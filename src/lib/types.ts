@@ -140,12 +140,16 @@ export interface MarketSurvey {
   id: string;
   zone_name: string;
   survey_date: string;
+  industry: string | null;
   wage_unskilled_min: number | null;
   wage_unskilled_max: number | null;
+  wage_seasonal_min: number | null;
+  wage_seasonal_max: number | null;
   wage_skilled_min: number | null;
   wage_skilled_max: number | null;
   wage_tech: number | null;
   labor_availability: string;
+  occupancy: string | null;
   surveyed_by: string | null;
   notes: string | null;
   created_at: string;
@@ -156,11 +160,59 @@ export interface Competitor {
   zone_name: string;
   company_name: string;
   survey_date: string;
+  wage_paid: number | null;
   fee_unskilled: number | null;
   fee_skilled: number | null;
   fee_tech: number | null;
+  fee_per_shift: number | null;
+  supplying_for: string[] | null;
   trend: string;
   notes: string | null;
+  created_at: string;
+}
+
+export interface MarketZone {
+  id: string;
+  name: string;
+  full_name: string | null;
+  location: string | null;
+  operator: string | null;
+  area: string | null;
+  established_year: string | null;
+  occupancy_pct: number | null;
+  total_companies: number | null;
+  fdi_companies: number | null;
+  total_workers: number | null;
+  industries: string[] | null;
+  countries: string[] | null;
+  characteristics: string | null;
+  strengths: string | null;
+  weaknesses: string | null;
+  labor_availability: string;
+  lgv_clients: number;
+  lgv_workers: number;
+  potential: number;
+  notes: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface MarketLeadSupplier {
+  name: string;
+  qty: number;
+  is_us: boolean;
+}
+
+export interface MarketLead {
+  id: string;
+  company_name: string;
+  region: string | null;
+  industry: string | null;
+  workers_needed: number;
+  source: string | null;
+  lead_date: string;
+  status: string;
+  suppliers: MarketLeadSupplier[];
   created_at: string;
 }
 

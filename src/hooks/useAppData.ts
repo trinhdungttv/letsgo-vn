@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Client, LaborHistoryEntry, FinanceRecord, MarketSurvey, Competitor } from '../lib/types';
+import type { Client, LaborHistoryEntry, FinanceRecord, MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
 
 function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
   return new Promise((res, rej) => {
@@ -15,6 +15,8 @@ export function useAppData(enabled = false) {
   const [finance, setFinance] = useState<FinanceRecord[]>([]);
   const [marketSurveys, setMarketSurveys] = useState<MarketSurvey[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [marketZones, setMarketZones] = useState<MarketZone[]>([]);
+  const [marketLeads, setMarketLeads] = useState<MarketLead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,12 +54,16 @@ export function useAppData(enabled = false) {
   }, []);
 
   const loadMarket = useCallback(async () => {
-    const [sr, cr] = await Promise.all([
+    const [sr, cr, zr, lr] = await Promise.all([
       withTimeout(supabase.from('market_surveys').select('*').order('zone_name')),
       withTimeout(supabase.from('competitors').select('*').order('zone_name')),
+      withTimeout(supabase.from('market_zones').select('*').order('name')),
+      withTimeout(supabase.from('market_leads').select('*').order('lead_date', { ascending: false })),
     ]);
     if (!sr.error) setMarketSurveys((sr.data || []) as MarketSurvey[]);
     if (!cr.error) setCompetitors((cr.data || []) as Competitor[]);
+    if (!zr.error) setMarketZones((zr.data || []) as MarketZone[]);
+    if (!lr.error) setMarketLeads((lr.data || []) as MarketLead[]);
   }, []);
 
   useEffect(() => {
@@ -73,7 +79,7 @@ export function useAppData(enabled = false) {
 
   return {
     clients, setClients, laborHistory, setLaborHistory,
-    finance, setFinance, marketSurveys, competitors,
+    finance, setFinance, marketSurveys, competitors, marketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
   };

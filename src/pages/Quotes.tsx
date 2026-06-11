@@ -8,12 +8,13 @@ interface QuotesProps {
   marketSurveys: MarketSurvey[];
   competitors: Competitor[];
   toast: (msg: string) => void;
+  initialZone?: string;
 }
 
 const LG_WAGES = { pt: 6200000, tn: 8500000, ktv: 12000000 };
 
-export default function Quotes({ marketSurveys, competitors, toast }: QuotesProps) {
-  const [form, setForm] = useState({ name: '', tax: '', address: '', contact: '', demand: '', zone: '' });
+export default function Quotes({ marketSurveys, competitors, toast, initialZone }: QuotesProps) {
+  const [form, setForm] = useState({ name: '', tax: '', address: '', contact: '', demand: '', zone: initialZone || '' });
   const [fees, setFees] = useState({ pt: '850000', tn: '1100000', ktv: '1400000' });
   const [showPreview, setShowPreview] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
