@@ -3,6 +3,8 @@ import { Edit2 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import type { CRMProduct, CRMDeal } from '../lib/types';
 
 interface Props {
@@ -24,6 +26,7 @@ const CATEGORIES = {
 type CategoryKey = keyof typeof CATEGORIES;
 
 const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProductUpdate, toast }) => {
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<CRMProduct | null>(null);
   const [formData, setFormData] = useState({ name: '', price: 0, category: 'software', description: '' });
@@ -66,6 +69,11 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         if (error) throw error;
         onProductUpdate({ ...editingProduct, ...formData });
         toast('Cập nhật sản phẩm thành công');
+        await logActivity({
+          user, action: 'update', table: 'crm_products', recordId: editingProduct.id,
+          description: `Cập nhật sản phẩm "${formData.name}"`,
+          oldData: editingProduct, newData: { ...editingProduct, ...formData },
+        });
       } else {
         const { data, error } = await supabase
           .from('crm_products')
@@ -83,6 +91,13 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         if (error) throw error;
         if (data) onProductCreate(data);
         toast('Thêm sản phẩm thành công');
+        if (data) {
+          await logActivity({
+            user, action: 'insert', table: 'crm_products', recordId: data.id,
+            description: `Thêm sản phẩm "${formData.name}"`,
+            newData: data,
+          });
+        }
       }
 
       setShowModal(false);

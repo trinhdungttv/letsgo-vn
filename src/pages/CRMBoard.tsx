@@ -4,6 +4,7 @@ import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import type { Client, CRMProduct, CRMDeal, Contact } from '../lib/types';
@@ -144,6 +145,11 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
       if (error) throw error;
       onDealUpdate(data as CRMDeal);
       toast(`Cập nhật thương vụ thành "${settings.labels[newStage] || DEFAULT_LABELS[newStage]}"`);
+      await logActivity({
+        user, action: 'update', table: 'crm_deals', recordId: deal.id,
+        description: `Chuyển thương vụ "${deal.title}" sang giai đoạn "${settings.labels[newStage] || DEFAULT_LABELS[newStage]}"`,
+        oldData: deal, newData: data,
+      });
     } catch (err: any) { toast('Lỗi: ' + err.message); }
   };
 
@@ -182,6 +188,16 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
       onDealActivate(data as Client);
       setActivatingDeal(null);
       toast(`Đã tạo khách hàng "${activateForm.companyName}" — hãy điền thêm thông tin!`);
+      await logActivity({
+        user, action: 'insert', table: 'clients', recordId: data.id,
+        description: `Kích hoạt khách hàng "${activateForm.companyName}" từ thương vụ "${activatingDeal.title}"`,
+        newData: data,
+      });
+      await logActivity({
+        user, action: 'update', table: 'crm_deals', recordId: activatingDeal.id,
+        description: `Đánh dấu thương vụ "${activatingDeal.title}" thành "Thắng"`,
+        oldData: activatingDeal, newData: { ...activatingDeal, stage: 'won' },
+      });
     } catch (err: any) { toast('Lỗi: ' + err.message); }
     finally { setIsActivating(false); }
   };
@@ -205,6 +221,11 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
       setShowModal(false);
       setFormData({ title: '', contactId: '', productId: '', value: 0, stage: 'new', owner: '', expectedClose: '' });
       toast('Tạo thương vụ thành công');
+      await logActivity({
+        user, action: 'insert', table: 'crm_deals', recordId: data.id,
+        description: `Tạo thương vụ "${formData.title}"`,
+        newData: data,
+      });
     } catch (err: any) { toast('Lỗi: ' + err.message); }
     finally { setIsSubmitting(false); }
   };

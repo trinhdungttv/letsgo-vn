@@ -3,6 +3,8 @@ import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText,
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+import { logActivity } from '../../lib/audit';
+import { useAuth } from '../../lib/auth';
 
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
@@ -31,6 +33,7 @@ function TagList({ tags, onAdd, onRemove, color }: { tags: string[]; onAdd: (v: 
 }
 
 export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh, toast }: MarketTabProps) {
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(emptyAddForm);
@@ -56,7 +59,7 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
     if (!addForm.name.trim()) { toast('Nhập tên khu vực'); return; }
     setSaving(true);
     try {
-      const { error } = await supabase.from('market_zones').insert({
+      const { data, error } = await supabase.from('market_zones').insert({
         name: addForm.name.trim(),
         full_name: addForm.full_name || null,
         location: addForm.location || null,
@@ -68,8 +71,13 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
         occupancy_pct: parseInt(addForm.occupancy_pct) || 0,
         labor_availability: addForm.labor_availability,
         characteristics: addForm.characteristics || null,
-      });
+      }).select().single();
       if (error) throw error;
+      await logActivity({
+        user, action: 'insert', table: 'market_zones', recordId: data.id,
+        description: `Thêm hồ sơ khu vực "${addForm.name.trim()}"`,
+        newData: data,
+      });
       await onRefresh();
       setShowAdd(false);
       setAddForm(emptyAddForm);
@@ -82,10 +90,14 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
     if (!selected || !editForm) return;
     setSaving(true);
     try {
-      const { error } = await supabase.from('market_zones').update({
-        ...editForm, updated_at: new Date().toISOString(),
-      }).eq('id', selected.id);
+      const updates = { ...editForm, updated_at: new Date().toISOString() };
+      const { error } = await supabase.from('market_zones').update(updates).eq('id', selected.id);
       if (error) throw error;
+      await logActivity({
+        user, action: 'update', table: 'market_zones', recordId: selected.id,
+        description: `Cập nhật hồ sơ khu vực "${selected.name}"`,
+        oldData: selected, newData: { ...selected, ...updates },
+      });
       await onRefresh();
       toast('Đã lưu hồ sơ: ' + selected.name);
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -97,6 +109,11 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
     try {
       const { error } = await supabase.from('market_zones').update({ potential: n, updated_at: new Date().toISOString() }).eq('id', selected.id);
       if (error) throw error;
+      await logActivity({
+        user, action: 'update', table: 'market_zones', recordId: selected.id,
+        description: `Cập nhật mức độ tiềm năng khu vực "${selected.name}" thành ${n} sao`,
+        oldData: selected, newData: { ...selected, potential: n },
+      });
       await onRefresh();
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };

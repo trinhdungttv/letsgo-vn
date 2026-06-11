@@ -34,6 +34,24 @@ export function getCurrentWeekLabel(): string {
   return `T${now.getMonth() + 1}W${weekNum}`;
 }
 
+// Returns week labels (TmWn) grouped by month for the past `monthsBack` months (incl. current),
+// newest first. Current month only includes weeks up to the current week (no future weeks).
+export function recentWeekLabels(monthsBack = 6): { month: string; labels: string[] }[] {
+  const now = new Date();
+  const groups: { month: string; labels: string[] }[] = [];
+  for (let i = 0; i < monthsBack; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const m = d.getMonth() + 1;
+    const y = d.getFullYear();
+    const isCurrent = i === 0;
+    const maxWeek = isCurrent ? Math.ceil(now.getDate() / 7) : 5;
+    const labels: string[] = [];
+    for (let w = maxWeek; w >= 1; w--) labels.push(`T${m}W${w}`);
+    groups.push({ month: `Tháng ${m}/${y}`, labels });
+  }
+  return groups;
+}
+
 export function statusPill(status: string): { label: string; cls: string } {
   switch (status) {
     case 'ok': return { label: 'Bình thường', cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200' };

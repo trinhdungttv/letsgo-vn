@@ -1,9 +1,12 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown } from 'lucide-react';
 import type { Client } from '../lib/types';
+import { useRegions } from '../hooks/useRegions';
+import { useManagers } from '../hooks/useManagers';
+import FilterDropdown, { ALL_OPTION } from './FilterDropdown';
 
 interface Props {
   clients: Client[];
+  onClientClick?: (c: Client) => void;
 }
 
 function TimelinePill({
@@ -28,25 +31,21 @@ function Connector({ active }: { active: boolean }) {
   return <div className={`w-5 h-0.5 mb-4 flex-shrink-0 ${active ? 'bg-emerald-300' : 'bg-gray-200'}`} />;
 }
 
-export default function FinanceTimeline({ clients }: Props) {
+export default function FinanceTimeline({ clients, onClientClick }: Props) {
   const todayNum = new Date().getDate();
 
-  const regions = useMemo(() => {
-    const set = new Set(clients.map(c => c.region || '').filter(Boolean));
-    return ['Tất cả', ...Array.from(set).sort()];
-  }, [clients]);
+  const { regions: regionList } = useRegions();
+  const { managers: managerList } = useManagers();
 
-  const managers = useMemo(() => {
-    const set = new Set(clients.map(c => c.manager || '').filter(Boolean));
-    return ['Tất cả', ...Array.from(set).sort()];
-  }, [clients]);
+  const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
+  const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
 
-  const [filterRegion, setFilterRegion] = useState('Tất cả');
-  const [filterManager, setFilterManager] = useState('Tất cả');
+  const [filterRegion, setFilterRegion] = useState<string[]>([ALL_OPTION]);
+  const [filterManager, setFilterManager] = useState<string[]>([ALL_OPTION]);
 
   const filtered = useMemo(() => clients.filter(c => {
-    const byRegion = filterRegion === 'Tất cả' || c.region === filterRegion;
-    const byManager = filterManager === 'Tất cả' || c.manager === filterManager;
+    const byRegion = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
+    const byManager = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     return byRegion && byManager;
   }), [clients, filterRegion, filterManager]);
 
@@ -55,29 +54,11 @@ export default function FinanceTimeline({ clients }: Props) {
       {/* Filter bar */}
       <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-3 flex-wrap">
         <span className="text-[12px] text-[#666] font-medium shrink-0">Lọc:</span>
-        <div className="relative">
-          <select
-            value={filterRegion}
-            onChange={e => setFilterRegion(e.target.value)}
-            className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[120px]"
-          >
-            {regions.map(r => <option key={r} value={r}>{r === 'Tất cả' ? 'Tất cả vùng' : r}</option>)}
-          </select>
-          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select
-            value={filterManager}
-            onChange={e => setFilterManager(e.target.value)}
-            className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[140px]"
-          >
-            {managers.map(m => <option key={m} value={m}>{m === 'Tất cả' ? 'Tất cả QL' : m}</option>)}
-          </select>
-          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-        </div>
-        {(filterRegion !== 'Tất cả' || filterManager !== 'Tất cả') && (
+        <FilterDropdown label="Chi nhánh" options={regions} selected={filterRegion} onChange={setFilterRegion} allLabel="Tất cả chi nhánh" />
+        <FilterDropdown label="Quản lý" options={managers} selected={filterManager} onChange={setFilterManager} allLabel="Tất cả QL" />
+        {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION)) && (
           <button
-            onClick={() => { setFilterRegion('Tất cả'); setFilterManager('Tất cả'); }}
+            onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); }}
             className="text-[11.5px] text-blue-600 hover:underline"
           >
             Xóa lọc
@@ -96,23 +77,31 @@ export default function FinanceTimeline({ clients }: Props) {
               <th className="text-left px-4 py-2.5 font-medium text-[#666]">Khu vực</th>
               <th className="text-left px-4 py-2.5 font-medium text-[#666]">Người quản lý</th>
               <th className="text-center px-4 py-2.5 font-medium text-[#666]">Timeline thanh toán</th>
+              <th className="text-center px-4 py-2.5 font-medium text-[#666]">Phát lương</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F0EEE9]">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-10 text-[#aaa]">Không có khách hàng nào</td>
+                <td colSpan={6} className="text-center py-10 text-[#aaa]">Không có khách hàng nào</td>
               </tr>
             ) : filtered.map((c, idx) => {
               const cutoffHighlight = todayNum >= c.cutoff_day ? 'done' : todayNum === c.cutoff_day - 1 ? 'active' : 'pending';
               const payStartHighlight = todayNum >= c.payment_start ? 'done' : todayNum === c.payment_start - 1 ? 'active' : 'pending';
               const payEndHighlight = todayNum >= c.payment_end ? 'done' : todayNum >= c.payment_start ? 'active' : 'pending';
+              const salaryHighlight = todayNum >= c.salary_day ? 'done' : todayNum === c.salary_day - 1 ? 'active' : 'pending';
 
               return (
                 <tr key={c.id} className="hover:bg-[#FAFAF8] transition">
                   <td className="px-4 py-3 text-[#aaa]">{idx + 1}</td>
                   <td className="px-4 py-3">
-                    <div className="font-semibold text-[#111]">{c.name}</div>
+                    {onClientClick ? (
+                      <button onClick={() => onClientClick(c)} className="font-semibold text-[#111] hover:text-blue-600 hover:underline text-left">
+                        {c.name}
+                      </button>
+                    ) : (
+                      <div className="font-semibold text-[#111]">{c.name}</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-[#555]">{c.region || '—'}</td>
                   <td className="px-4 py-3 text-[#555]">{c.manager || '—'}</td>
@@ -123,6 +112,11 @@ export default function FinanceTimeline({ clients }: Props) {
                       <TimelinePill day={c.payment_start} label="Bắt đầu TT" highlight={payStartHighlight} />
                       <Connector active={payEndHighlight !== 'pending'} />
                       <TimelinePill day={c.payment_end} label="Hạn TT" highlight={payEndHighlight} />
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-center">
+                      <TimelinePill day={c.salary_day} label="Phát lương" highlight={salaryHighlight} />
                     </div>
                   </td>
                 </tr>

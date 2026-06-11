@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Bar, Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -7,7 +7,7 @@ import {
 } from 'chart.js';
 import {
   AlertCircle, TrendingUp, Users, BarChart2,
-  ChevronDown, CheckCircle2, Clock, Circle, RefreshCw, ClipboardList,
+  ChevronDown, CheckCircle2, Clock, Circle, RefreshCw, ClipboardList, X, Phone, Mail,
 } from 'lucide-react';
 import type { Client } from '../lib/types';
 import { statusPill, formatCurrency, formatDate, daysUntil } from '../lib/format';
@@ -44,9 +44,9 @@ interface GroupRow {
 }
 
 const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactNode; cls: string; bg: string }> = {
-  pending:     { label: 'Chưa xử lý', icon: <Circle size={13} />,      cls: 'text-gray-500',   bg: 'bg-gray-100'   },
-  in_progress: { label: 'Đang xử lý', icon: <Clock size={13} />,       cls: 'text-amber-600',  bg: 'bg-amber-100'  },
-  done:        { label: 'Đã xong',    icon: <CheckCircle2 size={13} />, cls: 'text-emerald-600', bg: 'bg-emerald-100' },
+  pending:     { label: 'Cần làm',    icon: <Circle size={13} />,       cls: 'text-slate-600',   bg: 'bg-slate-100'   },
+  in_progress: { label: 'Đang làm',   icon: <Clock size={13} />,        cls: 'text-blue-600',    bg: 'bg-blue-100'    },
+  done:        { label: 'Hoàn thành', icon: <CheckCircle2 size={13} />, cls: 'text-emerald-600', bg: 'bg-emerald-100' },
 };
 
 export default function Dashboard({ clients }: DashboardProps) {
@@ -55,6 +55,7 @@ export default function Dashboard({ clients }: DashboardProps) {
   const [groupMode, setGroupMode] = useState<GroupMode>('region');
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
   const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -105,7 +106,15 @@ export default function Dashboard({ clients }: DashboardProps) {
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('created_at', { ascending: false }),
       ]);
 
-      const ct: DashboardTask[] = (contractTasks || []).map((t: any) => ({ ...t, source_type: 'contract' as const }));
+      // De-dupe contract tasks by client_id (keep most recent, list is ordered by created_at desc)
+      const seenClientIds = new Set<string>();
+      const ct: DashboardTask[] = [];
+      for (const t of (contractTasks || []) as any[]) {
+        const key = t.client_id || t.id;
+        if (seenClientIds.has(key)) continue;
+        seenClientIds.add(key);
+        ct.push({ ...t, source_type: 'contract' as const });
+      }
       const pt: DashboardTask[] = (pipelineTasks || []).map((t: any) => ({
         id: `pt_${t.id}`,
         client_id: null,
@@ -126,36 +135,54 @@ export default function Dashboard({ clients }: DashboardProps) {
     }
   }, []);
 
-  // Sync alerts → tasks (upsert missing ones)
+  // Sync alerts → tasks (insert missing ones; guarded against concurrent runs to avoid duplicates)
+  const syncInFlight = useRef(false);
   const syncAlertTasks = useCallback(async (alertClients: Client[]) => {
-    if (!alertClients.length) return;
-    const upserts = alertClients.map(c => ({
-      client_id: c.id,
-      client_name: c.name,
-      client_region: c.region,
-      description: c.status === 'danger' ? 'Hợp đồng khẩn cấp cần xử lý' : 'Hợp đồng sắp hết hạn',
-      source_status: c.status,
-    }));
-    // Only insert if not already present (by client_id)
-    const existingIds = new Set(tasks.map(t => t.client_id));
-    const newUpserts = upserts.filter(u => !existingIds.has(u.client_id ?? ''));
-    if (newUpserts.length) {
-      await supabase.from('dashboard_tasks').insert(newUpserts);
-      loadTasks();
+    if (!alertClients.length || syncInFlight.current) return;
+    syncInFlight.current = true;
+    try {
+      const ids = alertClients.map(c => c.id);
+      const { data: existing } = await supabase.from('dashboard_tasks').select('client_id').in('client_id', ids);
+      const existingIds = new Set((existing || []).map((r: any) => r.client_id));
+      const missing = alertClients.filter(c => !existingIds.has(c.id));
+      if (!missing.length) return;
+      const upserts = missing.map(c => {
+        const d = daysUntil(c.contract_end);
+        let description = 'Hợp đồng sắp hết hạn';
+        if (c.status === 'danger') description = 'Hợp đồng khẩn cấp cần xử lý';
+        else if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
+        else if (d !== null) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
+        return {
+          client_id: c.id,
+          client_name: c.name,
+          client_region: c.region,
+          description,
+          source_status: c.status,
+        };
+      });
+      await supabase.from('dashboard_tasks').insert(upserts);
+      await loadTasks();
+    } finally {
+      syncInFlight.current = false;
     }
-  }, [tasks, loadTasks]);
+  }, [loadTasks]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
-  const alerts = useMemo(() =>
-    [...filteredClients.filter(c => c.status === 'danger' || c.status === 'warn')]
-      .sort((a, b) => (a.status === 'danger' ? -1 : 1) - (b.status === 'danger' ? -1 : 1)),
-    [filteredClients]);
+  // Clients needing attention: hard alerts (danger/warn) + contracts expiring within 30 days
+  const alertAndExpiringClients = useMemo(() => {
+    const map = new Map<string, Client>();
+    for (const c of filteredClients) {
+      if (c.status === 'danger' || c.status === 'warn') map.set(c.id, c);
+    }
+    for (const c of expiringClients) map.set(c.id, c);
+    return [...map.values()];
+  }, [filteredClients, expiringClients]);
 
   useEffect(() => {
-    if (alerts.length && tasks.length >= 0) syncAlertTasks(alerts);
+    if (alertAndExpiringClients.length && tasks.length >= 0) syncAlertTasks(alertAndExpiringClients);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alerts.length]);
+  }, [alertAndExpiringClients.length]);
 
   const updateTaskStatus = async (id: string, status: TaskStatus) => {
     if (id.startsWith('pt_')) {
@@ -170,6 +197,11 @@ export default function Dashboard({ clients }: DashboardProps) {
     }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
   };
+
+  const findClientForTask = useCallback((task: DashboardTask): Client | null => {
+    if (task.client_id) return clients.find(c => c.id === task.client_id) || null;
+    return clients.find(c => c.name === task.client_name) || null;
+  }, [clients]);
 
   // Filter tasks by current scope
   const visibleTasks = useMemo(() => {
@@ -348,53 +380,61 @@ export default function Dashboard({ clients }: DashboardProps) {
                 <RefreshCw size={13} className={tasksLoading ? 'animate-spin' : ''} />
               </button>
             </div>
-            <div className="overflow-y-auto" style={{ maxHeight: 168 }}>
+            <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
               {visibleTasks.length === 0 ? (
                 <div className="text-center text-[#aaa] text-[13px] py-4">Không có việc cần làm</div>
               ) : (
-                visibleTasks.map(task => {
-                  const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.pending;
-                  return (
-                    <div key={task.id} className="flex items-center gap-2 px-3 py-2 border-b border-[#F0EEE9] last:border-0">
-                      {task.source_type === 'pipeline' ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-orange-100 text-orange-700">
-                          <ClipboardList size={10} /> BD
-                        </span>
-                      ) : task.source_status ? (
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 ${statusPill(task.source_status).cls}`}>
-                          {statusPill(task.source_status).label}
-                        </span>
-                      ) : null}
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-[12px] truncate">{task.client_name}</div>
-                        <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
-                        {(task as any).due_date && (
-                          <div className={`text-[10.5px] mt-0.5 ${new Date((task as any).due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                            Hạn: {(task as any).due_date}
-                          </div>
+                <div className="grid grid-cols-2">
+                  {visibleTasks.map(task => {
+                    const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.pending;
+                    const relatedClient = findClientForTask(task);
+                    const daysLeft = task.source_type !== 'pipeline' && relatedClient ? daysUntil(relatedClient.contract_end) : null;
+                    return (
+                      <div key={task.id} className="flex items-center gap-2 px-3 py-2 border-b border-r border-[#F0EEE9] [&:nth-child(2n)]:border-r-0">
+                        {task.source_type === 'pipeline' ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-orange-100 text-orange-700">
+                            <ClipboardList size={10} /> BD
+                          </span>
+                        ) : daysLeft !== null ? (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-red-100 text-red-700">
+                            {daysLeft <= 0 ? 'Hết hạn' : `${daysLeft} ngày`}
+                          </span>
+                        ) : null}
+                        <div className="flex-1 min-w-0">
+                          {relatedClient ? (
+                            <button onClick={() => setSelectedClient(relatedClient)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
+                          ) : (
+                            <div className="font-medium text-[12px] truncate">{task.client_name}</div>
+                          )}
+                          <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
+                          {(task as any).due_date && (
+                            <div className={`text-[10.5px] mt-0.5 ${new Date((task as any).due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                              Hạn: {(task as any).due_date}
+                            </div>
+                          )}
+                        </div>
+                        {task.client_region && (
+                          <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
                         )}
+                        {/* Status selector */}
+                        <div className="relative shrink-0">
+                          <select
+                            value={task.status}
+                            onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                            className={`appearance-none text-[10.5px] font-medium pl-5 pr-4 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 ${cfg.bg} ${cfg.cls}`}
+                          >
+                            {(Object.entries(TASK_STATUS_CONFIG) as [TaskStatus, typeof TASK_STATUS_CONFIG[TaskStatus]][]).map(([val, c]) => (
+                              <option key={val} value={val}>{c.label}</option>
+                            ))}
+                          </select>
+                          <span className={`absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none ${cfg.cls}`}>
+                            {cfg.icon}
+                          </span>
+                        </div>
                       </div>
-                      {task.client_region && (
-                        <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
-                      )}
-                      {/* Status selector */}
-                      <div className="relative shrink-0">
-                        <select
-                          value={task.status}
-                          onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                          className={`appearance-none text-[10.5px] font-medium pl-5 pr-4 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 ${cfg.bg} ${cfg.cls}`}
-                        >
-                          {(Object.entries(TASK_STATUS_CONFIG) as [TaskStatus, typeof TASK_STATUS_CONFIG[TaskStatus]][]).map(([val, c]) => (
-                            <option key={val} value={val}>{c.label}</option>
-                          ))}
-                        </select>
-                        <span className={`absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none ${cfg.cls}`}>
-                          {cfg.icon}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
@@ -566,23 +606,59 @@ export default function Dashboard({ clients }: DashboardProps) {
           </div>
         </div>
 
-        {/* Expiring Contracts */}
-        {expiringClients.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <div className="text-[12px] font-semibold text-amber-800 mb-2">HĐ hết hạn trong 30 ngày tới</div>
-            <div className="flex flex-wrap gap-2">
-              {expiringClients.map(c => {
-                const d = daysUntil(c.contract_end)!;
-                return (
-                  <span key={c.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11.5px] font-medium ${d <= 0 ? 'bg-red-100 text-red-800' : d <= 7 ? 'bg-red-50 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
-                    {c.name} · {d <= 0 ? 'Hết hạn' : formatDate(c.contract_end)}
+      </div>
+
+      {selectedClient && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedClient(null)}>
+          <div className="bg-white rounded-[12px] w-full max-w-md p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[15px] font-semibold text-[#111]">{selectedClient.name}</h2>
+              <button onClick={() => setSelectedClient(null)} className="p-1 hover:bg-gray-100 rounded"><X size={15} /></button>
+            </div>
+            <div className="space-y-3 text-[12.5px]">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill(selectedClient.status).cls}`}>
+                  {statusPill(selectedClient.status).label}
+                </span>
+                {selectedClient.client_type && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-600">
+                    {selectedClient.client_type === 'active' ? 'Khách hàng' : 'Tiềm năng'}
                   </span>
-                );
-              })}
+                )}
+                {selectedClient.prospect_status && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700">
+                    {selectedClient.prospect_status}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><div className="text-[11px] text-gray-400">Khu vực</div><div className="font-medium">{selectedClient.region || '—'}</div></div>
+                <div><div className="text-[11px] text-gray-400">Quản lý</div><div className="font-medium">{selectedClient.manager || '—'}</div></div>
+                <div><div className="text-[11px] text-gray-400">Lao động hiện tại</div><div className="font-medium">{selectedClient.current_workers ?? 0}</div></div>
+                <div><div className="text-[11px] text-gray-400">LĐ tối thiểu</div><div className="font-medium">{selectedClient.min_workers}</div></div>
+                <div><div className="text-[11px] text-gray-400">Bắt đầu HĐ</div><div className="font-medium">{selectedClient.contract_start ? formatDate(selectedClient.contract_start) : '—'}</div></div>
+                <div><div className="text-[11px] text-gray-400">Kết thúc HĐ</div><div className="font-medium">{selectedClient.contract_end ? formatDate(selectedClient.contract_end) : '—'}</div></div>
+              </div>
+              {(selectedClient.phone || selectedClient.email) && (
+                <div className="flex flex-col gap-1.5 pt-2 border-t border-[#F0EEE9]">
+                  {selectedClient.phone && (
+                    <div className="flex items-center gap-1.5 text-gray-600"><Phone size={12} /> {selectedClient.phone}</div>
+                  )}
+                  {selectedClient.email && (
+                    <div className="flex items-center gap-1.5 text-gray-600"><Mail size={12} /> {selectedClient.email}</div>
+                  )}
+                </div>
+              )}
+              {selectedClient.notes && (
+                <div className="pt-2 border-t border-[#F0EEE9]">
+                  <div className="text-[11px] text-gray-400 mb-1">Ghi chú</div>
+                  <div className="text-gray-700 whitespace-pre-wrap">{selectedClient.notes}</div>
+                </div>
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 }

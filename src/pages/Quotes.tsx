@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Eye, Download, Send, Save } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import type { MarketSurvey, Competitor } from '../lib/types';
 
 interface QuotesProps {
@@ -14,6 +16,7 @@ interface QuotesProps {
 const LG_WAGES = { pt: 6200000, tn: 8500000, ktv: 12000000 };
 
 export default function Quotes({ marketSurveys, competitors, toast, initialZone }: QuotesProps) {
+  const { user } = useAuth();
   const [form, setForm] = useState({ name: '', tax: '', address: '', contact: '', demand: '', zone: initialZone || '' });
   const [fees, setFees] = useState({ pt: '850000', tn: '1100000', ktv: '1400000' });
   const [showPreview, setShowPreview] = useState(false);
@@ -44,14 +47,19 @@ export default function Quotes({ marketSurveys, competitors, toast, initialZone 
   const handleSave = async () => {
     if (!form.name) { toast('Nhập tên công ty trước'); return; }
     try {
-      const { error } = await supabase.from('quotes').insert({
+      const { data, error } = await supabase.from('quotes').insert({
         client_name: form.name, tax_code: form.tax, address: form.address,
         contact_person: form.contact, labor_demand: form.demand, zone: form.zone || null,
         price_unskilled: ptFee, price_skilled: tnFee, price_tech: ktvFee, status: 'draft',
-      });
+      }).select().single();
       if (error) throw error;
       setSaved(true); setTimeout(() => setSaved(false), 3000);
       toast('Đã lưu báo giá!');
+      await logActivity({
+        user, action: 'insert', table: 'quotes', recordId: data.id,
+        description: `Tạo báo giá cho "${form.name}"`,
+        newData: data,
+      });
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 

@@ -2,10 +2,12 @@ import { useState, useMemo } from 'react';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry } from '../lib/types';
-import { formatDate, getMonthLast, getCurrentWeekLabel, statusPill } from '../lib/format';
+import type { Client, LaborHistoryEntry, MarketZone } from '../lib/types';
+import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, statusPill } from '../lib/format';
 import { MANAGERS } from '../lib/constants';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import ContactsTab from '../components/ContactsTab';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
@@ -16,24 +18,39 @@ interface ClientDetailProps {
   onBack: () => void;
   onClientUpdate: (client: Client) => void;
   onLaborUpdate: (entry: LaborHistoryEntry) => void;
+  marketZones: MarketZone[];
   toast: (msg: string) => void;
 }
 
-export default function ClientDetail({ client, laborHistory, onBack, onClientUpdate, onLaborUpdate, toast }: ClientDetailProps) {
+export default function ClientDetail({ client, laborHistory, onBack, onClientUpdate, onLaborUpdate, marketZones, toast }: ClientDetailProps) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'contacts'>('overview');
   const [editing, setEditing] = useState(false);
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
+  const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
   const [laborInput, setLaborInput] = useState(String(client.current_workers || 0));
   const [laborMsg, setLaborMsg] = useState(false);
+  const weekGroups = useMemo(() => recentWeekLabels(2), []);
   const [openInfo, setOpenInfo] = useState(false);
   const [openLabor, setOpenLabor] = useState(true);
   const [form, setForm] = useState({
+    name: client.name || '',
     region: client.region || '',
     manager: client.manager || '',
+    industrial_zones: client.industrial_zones || [],
     contract_start: client.contract_start || '',
     contract_end: client.contract_end || '',
     notes: client.notes || '',
   });
+
+  const toggleZone = (name: string) => {
+    setForm(f => ({
+      ...f,
+      industrial_zones: f.industrial_zones.includes(name)
+        ? f.industrial_zones.filter(z => z !== name)
+        : [...f.industrial_zones, name],
+    }));
+  };
 
   const hist = useMemo(() => [...laborHistory].sort((a, b) => a.created_at.localeCompare(b.created_at)), [laborHistory]);
   const currentWorkers = hist.length ? hist[hist.length - 1].count : 0;
@@ -66,6 +83,7 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   }, [hist]);
 
   const handleSave = async () => {
+    if (!form.name.trim()) { toast('Tên công ty không được để trống'); return; }
     try {
       const updates = { ...form, updated_at: new Date().toISOString() };
       const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
@@ -73,6 +91,11 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
       onClientUpdate({ ...client, ...updates });
       setEditing(false);
       toast('Đã lưu thông tin khách hàng!');
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: client.id,
+        description: `Cập nhật thông tin khách hàng "${client.name}"`,
+        oldData: client, newData: { ...client, ...updates },
+      });
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
     }
@@ -81,17 +104,27 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   const handleLaborUpdate = async () => {
     const val = parseInt(laborInput);
     if (isNaN(val) || val < 0) { toast('Số lao động không hợp lệ'); return; }
-    const wk = getCurrentWeekLabel();
+    const wk = laborWeek;
     try {
       const existing = hist.find(h => h.week_label === wk);
       if (existing) {
         const { error } = await supabase.from('client_labor_history').update({ count: val }).eq('id', existing.id);
         if (error) throw error;
         onLaborUpdate({ ...existing, count: val });
+        await logActivity({
+          user, action: 'update', table: 'client_labor_history', recordId: existing.id,
+          description: `Cập nhật LĐ tuần ${wk} cho "${client.name}": ${existing.count.toLocaleString()} → ${val.toLocaleString()}`,
+          oldData: existing, newData: { ...existing, count: val },
+        });
       } else {
-        const { data, error } = await supabase.from('client_labor_history').insert({ client_id: client.id, week_label: wk, count: val, updated_by: 'Tony Nguyễn' }).select().single();
+        const { data, error } = await supabase.from('client_labor_history').insert({ client_id: client.id, week_label: wk, count: val, updated_by: user?.full_name || null }).select().single();
         if (error) throw error;
         onLaborUpdate(data);
+        await logActivity({
+          user, action: 'insert', table: 'client_labor_history', recordId: data.id,
+          description: `Thêm số liệu LĐ tuần ${wk} cho "${client.name}": ${val.toLocaleString()}`,
+          newData: data,
+        });
       }
       setLaborMsg(true);
       setTimeout(() => setLaborMsg(false), 3000);
@@ -153,8 +186,12 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
               {editing ? (
                 <>
                   <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div className="flex flex-col gap-1 col-span-2">
+                      <label className="text-[12px] text-[#666] font-medium">Tên công ty</label>
+                      <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                    </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-[12px] text-[#666] font-medium">Khu vực</label>
+                      <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>
                       <select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
                         {['Biên Hòa', 'VSIP', 'Bình Dương', 'Đồng Nai', 'Bàu Bàng', 'Củ Chi', 'Nhơn Trạch'].map(r => <option key={r}>{r}</option>)}
                       </select>
@@ -175,6 +212,22 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
+                    <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
+                    <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-gray-300">
+                      {marketZones.length === 0 && <span className="text-[12px] text-[#aaa]">Chưa có khu vực nào trong Thị trường &gt; Khu vực</span>}
+                      {marketZones.map(z => (
+                        <button
+                          key={z.id}
+                          type="button"
+                          onClick={() => toggleZone(z.name)}
+                          className={`px-2.5 py-1 rounded-full text-[12px] font-medium border transition ${form.industrial_zones.includes(z.name) ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-700'}`}
+                        >
+                          {z.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
                     <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 min-h-[60px] resize-y" />
                   </div>
@@ -186,7 +239,7 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    ['Khu vực', client.region],
+                    ['Chi Nhánh', client.region],
                     ['Người quản lý', client.manager],
                     ['Ngày bắt đầu HĐ', formatDate(client.contract_start)],
                     ['Ngày hết hạn HĐ', formatDate(client.contract_end)],
@@ -196,6 +249,18 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                       <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
                     </div>
                   ))}
+                  <div className="col-span-2">
+                    <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
+                    <div className="py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px] flex flex-wrap gap-1.5 items-center">
+                      {client.industrial_zones && client.industrial_zones.length > 0 ? (
+                        client.industrial_zones.map(z => (
+                          <span key={z} className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">{z}</span>
+                        ))
+                      ) : (
+                        <span className="text-[13px] text-[#111]">—</span>
+                      )}
+                    </div>
+                  </div>
                   {client.notes && (
                     <div className="col-span-2">
                       <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
@@ -216,9 +281,16 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
           </button>
           {openLabor && (
             <div className="p-4">
-              <div className="flex items-center gap-2.5 bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-4 py-3 mb-3">
+              <div className="flex items-center gap-2.5 flex-wrap bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-4 py-3 mb-3">
                 <RefreshCw size={16} className="text-[#888]" />
-                <span className="text-[13px] text-[#555] font-medium">Cập nhật LĐ tuần này:</span>
+                <span className="text-[13px] text-[#555] font-medium">Cập nhật LĐ tuần:</span>
+                <select value={laborWeek} onChange={e => setLaborWeek(e.target.value)} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  {weekGroups.map(g => (
+                    <optgroup key={g.month} label={g.month}>
+                      {g.labels.map(l => <option key={l} value={l}>{l}{l === getCurrentWeekLabel() ? ' (tuần này)' : ''}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
                 <input type="number" value={laborInput} onChange={e => setLaborInput(e.target.value)} className="w-[110px] text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
                 <button onClick={handleLaborUpdate} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Cập nhật</button>
                 {laborMsg && <span className="text-[12px] text-emerald-600 inline-flex items-center gap-1">✓ Đã lưu!</span>}
@@ -253,6 +325,28 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                   })}
                 </tbody>
               </table>
+
+              {hist.length > 0 && (
+                <>
+                  <div className="text-[13px] font-semibold text-[#111] mt-4 mb-2">Lịch sử nhập liệu</div>
+                  <table className="w-full text-[12.5px]">
+                    <thead><tr><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Tuần</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Số LĐ</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Người cập nhật</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Ngày điền</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]"></th></tr></thead>
+                    <tbody>
+                      {[...hist].reverse().slice(0, 12).map(h => (
+                        <tr key={h.id} className="border-b border-[#F0EEE9]">
+                          <td className="px-3 py-2">{h.week_label}</td>
+                          <td className="px-3 py-2 font-semibold">{h.count.toLocaleString()}</td>
+                          <td className="px-3 py-2 text-[#888]">{h.updated_by || '—'}</td>
+                          <td className="px-3 py-2 text-[#888]">{formatDate(h.created_at)}</td>
+                          <td className="px-3 py-2">
+                            <button onClick={() => { setLaborWeek(h.week_label); setLaborInput(String(h.count)); }} className="text-[11.5px] text-blue-600 hover:underline">Sửa</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           )}
         </div>

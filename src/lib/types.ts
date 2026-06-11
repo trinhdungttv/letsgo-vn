@@ -16,6 +16,7 @@ export interface Manager {
   name: string;
   phone: string | null;
   email: string | null;
+  region: string | null;
   created_at: string;
 }
 
@@ -24,10 +25,16 @@ export interface Client {
   name: string;
   region: string | null;
   manager: string | null;
+  industrial_zones: string[];
   min_workers: number;
   cutoff_day: number;
+  cutoff_day_end: number | null;
+  calc_day: number;
+  calc_day_end: number | null;
   payment_start: number;
   payment_end: number;
+  salary_day: number;
+  salary_day_end: number | null;
   next_month_pay: boolean;
   contract_start: string | null;
   contract_end: string | null;
@@ -231,7 +238,23 @@ export interface Quote {
   created_at: string;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline';
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline';
+
+export type AuditAction = 'insert' | 'update' | 'delete';
+
+export interface AuditLogEntry {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  action: AuditAction;
+  table_name: string;
+  record_id: string;
+  description: string | null;
+  old_data: any;
+  new_data: any;
+  undone: boolean;
+  created_at: string;
+}
 
 export type FinanceTimelineMode = 'clients' | 'payment';
 

@@ -5,7 +5,7 @@ import type { Region, Manager } from '../lib/types';
 type Tab = 'regions' | 'managers' | 'columns';
 
 const ALL_COLUMNS = [
-  { key: 'region', label: 'Khu vực' },
+  { key: 'region', label: 'Chi Nhánh' },
   { key: 'manager', label: 'Quản lý' },
   { key: 'workers', label: 'LĐ' },
   { key: 'cutoff', label: 'Chốt' },
@@ -57,7 +57,7 @@ export default function AdminSettings({
   const [editingRegion, setEditingRegion] = useState<{ id: string; name: string } | null>(null);
 
   // Managers state
-  const [newMgr, setNewMgr] = useState<Omit<Manager, 'id' | 'created_at'>>({ name: '', phone: '', email: '' });
+  const [newMgr, setNewMgr] = useState<Omit<Manager, 'id' | 'created_at'>>({ name: '', phone: '', email: '', region: '' });
   const [editingMgr, setEditingMgr] = useState<Manager | null>(null);
   const [showAddMgr, setShowAddMgr] = useState(false);
 
@@ -72,27 +72,27 @@ export default function AdminSettings({
 
   const handleAddRegion = () => {
     if (!newRegion.trim()) return;
-    wrap(async () => { await onAddRegion(newRegion.trim()); setNewRegion(''); }, 'Đã thêm khu vực');
+    wrap(async () => { await onAddRegion(newRegion.trim()); setNewRegion(''); }, 'Đã thêm chi nhánh');
   };
 
   const handleSaveRegion = () => {
     if (!editingRegion || !editingRegion.name.trim()) return;
-    wrap(async () => { await onUpdateRegion(editingRegion.id, editingRegion.name.trim()); setEditingRegion(null); }, 'Đã cập nhật khu vực');
+    wrap(async () => { await onUpdateRegion(editingRegion.id, editingRegion.name.trim()); setEditingRegion(null); }, 'Đã cập nhật chi nhánh');
   };
 
   const handleDeleteRegion = (id: string, name: string) => {
-    if (!confirm(`Xóa khu vực "${name}"?`)) return;
-    wrap(() => onDeleteRegion(id), 'Đã xóa khu vực');
+    if (!confirm(`Xóa chi nhánh "${name}"?`)) return;
+    wrap(() => onDeleteRegion(id), 'Đã xóa chi nhánh');
   };
 
   const handleAddMgr = () => {
     if (!newMgr.name.trim()) return;
-    wrap(async () => { await onAddManager({ ...newMgr, name: newMgr.name.trim() }); setNewMgr({ name: '', phone: '', email: '' }); setShowAddMgr(false); }, 'Đã thêm người quản lý');
+    wrap(async () => { await onAddManager({ ...newMgr, name: newMgr.name.trim() }); setNewMgr({ name: '', phone: '', email: '', region: '' }); setShowAddMgr(false); }, 'Đã thêm người quản lý');
   };
 
   const handleSaveMgr = () => {
     if (!editingMgr || !editingMgr.name.trim()) return;
-    wrap(async () => { await onUpdateManager(editingMgr.id, { name: editingMgr.name, phone: editingMgr.phone, email: editingMgr.email }); setEditingMgr(null); }, 'Đã cập nhật quản lý');
+    wrap(async () => { await onUpdateManager(editingMgr.id, { name: editingMgr.name, phone: editingMgr.phone, email: editingMgr.email, region: editingMgr.region }); setEditingMgr(null); }, 'Đã cập nhật quản lý');
   };
 
   const handleDeleteMgr = (id: string, name: string) => {
@@ -108,7 +108,7 @@ export default function AdminSettings({
   };
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'regions', label: 'Khu vực' },
+    { key: 'regions', label: 'Chi Nhánh' },
     { key: 'managers', label: 'Quản lý' },
     { key: 'columns', label: 'Bộ lọc cột' },
   ];
@@ -140,7 +140,7 @@ export default function AdminSettings({
                   value={newRegion}
                   onChange={e => setNewRegion(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddRegion()}
-                  placeholder="Tên khu vực mới..."
+                  placeholder="Tên chi nhánh mới..."
                   className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button onClick={handleAddRegion} disabled={saving || !newRegion.trim()}
@@ -180,7 +180,7 @@ export default function AdminSettings({
                     )}
                   </div>
                 ))}
-                {regions.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Chưa có khu vực nào</p>}
+                {regions.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Chưa có chi nhánh nào</p>}
               </div>
             </div>
           )}
@@ -203,6 +203,11 @@ export default function AdminSettings({
                     <input value={newMgr.email || ''} onChange={e => setNewMgr(f => ({ ...f, email: e.target.value }))}
                       placeholder="Email" className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400" />
                   </div>
+                  <select value={newMgr.region || ''} onChange={e => setNewMgr(f => ({ ...f, region: e.target.value }))}
+                    className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="">— Chọn chi nhánh —</option>
+                    {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                  </select>
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setShowAddMgr(false)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>
                     <button onClick={handleAddMgr} disabled={saving || !newMgr.name.trim()}
@@ -224,6 +229,11 @@ export default function AdminSettings({
                           <input value={editingMgr.email || ''} onChange={e => setEditingMgr({ ...editingMgr, email: e.target.value })}
                             placeholder="Email" className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400" />
                         </div>
+                        <select value={editingMgr.region || ''} onChange={e => setEditingMgr({ ...editingMgr, region: e.target.value })}
+                          className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
+                          <option value="">— Chọn chi nhánh —</option>
+                          {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                        </select>
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setEditingMgr(null)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>
                           <button onClick={handleSaveMgr} disabled={saving}
@@ -235,6 +245,7 @@ export default function AdminSettings({
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-semibold text-gray-800">{m.name}</div>
                           <div className="text-xs text-gray-500">{[m.phone, m.email].filter(Boolean).join(' · ') || 'Chưa có liên hệ'}</div>
+                          <div className="text-xs text-gray-400">Chi nhánh: {m.region || '—'}</div>
                         </div>
                         <button onClick={() => setEditingMgr({ ...m })} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded-md flex-shrink-0">
                           <Pencil className="w-3.5 h-3.5" />

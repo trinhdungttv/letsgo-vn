@@ -8,6 +8,7 @@ import PageHeader from '../components/PageHeader';
 import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
@@ -85,6 +86,7 @@ interface ProfileModalProps {
 }
 
 function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: ProfileModalProps) {
+  const { user } = useAuth();
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
@@ -131,54 +133,71 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
-  const patchEntry = async (patch: Partial<CRMPipelineEntry>) => {
+  const patchEntry = async (patch: Partial<CRMPipelineEntry>, description: string) => {
     const { error } = await supabase.from('crm_pipeline').update(patch).eq('id', entry.id);
-    if (!error) onUpdate({ ...entry, ...patch });
-    else toast('Lỗi: ' + error.message);
+    if (!error) {
+      onUpdate({ ...entry, ...patch });
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
+        description, oldData: entry, newData: { ...entry, ...patch },
+      });
+    } else toast('Lỗi: ' + error.message);
   };
 
   const cycleRating = async () => {
     const order = ['hot', 'normal', 'low'] as const;
     const next = order[(order.indexOf(rating as 'hot' | 'normal' | 'low') + 1) % order.length];
     setRating(next);
-    await patchEntry({ rating: next });
+    const ratingLabel = RATING_CONFIG[next]?.label || next;
+    await patchEntry({ rating: next }, `Đổi đánh giá "${entry.company_name}" thành "${ratingLabel}"`);
   };
 
   const addInteraction = async () => {
     if (!intContent.trim()) return;
     setAddingInt(true);
-    const { error } = await supabase.from('crm_interactions').insert({
+    const { data, error } = await supabase.from('crm_interactions').insert({
       crm_id: entry.id, interaction_type: intType,
       content: intContent.trim(), interaction_date: intDate,
-    });
+    }).select().single();
     setAddingInt(false);
     if (!error) {
       setIntContent('');
       setIntDate(new Date().toISOString().split('T')[0]);
       loadDetails();
       toast('Đã ghi log tương tác');
+      const typeLabel = INTERACTION_TYPES.find(t => t.id === intType)?.label || intType;
+      await logActivity({
+        user, action: 'insert', table: 'crm_interactions', recordId: data.id,
+        description: `Thêm log "${typeLabel}" cho "${entry.company_name}"`,
+        newData: data,
+      });
     } else toast('Lỗi: ' + error.message);
   };
 
   const addGift = async () => {
     if (!giftItem.trim()) return;
     setAddingGift(true);
-    const { error } = await supabase.from('crm_gifts').insert({
+    const { data, error } = await supabase.from('crm_gifts').insert({
       crm_id: entry.id, item_name: giftItem.trim(),
       value: giftValue.trim() || null, gift_date: giftDate,
-    });
+    }).select().single();
     setAddingGift(false);
     if (!error) {
       setGiftItem(''); setGiftValue('');
       setGiftDate(new Date().toISOString().split('T')[0]);
       loadDetails();
       toast('Đã ghi nhận quà tặng');
+      await logActivity({
+        user, action: 'insert', table: 'crm_gifts', recordId: data.id,
+        description: `Thêm quà tặng "${data.item_name}" cho "${entry.company_name}"`,
+        newData: data,
+      });
     } else toast('Lỗi: ' + error.message);
   };
 
   const savePrefs = async () => {
     setSavingPrefs(true);
-    await patchEntry({ preferences: prefs });
+    await patchEntry({ preferences: prefs }, `Cập nhật sở thích/lưu ý cho "${entry.company_name}"`);
     setSavingPrefs(false);
     toast('Đã lưu sở thích/lưu ý');
   };
@@ -186,29 +205,57 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
   const addTask = async () => {
     if (!taskTitle.trim()) return;
     setAddingTask(true);
-    const { error } = await supabase.from('crm_pipeline_tasks').insert({
+    const { data, error } = await supabase.from('crm_pipeline_tasks').insert({
       crm_id: entry.id,
       company_name: entry.company_name,
       title: taskTitle.trim(),
       description: taskDesc.trim() || null,
       due_date: taskDue || null,
-    });
+    }).select().single();
     setAddingTask(false);
     if (!error) {
       setTaskTitle(''); setTaskDesc(''); setTaskDue('');
       loadDetails();
       toast('Đã thêm việc cần xử lý');
+      await logActivity({
+        user, action: 'insert', table: 'crm_pipeline_tasks', recordId: data.id,
+        description: `Thêm việc "${data.title}" cho "${entry.company_name}"`,
+        newData: data,
+      });
     } else toast('Lỗi: ' + error.message);
   };
 
+  const TASK_STATUS_LABELS: Record<PipelineTaskStatus, string> = {
+    pending: 'Chưa xử lý', in_progress: 'Đang xử lý', done: 'Đã xong',
+  };
+
   const updateTaskStatus = async (id: string, status: PipelineTaskStatus) => {
-    await supabase.from('crm_pipeline_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    const existing = pipelineTasks.find(t => t.id === id);
+    const updatedAt = new Date().toISOString();
+    const { error } = await supabase.from('crm_pipeline_tasks').update({ status, updated_at: updatedAt }).eq('id', id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
     setPipelineTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+    if (existing) {
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline_tasks', recordId: id,
+        description: `Đổi trạng thái việc "${existing.title}" thành "${TASK_STATUS_LABELS[status]}"`,
+        oldData: existing, newData: { ...existing, status, updated_at: updatedAt },
+      });
+    }
   };
 
   const deleteTask = async (id: string) => {
-    await supabase.from('crm_pipeline_tasks').delete().eq('id', id);
+    const existing = pipelineTasks.find(t => t.id === id);
+    const { error } = await supabase.from('crm_pipeline_tasks').delete().eq('id', id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
     setPipelineTasks(prev => prev.filter(t => t.id !== id));
+    if (existing) {
+      await logActivity({
+        user, action: 'delete', table: 'crm_pipeline_tasks', recordId: id,
+        description: `Xóa việc "${existing.title}" của "${entry.company_name}"`,
+        oldData: existing,
+      });
+    }
   };
 
   const handleActivate = async () => {
@@ -225,6 +272,11 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
       if (error) throw error;
       await supabase.from('crm_pipeline').update({ stage: 'hop-tac' }).eq('id', entry.id);
       onUpdate({ ...entry, stage: 'hop-tac' });
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
+        description: `Chuyển "${entry.company_name}" sang Khách hàng đang hợp tác`,
+        oldData: entry, newData: { ...entry, stage: 'hop-tac' },
+      });
       toast(`Đã chuyển "${entry.company_name}" sang Khách hàng!`);
       onClose();
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -311,24 +363,24 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
                 <InlineEdit
                   label="Tên công ty"
                   value={entry.company_name}
-                  onSave={v => patchEntry({ company_name: v })}
+                  onSave={v => patchEntry({ company_name: v }, `Đổi tên công ty "${entry.company_name}" thành "${v}"`)}
                 />
                 <InlineEdit
                   label="Khu vực / KCN"
                   value={entry.region || ''}
-                  onSave={v => patchEntry({ region: v || null })}
+                  onSave={v => patchEntry({ region: v || null }, `Cập nhật khu vực/KCN cho "${entry.company_name}"`)}
                 />
                 <InlineEdit
                   label="Tổng Thời Vụ"
                   value={String(entry.workers_seasonal ?? 0)}
                   type="number"
-                  onSave={v => patchEntry({ workers_seasonal: parseInt(v) || 0 })}
+                  onSave={v => patchEntry({ workers_seasonal: parseInt(v) || 0 }, `Cập nhật tổng LĐ thời vụ cho "${entry.company_name}"`)}
                 />
                 <InlineEdit
                   label="Tổng Chính Thức"
                   value={String(entry.workers_permanent ?? 0)}
                   type="number"
-                  onSave={v => patchEntry({ workers_permanent: parseInt(v) || 0 })}
+                  onSave={v => patchEntry({ workers_permanent: parseInt(v) || 0 }, `Cập nhật tổng LĐ chính thức cho "${entry.company_name}"`)}
                 />
                 <div>
                   <div className="text-[11px] text-[#888] font-medium mb-0.5">Đánh giá</div>
@@ -382,7 +434,7 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
                 <div className="text-[12px] font-semibold text-[#333] mb-1.5">Ghi chú nội bộ</div>
                 <textarea
                   defaultValue={entry.notes || ''}
-                  onBlur={e => patchEntry({ notes: e.target.value || null })}
+                  onBlur={e => patchEntry({ notes: e.target.value || null }, `Cập nhật ghi chú nội bộ cho "${entry.company_name}"`)}
                   rows={3}
                   placeholder="Ghi chú về công ty..."
                   className="w-full text-[12.5px] px-3 py-2 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
@@ -737,17 +789,22 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
   const handleAdd = async () => {
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
     try {
-      const { error } = await supabase.from('crm_pipeline').insert({
+      const { data, error } = await supabase.from('crm_pipeline').insert({
         company_name: modalForm.name, region: modalForm.region || null,
         worker_estimate: parseInt(modalForm.estimate) || null,
         stage: 'tiem-nang', rating: modalForm.rating,
         last_contact: new Date().toISOString().split('T')[0],
-      });
+      }).select().single();
       if (error) throw error;
       await onRefresh();
       setModalForm({ name: '', region: '', estimate: '', rating: 'normal' });
       setShowModal(false);
       toast('Đã thêm vào pipeline!');
+      await logActivity({
+        user, action: 'insert', table: 'crm_pipeline', recordId: data.id,
+        description: `Thêm công ty "${data.company_name}" vào pipeline`,
+        newData: data,
+      });
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
@@ -763,16 +820,29 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
       if (error) throw error;
       await onRefresh();
       toast(`${entry.company_name} → ${stageLabel}`);
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline', recordId: dragId,
+        description: `Chuyển "${entry.company_name}" sang giai đoạn "${stageLabel}"`,
+        oldData: entry, newData: { ...entry, stage: targetStage },
+      });
     } catch (e: any) { toast('Lỗi: ' + e.message); await onRefresh(); }
   };
 
   const handleDelete = async (id: string) => {
     try {
+      const existing = localPipeline.find(e => e.id === id);
       const { error } = await supabase.from('crm_pipeline').delete().eq('id', id);
       if (error) throw error;
       setProfileEntry(null);
       await onRefresh();
       toast('Đã xóa');
+      if (existing) {
+        await logActivity({
+          user, action: 'delete', table: 'crm_pipeline', recordId: id,
+          description: `Xóa công ty "${existing.company_name}" khỏi pipeline`,
+          oldData: existing,
+        });
+      }
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 

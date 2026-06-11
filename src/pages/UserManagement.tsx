@@ -3,6 +3,8 @@ import { Plus, Pencil, Trash2, X, Shield, Check } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import type { AppUser } from '../lib/types';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import { ROLE_LABELS, ROLE_COLORS } from '../lib/constants';
 
 interface UserManagementProps {
@@ -25,6 +27,7 @@ const ALL_PAGES = ['Dashboard', 'Khách hàng', 'Tài chính', 'CSKH', 'Thị tr
 const emptyForm = { username: '', full_name: '', password: '', role: 'kinhdoanh' as AppUser['role'] };
 
 export default function UserManagement({ toast }: UserManagementProps) {
+  const { user } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -66,10 +69,20 @@ export default function UserManagement({ toast }: UserManagementProps) {
         const { error } = await supabase.from('app_users').update(update).eq('id', editUser.id);
         if (error) throw error;
         toast('Đã cập nhật user!');
+        await logActivity({
+          user, action: 'update', table: 'app_users', recordId: editUser.id,
+          description: `Cập nhật tài khoản "${form.username}"`,
+          oldData: editUser, newData: { ...editUser, ...update },
+        });
       } else {
-        const { error } = await supabase.from('app_users').insert({ username: form.username, full_name: form.full_name, password: form.password, role: form.role });
+        const { data, error } = await supabase.from('app_users').insert({ username: form.username, full_name: form.full_name, password: form.password, role: form.role }).select().single();
         if (error) throw error;
         toast('Đã tạo user mới!');
+        await logActivity({
+          user, action: 'insert', table: 'app_users', recordId: data.id,
+          description: `Tạo tài khoản mới "${form.username}"`,
+          newData: data,
+        });
       }
       await fetchUsers();
       setShowModal(false);
@@ -80,9 +93,18 @@ export default function UserManagement({ toast }: UserManagementProps) {
   const handleDelete = async (id: string, username: string) => {
     if (!confirm(`Xóa user "${username}"?`)) return;
     setDeletingId(id);
+    const oldUser = users.find(u => u.id === id);
     const { error } = await supabase.from('app_users').delete().eq('id', id);
     if (error) toast('Lỗi xóa: ' + error.message);
-    else { toast('Đã xóa user'); setUsers(prev => prev.filter(u => u.id !== id)); }
+    else {
+      toast('Đã xóa user');
+      setUsers(prev => prev.filter(u => u.id !== id));
+      await logActivity({
+        user, action: 'delete', table: 'app_users', recordId: id,
+        description: `Xóa tài khoản "${username}"`,
+        oldData: oldUser,
+      });
+    }
     setDeletingId(null);
   };
 

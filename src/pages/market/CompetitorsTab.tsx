@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Plus, TrendingUp, TrendingDown, Minus, X, Eye } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
+import { logActivity } from '../../lib/audit';
+import { useAuth } from '../../lib/auth';
 
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
@@ -15,6 +17,7 @@ const trendIcon = (trend: string) => {
 };
 
 export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter, onRefresh, toast }: MarketTabProps) {
+  const { user } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -39,7 +42,7 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
     if (!form.company_name.trim()) { toast('Nhập tên đối thủ'); return; }
     setSaving(true);
     try {
-      const { error } = await supabase.from('competitors').insert({
+      const { data, error } = await supabase.from('competitors').insert({
         company_name: form.company_name.trim(),
         zone_name: form.zone_name || 'Toàn quốc',
         wage_paid: form.wage_paid ? parseFloat(form.wage_paid) * 1_000_000 : null,
@@ -50,8 +53,13 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
         trend: form.trend,
         supplying_for: form.supplying_for.split(',').map(s => s.trim()).filter(Boolean),
         notes: form.notes || null,
-      });
+      }).select().single();
       if (error) throw error;
+      await logActivity({
+        user, action: 'insert', table: 'competitors', recordId: data.id,
+        description: `Thêm đối thủ "${form.company_name.trim()}" tại khu vực "${form.zone_name || 'Toàn quốc'}"`,
+        newData: data,
+      });
       await onRefresh();
       setShowAdd(false);
       setForm(emptyForm);

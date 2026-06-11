@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { ChevronLeft, CheckCircle2, MessageCircle, Phone, Mail, Calendar, Pencil } from 'lucide-react';
 import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import type { Client, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from '../lib/types';
 
 // Stage configuration
@@ -33,6 +35,7 @@ interface CRMDealProps {
 }
 
 export default function CRMDeal({ deal, leads, products, activities, onDealUpdate, onActivityCreate, onBack, toast }: CRMDealProps) {
+  const { user } = useAuth();
   const [editingTitle, setEditingTitle] = useState(false);
   const [newTitle, setNewTitle] = useState(deal.title);
   const [activeActivityTab, setActiveActivityTab] = useState<ActivityType>('note');
@@ -69,6 +72,11 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
       onDealUpdate(data as CRMDealType);
       setEditingTitle(false);
       toast('Cập nhật tiêu đề thành công');
+      await logActivity({
+        user, action: 'update', table: 'crm_deals', recordId: deal.id,
+        description: `Đổi tên thương vụ "${deal.title}" thành "${newTitle}"`,
+        oldData: deal, newData: data,
+      });
     } catch (err) {
       toast('Lỗi cập nhật tiêu đề');
       setNewTitle(deal.title);
@@ -88,6 +96,11 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
       if (error) throw error;
       onDealUpdate(data as CRMDealType);
       toast(`Cập nhật thương vụ thành "${STAGES[newStage].label}"`);
+      await logActivity({
+        user, action: 'update', table: 'crm_deals', recordId: deal.id,
+        description: `Chuyển thương vụ "${deal.title}" sang giai đoạn "${STAGES[newStage].label}"`,
+        oldData: deal, newData: data,
+      });
     } catch (err) {
       toast('Lỗi cập nhật thương vụ');
       console.error(err);
@@ -120,6 +133,11 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
       setActivityContent('');
       setActivityCreatedBy('');
       toast('Thêm hoạt động thành công');
+      await logActivity({
+        user, action: 'insert', table: 'crm_activities', recordId: data.id,
+        description: `Thêm hoạt động (${activeActivityTab}) cho thương vụ "${deal.title}"`,
+        newData: data,
+      });
     } catch (err) {
       toast('Lỗi thêm hoạt động');
       console.error(err);

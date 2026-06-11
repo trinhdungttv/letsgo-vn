@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Plus, X, ArrowRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
+import { logActivity } from '../../lib/audit';
+import { useAuth } from '../../lib/auth';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
 const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-700' : s === 'Đang TH' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700';
@@ -10,6 +12,7 @@ const emptyLeadForm = { company_name: '', region: '', industry: '', workers_need
 const emptySupForm = { name: '', qty: '0' };
 
 export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: MarketTabProps) {
+  const { user } = useAuth();
   const [showAddLead, setShowAddLead] = useState(false);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
   const [showAddSup, setShowAddSup] = useState<string | null>(null);
@@ -22,7 +25,7 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
     if (!leadForm.company_name.trim()) { toast('Nhập tên công ty'); return; }
     setSaving(true);
     try {
-      const { error } = await supabase.from('market_leads').insert({
+      const { data, error } = await supabase.from('market_leads').insert({
         company_name: leadForm.company_name.trim(),
         region: leadForm.region || (zoneFilter !== 'all' ? zoneFilter : null),
         industry: leadForm.industry || null,
@@ -30,8 +33,13 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
         source: leadForm.source || null,
         status: 'Chưa LH',
         suppliers: [{ name: "Let's Go VN", qty: parseInt(leadForm.lgv_qty) || 0, is_us: true }],
-      });
+      }).select().single();
       if (error) throw error;
+      await logActivity({
+        user, action: 'insert', table: 'market_leads', recordId: data.id,
+        description: `Thêm công ty/dự án "${leadForm.company_name.trim()}"`,
+        newData: data,
+      });
       await onRefresh();
       setShowAddLead(false);
       setLeadForm(emptyLeadForm);
@@ -49,6 +57,11 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
       const newSuppliers = [...lead.suppliers, { name: supForm.name.trim(), qty: parseInt(supForm.qty) || 0, is_us: false }];
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
+      await logActivity({
+        user, action: 'update', table: 'market_leads', recordId: leadId,
+        description: `Thêm NCC "${supForm.name.trim()}" cho công ty/dự án "${lead.company_name}"`,
+        oldData: lead, newData: { ...lead, suppliers: newSuppliers },
+      });
       await onRefresh();
       setShowAddSup(null);
       setSupForm(emptySupForm);
@@ -59,8 +72,16 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
 
   const handleStatusChange = async (leadId: string, status: string) => {
     try {
+      const lead = marketLeads.find(l => l.id === leadId);
       const { error } = await supabase.from('market_leads').update({ status }).eq('id', leadId);
       if (error) throw error;
+      if (lead) {
+        await logActivity({
+          user, action: 'update', table: 'market_leads', recordId: leadId,
+          description: `Cập nhật trạng thái "${lead.company_name}": ${lead.status} → ${status}`,
+          oldData: lead, newData: { ...lead, status },
+        });
+      }
       await onRefresh();
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };

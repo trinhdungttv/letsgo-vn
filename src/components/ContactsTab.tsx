@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Plus, Edit2, UserX, Users } from 'lucide-react';
 import type { Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 
 const ROLES = ['HR Manager', 'Giám đốc', 'Kế toán', 'Khác'];
 
@@ -31,6 +33,7 @@ interface Props {
 }
 
 export default function ContactsTab({ clientId, toast }: Props) {
+  const { user } = useAuth();
   const { contacts, loading, addContact, updateContact, markInactive } = useContacts(clientId);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -73,11 +76,22 @@ export default function ContactsTab({ clientId, toast }: Props) {
         notes: form.notes.trim() || null,
       };
       if (editingId) {
-        await updateContact(editingId, payload);
+        const oldContact = contacts.find(c => c.id === editingId);
+        const updated = await updateContact(editingId, payload);
         toast('Đã cập nhật người liên hệ');
+        await logActivity({
+          user, action: 'update', table: 'contacts', recordId: editingId,
+          description: `Cập nhật người liên hệ "${payload.name}"`,
+          oldData: oldContact, newData: updated,
+        });
       } else {
-        await addContact(payload);
+        const created = await addContact(payload);
         toast('Đã thêm người liên hệ');
+        await logActivity({
+          user, action: 'insert', table: 'contacts', recordId: created.id,
+          description: `Thêm người liên hệ "${payload.name}"`,
+          newData: created,
+        });
       }
       setShowModal(false);
     } catch (e: any) {
@@ -92,6 +106,11 @@ export default function ContactsTab({ clientId, toast }: Props) {
     try {
       await markInactive(c.id);
       toast(`Đã đánh dấu "${c.name}" nghỉ việc`);
+      await logActivity({
+        user, action: 'update', table: 'contacts', recordId: c.id,
+        description: `Đánh dấu người liên hệ "${c.name}" đã nghỉ`,
+        oldData: c, newData: { ...c, is_active: false, end_date: new Date().toISOString().slice(0, 10) },
+      });
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
     }

@@ -1,21 +1,34 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Lock, CheckCircle, Circle, ChevronDown, Pencil, Check, X as XIcon, CalendarCheck } from 'lucide-react';
+import { Lock, CheckCircle, Circle, Pencil, Check, X as XIcon, CalendarCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import FinanceTimeline from '../components/FinanceTimeline';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
+import { useRegions } from '../hooks/useRegions';
+import { useManagers } from '../hooks/useManagers';
+import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 
 type TimelineMode = 'clients' | 'payment';
-type DayEventType = 'cutoff' | 'payStart' | 'payEnd';
+type DayEventType = 'cutoff' | 'calc' | 'payment' | 'salary';
 interface DayEvent { client: Client; type: DayEventType }
 
 const EVENT_CFG: Record<DayEventType, { dot: string; pill: string; text: string; label: string }> = {
-  cutoff:   { dot: 'bg-red-500',     pill: 'bg-red-50 border-red-200',         text: 'text-red-700',     label: 'Chốt công' },
-  payStart: { dot: 'bg-emerald-500', pill: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', label: 'Bắt đầu TT' },
-  payEnd:   { dot: 'bg-amber-500',   pill: 'bg-amber-50 border-amber-200',     text: 'text-amber-700',   label: 'Hạn TT' },
+  cutoff:  { dot: 'bg-orange-400', pill: 'bg-orange-50 border-orange-200',   text: 'text-orange-700',  label: 'Chốt công' },
+  calc:    { dot: 'bg-blue-400',   pill: 'bg-blue-50 border-blue-200',       text: 'text-blue-700',    label: 'Tính lương' },
+  payment: { dot: 'bg-emerald-500',pill: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', label: 'Kỳ thanh toán' },
+  salary:  { dot: 'bg-purple-500', pill: 'bg-purple-50 border-purple-200',   text: 'text-purple-700',  label: 'Phát lương' },
 };
+
+// inclusive day range, clipped to 1..31; falls back to a single day if no end given
+function dayRange(start: number, end: number | null | undefined): number[] {
+  const e = end && end >= start ? end : start;
+  const days: number[] = [];
+  for (let d = start; d <= e; d++) if (d >= 1 && d <= 31) days.push(d);
+  return days;
+}
 
 const DAY_HEADERS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
@@ -65,30 +78,33 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   useEffect(() => { onLoadFinance(month); }, [month, onLoadFinance]);
 
   // ── Shared filters ────────────────────────────────────────────────
-  const [filterRegion, setFilterRegion] = useState('Tất cả');
-  const [filterManager, setFilterManager] = useState('Tất cả');
+  const [filterRegion, setFilterRegion] = useState<string[]>([ALL_OPTION]);
+  const [filterManager, setFilterManager] = useState<string[]>([ALL_OPTION]);
 
   // ── Calendar (payment mode) extra state ──────────────────────────
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ cutoff_day: 1, payment_start: 1, payment_end: 5 });
+
+  // ── Timeline edit modal (opened by clicking a company name) ──────
+  const [editClient, setEditClient] = useState<Client | null>(null);
+  const [editForm, setEditForm] = useState({
+    cutoff_day: 1, cutoff_day_end: null as number | null,
+    calc_day: 3, calc_day_end: null as number | null,
+    payment_start: 1, payment_end: 5,
+    salary_day: 1, salary_day_end: null as number | null,
+  });
 
   // ── Date picker modal state ───────────────────────────────────────
   const [payModal, setPayModal] = useState<{ recId: string; date: string } | null>(null);
 
-  const regions = useMemo(() => {
-    const s = new Set(clients.map(c => c.region || '').filter(Boolean));
-    return ['Tất cả', ...Array.from(s).sort()];
-  }, [clients]);
+  const { regions: regionList } = useRegions();
+  const { managers: managerList } = useManagers();
 
-  const managers = useMemo(() => {
-    const s = new Set(clients.map(c => c.manager || '').filter(Boolean));
-    return ['Tất cả', ...Array.from(s).sort()];
-  }, [clients]);
+  const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
+  const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
 
   const filteredClients = useMemo(() => clients.filter(c => {
-    const okR = filterRegion === 'Tất cả' || c.region === filterRegion;
-    const okM = filterManager === 'Tất cả' || c.manager === filterManager;
+    const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
+    const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     return okR && okM;
   }), [clients, filterRegion, filterManager]);
 
@@ -109,9 +125,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       if (d >= 1 && d <= 31) (map[d] ??= []).push({ client: c, type });
     };
     for (const c of filteredClients) {
-      add(c.cutoff_day, c, 'cutoff');
-      add(c.payment_start, c, 'payStart');
-      add(c.payment_end, c, 'payEnd');
+      for (const d of dayRange(c.cutoff_day, c.cutoff_day_end)) add(d, c, 'cutoff');
+      for (const d of dayRange(c.calc_day, c.calc_day_end)) add(d, c, 'calc');
+      for (const d of dayRange(c.payment_start, c.payment_end)) add(d, c, 'payment');
+      for (const d of dayRange(c.salary_day, c.salary_day_end)) add(d, c, 'salary');
     }
     return map;
   }, [filteredClients]);
@@ -120,23 +137,29 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const selectedClientIds = [...new Set(selectedEvents.map(e => e.client.id))];
 
   const startEdit = (c: Client) => {
-    setEditingId(c.id);
-    setEditForm({ cutoff_day: c.cutoff_day, payment_start: c.payment_start, payment_end: c.payment_end });
+    setEditClient(c);
+    setEditForm({
+      cutoff_day: c.cutoff_day, cutoff_day_end: c.cutoff_day_end,
+      calc_day: c.calc_day, calc_day_end: c.calc_day_end,
+      payment_start: c.payment_start, payment_end: c.payment_end,
+      salary_day: c.salary_day, salary_day_end: c.salary_day_end,
+    });
   };
 
-  const handleSaveEdit = async (clientId: string) => {
-    const c = clients.find(x => x.id === clientId);
-    if (!c) return;
-    const { error } = await supabase.from('clients').update({
-      cutoff_day: editForm.cutoff_day,
-      payment_start: editForm.payment_start,
-      payment_end: editForm.payment_end,
-      updated_at: new Date().toISOString(),
-    }).eq('id', clientId);
+  const handleSaveEdit = async () => {
+    if (!editClient) return;
+    const c = editClient;
+    const updates = { ...editForm, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
     if (error) { toast('Lỗi: ' + error.message); return; }
     onClientUpdate({ ...c, ...editForm });
-    setEditingId(null);
-    toast('Đã cập nhật kỳ thanh toán!');
+    setEditClient(null);
+    toast('Đã cập nhật timeline!');
+    await logActivity({
+      user, action: 'update', table: 'clients', recordId: c.id,
+      description: `Cập nhật timeline (chốt công/tính lương/kỳ TT/phát lương) cho "${c.name}"`,
+      oldData: c, newData: { ...c, ...updates },
+    });
   };
 
   // ── Finance records ───────────────────────────────────────────────
@@ -169,6 +192,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     onFinanceUpdate({ ...rec, paid_status: true, paid_date: payModal.date });
     setPayModal(null);
     toast(`Đã đánh dấu TT ngày ${fmtDate(payModal.date)}`);
+    const cName = clients.find(c => c.id === rec.client_id)?.name || rec.client_id;
+    await logActivity({
+      user, action: 'update', table: 'finance_records', recordId: rec.id,
+      description: `Đánh dấu đã thanh toán cho "${cName}" ngày ${fmtDate(payModal.date)}`,
+      oldData: rec, newData: { ...rec, paid_status: true, paid_date: payModal.date },
+    });
   };
 
   const undoPaid = async (rec: FinanceRecord) => {
@@ -179,6 +208,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     if (error) { toast('Lỗi: ' + error.message); return; }
     onFinanceUpdate({ ...rec, paid_status: false, paid_date: null });
     toast('Đã hủy trạng thái thanh toán');
+    const cName = clients.find(c => c.id === rec.client_id)?.name || rec.client_id;
+    await logActivity({
+      user, action: 'update', table: 'finance_records', recordId: rec.id,
+      description: `Hủy trạng thái thanh toán cho "${cName}"`,
+      oldData: rec, newData: { ...rec, paid_status: false, paid_date: null },
+    });
   };
 
   // ── Access guard ──────────────────────────────────────────────────
@@ -205,7 +240,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
           <div className="flex items-center gap-2.5">
             <select
               value={month}
-              onChange={e => { setMonth(e.target.value); setSelectedDay(null); setEditingId(null); }}
+              onChange={e => { setMonth(e.target.value); setSelectedDay(null); setEditClient(null); }}
               className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
             >
               <option value="2026-06">Tháng 6/2026</option>
@@ -265,29 +300,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
           <>
             {/* Filter: Region + Manager dropdowns */}
             <div className="flex items-center gap-2.5 flex-wrap">
-              <div className="relative">
-                <select
-                  value={filterRegion}
-                  onChange={e => setFilterRegion(e.target.value)}
-                  className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[130px]"
-                >
-                  {regions.map(r => <option key={r} value={r}>{r === 'Tất cả' ? 'Tất cả vùng' : r}</option>)}
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
-              <div className="relative">
-                <select
-                  value={filterManager}
-                  onChange={e => setFilterManager(e.target.value)}
-                  className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[150px]"
-                >
-                  {managers.map(m => <option key={m} value={m}>{m === 'Tất cả' ? 'Tất cả quản lý' : m}</option>)}
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
-              {(filterRegion !== 'Tất cả' || filterManager !== 'Tất cả') && (
+              <FilterDropdown label="Chi nhánh" options={regions} selected={filterRegion} onChange={setFilterRegion} allLabel="Tất cả chi nhánh" />
+              <FilterDropdown label="Quản lý" options={managers} selected={filterManager} onChange={setFilterManager} allLabel="Tất cả quản lý" />
+              {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION)) && (
                 <button
-                  onClick={() => { setFilterRegion('Tất cả'); setFilterManager('Tất cả'); }}
+                  onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); }}
                   className="text-[11.5px] text-blue-600 hover:underline"
                 >
                   Xóa lọc
@@ -310,6 +327,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block w-8 h-3 rounded bg-emerald-400 opacity-80" /> Kỳ TT
                   </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> Phát lương
+                  </span>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -331,38 +351,104 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     Không có khách hàng
                   </div>
                 ) : filteredClients.map(c => {
+                  const cutoffEnd = c.cutoff_day_end && c.cutoff_day_end > c.cutoff_day ? c.cutoff_day_end : null;
                   const cutoffX = ((c.cutoff_day - 1) / daysInMonth) * 100;
-                  const calcDay = c.cutoff_day + 2;
-                  const calcX = ((Math.min(calcDay - 1, daysInMonth - 1)) / daysInMonth) * 100;
+                  const cutoffEndX = cutoffEnd ? (Math.min(cutoffEnd, daysInMonth) / daysInMonth) * 100 : null;
+
+                  const calcEnd = c.calc_day_end && c.calc_day_end > c.calc_day ? c.calc_day_end : null;
+                  const calcX = ((Math.min(c.calc_day - 1, daysInMonth - 1)) / daysInMonth) * 100;
+                  const calcEndX = calcEnd ? (Math.min(calcEnd, daysInMonth) / daysInMonth) * 100 : null;
+
                   const payEnd = Math.min(c.payment_end, daysInMonth);
                   const showBar = !c.next_month_pay && c.payment_start > c.cutoff_day;
                   const payStartX = ((c.payment_start - 1) / daysInMonth) * 100;
                   const payEndX = (payEnd / daysInMonth) * 100;
+
+                  const salaryEnd = c.salary_day_end && c.salary_day_end > c.salary_day ? c.salary_day_end : null;
+                  const salaryX = ((Math.min(c.salary_day - 1, daysInMonth - 1)) / daysInMonth) * 100;
+                  const salaryEndX = salaryEnd ? (Math.min(salaryEnd, daysInMonth) / daysInMonth) * 100 : null;
+
                   return (
                     <div key={c.id} className="flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
                       <div className="w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2]">
-                        <div className="text-[12px] font-semibold text-[#111] truncate">{c.name}</div>
+                        <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
+                          {c.name}
+                        </button>
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LĐ</div>
                       </div>
-                      <div className="flex-1 relative" style={{ height: 44 }}>
+                      <div className="flex-1 relative" style={{ height: 64 }}>
                         <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40"
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
-                        {showBar && (
-                          <div
-                            className={`absolute top-3 rounded-sm ${c.paid_this_month ? 'bg-emerald-400' : 'bg-emerald-300 opacity-70'}`}
-                            style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 18 }}
-                            title={`Kỳ TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Đã TT)' : ' (Chưa TT)'}`}
-                          />
-                        )}
-                        {c.next_month_pay && (
-                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 14 }}>TT/T7</div>
+
+                        {/* Row 1: Chốt công + Tính lương */}
+                        {cutoffEndX !== null && (
+                          <div className="absolute border-t border-dashed border-orange-300"
+                            style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 14 }} />
                         )}
                         <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                          style={{ left: `calc(${cutoffX}% - 6px)`, top: 14 }}
-                          title={`Chốt công: ngày ${c.cutoff_day}`} />
+                          style={{ left: `calc(${cutoffX}% - 6px)`, top: 8 }}
+                          title={`Chốt công: ngày ${c.cutoff_day}${cutoffEnd ? `–${cutoffEnd}` : ''}`} />
+                        <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
+                          style={{ left: `${cutoffX}%`, top: 21, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
+                        {cutoffEndX !== null && (
+                          <>
+                            <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
+                              style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 8 }}
+                              title={`Chốt công: ngày ${c.cutoff_day}–${cutoffEnd}`} />
+                            <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
+                              style={{ left: `${cutoffEndX}%`, top: 21, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
+                          </>
+                        )}
+                        {calcEndX !== null && (
+                          <div className="absolute border-t border-dashed border-blue-300"
+                            style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 14 }} />
+                        )}
                         <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                          style={{ left: `calc(${calcX}% - 6px)`, top: 14, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                          title={`Tính lương: ngày ${calcDay}`} />
+                          style={{ left: `calc(${calcX}% - 6px)`, top: 8, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                          title={`Tính lương: ngày ${c.calc_day}${calcEnd ? `–${calcEnd}` : ''}`} />
+                        <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
+                          style={{ left: `${calcX}%`, top: 21, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
+                        {calcEndX !== null && (
+                          <>
+                            <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
+                              style={{ left: `calc(${calcEndX}% - 6px)`, top: 8, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                              title={`Tính lương: ngày ${c.calc_day}–${calcEnd}`} />
+                            <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
+                              style={{ left: `${calcEndX}%`, top: 21, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                          </>
+                        )}
+
+                        {/* Row 2: Kỳ TT + Phát lương */}
+                        {showBar && (
+                          <div
+                            className={`absolute rounded-sm flex items-center justify-center text-[9px] font-semibold whitespace-nowrap overflow-hidden ${c.paid_this_month ? 'bg-emerald-400 text-emerald-900' : 'bg-emerald-300 opacity-70 text-emerald-800'}`}
+                            style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 38 }}
+                            title={`Kỳ TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Đã TT)' : ' (Chưa TT)'}`}
+                          >
+                            {c.payment_start}–{c.payment_end}
+                          </div>
+                        )}
+                        {c.next_month_pay && (
+                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 40 }}>TT/T7</div>
+                        )}
+                        {salaryEndX !== null && (
+                          <div className="absolute border-t border-dashed border-purple-300"
+                            style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 44 }} />
+                        )}
+                        <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
+                          style={{ left: `calc(${salaryX}% - 6px)`, top: 38 }}
+                          title={`Phát lương: ngày ${c.salary_day}${salaryEnd ? `–${salaryEnd}` : ''}`} />
+                        <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
+                          style={{ left: `${salaryX}%`, top: 51, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
+                        {salaryEndX !== null && (
+                          <>
+                            <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
+                              style={{ left: `calc(${salaryEndX}% - 6px)`, top: 38 }}
+                              title={`Phát lương: ngày ${c.salary_day}–${salaryEnd}`} />
+                            <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
+                              style={{ left: `${salaryEndX}%`, top: 51, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -390,11 +476,13 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const profit = (r.revenue || 0) - cost;
 
                   const cutoffDay = clientData?.cutoff_day ?? 20;
-                  const calcDay = cutoffDay + 2;
-                  const payDay = clientData?.payment_start ?? 26;
+                  const calcDay = clientData?.calc_day ?? cutoffDay + 2;
+                  const payStartDay = clientData?.payment_start ?? 26;
+                  const salaryDay = clientData?.salary_day ?? payStartDay;
 
                   const cutoffDone = todayNum >= cutoffDay;
                   const calcDone = todayNum >= calcDay;
+                  const payStartDone = todayNum >= payStartDay;
                   const payDone = r.paid_status;
 
                   return (
@@ -405,7 +493,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       <div className="flex items-center gap-4 flex-wrap">
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-semibold text-[#111] mb-0.5 truncate">
-                            {clientObj?.name || clientData?.name || r.client_id}
+                            {clientData ? (
+                              <button onClick={() => startEdit(clientData)} className="hover:text-blue-600 hover:underline text-left truncate">
+                                {clientObj?.name || clientData.name}
+                              </button>
+                            ) : (clientObj?.name || r.client_id)}
                           </div>
                           <div className="flex gap-3 text-[12px] flex-wrap">
                             <span>DT: <strong className="text-blue-700">{formatCurrency(r.revenue || 0)}</strong></span>
@@ -424,8 +516,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           <TimelineStep label="Chốt công" day={cutoffDay} done={cutoffDone} isToday={todayNum === cutoffDay} />
                           <div className={`w-5 h-0.5 mb-5 ${calcDone ? 'bg-emerald-400' : 'bg-gray-200'}`} />
                           <TimelineStep label="Tính lương" day={calcDay} done={calcDone} isToday={todayNum === calcDay} />
+                          <div className={`w-5 h-0.5 mb-5 ${payStartDone ? 'bg-emerald-400' : 'bg-gray-200'}`} />
+                          <TimelineStep label="Kỳ TT" day={payStartDay} done={payStartDone} isToday={todayNum === payStartDay} />
                           <div className={`w-5 h-0.5 mb-5 ${payDone ? 'bg-emerald-400' : 'bg-gray-200'}`} />
-                          <TimelineStep label="Phát lương" day={payDay} done={payDone} isToday={!payDone && todayNum >= payDay} />
+                          <TimelineStep label="Phát lương" day={salaryDay} done={payDone} isToday={!payDone && todayNum >= salaryDay} />
                         </div>
 
                         {/* Paid toggle button */}
@@ -458,29 +552,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
           <>
             {/* Filter row */}
             <div className="flex items-center gap-2.5 flex-wrap">
-              <div className="relative">
-                <select
-                  value={filterRegion}
-                  onChange={e => { setFilterRegion(e.target.value); setSelectedDay(null); }}
-                  className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[130px]"
-                >
-                  {regions.map(r => <option key={r} value={r}>{r === 'Tất cả' ? 'Tất cả vùng' : r}</option>)}
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
-              <div className="relative">
-                <select
-                  value={filterManager}
-                  onChange={e => { setFilterManager(e.target.value); setSelectedDay(null); }}
-                  className="text-[12.5px] pl-2.5 pr-7 py-1.5 border border-gray-300 rounded-lg outline-none bg-white appearance-none cursor-pointer hover:border-blue-400 transition min-w-[150px]"
-                >
-                  {managers.map(m => <option key={m} value={m}>{m === 'Tất cả' ? 'Tất cả quản lý' : m}</option>)}
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
-              {(filterRegion !== 'Tất cả' || filterManager !== 'Tất cả') && (
+              <FilterDropdown label="Chi nhánh" options={regions} selected={filterRegion} onChange={v => { setFilterRegion(v); setSelectedDay(null); }} allLabel="Tất cả chi nhánh" />
+              <FilterDropdown label="Quản lý" options={managers} selected={filterManager} onChange={v => { setFilterManager(v); setSelectedDay(null); }} allLabel="Tất cả quản lý" />
+              {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION)) && (
                 <button
-                  onClick={() => { setFilterRegion('Tất cả'); setFilterManager('Tất cả'); setSelectedDay(null); }}
+                  onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); setSelectedDay(null); }}
                   className="text-[11.5px] text-blue-600 hover:underline"
                 >
                   Xóa lọc
@@ -566,7 +642,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   <div className="text-[12.5px] font-semibold text-[#111]">
                     Ngày {selectedDay} — {selectedClientIds.length} khách hàng
                   </div>
-                  <button onClick={() => { setSelectedDay(null); setEditingId(null); }} className="text-[#aaa] hover:text-[#666] transition">
+                  <button onClick={() => setSelectedDay(null)} className="text-[#aaa] hover:text-[#666] transition">
                     <XIcon size={14} />
                   </button>
                 </div>
@@ -574,61 +650,30 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   {selectedClientIds.map(clientId => {
                     const evts = selectedEvents.filter(e => e.client.id === clientId);
                     const c = evts[0].client;
-                    const isEditing = editingId === clientId;
+                    const seenTypes = [...new Set(evts.map(e => e.type))];
                     return (
                       <div key={clientId} className="px-4 py-3">
-                        {isEditing ? (
-                          <div>
-                            <div className="text-[13px] font-semibold text-[#111] mb-3">{c.name}</div>
-                            <div className="grid grid-cols-3 gap-3 mb-3">
-                              {([
-                                ['Ngày chốt công', 'cutoff_day'],
-                                ['Bắt đầu TT', 'payment_start'],
-                                ['Hạn thanh toán', 'payment_end'],
-                              ] as [string, keyof typeof editForm][]).map(([lbl, key]) => (
-                                <div key={key}>
-                                  <label className="text-[11.5px] text-[#666] font-medium block mb-0.5">{lbl}</label>
-                                  <input
-                                    type="number" min={1} max={31}
-                                    value={editForm[key]}
-                                    onChange={e => setEditForm({ ...editForm, [key]: Math.max(1, Math.min(31, +e.target.value)) })}
-                                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                                  />
-                                </div>
-                              ))}
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
+                            <div className="flex gap-1.5 mt-1 flex-wrap">
+                              {seenTypes.map(type => {
+                                const cfg = EVENT_CFG[type];
+                                return (
+                                  <span key={type} className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${cfg.pill} ${cfg.text}`}>
+                                    {cfg.label}
+                                  </span>
+                                );
+                              })}
                             </div>
-                            <div className="flex gap-2">
-                              <button onClick={() => handleSaveEdit(clientId)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-                                <Check size={12} /> Lưu
-                              </button>
-                              <button onClick={() => setEditingId(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
-                                <XIcon size={12} /> Hủy
-                              </button>
+                            <div className="text-[11.5px] text-[#aaa] mt-1">
+                              Chốt: ngày {c.cutoff_day}{c.cutoff_day_end ? `–${c.cutoff_day_end}` : ''} · Tính lương: {c.calc_day}{c.calc_day_end ? `–${c.calc_day_end}` : ''} · Kỳ TT: {c.payment_start}–{c.payment_end} · Phát lương: {c.salary_day}{c.salary_day_end ? `–${c.salary_day_end}` : ''}
                             </div>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
-                              <div className="flex gap-1.5 mt-1 flex-wrap">
-                                {evts.map(e => {
-                                  const cfg = EVENT_CFG[e.type];
-                                  return (
-                                    <span key={e.type} className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${cfg.pill} ${cfg.text}`}>
-                                      {cfg.label}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                              <div className="text-[11.5px] text-[#aaa] mt-1">
-                                Chốt: ngày {c.cutoff_day} · TT: {c.payment_start}–{c.payment_end} hàng tháng
-                              </div>
-                            </div>
-                            <button onClick={() => startEdit(c)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium border border-blue-400 text-blue-700 hover:bg-blue-50 transition shrink-0">
-                              <Pencil size={11} /> Chỉnh sửa
-                            </button>
-                          </div>
-                        )}
+                          <button onClick={() => startEdit(c)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium border border-blue-400 text-blue-700 hover:bg-blue-50 transition shrink-0">
+                            <Pencil size={11} /> Chỉnh sửa
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -636,7 +681,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               </div>
             )}
 
-            <FinanceTimeline clients={clients} />
+            <FinanceTimeline clients={clients} onClientClick={startEdit} />
           </>
         )}
       </div>
@@ -695,6 +740,71 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 onClick={() => setPayModal(null)}
                 className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition"
               >
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Timeline edit modal (Chốt công / Tính lương / Kỳ TT / Phát lương) ── */}
+      {editClient && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={e => { if (e.target === e.currentTarget) setEditClient(null); }}
+        >
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[420px]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-[14px] font-semibold text-[#111] truncate pr-2">{editClient.name}</div>
+              <button onClick={() => setEditClient(null)} className="text-[#aaa] hover:text-[#666] shrink-0">
+                <XIcon size={15} />
+              </button>
+            </div>
+
+            <div className="space-y-3.5">
+              {([
+                { label: 'Chốt công', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
+                { label: 'Tính lương', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
+                { label: 'Kỳ thanh toán', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
+                { label: 'Phát lương', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
+              ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => (
+                <div key={row.start} className="flex items-center gap-3">
+                  <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
+                    <span className={`inline-block w-2 h-2 rounded-full ${row.dot}`} />
+                    {row.label}
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày bắt đầu</label>
+                    <input
+                      type="number" min={1} max={31}
+                      value={editForm[row.start] ?? 1}
+                      onChange={e => setEditForm({ ...editForm, [row.start]: Math.max(1, Math.min(31, +e.target.value)) })}
+                      className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày kết thúc</label>
+                    <input
+                      type="number" min={1} max={31}
+                      placeholder="—"
+                      value={editForm[row.end] ?? ''}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setEditForm({ ...editForm, [row.end]: v === '' ? null : Math.max(1, Math.min(31, +v)) });
+                      }}
+                      className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[11px] text-[#aaa] mt-2.5">Để trống "Ngày kết thúc" nếu mốc chỉ diễn ra trong 1 ngày.</div>
+
+            <div className="flex gap-2 mt-4">
+              <button onClick={handleSaveEdit} className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg text-[13px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+                <Check size={14} /> Lưu
+              </button>
+              <button onClick={() => setEditClient(null)} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
                 Hủy
               </button>
             </div>

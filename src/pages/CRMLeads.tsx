@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Edit2, Link2, X, Plus, Search } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import type { Client, Contact } from '../lib/types';
 
 interface Props {
@@ -121,6 +123,7 @@ const emptyForm = (): FormData => ({
 });
 
 const CRMLeads: React.FC<Props> = ({ clients, toast }) => {
+  const { user } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -179,10 +182,20 @@ const CRMLeads: React.FC<Props> = ({ clients, toast }) => {
         const { error } = await supabase.from('contacts').update(payload).eq('id', editing.id);
         if (error) throw error;
         toast('Cập nhật thành công');
+        await logActivity({
+          user, action: 'update', table: 'contacts', recordId: editing.id,
+          description: `Cập nhật liên hệ "${payload.name}"`,
+          oldData: editing, newData: { ...editing, ...payload },
+        });
       } else {
-        const { error } = await supabase.from('contacts').insert({ ...payload, created_at: new Date().toISOString() });
+        const { data, error } = await supabase.from('contacts').insert({ ...payload, created_at: new Date().toISOString() }).select().single();
         if (error) throw error;
         toast('Đã thêm liên hệ mới');
+        await logActivity({
+          user, action: 'insert', table: 'contacts', recordId: data.id,
+          description: `Thêm liên hệ "${payload.name}"`,
+          newData: data,
+        });
       }
       await load();
       setShowModal(false);
@@ -193,10 +206,17 @@ const CRMLeads: React.FC<Props> = ({ clients, toast }) => {
   const handleLinkCompany = async (contactId: string) => {
     if (!linkClientId) { setLinkingId(null); return; }
     try {
+      const oldContact = contacts.find(c => c.id === contactId);
       const { error } = await supabase.from('contacts').update({ client_id: linkClientId, updated_at: new Date().toISOString() }).eq('id', contactId);
       if (error) throw error;
       await load();
       toast('Đã gắn công ty');
+      const clientName = clients.find(cl => cl.id === linkClientId)?.name || linkClientId;
+      await logActivity({
+        user, action: 'update', table: 'contacts', recordId: contactId,
+        description: `Gắn liên hệ "${oldContact?.name || contactId}" với công ty "${clientName}"`,
+        oldData: oldContact, newData: { ...oldContact, client_id: linkClientId },
+      });
     } catch (err: any) { toast('Lỗi: ' + err.message); }
     finally { setLinkingId(null); setLinkClientId(''); }
   };

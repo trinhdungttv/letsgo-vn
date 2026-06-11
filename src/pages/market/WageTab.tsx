@@ -2,6 +2,8 @@ import { Fragment, useState } from 'react';
 import { Plus, Trash2, ExternalLink, Coins, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+import { logActivity } from '../../lib/audit';
+import { useAuth } from '../../lib/auth';
 
 const emptyForm = {
   zone_name: '', industry: '', pt_min: '', pt_max: '', tv_min: '', tv_max: '', ct_min: '', ct_max: '',
@@ -9,6 +11,7 @@ const emptyForm = {
 };
 
 export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZoneFilter, goTab, onRefresh, toast }: MarketTabProps) {
+  const { user } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -26,7 +29,7 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
     setSaving(true);
     try {
       const toNum = (v: string) => v ? parseFloat(v) * 1_000_000 : null;
-      const { error } = await supabase.from('market_surveys').insert({
+      const { data, error } = await supabase.from('market_surveys').insert({
         zone_name: form.zone_name.trim(),
         industry: form.industry.trim(),
         survey_date: form.survey_date,
@@ -35,8 +38,13 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
         wage_skilled_min: toNum(form.ct_min), wage_skilled_max: toNum(form.ct_max),
         labor_availability: form.labor_availability,
         occupancy: form.occupancy || null,
-      });
+      }).select().single();
       if (error) throw error;
+      await logActivity({
+        user, action: 'insert', table: 'market_surveys', recordId: data.id,
+        description: `Thêm khảo sát lương ngành "${form.industry.trim()}" cho khu vực "${form.zone_name.trim()}"`,
+        newData: data,
+      });
       await onRefresh();
       setShowAdd(false);
       setForm(emptyForm);
@@ -47,8 +55,16 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
 
   const handleDelete = async (id: string) => {
     try {
+      const existing = marketSurveys.find(s => s.id === id);
       const { error } = await supabase.from('market_surveys').delete().eq('id', id);
       if (error) throw error;
+      if (existing) {
+        await logActivity({
+          user, action: 'delete', table: 'market_surveys', recordId: id,
+          description: `Xóa khảo sát lương ngành "${existing.industry || '—'}" của khu vực "${existing.zone_name}"`,
+          oldData: existing,
+        });
+      }
       await onRefresh();
       toast('Đã xóa khảo sát');
     } catch (e: any) { toast('Lỗi: ' + e.message); }

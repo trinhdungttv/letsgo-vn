@@ -2,21 +2,25 @@ import { useState } from 'react';
 import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
+import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
-import type { Client, LaborHistoryEntry, Region, Manager } from '../lib/types';
+import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
 import { getMonthLast, statusPill, formatDate, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 
 interface ClientsProps {
   clients: Client[];
   laborHistory: Record<string, LaborHistoryEntry[]>;
-  activeRegion: string;
-  onRegionChange: (r: string) => void;
+  activeRegion: string[];
+  onRegionChange: (r: string[]) => void;
   onSelectClient: (id: string) => void;
   onAddClient: (regionName?: string, managerName?: string) => void;
   onClientUpdate: (c: Client) => void;
   isAdmin: boolean;
+  marketZones: MarketZone[];
   toast: (m: string) => void;
 }
 
@@ -29,23 +33,31 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onAddClient, onClientUpdate, isAdmin, toast,
+  onSelectClient, onAddClient, onClientUpdate, isAdmin, marketZones, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [columns, setColumns] = useState(loadColumnSettings);
+  const { user } = useAuth();
   const [renewForm, setRenewForm] = useState<RenewForm | null>(null);
   const [isRenewing, setIsRenewing] = useState(false);
+  const [activeZones, setActiveZones] = useState<string[]>([ALL_OPTION]);
+  const [activeManagers, setActiveManagers] = useState<string[]>([ALL_OPTION]);
+  const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
 
-  const regionNames = ['Tất cả', ...regions.map(r => r.name)];
+  const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
+  const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
+  const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
 
   const filtered = clients.filter(c => {
-    const matchRegion = activeRegion === 'Tất cả' || c.region === activeRegion;
+    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
+    const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
+    const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
-    return matchRegion && matchSearch;
+    return matchRegion && matchManager && matchZones && matchSearch;
   });
 
   const getDelta = (clientId: string) => {
@@ -68,16 +80,22 @@ export default function Clients({
     if (!renewForm) return;
     setIsRenewing(true);
     try {
-      const { error } = await supabase.from('clients').update({
+      const updates = {
         contract_start: renewForm.startDate,
         contract_end: renewForm.endDate,
         status: 'ok',
         notes: renewForm.notes ? (renewForm.client.notes ? renewForm.client.notes + '\n' + renewForm.notes : renewForm.notes) : renewForm.client.notes,
         updated_at: new Date().toISOString(),
-      }).eq('id', renewForm.client.id);
+      };
+      const { error } = await supabase.from('clients').update(updates).eq('id', renewForm.client.id);
       if (error) throw error;
       onClientUpdate({ ...renewForm.client, contract_start: renewForm.startDate, contract_end: renewForm.endDate, status: 'ok' });
       toast(`Đã gia hạn HĐ đến ${formatDate(renewForm.endDate)}`);
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: renewForm.client.id,
+        description: `Gia hạn hợp đồng khách hàng "${renewForm.client.name}" đến ${formatDate(renewForm.endDate)}`,
+        oldData: renewForm.client, newData: { ...renewForm.client, ...updates },
+      });
       setRenewForm(null);
     } catch (err: any) { toast('Lỗi: ' + err.message); }
     finally { setIsRenewing(false); }
@@ -104,14 +122,11 @@ export default function Clients({
         }
       />
       <div className="flex-1 overflow-y-auto p-5">
-        {/* Region pills */}
-        <div className="flex flex-wrap gap-1.5 mb-3 items-center">
-          {regionNames.map(r => (
-            <button key={r} onClick={() => onRegionChange(r)}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[12px] font-medium border transition ${activeRegion === r ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-700'}`}>
-              {r}
-            </button>
-          ))}
+        {/* Filters: Khu công nghiệp - Chi nhánh - Quản lý */}
+        <div className="flex flex-wrap gap-2 mb-3 items-center">
+          <FilterDropdown label="Khu công nghiệp" options={zoneNames} selected={activeZones} onChange={setActiveZones} />
+          <FilterDropdown label="Chi nhánh" options={regionNames} selected={activeRegion} onChange={onRegionChange} />
+          <FilterDropdown label="Quản lý" options={managerNames} selected={activeManagers} onChange={setActiveManagers} />
         </div>
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
@@ -125,7 +140,7 @@ export default function Clients({
               <thead>
                 <tr className="border-b border-[#E8E7E2]">
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Công ty</th>
-                  {col('region') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Khu vực</th>}
+                  {col('region') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Chi Nhánh</th>}
                   {col('manager') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Quản lý</th>}
                   {col('workers') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">LĐ</th>}
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Δ</th>
@@ -162,7 +177,22 @@ export default function Clients({
                         </div>
                       </td>
                       {col('region') && <td className="px-3 py-2 text-[12px] text-[#555]">{c.region || '—'}</td>}
-                      {col('manager') && <td className="px-3 py-2 text-[12px] whitespace-nowrap">{c.manager || '—'}</td>}
+                      {col('manager') && (
+                        <td className="px-3 py-2 text-[12px] whitespace-nowrap">
+                          {c.manager ? (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                const m = managers.find(mg => mg.name === c.manager);
+                                setSelectedManager(m || { id: c.manager as string, name: c.manager as string, phone: null, email: null, region: null, created_at: '' });
+                              }}
+                              className="text-blue-600 hover:underline"
+                            >
+                              {c.manager}
+                            </button>
+                          ) : '—'}
+                        </td>
+                      )}
                       {col('workers') && (
                         <td className="px-3 py-2">
                           <div className={`font-semibold ${underMin ? 'text-red-700' : ''}`}>
@@ -283,6 +313,56 @@ export default function Clients({
                 <RefreshCw className="w-3.5 h-3.5" />
                 {isRenewing ? 'Đang lưu...' : 'Xác nhận gia hạn'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manager Detail Modal */}
+      {selectedManager && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[12px] w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8E7E2]">
+              <h3 className="text-[14px] font-semibold text-[#111]">{selectedManager.name}</h3>
+              <button onClick={() => setSelectedManager(null)} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ['Số điện thoại', selectedManager.phone],
+                  ['Email', selectedManager.email],
+                  ['Chi nhánh', selectedManager.region],
+                ].map(([label, val]) => (
+                  <div key={label}>
+                    <label className="text-[12px] text-[#666] font-medium">{label}</label>
+                    <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <label className="text-[12px] text-[#666] font-medium">
+                  Khách hàng phụ trách ({clients.filter(c => c.manager === selectedManager.name).length})
+                </label>
+                <div className="mt-1.5 max-h-[220px] overflow-y-auto border border-[#E8E7E2] rounded-lg divide-y divide-[#F0EEE9]">
+                  {clients.filter(c => c.manager === selectedManager.name).length === 0 ? (
+                    <div className="px-3 py-3 text-[12.5px] text-[#aaa] text-center">Chưa phụ trách khách hàng nào</div>
+                  ) : clients.filter(c => c.manager === selectedManager.name).map(c => {
+                    const p = statusPill(c.status);
+                    return (
+                      <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[12.5px] font-medium text-[#111] truncate">{c.name}</div>
+                          <div className="text-[11px] text-[#888]">{c.region || '—'}</div>
+                        </div>
+                        <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${p.cls}`}>{p.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={() => setSelectedManager(null)} className="w-full py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Đóng</button>
             </div>
           </div>
         </div>

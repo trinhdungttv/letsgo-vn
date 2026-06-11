@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Home, Building2, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, KanbanSquare, UserCircle2, Package, ChevronDown, ChevronRight, Network } from 'lucide-react';
+import { Home, Building2, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, KanbanSquare, UserCircle2, Package, ChevronDown, ChevronRight, Network, History } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 
@@ -16,6 +16,7 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'quotes', label: 'Báo giá', icon: <Calculator size={15} /> },
   { page: 'reports', label: 'Báo cáo', icon: <BarChart3 size={15} /> },
   { page: 'users', label: 'Quản lý Users', icon: <Users size={15} /> },
+  { page: 'history', label: 'Lịch sử', icon: <History size={15} /> },
 ];
 
 const CRM_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [

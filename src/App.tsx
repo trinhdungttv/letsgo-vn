@@ -5,6 +5,7 @@ import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { supabase } from './lib/supabase';
+import { logActivity } from './lib/audit';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -15,6 +16,7 @@ import Market from './pages/Market';
 import Quotes from './pages/Quotes';
 import Reports from './pages/Reports';
 import UserManagement from './pages/UserManagement';
+import History from './pages/History';
 import CRMDash from './pages/CRMDash';
 import CRMBoard from './pages/CRMBoard';
 import CRMLeads from './pages/CRMLeads';
@@ -49,7 +51,7 @@ function AppInner() {
   } = useCRMData(!!user);
 
   const [page, setPage] = useState<Page>('dashboard');
-  const [activeRegion, setActiveRegion] = useState('Tất cả');
+  const [activeRegion, setActiveRegion] = useState<string[]>(['Tất cả']);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState('');
@@ -125,10 +127,15 @@ function AppInner() {
     const manager = prompt('Người quản lý:', managerName || '') || '';
     const ctEnd = prompt('Ngày hết hạn HĐ (YYYY-MM-DD):', '2027-06-01') || '';
     try {
-      const { error } = await supabase.from('clients').insert({ name, region, manager, contract_end: ctEnd || null, status: 'ok', client_type: 'active', cutoff_day: 25, payment_start: 5, payment_end: 8 });
+      const { data, error } = await supabase.from('clients').insert({ name, region, manager, contract_end: ctEnd || null, status: 'ok', client_type: 'active', cutoff_day: 25, payment_start: 5, payment_end: 8 }).select().single();
       if (error) throw error;
       await loadClients();
       toast('Đã thêm khách hàng mới!');
+      await logActivity({
+        user, action: 'insert', table: 'clients', recordId: data.id,
+        description: `Thêm khách hàng mới "${name}" (${region})`,
+        newData: data,
+      });
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
     }
@@ -188,6 +195,7 @@ function AppInner() {
             onAddClient={handleAddClient}
             onClientUpdate={handleClientUpdate}
             isAdmin={user?.role === 'admin'}
+            marketZones={marketZones}
             toast={toast}
           />
         )}
@@ -198,6 +206,7 @@ function AppInner() {
             onBack={() => setPage('clients')}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
+            marketZones={marketZones}
             toast={toast}
           />
         )}
@@ -212,6 +221,7 @@ function AppInner() {
         )}
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}
+        {page === 'history' && <History toast={toast} />}
 
         {/* CRM Module */}
         {page === 'crm-dash' && (
