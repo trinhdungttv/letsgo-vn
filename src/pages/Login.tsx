@@ -25,7 +25,7 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0c2340] mb-4 shadow-lg">
             <span className="text-white font-bold text-xl">LG</span>
           </div>
-          <h1 className="text-[20px] font-bold text-[#111]">Let's Go VN</h1>
+          <h1 className="text-[20px] font-bold text-[#111]">P. Kinh Doanh</h1>
           <p className="text-[13px] text-[#888] mt-1">Hệ thống quản lý nội bộ</p>
         </div>
 

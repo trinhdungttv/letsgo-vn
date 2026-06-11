@@ -45,7 +45,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             <span className="text-white font-bold text-[12px]">LG</span>
           </div>
           <div>
-            <div className="text-[13px] font-semibold text-white leading-tight">Let's Go VN</div>
+            <div className="text-[13px] font-semibold text-white leading-tight">P. Kinh Doanh</div>
             <div className="text-[10px] text-white/40 mt-0.5">Ops v5.0</div>
           </div>
         </div>
