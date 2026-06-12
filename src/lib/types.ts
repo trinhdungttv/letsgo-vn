@@ -270,6 +270,13 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export interface DashboardTarget {
+  id: string;
+  scope: string; // 'total' or a region/branch name
+  target_value: number;
+  updated_at: string;
+}
+
 export type FinanceTimelineMode = 'clients' | 'payment';
 
 export interface CRMProduct {

@@ -6,7 +6,7 @@ import {
   BarElement, Tooltip, Filler, Legend,
 } from 'chart.js';
 import {
-  AlertCircle, TrendingUp, Users, BarChart2,
+  AlertCircle, TrendingUp, Users, BarChart2, Target,
   ChevronDown, CheckCircle2, Clock, Circle, RefreshCw, ClipboardList, X, Phone, Mail,
 } from 'lucide-react';
 import type { Client } from '../lib/types';
@@ -14,6 +14,33 @@ import { statusPill, formatCurrency, formatDate, daysUntil } from '../lib/format
 import { supabase } from '../lib/supabase';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler, Legend);
+
+// Draws a dashed horizontal target line + label across the chart area
+const targetLinePlugin = {
+  id: 'targetLine',
+  afterDraw(chart: ChartJS) {
+    const target = (chart.options?.plugins as Record<string, { value?: number }> | undefined)?.targetLine?.value;
+    if (target == null) return;
+    const { ctx, chartArea, scales } = chart;
+    const y = scales.y.getPixelForValue(target);
+    if (y < chartArea.top || y > chartArea.bottom) return;
+    ctx.save();
+    ctx.strokeStyle = '#F59E0B';
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(chartArea.left, y);
+    ctx.lineTo(chartArea.right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#D97706';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(Number(target).toLocaleString('vi-VN'), chartArea.right - 4, y - 4);
+    ctx.restore();
+  },
+};
+ChartJS.register(targetLinePlugin);
 
 interface DashboardProps { clients: Client[]; }
 
@@ -96,6 +123,43 @@ export default function Dashboard({ clients }: DashboardProps) {
 
   const trendData = [2420, 2510, 2590, 2670, 2790, totalWorkers || 2847];
   const expiringClients = filteredClients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; });
+
+  // Labor targets per scope ('total' or a region/branch name)
+  const [targets, setTargets] = useState<Record<string, number>>({});
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetInput, setTargetInput] = useState('');
+
+  useEffect(() => {
+    supabase.from('dashboard_targets').select('scope, target_value').then(({ data }) => {
+      if (!data) return;
+      const map: Record<string, number> = {};
+      for (const row of data) map[row.scope] = Number(row.target_value);
+      setTargets(map);
+    });
+  }, []);
+
+  const targetScopeKey = scopeMode === 'region' && selectedScope ? selectedScope : 'total';
+  const targetScopeLabel = targetScopeKey === 'total' ? 'Tổng' : targetScopeKey;
+  const targetValue = targets[targetScopeKey];
+
+  const startEditTarget = () => {
+    setTargetInput(targetValue != null ? String(targetValue) : '');
+    setEditingTarget(true);
+  };
+
+  const saveTarget = async () => {
+    const val = parseFloat(targetInput);
+    if (!Number.isFinite(val) || val <= 0) {
+      // Empty/invalid input clears the target for this scope
+      await supabase.from('dashboard_targets').delete().eq('scope', targetScopeKey);
+      setTargets(prev => { const next = { ...prev }; delete next[targetScopeKey]; return next; });
+      setEditingTarget(false);
+      return;
+    }
+    await supabase.from('dashboard_targets').upsert({ scope: targetScopeKey, target_value: val, updated_at: new Date().toISOString() }, { onConflict: 'scope' });
+    setTargets(prev => ({ ...prev, [targetScopeKey]: val }));
+    setEditingTarget(false);
+  };
 
   // Load tasks from Supabase (contract alerts + pipeline tasks)
   const loadTasks = useCallback(async () => {
@@ -342,14 +406,54 @@ export default function Dashboard({ clients }: DashboardProps) {
         {/* Trend + Alerts */}
         <div className="grid grid-cols-5 gap-2.5">
           <div className="col-span-2 bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5">
+            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap">
               <TrendingUp size={13} className="text-blue-500" />
               <span className="text-[12.5px] font-semibold text-[#111]">Xu hướng lao động T1–T6</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                {editingTarget ? (
+                  <>
+                    <span className="text-[11px] text-[#888]">Mục tiêu ({targetScopeLabel}):</span>
+                    <input
+                      type="number"
+                      autoFocus
+                      value={targetInput}
+                      onChange={e => setTargetInput(e.target.value)}
+                      onBlur={saveTarget}
+                      onKeyDown={e => { if (e.key === 'Enter') saveTarget(); if (e.key === 'Escape') setEditingTarget(false); }}
+                      placeholder="VD: 3000"
+                      className="w-20 text-[11px] px-1.5 py-0.5 rounded border border-amber-300 outline-none focus:border-amber-500"
+                    />
+                  </>
+                ) : (
+                  <button
+                    onClick={startEditTarget}
+                    title={targetValue != null ? `Mục tiêu (${targetScopeLabel}): ${targetValue.toLocaleString('vi-VN')}` : `Đặt mục tiêu (${targetScopeLabel})`}
+                    className={`p-1 rounded hover:bg-amber-50 transition ${targetValue != null ? 'text-amber-500' : 'text-[#ccc] hover:text-amber-500'}`}
+                  >
+                    <Target size={14} />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="p-3" style={{ height: 168 }}>
               <Line
-                data={{ labels: ['T1','T2','T3','T4','T5','T6'], datasets: [{ data: trendData, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3 }] }}
-                options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { min: 2200, ticks: { callback: (v) => Number(v).toLocaleString() } } } }}
+                data={{ labels: ['T1','T2','T3','T4','T5','T6'], datasets: [{ data: trendData, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.45, cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: 3 }] }}
+                options={{
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                    ...({ targetLine: { value: targetValue } } as any),
+                  },
+                  scales: {
+                    x: { grid: { display: false } },
+                    y: (() => {
+                      const vals = targetValue != null ? [...trendData, targetValue] : trendData;
+                      const min = Math.floor(Math.min(...vals) * 0.95 / 10) * 10;
+                      const max = Math.ceil(Math.max(...vals) * 1.05 / 10) * 10;
+                      return { min, max, ticks: { callback: (v: any) => Number(v).toLocaleString() } };
+                    })(),
+                  },
+                }}
               />
             </div>
           </div>

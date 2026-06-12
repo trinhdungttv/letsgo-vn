@@ -3,7 +3,7 @@ import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageC
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
 import type { Client, LaborHistoryEntry, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact } from '../lib/types';
-import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, statusPill, formatCurrency } from '../lib/format';
+import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -36,7 +36,34 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
   const [laborInput, setLaborInput] = useState(String(client.current_workers || 0));
   const [laborMsg, setLaborMsg] = useState(false);
-  const weekGroups = useMemo(() => recentWeekLabels(2), []);
+  const [extraMonth, setExtraMonth] = useState(''); // value of <input type="month"> picker
+  const [extraMonths, setExtraMonths] = useState<{ year: number; month: number }[]>([]);
+  const monthSortKey = (label: string) => {
+    const m = label.match(/Tháng (\d+)\/(\d+)/);
+    return m ? Number(m[2]) * 12 + Number(m[1]) : 0;
+  };
+  const weekGroups = useMemo(() => {
+    const base = recentWeekLabels(2);
+    const baseMonths = new Set(base.map(g => g.month));
+    const extra = extraMonths
+      .map(({ year, month }) => ({ month: `Tháng ${month}/${year}`, labels: weekLabelsForMonth(year, month).slice().reverse() }))
+      .filter(g => !baseMonths.has(g.month));
+    return [...base, ...extra].sort((a, b) => monthSortKey(b.month) - monthSortKey(a.month));
+  }, [extraMonths]);
+
+  const selectWeek = (wk: string) => {
+    setLaborWeek(wk);
+    const existing = hist.find(h => h.week_label === wk);
+    setLaborInput(existing ? String(existing.count) : '0');
+  };
+
+  const addExtraMonth = () => {
+    if (!extraMonth) return;
+    const [y, m] = extraMonth.split('-').map(Number);
+    if (!y || !m) return;
+    setExtraMonths(prev => prev.some(e => e.year === y && e.month === m) ? prev : [...prev, { year: y, month: m }]);
+    setExtraMonth('');
+  };
   const [openInfo, setOpenInfo] = useState(false);
   const [openLabor, setOpenLabor] = useState(true);
   const [form, setForm] = useState({
@@ -920,7 +947,7 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
               <div className="flex items-center gap-2.5 flex-wrap bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-4 py-3 mb-3">
                 <RefreshCw size={16} className="text-[#888]" />
                 <span className="text-[13px] text-[#555] font-medium">Cập nhật LĐ tuần:</span>
-                <select value={laborWeek} onChange={e => setLaborWeek(e.target.value)} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                <select value={laborWeek} onChange={e => selectWeek(e.target.value)} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
                   {weekGroups.map(g => (
                     <optgroup key={g.month} label={g.month}>
                       {g.labels.map(l => <option key={l} value={l}>{l}{l === getCurrentWeekLabel() ? ' (tuần này)' : ''}</option>)}
@@ -930,6 +957,11 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                 <input type="number" value={laborInput} onChange={e => setLaborInput(e.target.value)} className="w-[110px] text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
                 <button onClick={handleLaborUpdate} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Cập nhật</button>
                 {laborMsg && <span className="text-[12px] text-emerald-600 inline-flex items-center gap-1">✓ Đã lưu!</span>}
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <span className="text-[12px] text-[#888]">Thêm tháng cũ:</span>
+                  <input type="month" value={extraMonth} onChange={e => setExtraMonth(e.target.value)} className="text-[12px] px-2 py-1 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <button onClick={addExtraMonth} className="px-2.5 py-1 rounded-lg text-[12px] font-medium border border-gray-300 text-[#555] hover:bg-white transition">+ Thêm</button>
+                </div>
               </div>
 
               <div className="flex gap-1.5 mb-3">

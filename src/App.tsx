@@ -1,8 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
-import { useAuth, AuthProvider } from './lib/auth';
+import { useAuth, AuthProvider, canAccess } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { supabase } from './lib/supabase';
 import { logActivity } from './lib/audit';
@@ -23,6 +23,8 @@ import CRMLeads from './pages/CRMLeads';
 import CRMProds from './pages/CRMProds';
 import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
+
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -50,10 +52,37 @@ function AppInner() {
     reloadPipeline,
   } = useCRMData(!!user);
 
-  const [page, setPage] = useState<Page>('dashboard');
+  const [page, setPage] = useState<Page>(() => {
+    const saved = localStorage.getItem('lgvn_page');
+    return saved && PAGES.includes(saved as Page) ? (saved as Page) : 'dashboard';
+  });
   const [activeRegion, setActiveRegion] = useState<string[]>(['Tất cả']);
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedClientId'));
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedDealId'));
+
+  // Persist current page/selection so a page reload (F5) returns to the same place
+  useEffect(() => { localStorage.setItem('lgvn_page', page); }, [page]);
+  useEffect(() => {
+    if (selectedClientId) localStorage.setItem('lgvn_selectedClientId', selectedClientId);
+    else localStorage.removeItem('lgvn_selectedClientId');
+  }, [selectedClientId]);
+  useEffect(() => {
+    if (selectedDealId) localStorage.setItem('lgvn_selectedDealId', selectedDealId);
+    else localStorage.removeItem('lgvn_selectedDealId');
+  }, [selectedDealId]);
+
+  // Load data needed by the restored page on first mount
+  useEffect(() => {
+    if (page === 'finance') loadFinance('2026-06');
+    if (page === 'market') loadMarket();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Guard against a restored page the current user no longer has access to
+  useEffect(() => {
+    if (user && !canAccess(user.role, page)) setPage('dashboard');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
   const [toastMsg, setToastMsg] = useState('');
   const [toastTimer, setToastTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 

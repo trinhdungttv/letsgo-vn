@@ -34,6 +34,15 @@ export function getCurrentWeekLabel(): string {
   return `T${now.getMonth() + 1}W${weekNum}`;
 }
 
+// Returns the week labels (TmWn) that actually exist in a given month, ascending (W1 first).
+export function weekLabelsForMonth(year: number, month: number): string[] {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const maxWeek = Math.ceil(daysInMonth / 7);
+  const labels: string[] = [];
+  for (let w = 1; w <= maxWeek; w++) labels.push(`T${month}W${w}`);
+  return labels;
+}
+
 // Returns week labels (TmWn) grouped by month for the past `monthsBack` months (incl. current),
 // newest first. Current month only includes weeks up to the current week (no future weeks).
 export function recentWeekLabels(monthsBack = 6): { month: string; labels: string[] }[] {
@@ -44,9 +53,8 @@ export function recentWeekLabels(monthsBack = 6): { month: string; labels: strin
     const m = d.getMonth() + 1;
     const y = d.getFullYear();
     const isCurrent = i === 0;
-    const maxWeek = isCurrent ? Math.ceil(now.getDate() / 7) : 5;
-    const labels: string[] = [];
-    for (let w = maxWeek; w >= 1; w--) labels.push(`T${m}W${w}`);
+    const all = weekLabelsForMonth(y, m);
+    const labels = (isCurrent ? all.slice(0, Math.ceil(now.getDate() / 7)) : all).slice().reverse();
     groups.push({ month: `Tháng ${m}/${y}`, labels });
   }
   return groups;
