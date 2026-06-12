@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Finance Workspace — Let's Go VN</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+:root{--bg:#fff;--bg2:#f5f5f4;--bg3:#ebebea;--tx:#1a1a18;--tx2:#5f5e5a;--tx3:#888780;--bd:rgba(0,0,0,.10);--bd2:rgba(0,0,0,.20);--bd3:rgba(0,0,0,.32);--r:8px;--rl:12px;--green:#3B6D11;--red:#A32D2D;--blue:#185FA5;--teal:#0F6E56}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1c1a;--bg2:#252523;--bg3:#2e2e2b;--tx:#e8e6de;--tx2:#9c9a92;--tx3:#6b6963;--bd:rgba(255,255,255,.08);--bd2:rgba(255,255,255,.16);--bd3:rgba(255,255,255,.28)}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:var(--tx);background:var(--bg2);padding:20px;min-height:100vh}
+button,input,select{font-family:inherit}
+.wrap{max-width:980px;margin:0 auto;background:var(--bg);border-radius:var(--rl);border:.5px solid var(--bd);padding:20px}
+/* inputs */
+input[type=number]{background:var(--bg);border:.5px solid var(--bd2);border-radius:6px;color:var(--tx);padding:5px 24px 5px 8px;font-size:12px;outline:none;width:100%;text-align:right}
+input[type=number]:focus{border-color:var(--bd3)}
+input[type=text]{background:transparent;border:none;border-bottom:.5px dashed var(--bd2);border-radius:0;color:var(--tx);padding:2px 4px;font-size:12px;outline:none;width:100%}
+input[type=text]:focus{border-bottom-color:var(--bd3)}
+select{background:var(--bg);border:.5px solid var(--bd2);border-radius:6px;color:var(--tx);padding:4px 7px;font-size:11px;outline:none;cursor:pointer}
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;font-size:12px;font-weight:500;border-radius:var(--r);border:.5px solid var(--bd2);background:var(--bg2);color:var(--tx);cursor:pointer;transition:all .12s;user-select:none}
+.btn:hover{filter:brightness(.96)}
+.btn-teal{background:var(--teal);color:#E1F5EE;border-color:var(--teal)}
+.btn-sm{padding:3px 9px;font-size:11px}
+.ibt{width:22px;height:22px;border-radius:5px;border:.5px solid var(--bd2);background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--tx3);flex-shrink:0;transition:all .12s}
+.ibt:hover{background:var(--bg2);color:var(--tx)}
+.ibt.del:hover{background:#FCEBEB;color:#A32D2D}
+/* tabs */
+.top-tabs{display:flex;gap:0;border-bottom:.5px solid var(--bd);margin-bottom:16px}
+.tp-tab{padding:6px 16px;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--tx2);transition:all .12s;user-select:none;white-space:nowrap}
+.tp-tab.active{color:var(--tx);border-bottom-color:var(--tx);font-weight:500}
+/* panels */
+.panel{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);overflow:hidden;margin-bottom:12px}
+.panel-hd{padding:9px 14px;border-bottom:.5px solid var(--bd);display:flex;align-items:center;gap:8px}
+.panel-title{font-size:12px;font-weight:500;flex:1}
+.panel-body{padding:10px 14px}
+/* tags / badges */
+.tag{display:inline-flex;align-items:center;font-size:10px;padding:2px 7px;border-radius:6px;font-weight:500;white-space:nowrap}
+.tag-m{background:#E6F1FB;color:#0C447C}
+.tag-s{background:#EAF3DE;color:#27500A}
+.rank-badge{font-size:10px;padding:2px 6px;border-radius:5px;font-weight:600}
+.r1{background:#FAEEDA;color:#633806}.r2{background:#F1EFE8;color:#444441}.r3{background:#EAF3DE;color:#27500A}
+/* ═══ PROJECT LAYOUT ═══ */
+.proj-layout{display:grid;grid-template-columns:230px 1fr;gap:12px;min-height:540px}
+.sidebar{background:var(--bg2);border-radius:var(--rl);border:.5px solid var(--bd);overflow:hidden}
+.sb-hd{padding:9px 12px;border-bottom:.5px solid var(--bd);display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:500}
+.proj-item{padding:9px 12px;cursor:pointer;border-bottom:.5px solid var(--bd);border-left:2.5px solid transparent;transition:all .1s}
+.proj-item:hover{background:var(--bg)}
+.proj-item.active{background:var(--bg);border-left-color:var(--teal)}
+.proj-name{font-size:12px;font-weight:500;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* type toggle */
+.type-toggle{display:flex;border:.5px solid var(--bd2);border-radius:var(--r);overflow:hidden;margin-bottom:12px;max-width:340px}
+.tt-btn{flex:1;padding:6px;font-size:11px;font-weight:500;background:none;border:none;cursor:pointer;color:var(--tx2);transition:all .12s;text-align:center}
+.tt-btn.active{background:var(--bg2);color:var(--tx)}
+/* cost table */
+.ctable{width:100%;border-collapse:collapse;font-size:12px}
+.ctable th{font-size:10px;font-weight:500;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;padding:4px 6px;border-bottom:.5px solid var(--bd);text-align:left}
+.ctable td{padding:4px 6px;border-bottom:.5px solid var(--bd);vertical-align:middle}
+.ctable tr:last-child td{border:none}
+.inpw{position:relative}
+.inpw input{padding-right:24px}
+.inpw .u{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--tx3);pointer-events:none}
+.add-row{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--tx3);cursor:pointer;padding:5px 0 2px;background:none;border:none;border-top:.5px dashed var(--bd);width:100%;text-align:left;margin-top:4px}
+.add-row:hover{color:var(--tx)}
+/* result */
+.res-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.res-card{border-radius:10px;padding:12px;text-align:center}
+.rc-tot{background:var(--bg2);border:.5px solid var(--bd)}
+.rc-lg{background:#E6F1FB;border:.5px solid #B5D4F4}
+.rc-cn{background:#EAF3DE;border:.5px solid #C0DD97}
+@media(prefers-color-scheme:dark){.rc-lg{background:#042C53;border-color:#0C447C}.rc-cn{background:#173404;border-color:#27500A}}
+.rl{font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.rv{font-size:20px;font-weight:500}
+.rs{font-size:10px;margin-top:3px}
+/* ═══ WORKSPACE ═══ */
+.bp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.bp-card{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);overflow:hidden;cursor:pointer;transition:border-color .15s}
+.bp-card:hover{border-color:var(--bd2)}
+.bp-card.sel{border-color:var(--teal);border-width:1.5px}
+.mc{padding:4px 10px;font-size:11px;border-radius:6px;border:.5px solid var(--bd2);background:none;color:var(--tx2);cursor:pointer;transition:all .12s}
+.mc.active{background:var(--bg2);border-color:var(--bd3);color:var(--tx);font-weight:500}
+.mc.compare{background:#E6F1FB;border-color:#B5D4F4;color:#185FA5}
+@media(prefers-color-scheme:dark){.mc.compare{background:#042C53;border-color:#0C447C;color:#B5D4F4}}
+/* comparison table */
+.cmp-t{width:100%;border-collapse:collapse;font-size:12px}
+.cmp-t th{font-size:10px;font-weight:500;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;padding:5px 8px;border-bottom:.5px solid var(--bd);text-align:left;white-space:nowrap}
+.cmp-t td{padding:6px 8px;border-bottom:.5px solid var(--bd)}
+.cmp-t tr:last-child td{border:none}
+.num{text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
+.tr-total{background:var(--bg2);font-weight:500}
+/* overhead table */
+.oh-t{width:100%;border-collapse:collapse;font-size:12px}
+.oh-t th{font-size:10px;font-weight:500;color:var(--tx3);text-transform:uppercase;padding:4px 8px;border-bottom:.5px solid var(--bd);text-align:left}
+.oh-t td{padding:4px 8px;border-bottom:.5px solid var(--bd);vertical-align:middle}
+.oh-t tr:last-child td{border:none}
+/* kpi */
+.kpi-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.kpi-pill{background:var(--bg2);border-radius:var(--r);padding:8px 12px;flex:1;min-width:90px;text-align:center}
+.kp-val{font-size:17px;font-weight:500}
+.kp-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+/* colors */
+.green{color:var(--green)}.red{color:var(--red)}.blue{color:var(--blue)}.teal{color:var(--teal)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="font-size:17px;font-weight:500;margin-bottom:14px;display:flex;align-items:center;gap:8px">
+    <i class="ti ti-chart-pie-2" aria-hidden="true"></i> Finance Workspace — Let's Go VN
+  </div>
+
+  <div class="top-tabs">
+    <div class="tp-tab active" onclick="switchMain('projects',this)">P&L Dự Án</div>
+    <div class="tp-tab" onclick="switchMain('workspace',this)">Hiệu suất chi nhánh</div>
+    <div class="tp-tab" onclick="switchMain('overhead',this)">Chi phí cố định CN</div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       TAB 1: P&L DỰ ÁN
+  ══════════════════════════════════════════ -->
+  <div id="view-projects">
+    <div class="proj-layout">
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sb-hd">
+          Dự án
+          <button class="btn btn-sm" onclick="addProject()"><i class="ti ti-plus" aria-hidden="true"></i></button>
+        </div>
+        <div id="projList"></div>
+      </div>
+
+      <!-- Main detail -->
+      <div id="mainPanel">
+        <div style="display:flex;align-items:center;justify-content:center;height:300px;color:var(--tx3);font-size:12px">
+          ← Chọn dự án để xem chi tiết
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       TAB 2: WORKSPACE CHI NHÁNH
+  ══════════════════════════════════════════ -->
+  <div id="view-workspace" style="display:none">
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--tx3)">Kỳ:</span>
+      <div style="display:flex;border:.5px solid var(--bd2);border-radius:8px;overflow:hidden">
+        <button class="tt-btn active" onclick="setPM('month',this)" style="padding:5px 12px;font-size:11px">Tháng</button>
+        <button class="tt-btn" onclick="setPM('quarter',this)" style="padding:5px 12px;font-size:11px">Quý</button>
+      </div>
+      <div id="periodChips" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+      <div style="flex:1"></div>
+      <span style="font-size:11px;color:var(--tx2)">So sánh: <strong class="blue" id="cmpLabel">T5/2025</strong></span>
+    </div>
+
+    <div class="bp-grid" id="branchCards"></div>
+
+    <div class="panel" id="detailPanel">
+      <div class="panel-hd">
+        <div class="panel-title" id="detTitle">Chi tiết chi nhánh</div>
+        <select id="detMonthSel" onchange="renderDetail()" style="font-size:11px;padding:3px 6px"></select>
+      </div>
+      <div class="panel-body" id="detBody"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="panel-title"><i class="ti ti-table" style="font-size:12px;margin-right:4px" aria-hidden="true"></i>Bảng so sánh tất cả chi nhánh</div>
+      </div>
+      <div class="panel-body" style="padding:8px 14px">
+        <table class="cmp-t" id="cmpTable"></table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       TAB 3: CHI PHÍ CỐ ĐỊNH CHI NHÁNH
+  ══════════════════════════════════════════ -->
+  <div id="view-overhead" style="display:none">
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--tx3)">Chi nhánh:</span>
+      <select id="ohBranchSel" onchange="renderOverhead()" style="font-size:12px">
+        <option>BH - Ms Thương</option><option>DG - Mr Tâm</option><option>VSIP - Ms Phượng</option>
+      </select>
+      <span style="font-size:11px;color:var(--tx3)">Tháng:</span>
+      <select id="ohMonthSel" onchange="renderOverhead()" style="font-size:12px">
+        <option>T6/2025</option><option>T5/2025</option><option>T4/2025</option><option>T3/2025</option>
+      </select>
+      <button class="btn btn-sm" onclick="copyFromLast()" style="color:#185FA5;border-color:#B5D4F4">
+        <i class="ti ti-copy" aria-hidden="true"></i> Sao chép tháng trước
+      </button>
+      <button class="btn btn-sm btn-teal" onclick="saveOverhead()">
+        <i class="ti ti-device-floppy" aria-hidden="true"></i> Lưu
+      </button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="panel-title">
+          <i class="ti ti-building" style="font-size:12px;margin-right:4px;color:#185FA5" aria-hidden="true"></i>
+          Chi phí cố định — <span id="ohHeaderLabel">BH - Ms Thương · T6/2025</span>
+        </div>
+        <span style="font-size:10px;color:var(--tx3)">Trừ 1 lần/tháng · Không phân bổ vào từng DA</span>
+      </div>
+      <div style="padding:6px 14px">
+        <table class="oh-t">
+          <thead><tr>
+            <th>Khoản chi phí cố định</th>
+            <th style="text-align:right">Giá trị</th>
+            <th style="text-align:center;width:80px">Loại</th>
+            <th style="width:26px"></th>
+          </tr></thead>
+          <tbody id="ohRows"></tbody>
+        </table>
+        <button class="add-row" onclick="addOhRow()">
+          <i class="ti ti-plus" style="font-size:11px" aria-hidden="true"></i> Thêm khoản
+        </button>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:7px 14px;background:var(--bg2);border-top:.5px solid var(--bd);font-size:12px;font-weight:500">
+        <span>Tổng chi phí cố định tháng này</span>
+        <span class="red" id="ohTotal">0 tr.đ</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;padding:6px 14px;border-top:.5px solid var(--bd);font-size:10px;color:var(--tx3)">
+        <i class="ti ti-info-circle" style="font-size:12px" aria-hidden="true"></i>
+        CP này được trừ thẳng vào phần LN chi nhánh nhận từ các dự án. Không chia vào dự án riêng lẻ.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hd"><div class="panel-title">Lợi nhuận ròng chi nhánh sau trừ chi phí cố định</div></div>
+      <div class="panel-body">
+        <div class="kpi-row">
+          <div class="kpi-pill"><div class="kp-lbl">LN từ dự án (CN phần)</div><div class="kp-val green" id="oh_proj">—</div></div>
+          <div class="kpi-pill" style="background:none;font-size:22px;display:flex;align-items:center;justify-content:center;flex:0;padding:0 2px;color:var(--tx3)">−</div>
+          <div class="kpi-pill"><div class="kp-lbl">CP cố định CN</div><div class="kp-val red" id="oh_fixed">—</div></div>
+          <div class="kpi-pill" style="background:none;font-size:22px;display:flex;align-items:center;justify-content:center;flex:0;padding:0 2px;color:var(--tx3)">=</div>
+          <div class="kpi-pill" style="border:1.5px solid var(--teal)"><div class="kp-lbl">LN ròng CN</div><div class="kp-val" id="oh_net">—</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /wrap -->
+
+<script>
+// ════════════════════════════════════════════════════════
+// DATA
+// ════════════════════════════════════════════════════════
+const MONTHS=['T1','T2','T3','T4','T5','T6'].map(m=>m+'/2025');
+
+let projects=[
+  {id:'p1',name:'Kuka Home Vietnam',branch:'BH - Ms Thương',type:'shared',lgPct:40,cnPct:60,revenue:272,
+   costs:[{id:'c1',label:'Lương cơ bản NLĐ',val:210,payer:'lg'},{id:'c2',label:'Phụ cấp / OT',val:18,payer:'lg'},{id:'c3',label:'BHXH/BHYT',val:12,payer:'lg'},{id:'c4',label:'Chi phí tuyển dụng',val:5,payer:'cn'},{id:'c5',label:'Lương quản lý CN',val:15,payer:'cn'},{id:'c6',label:'Đi lại/công tác',val:4,payer:'ch'}]},
+  {id:'p2',name:'Nippon Express VN',branch:'BH - Ms Thương',type:'managed',lgPct:100,cnPct:0,revenue:61,
+   costs:[{id:'c1',label:'Lương cơ bản NLĐ',val:48,payer:'lg'},{id:'c2',label:'BHXH/BHYT',val:4,payer:'lg'},{id:'c3',label:'Lương quản lý',val:8,payer:'lg'},{id:'c4',label:'Chi phí vận hành',val:2,payer:'lg'}]},
+  {id:'p3',name:'TTP Vinawood',branch:'DG - Mr Tâm',type:'shared',lgPct:35,cnPct:65,revenue:387,
+   costs:[{id:'c1',label:'Lương cơ bản NLĐ',val:310,payer:'lg'},{id:'c2',label:'Phụ cấp/OT',val:28,payer:'lg'},{id:'c3',label:'BHXH/BHYT',val:18,payer:'lg'},{id:'c4',label:'Tuyển dụng',val:8,payer:'cn'},{id:'c5',label:'Lương quản lý',val:12,payer:'cn'},{id:'c6',label:'Chi phí khác',val:3,payer:'ch'}]}
+];
+
+const branches=[
+  {id:'bh',name:'BH - Ms Thương',color:'#185FA5'},
+  {id:'dg',name:'DG - Mr Tâm',color:'#0F6E56'},
+  {id:'vs',name:'VSIP - Ms Phượng',color:'#854F0B'},
+];
+
+const perfData={
+  bh:{'T1/2025':{proj_cn:52,overhead:92,projects:2,workers:380,revenue:318},'T2/2025':{proj_cn:48,overhead:92,projects:2,workers:360,revenue:305},'T3/2025':{proj_cn:61,overhead:95,projects:2,workers:390,revenue:332},'T4/2025':{proj_cn:55,overhead:95,projects:2,workers:385,revenue:320},'T5/2025':{proj_cn:58,overhead:95,projects:2,workers:400,revenue:333},'T6/2025':{proj_cn:18,overhead:103,projects:2,workers:405,revenue:333}},
+  dg:{'T1/2025':{proj_cn:72,overhead:85,projects:1,workers:440,revenue:387},'T2/2025':{proj_cn:68,overhead:85,projects:1,workers:430,revenue:378},'T3/2025':{proj_cn:80,overhead:88,projects:1,workers:455,revenue:397},'T4/2025':{proj_cn:75,overhead:88,projects:1,workers:448,revenue:390},'T5/2025':{proj_cn:78,overhead:90,projects:1,workers:450,revenue:387},'T6/2025':{proj_cn:68,overhead:90,projects:1,workers:450,revenue:387}},
+  vs:{'T1/2025':{proj_cn:42,overhead:70,projects:2,workers:310,revenue:270},'T2/2025':{proj_cn:38,overhead:70,projects:2,workers:300,revenue:260},'T3/2025':{proj_cn:50,overhead:72,projects:2,workers:320,revenue:278},'T4/2025':{proj_cn:45,overhead:72,projects:2,workers:315,revenue:272},'T5/2025':{proj_cn:48,overhead:75,projects:2,workers:318,revenue:274},'T6/2025':{proj_cn:55,overhead:75,projects:2,workers:320,revenue:275}},
+};
+
+let overheadItems={
+  'BH - Ms Thương':[{id:'o1',label:'Mặt bằng văn phòng',val:25,type:'Cố định'},{id:'o2',label:'Lương nhân viên VP',val:60,type:'Cố định'},{id:'o3',label:'Điện / nước / internet',val:5,type:'Cố định'},{id:'o4',label:'Đi lại / công tác',val:8,type:'Biến đổi'},{id:'o5',label:'Chi phí khác',val:5,type:'Biến đổi'}],
+  'DG - Mr Tâm':[{id:'o1',label:'Mặt bằng văn phòng',val:20,type:'Cố định'},{id:'o2',label:'Lương nhân viên VP',val:50,type:'Cố định'},{id:'o3',label:'Điện / nước / internet',val:4,type:'Cố định'},{id:'o4',label:'Đi lại / công tác',val:10,type:'Biến đổi'},{id:'o5',label:'Chi phí khác',val:6,type:'Biến đổi'}],
+  'VSIP - Ms Phượng':[{id:'o1',label:'Mặt bằng văn phòng',val:22,type:'Cố định'},{id:'o2',label:'Lương nhân viên VP',val:40,type:'Cố định'},{id:'o3',label:'Điện / nước / internet',val:4,type:'Cố định'},{id:'o4',label:'Đi lại / công tác',val:6,type:'Biến đổi'},{id:'o5',label:'Chi phí khác',val:3,type:'Biến đổi'}],
+};
+
+let selP='p1', selBranch='bh', selMonth='T6/2025', cmpMonth='T5/2025';
+
+// ════════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════════
+const genId=()=>'i'+Date.now()+Math.random().toString(36).slice(2,5);
+const fmt=n=>Math.round(n).toLocaleString('vi-VN');
+const pct=(n,t)=>t>0?(n/t*100).toFixed(1)+'%':'—';
+const netOf=(bid,m)=>{const d=perfData[bid][m]||{proj_cn:0,overhead:0};return d.proj_cn-d.overhead;};
+const delta=v=>v>0?'↑ +'+fmt(v):v<0?'↓ '+fmt(v):'→ 0';
+
+function calcP(p){
+  const tc=p.costs.reduce((s,c)=>s+(+c.val||0),0);
+  const profit=p.revenue-tc;
+  let lgC=0,cnC=0,shC=0;
+  p.costs.forEach(c=>{if(c.payer==='lg')lgC+=+c.val||0;else if(c.payer==='cn')cnC+=+c.val||0;else shC+=+c.val||0;});
+  const lgP=p.type==='managed'?profit:profit*p.lgPct/100;
+  const cnP=p.type==='managed'?0:profit*p.cnPct/100;
+  return{tc,profit,lgC,cnC,shC,lgP,cnP};
+}
+
+// ════════════════════════════════════════════════════════
+// TAB 1: PROJECTS
+// ════════════════════════════════════════════════════════
+function renderSidebar(){
+  document.getElementById('projList').innerHTML=projects.map(p=>{
+    const r=calcP(p);
+    return`<div class="proj-item ${p.id===selP?'active':''}" onclick="selectP('${p.id}')">
+      <div class="proj-name">${p.name}</div>
+      <div style="font-size:10px;color:var(--tx3);margin-bottom:3px">${p.branch}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="tag ${p.type==='managed'?'tag-m':'tag-s'}">${p.type==='managed'?'Khoán':p.lgPct+'/'+p.cnPct}</span>
+        <span style="font-size:11px;font-weight:500;color:${r.profit>=0?'#3B6D11':'#A32D2D'}">LN: ${fmt(r.profit)}</span>
+      </div>
+    </div>`;}).join('');
+}
+
+function crHTML(pid,c){
+  return`<tr>
+    <td style="min-width:120px"><input type="text" value="${c.label}" onchange="upC('${pid}','${c.id}','label',this.value)"></td>
+    <td><div class="inpw" style="width:110px"><input type="number" value="${c.val||''}" placeholder="0" oninput="upC('${pid}','${c.id}','val',+this.value)"><span class="u">tr.đ</span></div></td>
+    <td style="text-align:center">
+      <select onchange="upC('${pid}','${c.id}','payer',this.value)">
+        <option value="lg" ${c.payer==='lg'?'selected':''}>LGV trả</option>
+        <option value="cn" ${c.payer==='cn'?'selected':''}>CN trả</option>
+        <option value="ch" ${c.payer==='ch'?'selected':''}>Chung</option>
+      </select>
+    </td>
+    <td><button class="ibt del" onclick="delC('${pid}','${c.id}')"><i class="ti ti-trash" style="font-size:11px" aria-hidden="true"></i></button></td>
+  </tr>`;
+}
+
+function renderMain(){
+  const p=projects.find(x=>x.id===selP);
+  if(!p){document.getElementById('mainPanel').innerHTML='';return;}
+  const r=calcP(p);
+  document.getElementById('mainPanel').innerHTML=`
+  <!-- Row 1: Info -->
+  <div class="panel">
+    <div class="panel-hd">
+      <div style="font-size:14px;font-weight:500;flex:1">${p.name}</div>
+      <span class="tag ${p.type==='managed'?'tag-m':'tag-s'}" style="padding:3px 9px">${p.type==='managed'?'Khoán toàn bộ':'Chia tỷ lệ'}</span>
+      <button class="btn btn-sm" onclick="deleteP('${p.id}')" style="margin-left:6px;color:#A32D2D"><i class="ti ti-trash" aria-hidden="true"></i></button>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--tx2);white-space:nowrap">Chi nhánh:</span>
+        <input type="text" value="${p.branch}" onchange="upF('${p.id}','branch',this.value)"
+          style="flex:1;min-width:130px;border:.5px solid var(--bd2);border-radius:6px;padding:4px 8px;font-size:12px;background:var(--bg)">
+        <span style="font-size:12px;color:var(--tx2);white-space:nowrap">Doanh thu:</span>
+        <div class="inpw" style="width:140px"><input type="number" value="${p.revenue}" onchange="upF('${p.id}','revenue',+this.value)"><span class="u">tr.đ</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Type + Split -->
+  <div class="panel">
+    <div class="panel-hd"><div class="panel-title"><i class="ti ti-git-branch" style="font-size:12px;margin-right:4px" aria-hidden="true"></i>Loại dự án & phân chia lợi nhuận</div></div>
+    <div class="panel-body">
+      <div class="type-toggle">
+        <button class="tt-btn ${p.type==='managed'?'active':''}" onclick="setType('${p.id}','managed')">
+          <i class="ti ti-user-check" aria-hidden="true"></i> Khoán toàn bộ (LGV quản lý)
+        </button>
+        <button class="tt-btn ${p.type==='shared'?'active':''}" onclick="setType('${p.id}','shared')">
+          <i class="ti ti-percentage" aria-hidden="true"></i> Chia tỷ lệ
+        </button>
+      </div>
+      ${p.type==='shared'?`
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--tx2)">Let's Go VN:</span>
+        <div class="inpw" style="width:80px"><input type="number" min="0" max="100" value="${p.lgPct}" oninput="upSplit('${p.id}','lg',this.value)"><span class="u">%</span></div>
+        <span style="font-size:12px;color:var(--tx2)">Chi nhánh:</span>
+        <div class="inpw" style="width:80px"><input type="number" min="0" max="100" value="${p.cnPct}" oninput="upSplit('${p.id}','cn',this.value)"><span class="u">%</span></div>
+        <span style="font-size:11px;font-weight:500;color:${Math.abs(p.lgPct+p.cnPct-100)<.01?'#3B6D11':'#A32D2D'}">
+          ${Math.abs(p.lgPct+p.cnPct-100)<.01?'✓ Tổng = 100%':'⚠ Tổng ≠ 100%'}
+        </span>
+      </div>`:`
+      <div style="font-size:12px;color:var(--tx2)">LGV trả toàn bộ chi phí & nhận 100% LN. Chi nhánh nhận lương cố định.</div>`}
+    </div>
+  </div>
+
+  <!-- Row 3: Costs -->
+  <div class="panel">
+    <div class="panel-hd">
+      <div class="panel-title"><i class="ti ti-receipt" style="font-size:12px;margin-right:4px" aria-hidden="true"></i>Chi phí dự án</div>
+      <div style="display:flex;gap:5px;font-size:10px">
+        <span style="background:#E6F1FB;color:#0C447C;padding:2px 7px;border-radius:5px;font-weight:500">LGV trả</span>
+        <span style="background:#EAF3DE;color:#27500A;padding:2px 7px;border-radius:5px;font-weight:500">CN trả</span>
+        <span style="background:var(--bg2);color:var(--tx2);padding:2px 7px;border-radius:5px;font-weight:500;border:.5px solid var(--bd)">Chung</span>
+      </div>
+    </div>
+    <div class="panel-body" style="padding:6px 14px">
+      <table class="ctable">
+        <thead><tr><th>Khoản chi phí</th><th style="text-align:right">Giá trị</th><th style="text-align:center;width:95px">Bên chi trả</th><th style="width:28px"></th></tr></thead>
+        <tbody>${p.costs.map(c=>crHTML(p.id,c)).join('')}</tbody>
+      </table>
+      <button class="add-row" onclick="addC('${p.id}')">
+        <i class="ti ti-plus" style="font-size:11px" aria-hidden="true"></i> Thêm khoản chi phí
+      </button>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:7px 14px;background:var(--bg2);border-top:.5px solid var(--bd);font-size:12px;font-weight:500">
+      <span>Tổng chi phí</span><span class="red">${fmt(r.tc)} tr.đ</span>
+    </div>
+  </div>
+
+  <!-- Row 4: Result -->
+  <div class="panel">
+    <div class="panel-hd"><div class="panel-title"><i class="ti ti-calculator" style="font-size:12px;margin-right:4px" aria-hidden="true"></i>Kết quả phân chia</div></div>
+    <div class="panel-body">
+      <div style="font-size:11px;color:var(--tx3);background:var(--bg2);padding:7px 10px;border-radius:7px;margin-bottom:10px">
+        DT <strong style="color:var(--tx)">${fmt(p.revenue)}</strong>
+        &minus; CP <strong class="red">${fmt(r.tc)}</strong>
+        = LN <strong style="color:${r.profit>=0?'#3B6D11':'#A32D2D'}">${fmt(r.profit)}</strong> tr.đ
+        ${p.type==='shared'?` → Chia ${p.lgPct}/${p.cnPct}`:" → 100% Let's Go VN"}
+      </div>
+      <div class="res-grid">
+        <div class="res-card rc-tot">
+          <div class="rl" style="color:var(--tx3)">Lợi nhuận dự án</div>
+          <div class="rv ${r.profit>=0?'green':'red'}">${fmt(r.profit)}</div>
+          <div class="rs" style="color:var(--tx3)">triệu đồng</div>
+        </div>
+        <div class="res-card rc-lg">
+          <div class="rl" style="color:#0C447C">Let's Go VN</div>
+          <div class="rv blue">${fmt(r.lgP)}</div>
+          <div class="rs" style="color:#378ADD">${p.type==='shared'?p.lgPct+'% LN':'100% (khoán)'}</div>
+        </div>
+        <div class="res-card rc-cn">
+          <div class="rl" style="color:#27500A">Chi nhánh</div>
+          <div class="rv green">${fmt(r.cnP)}</div>
+          <div class="rs" style="color:#3B6D11">${p.type==='shared'?p.cnPct+'% LN':'Nhận lương CĐ'}</div>
+        </div>
+      </div>
+      ${p.type==='shared'?`
+      <div style="margin-top:10px;font-size:11px;color:var(--tx3);background:var(--bg2);padding:7px 10px;border-radius:7px">
+        <strong style="color:var(--tx2)">CP theo bên: </strong>
+        LGV chịu <strong class="blue">${fmt(r.lgC)}</strong> ·
+        CN chịu <strong class="green">${fmt(r.cnC)}</strong> ·
+        Chung <strong>${fmt(r.shC)}</strong> tr.đ
+      </div>`:''}
+    </div>
+  </div>`;
+}
+
+// project actions
+function selectP(id){selP=id;renderSidebar();renderMain();}
+function addProject(){
+  const name=prompt('Tên dự án / công ty:');if(!name)return;
+  const branch=prompt('Chi nhánh phụ trách:')||'';
+  const p={id:'p'+Date.now(),name,branch,type:'shared',lgPct:40,cnPct:60,revenue:0,
+    costs:[{id:genId(),label:'Lương cơ bản NLĐ',val:0,payer:'lg'},{id:genId(),label:'Chi phí quản lý',val:0,payer:'cn'}]};
+  projects.push(p);selP=p.id;renderSidebar();renderMain();
+}
+function deleteP(id){
+  if(!confirm('Xoá dự án này?'))return;
+  projects=projects.filter(p=>p.id!==id);
+  selP=projects.length?projects[0].id:null;
+  renderSidebar();renderMain();
+}
+function upF(pid,f,v){const p=projects.find(x=>x.id===pid);if(p){p[f]=v;renderSidebar();renderMain();}}
+function setType(pid,t){const p=projects.find(x=>x.id===pid);if(p){p.type=t;renderSidebar();renderMain();}}
+function upSplit(pid,side,val){
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  const v=Math.min(100,Math.max(0,parseFloat(val)||0));
+  if(side==='lg'){p.lgPct=v;p.cnPct=Math.round((100-v)*10)/10;}
+  else{p.cnPct=v;p.lgPct=Math.round((100-v)*10)/10;}
+  renderSidebar();renderMain();
+}
+function upC(pid,cid,f,v){
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  const c=p.costs.find(x=>x.id===cid);if(c){c[f]=v;renderSidebar();renderMain();}
+}
+function addC(pid){
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  p.costs.push({id:genId(),label:'Chi phí mới',val:0,payer:'lg'});
+  renderSidebar();renderMain();
+}
+function delC(pid,cid){
+  const p=projects.find(x=>x.id===pid);if(!p)return;
+  p.costs=p.costs.filter(c=>c.id!==cid);
+  renderSidebar();renderMain();
+}
+
+// ════════════════════════════════════════════════════════
+// TAB 2: WORKSPACE
+// ════════════════════════════════════════════════════════
+function renderChips(){
+  document.getElementById('periodChips').innerHTML=MONTHS.map(m=>`
+    <button class="mc ${m===selMonth?'active':m===cmpMonth?'compare':''}" onclick="selectPeriod('${m}')">${m}</button>`).join('');
+}
+function selectPeriod(m){
+  if(m===selMonth)return;
+  cmpMonth=selMonth;selMonth=m;
+  document.getElementById('cmpLabel').textContent=cmpMonth;
+  renderChips();renderCards();renderDetail();renderCmpTable();
+}
+function setPM(mode,el){document.querySelectorAll('.tt-btn').forEach(b=>{if(b.textContent.trim()==='Tháng'||b.textContent.trim()==='Quý')b.classList.remove('active');});el.classList.add('active');}
+
+function renderCards(){
+  const sorted=[...branches].sort((a,b)=>netOf(b.id,selMonth)-netOf(a.id,selMonth));
+  document.getElementById('branchCards').innerHTML=sorted.map((br,i)=>{
+    const d=perfData[br.id][selMonth]||{};
+    const nc=netOf(br.id,selMonth);const np=netOf(br.id,cmpMonth);const diff=nc-np;
+    const maxN=Math.max(...branches.map(b=>Math.abs(netOf(b.id,selMonth))),1);
+    const sparkV=MONTHS.map(m=>netOf(br.id,m));
+    const maxS=Math.max(...sparkV.map(Math.abs),1);
+    const ranks=['r1','r2','r3'];
+    return`<div class="bp-card ${br.id===selBranch?'sel':''}" onclick="selB('${br.id}')">
+      <div style="padding:10px 12px;border-bottom:.5px solid var(--bd);display:flex;align-items:center;justify-content:space-between">
+        <div><div style="font-size:12px;font-weight:500">${br.name}</div>
+        <div style="font-size:10px;color:var(--tx3)">${d.projects||0} DA · ${d.workers||0} LĐ</div></div>
+        <span class="rank-badge ${ranks[i]}">#${i+1}</span>
+      </div>
+      <div style="padding:10px 12px">
+        <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">LN ròng CN</div>
+        <div style="font-size:20px;font-weight:500;color:${nc>=0?br.color:'#A32D2D'}">${fmt(nc)}</div>
+        <div style="font-size:11px;margin:2px 0;color:${diff>0?'#3B6D11':diff<0?'#A32D2D':'var(--tx3)'}">
+          ${delta(diff)} vs ${cmpMonth}
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--tx3);margin-bottom:5px">
+          <span>DA phần: <strong>${fmt(d.proj_cn||0)}</strong></span>
+          <span>CP cố định: <strong class="red">${fmt(d.overhead||0)}</strong></span>
+        </div>
+        <div style="height:4px;border-radius:2px;background:var(--bg3);margin-bottom:6px;overflow:hidden">
+          <div style="height:100%;border-radius:2px;background:${br.color};width:${Math.max(0,Math.min(100,nc/maxN*100))}%"></div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:20px">
+          ${sparkV.map((v,si)=>`<div style="flex:1;border-radius:2px 2px 0 0;height:${Math.max(2,Math.abs(v)/maxS*18)}px;background:${si===MONTHS.indexOf(selMonth)?br.color:'var(--bg3)'}"></div>`).join('')}
+        </div>
+        <div style="font-size:10px;color:var(--tx3);margin-top:2px">T1→T6 2025</div>
+      </div>
+    </div>`;}).join('');
+}
+
+function renderDetail(){
+  const br=branches.find(b=>b.id===selBranch);
+  document.getElementById('detTitle').textContent=br.name+' — Chi tiết';
+  const mSel=document.getElementById('detMonthSel');
+  mSel.innerHTML=MONTHS.map(m=>`<option ${m===selMonth?'selected':''}>${m}</option>`).join('');
+  const m=selMonth;const d=perfData[selBranch][m]||{};const dc=perfData[selBranch][cmpMonth]||{};
+  const nc=netOf(selBranch,m);const np=netOf(selBranch,cmpMonth);
+  const rows=[
+    {label:'Doanh thu',cur:d.revenue||0,prv:dc.revenue||0,color:'#3B6D11'},
+    {label:'LN từ dự án (CN phần)',cur:d.proj_cn||0,prv:dc.proj_cn||0,color:br.color},
+    {label:'CP cố định chi nhánh',cur:d.overhead||0,prv:dc.overhead||0,color:'#A32D2D'},
+    {label:'LN ròng chi nhánh',cur:nc,prv:np,color:nc>=0?'#0F6E56':'#A32D2D',bold:true},
+  ];
+  const tF=(label,mo)=>{
+    const x=perfData[selBranch][mo]||{};
+    if(label==='Doanh thu')return x.revenue||0;
+    if(label.includes('từ dự án'))return x.proj_cn||0;
+    if(label.includes('CP cố định'))return x.overhead||0;
+    return netOf(selBranch,mo);
+  };
+  document.getElementById('detBody').innerHTML=`
+    <div class="kpi-row">
+      <div class="kpi-pill"><div class="kp-lbl">Doanh thu</div><div class="kp-val green">${fmt(d.revenue||0)}</div></div>
+      <div class="kpi-pill"><div class="kp-lbl">Số dự án</div><div class="kp-val">${d.projects||0}</div></div>
+      <div class="kpi-pill"><div class="kp-lbl">Lao động</div><div class="kp-val">${d.workers||0}</div></div>
+      <div class="kpi-pill"><div class="kp-lbl">LN/LĐ</div><div class="kp-val ${nc>=0?'green':'red'}">${d.workers?fmt(nc/d.workers*1000)+'k':'—'}</div></div>
+    </div>
+    <table class="cmp-t"><thead><tr>
+      <th>Chỉ số</th><th class="num">${m}</th><th class="num">${cmpMonth}</th>
+      <th class="num">Chênh lệch</th><th style="width:80px;text-align:center">T1→T6</th>
+    </tr></thead><tbody>
+    ${rows.map(r=>{
+      const diff=r.cur-r.prv;
+      const pctt=r.prv!==0?(diff/Math.abs(r.prv)*100).toFixed(1)+'%':'—';
+      const tv=MONTHS.map(mo=>tF(r.label,mo));
+      const mx=Math.max(...tv.map(Math.abs),1);
+      return`<tr ${r.bold?'class="tr-total"':''}>
+        <td style="color:var(--tx2)">${r.label}</td>
+        <td class="num" style="color:${r.color}">${fmt(r.cur)}</td>
+        <td class="num" style="color:var(--tx3)">${fmt(r.prv)}</td>
+        <td class="num" style="color:${diff>0?'#3B6D11':diff<0?'#A32D2D':'var(--tx3)'}">
+          ${diff>0?'↑ +':''}${fmt(diff)} ${pctt!=='—'?'('+pctt+')':''}
+        </td>
+        <td><div style="display:flex;align-items:flex-end;gap:1px;height:16px;justify-content:center">
+          ${tv.map((v,si)=>`<div style="width:8px;border-radius:1px 1px 0 0;height:${Math.max(2,Math.abs(v)/mx*14)}px;background:${si===MONTHS.indexOf(m)?r.color:'var(--bg3)'}"></div>`).join('')}
+        </div></td>
+      </tr>`;}).join('')}
+    </tbody></table>`;
+}
+
+function renderCmpTable(){
+  const cols=[cmpMonth,selMonth];
+  document.getElementById('cmpTable').innerHTML=`<thead><tr>
+    <th>Chi nhánh</th>
+    ${cols.map(m=>`<th class="num">${m} LN ròng</th><th class="num">DT</th>`).join('')}
+    <th class="num">Tăng trưởng LN</th>
+  </tr></thead><tbody>
+  ${branches.map(br=>{
+    const n0=netOf(br.id,cols[0]);const n1=netOf(br.id,cols[1]);
+    const r0=(perfData[br.id][cols[0]]||{}).revenue||0;
+    const r1=(perfData[br.id][cols[1]]||{}).revenue||0;
+    const diff=n1-n0;
+    return`<tr>
+      <td style="font-weight:500">${br.name}</td>
+      <td class="num ${n0>=0?'green':'red'}">${fmt(n0)}</td>
+      <td class="num" style="color:var(--tx3)">${fmt(r0)}</td>
+      <td class="num ${n1>=0?'green':'red'}">${fmt(n1)}</td>
+      <td class="num" style="color:var(--tx3)">${fmt(r1)}</td>
+      <td class="num" style="color:${diff>0?'#3B6D11':diff<0?'#A32D2D':'var(--tx3)'}">
+        ${diff>0?'↑ +':''}${fmt(diff)} tr.đ</td>
+    </tr>`;}).join('')}
+  <tr class="tr-total"><td>Tổng</td>
+    ${cols.map(m=>{
+      const tn=branches.reduce((s,b)=>s+netOf(b.id,m),0);
+      const tr=branches.reduce((s,b)=>s+(perfData[b.id][m]||{}).revenue||0,0);
+      return`<td class="num ${tn>=0?'green':'red'}">${fmt(tn)}</td><td class="num">${fmt(tr)}</td>`;}).join('')}
+    <td class="num ${branches.reduce((s,b)=>s+netOf(b.id,selMonth)-netOf(b.id,cmpMonth),0)>=0?'green':'red'}">
+      ${(()=>{const d=branches.reduce((s,b)=>s+netOf(b.id,selMonth)-netOf(b.id,cmpMonth),0);return(d>=0?'↑ +':'')+fmt(d)+' tr.đ';})()}
+    </td>
+  </tr></tbody>`;
+}
+
+function selB(id){selBranch=id;renderCards();renderDetail();}
+
+// ════════════════════════════════════════════════════════
+// TAB 3: OVERHEAD
+// ════════════════════════════════════════════════════════
+function renderOverhead(){
+  const bName=document.getElementById('ohBranchSel').value;
+  const month=document.getElementById('ohMonthSel').value;
+  document.getElementById('ohHeaderLabel').textContent=bName+' · '+month;
+  const items=overheadItems[bName]||[];
+  const total=items.reduce((s,i)=>s+(+i.val||0),0);
+  document.getElementById('ohTotal').textContent=fmt(total)+' tr.đ';
+  document.getElementById('ohRows').innerHTML=items.map(item=>`
+    <tr>
+      <td><input type="text" value="${item.label}" onchange="ohLabel('${bName}','${item.id}',this.value)"></td>
+      <td><div class="inpw" style="width:110px"><input type="number" value="${item.val||''}" placeholder="0" oninput="ohVal('${bName}','${item.id}',+this.value)"><span class="u">tr.đ</span></div></td>
+      <td style="text-align:center">
+        <select onchange="ohType('${bName}','${item.id}',this.value)" style="font-size:11px;padding:2px 5px">
+          <option ${item.type==='Cố định'?'selected':''}>Cố định</option>
+          <option ${item.type==='Biến đổi'?'selected':''}>Biến đổi</option>
+        </select>
+      </td>
+      <td><button class="ibt del" onclick="ohDel('${bName}','${item.id}')"><i class="ti ti-trash" style="font-size:11px" aria-hidden="true"></i></button></td>
+    </tr>`).join('');
+  const bId=branches.find(b=>b.name===bName)?.id||'bh';
+  const proj=(perfData[bId][month]||{}).proj_cn||0;
+  const net2=proj-total;
+  document.getElementById('oh_proj').textContent=fmt(proj)+' tr.đ';
+  document.getElementById('oh_fixed').textContent=fmt(total)+' tr.đ';
+  document.getElementById('oh_net').textContent=fmt(net2)+' tr.đ';
+  document.getElementById('oh_net').className='kp-val '+(net2>=0?'green':'red');
+}
+function ohLabel(b,id,v){const i=overheadItems[b]?.find(x=>x.id===id);if(i)i.label=v;}
+function ohType(b,id,v){const i=overheadItems[b]?.find(x=>x.id===id);if(i)i.type=v;}
+function ohVal(b,id,v){const i=overheadItems[b]?.find(x=>x.id===id);if(i)i.val=v;renderOverhead();}
+function ohDel(b,id){overheadItems[b]=overheadItems[b].filter(i=>i.id!==id);renderOverhead();}
+function addOhRow(){
+  const b=document.getElementById('ohBranchSel').value;
+  if(!overheadItems[b])overheadItems[b]=[];
+  overheadItems[b].push({id:genId(),label:'Chi phí mới',val:0,type:'Cố định'});
+  renderOverhead();
+}
+function copyFromLast(){const b=document.getElementById('ohBranchSel').value;alert('✓ Đã sao chép từ tháng trước cho '+b);}
+function saveOverhead(){const b=document.getElementById('ohBranchSel').value;const m=document.getElementById('ohMonthSel').value;alert('✓ Đã lưu: '+b+' · '+m);}
+
+// ════════════════════════════════════════════════════════
+// NAV
+// ════════════════════════════════════════════════════════
+function switchMain(view,el){
+  document.querySelectorAll('.tp-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  ['projects','workspace','overhead'].forEach(v=>{
+    document.getElementById('view-'+v).style.display=v===view?'':'none';
+  });
+  if(view==='workspace'){renderChips();renderCards();renderDetail();renderCmpTable();}
+  if(view==='overhead')renderOverhead();
+}
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+renderSidebar();
+renderMain();
+</script>
+</body>
+</html>

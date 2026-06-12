@@ -1,3 +1,5 @@
+import type { ProjectPnlType, CostPayer } from './types';
+
 export function formatCurrency(value: number): string {
   if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + ' tỷ';
   if (value >= 1_000_000) return (value / 1_000_000).toFixed(0) + ' tr';
@@ -58,6 +60,42 @@ export function recentWeekLabels(monthsBack = 6): { month: string; labels: strin
     groups.push({ month: `Tháng ${m}/${y}`, labels });
   }
   return groups;
+}
+
+// "2026-06" -> "Tháng 6/2026"
+export function monthLabel(month: string): string {
+  const [y, m] = month.split('-');
+  return `Tháng ${Number(m)}/${y}`;
+}
+
+// Shifts a "YYYY-MM" month string by `delta` months (negative = past).
+export function shiftMonth(month: string, delta: number): string {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function fmtTrieu(value: number): string {
+  return Math.round(value).toLocaleString('vi-VN');
+}
+
+// P&L calculation shared by the Finance Workspace project tabs.
+export function calcPnl(
+  p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number },
+  costs: { value: number; payer: CostPayer }[]
+): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number } {
+  const tc = costs.reduce((s, c) => s + (Number(c.value) || 0), 0);
+  const profit = p.revenue - tc;
+  let lgC = 0, cnC = 0, shC = 0;
+  for (const c of costs) {
+    const v = Number(c.value) || 0;
+    if (c.payer === 'lg') lgC += v;
+    else if (c.payer === 'cn') cnC += v;
+    else shC += v;
+  }
+  const lgP = p.project_type === 'managed' ? profit : profit * p.lg_pct / 100;
+  const cnP = p.project_type === 'managed' ? 0 : profit * p.cn_pct / 100;
+  return { tc, profit, lgC, cnC, shC, lgP, cnP };
 }
 
 export function statusPill(status: string): { label: string; cls: string } {

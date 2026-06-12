@@ -2,16 +2,20 @@ import { useState, useEffect, useMemo } from 'react';
 import { Lock, CheckCircle, Circle, Pencil, Check, X as XIcon, CalendarCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import FinanceTimeline from '../components/FinanceTimeline';
+import PnLProjectTab from '../components/finance/PnLProjectTab';
+import OverheadTab from '../components/finance/OverheadTab';
+import PerformanceTab from '../components/finance/PerformanceTab';
 import type { FinanceRecord, Client } from '../lib/types';
-import { formatCurrency } from '../lib/format';
+import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
+import { useFinanceData } from '../hooks/useFinanceData';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 
-type TimelineMode = 'clients' | 'payment';
+type WorkspaceTab = 'clients' | 'payment' | 'pnl' | 'overhead' | 'performance';
 type DayEventType = 'cutoff' | 'calc' | 'payment' | 'salary';
 interface DayEvent { client: Client; type: DayEventType }
 
@@ -73,9 +77,20 @@ interface FinanceProps {
 export default function Finance({ finance, clients, onLoadFinance, onFinanceUpdate, onClientUpdate, toast }: FinanceProps) {
   const { user } = useAuth();
   const [month, setMonth] = useState('2026-06');
-  const [timelineMode, setTimelineMode] = useState<TimelineMode>('clients');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('clients');
 
   useEffect(() => { onLoadFinance(month); }, [month, onLoadFinance]);
+
+  // ── Finance Workspace (P&L / Hiệu suất / Chi phí cố định) ─────────
+  const [selectedMonth, setSelectedMonth] = useState(month);
+  const [overheadBranch, setOverheadBranch] = useState('');
+  const workspaceMonths = useMemo(() => {
+    const base = todayStr.slice(0, 7);
+    const arr: string[] = [];
+    for (let i = -6; i <= 2; i++) arr.push(shiftMonth(base, i));
+    return arr;
+  }, []);
+  const finData = useFinanceData();
 
   // ── Shared filters ────────────────────────────────────────────────
   const [filterRegion, setFilterRegion] = useState<string[]>([ALL_OPTION]);
@@ -98,6 +113,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
+
+  useEffect(() => {
+    if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
+  }, [managerList, overheadBranch]);
 
   const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
@@ -173,7 +192,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const totalCost = sortedFinance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
   const totalProfit = totalRev - totalCost;
   const paidCount = sortedFinance.filter(r => r.paid_status).length;
-  const monthLabel = month === '2026-06' ? 'Tháng 6/2026' : 'Tháng 5/2026';
+  const monthTitle = month === '2026-06' ? 'Tháng 6/2026' : 'Tháng 5/2026';
 
   // Mark as paid — open date picker
   const openPayModal = (recId: string) => {
@@ -238,26 +257,54 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         subtitle="Timeline · Chi phí · Khoán · Trạng thái TT"
         actions={
           <div className="flex items-center gap-2.5">
-            <select
-              value={month}
-              onChange={e => { setMonth(e.target.value); setSelectedDay(null); setEditClient(null); }}
-              className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
-            >
-              <option value="2026-06">Tháng 6/2026</option>
-              <option value="2026-05">Tháng 5/2026</option>
-            </select>
+            {activeTab === 'clients' || activeTab === 'payment' ? (
+              <select
+                value={month}
+                onChange={e => { setMonth(e.target.value); setSelectedDay(null); setEditClient(null); }}
+                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
+              >
+                <option value="2026-06">Tháng 6/2026</option>
+                <option value="2026-05">Tháng 5/2026</option>
+              </select>
+            ) : (
+              <select
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
+              >
+                {workspaceMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+              </select>
+            )}
             <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
               <button
-                onClick={() => setTimelineMode('clients')}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${timelineMode === 'clients' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+                onClick={() => setActiveTab('clients')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'clients' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
               >
                 Timeline KH
               </button>
               <button
-                onClick={() => setTimelineMode('payment')}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${timelineMode === 'payment' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+                onClick={() => setActiveTab('payment')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'payment' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
               >
                 Timeline TT
+              </button>
+              <button
+                onClick={() => setActiveTab('pnl')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'pnl' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+              >
+                P&L Dự án
+              </button>
+              <button
+                onClick={() => setActiveTab('overhead')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'overhead' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+              >
+                Chi phí cố định CN
+              </button>
+              <button
+                onClick={() => setActiveTab('performance')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'performance' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+              >
+                Hiệu suất CN
               </button>
             </div>
           </div>
@@ -296,7 +343,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         </div>
 
         {/* ══ MODE 1: Timeline Khách hàng (Gantt) ══ */}
-        {timelineMode === 'clients' && (
+        {activeTab === 'clients' && (
           <>
             {/* Filter: Region + Manager dropdowns */}
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -316,7 +363,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             {/* Gantt chart */}
             <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
-                <span className="text-[12.5px] font-semibold text-[#111]">Timeline {monthLabel}</span>
+                <span className="text-[12.5px] font-semibold text-[#111]">Timeline {monthTitle}</span>
                 <div className="flex items-center gap-4 text-[11px] text-[#888]">
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> Chốt công
@@ -460,7 +507,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
                 <div className="text-[12.5px] font-semibold text-[#111]">
-                  Trạng thái thanh toán {monthLabel}
+                  Trạng thái thanh toán {monthTitle}
                 </div>
                 <div className="text-[11.5px] text-[#aaa]">
                   Chưa TT xếp lên trên · Bấm nút để cập nhật
@@ -548,7 +595,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         )}
 
         {/* ══ MODE 2: Timeline Thanh Toán (Calendar) ══ */}
-        {timelineMode === 'payment' && (
+        {activeTab === 'payment' && (
           <>
             {/* Filter row */}
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -683,6 +730,61 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
             <FinanceTimeline clients={clients} onClientClick={startEdit} />
           </>
+        )}
+
+        {/* ══ MODE 3: P&L Dự án ══ */}
+        {activeTab === 'pnl' && (
+          <PnLProjectTab
+            clients={clients}
+            month={selectedMonth}
+            projectsPnl={finData.projectsPnl}
+            pnlCosts={finData.pnlCosts}
+            onAddProject={finData.addProjectPnl}
+            onUpdateProject={finData.updateProjectPnl}
+            onDeleteProject={finData.deleteProjectPnl}
+            onLoadCosts={finData.loadPnlCosts}
+            onAddCost={finData.addPnlCost}
+            onUpdateCost={finData.updatePnlCost}
+            onDeleteCost={finData.deletePnlCost}
+            currentUser={user?.full_name}
+            toast={toast}
+          />
+        )}
+
+        {/* ══ MODE 4: Chi phí cố định CN ══ */}
+        {activeTab === 'overhead' && (
+          <OverheadTab
+            managers={managerList}
+            months={workspaceMonths}
+            branchManager={overheadBranch}
+            month={selectedMonth}
+            onBranchManagerChange={setOverheadBranch}
+            onMonthChange={setSelectedMonth}
+            overhead={finData.overhead}
+            projectsPnl={finData.projectsPnl}
+            pnlCosts={finData.pnlCosts}
+            onAdd={finData.addOverhead}
+            onUpdate={finData.updateOverhead}
+            onDelete={finData.deleteOverhead}
+            onCopyFromMonth={finData.copyOverheadFromMonth}
+            onLoadCosts={finData.loadPnlCosts}
+            toast={toast}
+          />
+        )}
+
+        {/* ══ MODE 5: Hiệu suất chi nhánh ══ */}
+        {activeTab === 'performance' && (
+          <PerformanceTab
+            managers={managerList}
+            months={workspaceMonths}
+            selMonth={selectedMonth}
+            onSelMonthChange={setSelectedMonth}
+            projectsPnl={finData.projectsPnl}
+            pnlCosts={finData.pnlCosts}
+            overhead={finData.overhead}
+            clients={clients}
+            onLoadCosts={finData.loadPnlCosts}
+          />
         )}
       </div>
 

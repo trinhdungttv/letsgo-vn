@@ -339,3 +339,41 @@ export interface Contact {
   updated_at: string;
   clients?: { name: string } | null;
 }
+
+export type ProjectPnlType = 'shared' | 'managed';
+export type CostPayer = 'lg' | 'cn' | 'ch';
+export type OverheadCostType = 'Cố định' | 'Biến đổi';
+
+export interface ProjectPnl {
+  id: string;
+  client_id: string;
+  month: string;
+  branch_manager: string | null;
+  project_type: ProjectPnlType;
+  lg_pct: number;
+  cn_pct: number;
+  revenue: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  clients?: { name: string } | null;
+}
+
+export interface ProjectPnlCost {
+  id: string;
+  pnl_id: string;
+  label: string;
+  value: number;
+  payer: CostPayer;
+  sort_order: number;
+}
+
+export interface BranchOverhead {
+  id: string;
+  branch_manager: string;
+  month: string;
+  label: string;
+  value: number;
+  cost_type: OverheadCostType;
+  sort_order: number;
+}
