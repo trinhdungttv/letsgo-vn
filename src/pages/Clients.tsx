@@ -159,6 +159,15 @@ export default function Clients({
           });
         }
 
+        await supabase.from('crm_deals').insert({
+          title: `Hợp đồng - ${row.name}`,
+          client_id: data.id,
+          value: 0,
+          stage: 'won',
+          owner: row.manager || null,
+          probability: 100,
+        });
+
         await logActivity({
           user, action: 'insert', table: 'clients', recordId: data.id,
           description: `Nhập khách hàng "${row.name}" từ file Excel (công ty cũ - đang hợp tác)`,

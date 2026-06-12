@@ -4,12 +4,13 @@ import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
 import type { Client, LaborHistoryEntry, MarketZone, CRMDeal as CRMDealType, CRMActivity } from '../lib/types';
 import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, statusPill, formatCurrency } from '../lib/format';
-import { MANAGERS } from '../lib/constants';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import ContactsTab from '../components/ContactsTab';
 import { useContacts } from '../hooks/useContacts';
+import { useRegions } from '../hooks/useRegions';
+import { useManagers } from '../hooks/useManagers';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
@@ -27,6 +28,8 @@ interface ClientDetailProps {
 
 export default function ClientDetail({ client, laborHistory, onBack, onClientUpdate, onLaborUpdate, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
+  const { regions } = useRegions();
+  const { managers } = useManagers();
   const [activeTab, setActiveTab] = useState<'overview' | 'crm'>('overview');
   const [editing, setEditing] = useState(false);
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
@@ -587,13 +590,15 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>
                       <select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                        {['Biên Hòa', 'VSIP', 'Bình Dương', 'Đồng Nai', 'Bàu Bàng', 'Củ Chi', 'Nhơn Trạch'].map(r => <option key={r}>{r}</option>)}
+                        {!regions.some(r => r.name === form.region) && form.region && <option key={form.region}>{form.region}</option>}
+                        {regions.map(r => <option key={r.id}>{r.name}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Người quản lý</label>
                       <select value={form.manager} onChange={e => setForm({ ...form, manager: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                        {MANAGERS.map(m => <option key={m}>{m}</option>)}
+                        {!managers.some(m => m.name === form.manager) && form.manager && <option key={form.manager}>{form.manager}</option>}
+                        {managers.map(m => <option key={m.id}>{m.name}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
