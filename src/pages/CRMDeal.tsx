@@ -7,10 +7,10 @@ import { logActivity } from '../lib/audit';
 import type { Client, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from '../lib/types';
 
 // Stage configuration
-const STAGE_ORDER = ['new', 'contacted', 'in_progress', 'proposal', 'won', 'lost'] as const;
-type StageKey = typeof STAGE_ORDER[number];
+export const STAGE_ORDER = ['new', 'contacted', 'in_progress', 'proposal', 'won', 'lost'] as const;
+export type StageKey = typeof STAGE_ORDER[number];
 
-const STAGES: Record<StageKey, { label: string; color: string; colBg: string; textCol: string; prob: number }> = {
+export const STAGES: Record<StageKey, { label: string; color: string; colBg: string; textCol: string; prob: number }> = {
   new:         { label: 'Mới',          color: 'bg-slate-500',   colBg: 'bg-slate-50/80',   textCol: 'text-slate-700',   prob: 10  },
   contacted:   { label: 'Đã liên hệ',   color: 'bg-blue-500',    colBg: 'bg-blue-50/80',    textCol: 'text-blue-700',    prob: 25  },
   in_progress: { label: 'Đang xử lý',   color: 'bg-amber-500',   colBg: 'bg-amber-50/80',   textCol: 'text-amber-700',   prob: 50  },
@@ -19,7 +19,7 @@ const STAGES: Record<StageKey, { label: string; color: string; colBg: string; te
   lost:        { label: 'Thua',          color: 'bg-red-500',     colBg: 'bg-red-50/80',     textCol: 'text-red-700',     prob: 0   },
 };
 
-const ACTIVE_STAGES: StageKey[] = ['new', 'contacted', 'in_progress', 'proposal'];
+export const ACTIVE_STAGES: StageKey[] = ['new', 'contacted', 'in_progress', 'proposal'];
 
 type ActivityType = 'note' | 'call' | 'email' | 'meeting';
 

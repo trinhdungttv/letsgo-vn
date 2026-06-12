@@ -194,6 +194,7 @@ function AppInner() {
             onSelectClient={handleSelectClient}
             onAddClient={handleAddClient}
             onClientUpdate={handleClientUpdate}
+            onReload={loadClients}
             isAdmin={user?.role === 'admin'}
             marketZones={marketZones}
             toast={toast}
@@ -208,6 +209,7 @@ function AppInner() {
             onLaborUpdate={handleLaborUpdate}
             marketZones={marketZones}
             toast={toast}
+            onOpenDeal={handleSelectDeal}
           />
         )}
         {page === 'finance' && (
@@ -221,11 +223,11 @@ function AppInner() {
         )}
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}
-        {page === 'history' && <History toast={toast} />}
+        {page === 'history' && <History toast={toast} onReload={loadClients} />}
 
         {/* CRM Module */}
         {page === 'crm-dash' && (
-          <CRMDash deals={deals} leads={leads} activities={activities} onNavigate={navigate} />
+          <CRMDash deals={deals} leads={leads} activities={activities} clients={clients} isAdmin={user?.role === 'admin'} onNavigate={navigate} />
         )}
         {page === 'crm-board' && (
           <CRMBoard

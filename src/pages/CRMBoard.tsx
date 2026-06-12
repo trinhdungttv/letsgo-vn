@@ -184,7 +184,8 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
         updated_at: new Date().toISOString(),
       }).select().single();
       if (error) throw error;
-      await supabase.from('crm_deals').update({ stage: 'won' }).eq('id', activatingDeal.id);
+      const { error: linkError } = await supabase.from('crm_deals').update({ stage: 'won', client_id: data.id }).eq('id', activatingDeal.id);
+      if (linkError) throw linkError;
       onDealActivate(data as Client);
       setActivatingDeal(null);
       toast(`Đã tạo khách hàng "${activateForm.companyName}" — hãy điền thêm thông tin!`);

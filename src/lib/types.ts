@@ -56,6 +56,7 @@ export interface Client {
   phone: string | null;
   email: string | null;
   prospect_status: 'lead' | 'prospect' | 'customer' | 'churned' | null;
+  archived_at: string | null;
 }
 
 export interface LaborHistoryEntry {
@@ -306,6 +307,7 @@ export interface Contact {
   start_date: string | null;
   end_date: string | null;
   is_active: boolean;
+  is_primary: boolean;
   notes: string | null;
   address: string | null;
   birthday: string | null;

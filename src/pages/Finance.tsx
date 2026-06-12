@@ -164,15 +164,15 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
   // ── Finance records ───────────────────────────────────────────────
   // Sort: unpaid first, paid last
-  const sortedFinance = useMemo(() =>
-    [...finance].sort((a, b) => Number(a.paid_status) - Number(b.paid_status)),
-    [finance]
-  );
+  const sortedFinance = useMemo(() => {
+    const activeIds = new Set(clients.map(c => c.id));
+    return finance.filter(r => activeIds.has(r.client_id)).sort((a, b) => Number(a.paid_status) - Number(b.paid_status));
+  }, [finance, clients]);
 
-  const totalRev = finance.reduce((s, r) => s + (r.revenue || 0), 0);
-  const totalCost = finance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
+  const totalRev = sortedFinance.reduce((s, r) => s + (r.revenue || 0), 0);
+  const totalCost = sortedFinance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
   const totalProfit = totalRev - totalCost;
-  const paidCount = finance.filter(r => r.paid_status).length;
+  const paidCount = sortedFinance.filter(r => r.paid_status).length;
   const monthLabel = month === '2026-06' ? 'Tháng 6/2026' : 'Tháng 5/2026';
 
   // Mark as paid — open date picker
@@ -289,7 +289,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             <div className="text-[11.5px] text-[#888] mb-1">Đã thanh toán</div>
             <div className="text-[20px] font-semibold text-[#111]">
               {paidCount}
-              <span className="text-[14px] text-[#aaa] font-normal">/{finance.length}</span>
+              <span className="text-[14px] text-[#aaa] font-normal">/{sortedFinance.length}</span>
             </div>
             <div className="text-[11px] text-[#aaa] mt-0.5">khách hàng</div>
           </div>

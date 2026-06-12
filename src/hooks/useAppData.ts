@@ -21,7 +21,7 @@ export function useAppData(enabled = false) {
   const [error, setError] = useState<string | null>(null);
 
   const loadClients = useCallback(async () => {
-    const { data, error: err } = await withTimeout(supabase.from('clients').select('*').eq('client_type', 'active').order('name'));
+    const { data, error: err } = await withTimeout(supabase.from('clients').select('*').eq('client_type', 'active').is('archived_at', null).order('name'));
     if (err) throw new Error(err.message);
     const clientList = (data || []) as Client[];
     const ids = clientList.map(c => c.id);

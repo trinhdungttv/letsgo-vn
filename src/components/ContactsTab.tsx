@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Edit2, UserX, Users } from 'lucide-react';
+import { Plus, Edit2, UserX, Users, Star } from 'lucide-react';
 import type { Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
 import { useAuth } from '../lib/auth';
@@ -34,7 +34,7 @@ interface Props {
 
 export default function ContactsTab({ clientId, toast }: Props) {
   const { user } = useAuth();
-  const { contacts, loading, addContact, updateContact, markInactive } = useContacts(clientId);
+  const { contacts, loading, addContact, updateContact, markInactive, setPrimary } = useContacts(clientId);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
@@ -73,6 +73,7 @@ export default function ContactsTab({ clientId, toast }: Props) {
         start_date: form.start_date || null,
         end_date: null as string | null,
         is_active: form.is_active,
+        is_primary: editingId ? contacts.find(c => c.id === editingId)?.is_primary || false : false,
         notes: form.notes.trim() || null,
       };
       if (editingId) {
@@ -98,6 +99,20 @@ export default function ContactsTab({ clientId, toast }: Props) {
       toast('Lỗi: ' + e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSetPrimary = async (c: Contact) => {
+    try {
+      await setPrimary(c.id);
+      toast(`Đã đặt "${c.name}" làm người liên hệ chính`);
+      await logActivity({
+        user, action: 'update', table: 'contacts', recordId: c.id,
+        description: `Đặt "${c.name}" làm người liên hệ chính cho công ty`,
+        oldData: c, newData: { ...c, is_primary: true },
+      });
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
     }
   };
 
@@ -160,7 +175,7 @@ export default function ContactsTab({ clientId, toast }: Props) {
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-[#E8E7E2]">
-                  {['Họ tên', 'SĐT', 'Email', 'Vai trò', 'Từ ngày', 'Trạng thái', ''].map(h => (
+                  {['', 'Họ tên', 'SĐT', 'Email', 'Vai trò', 'Từ ngày', 'Trạng thái', ''].map(h => (
                     <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">
                       {h}
                     </th>
@@ -170,7 +185,21 @@ export default function ContactsTab({ clientId, toast }: Props) {
               <tbody>
                 {contacts.map(c => (
                   <tr key={c.id} className={`border-b border-[#F0EEE9] hover:bg-[#FAFAF8] transition ${!c.is_active ? 'opacity-60' : ''}`}>
-                    <td className="px-3 py-2.5 font-medium text-[#111]">{c.name}</td>
+                    <td className="px-3 py-2.5">
+                      <button
+                        onClick={() => handleSetPrimary(c)}
+                        title={c.is_primary ? 'Người liên hệ chính' : 'Đặt làm người liên hệ chính'}
+                        className="inline-flex"
+                      >
+                        <Star size={14} className={c.is_primary ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-400'} />
+                      </button>
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-[#111]">
+                      {c.name}
+                      {c.is_primary && (
+                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">Liên hệ chính</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 text-[#555]">{c.phone || '—'}</td>
                     <td className="px-3 py-2.5 text-[#555]">{c.email || '—'}</td>
                     <td className="px-3 py-2.5 text-[#555]">{c.role || '—'}</td>

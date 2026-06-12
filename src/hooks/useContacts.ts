@@ -62,9 +62,15 @@ export function useContacts(clientId: string) {
     });
   }, [updateContact]);
 
+  const setPrimary = useCallback(async (id: string): Promise<void> => {
+    const others = contacts.filter(c => c.id !== id && c.is_primary);
+    await Promise.all(others.map(c => updateContact(c.id, { is_primary: false })));
+    await updateContact(id, { is_primary: true });
+  }, [contacts, updateContact]);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  return { contacts, loading, error, addContact, updateContact, markInactive, reload: load };
+  return { contacts, loading, error, addContact, updateContact, markInactive, setPrimary, reload: load };
 }

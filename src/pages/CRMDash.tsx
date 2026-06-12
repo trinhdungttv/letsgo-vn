@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Phone, Mail, PenTool, Calendar } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
@@ -8,7 +8,31 @@ interface Props {
   deals: CRMDeal[];
   leads: Client[];
   activities: CRMActivity[];
+  clients: Client[];
+  isAdmin: boolean;
   onNavigate: (p: Page) => void;
+}
+
+type PeriodFilter = 'all' | 'month' | 'quarter' | 'year';
+
+const PERIOD_LABELS: Record<PeriodFilter, string> = {
+  all: 'Tất cả',
+  month: 'Tháng này',
+  quarter: 'Quý này',
+  year: 'Năm này',
+};
+
+function isWithinPeriod(dateStr: string | null | undefined, period: PeriodFilter): boolean {
+  if (period === 'all') return true;
+  if (!dateStr) return false;
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return false;
+  const now = new Date();
+  if (date.getFullYear() !== now.getFullYear()) return false;
+  if (period === 'year') return true;
+  if (period === 'month') return date.getMonth() === now.getMonth();
+  const quarterOf = (m: number) => Math.floor(m / 3);
+  return quarterOf(date.getMonth()) === quarterOf(now.getMonth());
 }
 
 const STAGES = {
@@ -22,10 +46,10 @@ const STAGES = {
 
 type StageKey = keyof typeof STAGES;
 
-const CRMDash: React.FC<Props> = ({ deals, activities, onNavigate }) => {
+const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavigate }) => {
+  const [period, setPeriod] = useState<PeriodFilter>('all');
+
   const stats = useMemo(() => {
-    const activeDealIds = deals.filter(d => d.stage !== 'won' && d.stage !== 'lost').map(d => d.id);
-    const activeDealCount = activeDealIds.length;
     const pipelineValue = deals
       .filter(d => d.stage !== 'won' && d.stage !== 'lost')
       .reduce((sum, d) => sum + (d.value || 0), 0);
@@ -37,12 +61,22 @@ const CRMDash: React.FC<Props> = ({ deals, activities, onNavigate }) => {
     const recentActivities = activities.filter(a => new Date(a.created_at || '') > sevenDaysAgo).length;
 
     return {
-      activeDealCount,
       pipelineValue,
       winRate,
       recentActivities,
     };
   }, [deals, activities]);
+
+  const runningProjects = useMemo(() => {
+    const active = clients.filter(c => c.client_type === 'active');
+    const filtered = active.filter(c => isWithinPeriod(c.source === 'excel_import' ? c.contract_start : (c.won_date || c.contract_start), period));
+    const legacyCount = filtered.filter(c => c.source === 'excel_import').length;
+    return {
+      total: filtered.length,
+      legacyCount,
+      newCount: filtered.length - legacyCount,
+    };
+  }, [clients, period]);
 
   const stageDistribution = useMemo(() => {
     const distribution: Record<string, number> = {
@@ -114,6 +148,18 @@ const CRMDash: React.FC<Props> = ({ deals, activities, onNavigate }) => {
         title="CRM Dashboard"
         actions={
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <select
+                value={period}
+                onChange={e => setPeriod(e.target.value as PeriodFilter)}
+                className="px-2.5 py-1.5 rounded-lg text-[12px] border border-gray-300 text-gray-600 outline-none focus:border-blue-500"
+                title="Lọc 'Dự án đang chạy' theo kỳ ký mới"
+              >
+                {Object.entries(PERIOD_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+            )}
             <button onClick={() => onNavigate('crm-leads')} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Leads</button>
             <button onClick={() => onNavigate('crm-board')} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Pipeline</button>
           </div>
@@ -123,9 +169,9 @@ const CRMDash: React.FC<Props> = ({ deals, activities, onNavigate }) => {
       {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="text-xs font-medium text-gray-600 mb-1">Tổng thương vụ</div>
-          <div className="text-2xl font-bold text-gray-900 mb-1">{stats.activeDealCount}</div>
-          <div className="text-xs text-gray-500">active</div>
+          <div className="text-xs font-medium text-gray-600 mb-1">Dự án đang chạy</div>
+          <div className="text-2xl font-bold text-gray-900 mb-1">{runningProjects.total}</div>
+          <div className="text-xs text-gray-500">Cũ: {runningProjects.legacyCount} · CRM mới: {runningProjects.newCount}</div>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-4">

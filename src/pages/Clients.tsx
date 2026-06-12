@@ -1,15 +1,16 @@
-import { useState } from 'react';
-import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, statusPill, formatDate, daysUntil } from '../lib/format';
+import { getMonthLast, statusPill, formatDate, daysUntil, getCurrentWeekLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
+import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
 
 interface ClientsProps {
   clients: Client[];
@@ -19,6 +20,7 @@ interface ClientsProps {
   onSelectClient: (id: string) => void;
   onAddClient: (regionName?: string, managerName?: string) => void;
   onClientUpdate: (c: Client) => void;
+  onReload: () => void;
   isAdmin: boolean;
   marketZones: MarketZone[];
   toast: (m: string) => void;
@@ -33,7 +35,7 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onAddClient, onClientUpdate, isAdmin, marketZones, toast,
+  onSelectClient, onAddClient, onClientUpdate, onReload, isAdmin, marketZones, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -44,6 +46,11 @@ export default function Clients({
   const [activeZones, setActiveZones] = useState<string[]>([ALL_OPTION]);
   const [activeManagers, setActiveManagers] = useState<string[]>([ALL_OPTION]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
@@ -53,6 +60,7 @@ export default function Clients({
   const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
 
   const filtered = clients.filter(c => {
+    if (c.archived_at) return false;
     const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
@@ -101,6 +109,107 @@ export default function Clients({
     finally { setIsRenewing(false); }
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImporting(true);
+    try {
+      const rows = await parseClientExcel(file);
+      if (rows.length === 0) {
+        toast('Không tìm thấy dòng dữ liệu hợp lệ trong file');
+        return;
+      }
+      const existingNames = new Set(clients.map(c => c.name.trim().toLowerCase()));
+      const toInsert = rows.filter(r => !existingNames.has(r.name.trim().toLowerCase()));
+      const skipped = rows.length - toInsert.length;
+
+      let inserted = 0;
+      for (const row of toInsert) {
+        const payload = {
+          name: row.name,
+          region: row.region,
+          manager: row.manager,
+          phone: row.phone,
+          email: row.email,
+          contract_start: row.contract_start,
+          contract_end: row.contract_end,
+          min_workers: row.min_workers,
+          industrial_zones: row.industrial_zones,
+          notes: row.notes,
+          client_type: 'active' as const,
+          status: 'ok' as const,
+          prospect_status: 'customer' as const,
+          pipeline_stage: 'won',
+          source: 'excel_import',
+          cutoff_day: 25,
+          payment_start: 5,
+          payment_end: 8,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await supabase.from('clients').insert(payload).select().single();
+        if (error) { toast(`Lỗi khi nhập "${row.name}": ${error.message}`); continue; }
+
+        if (row.current_workers != null && row.current_workers > 0) {
+          await supabase.from('client_labor_history').insert({
+            client_id: data.id,
+            week_label: getCurrentWeekLabel(),
+            count: row.current_workers,
+            updated_by: user?.full_name || null,
+          });
+        }
+
+        await logActivity({
+          user, action: 'insert', table: 'clients', recordId: data.id,
+          description: `Nhập khách hàng "${row.name}" từ file Excel (công ty cũ - đang hợp tác)`,
+          newData: data,
+        });
+        inserted += 1;
+      }
+
+      onReload();
+      toast(`Đã nhập ${inserted} khách hàng${skipped > 0 ? `, bỏ qua ${skipped} dòng trùng tên` : ''}`);
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    if (!deletePassword) { toast('Vui lòng nhập mật khẩu'); return; }
+    setIsDeleting(true);
+    try {
+      const { data: authCheck, error: authErr } = await supabase
+        .from('app_users')
+        .select('id')
+        .eq('id', user?.id || '')
+        .eq('password', deletePassword)
+        .maybeSingle();
+      if (authErr) throw authErr;
+      if (!authCheck) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
+
+      const archivedAt = new Date().toISOString();
+      const { error } = await supabase.from('clients').update({ archived_at: archivedAt, updated_at: archivedAt }).eq('id', deleteTarget.id);
+      if (error) throw error;
+      onClientUpdate({ ...deleteTarget, archived_at: archivedAt });
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: deleteTarget.id,
+        description: `Xóa (lưu trữ) công ty "${deleteTarget.name}" — có thể khôi phục tại Lịch sử > Lưu trữ`,
+        oldData: deleteTarget, newData: { ...deleteTarget, archived_at: archivedAt },
+      });
+      toast(`Đã xóa "${deleteTarget.name}" — xem mục Lưu trữ trong Lịch sử để khôi phục`);
+      setDeleteTarget(null);
+      setDeletePassword('');
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const col = (key: ColumnKey) => columns[key] !== false;
 
   return (
@@ -115,6 +224,17 @@ export default function Clients({
                 <Settings className="w-4 h-4" />
               </button>
             )}
+            <button onClick={() => downloadClientTemplate({
+              regionNames: regions.map(r => r.name),
+              managerNames: managers.map(m => m.name),
+              zoneNames: marketZones.map(z => z.name),
+            })} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Tải file mẫu Excel">
+              <FileDown size={13} /> File mẫu
+            </button>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
+            <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50" title="Import danh sách khách hàng từ Excel">
+              <FileUp size={13} /> {isImporting ? 'Đang nhập...' : 'Import Excel'}
+            </button>
             <button onClick={() => onAddClient()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm KH
             </button>
@@ -149,6 +269,7 @@ export default function Clients({
                   {col('contract_end') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Hết HĐ</th>}
                   {col('progress') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Tiến độ</th>}
                   {col('status') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">TT</th>}
+                  {isAdmin && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -245,6 +366,17 @@ export default function Clients({
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pill.cls}`}>{pill.label}</span>
                         </td>
                       )}
+                      {isAdmin && (
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={e => { e.stopPropagation(); setDeleteTarget(c); setDeletePassword(''); }}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                            title="Xóa công ty"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -312,6 +444,44 @@ export default function Clients({
                 className="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5" />
                 {isRenewing ? 'Đang lưu...' : 'Xác nhận gia hạn'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Client Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Xóa công ty</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{deleteTarget.name}</p>
+              </div>
+              <button onClick={() => { setDeleteTarget(null); setDeletePassword(''); }} className="p-1 hover:bg-gray-100 rounded-md">
+                <span className="text-gray-500 text-lg leading-none">×</span>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-[12.5px] text-gray-600">
+                Công ty này sẽ được chuyển vào mục <strong>Lưu trữ</strong> (trong Lịch sử) và có thể khôi phục lại nếu cần. Vui lòng nhập mật khẩu của bạn để xác nhận.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Mật khẩu</label>
+                <input type="password" value={deletePassword}
+                  onChange={e => setDeletePassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleConfirmDelete(); }}
+                  autoFocus
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => { setDeleteTarget(null); setDeletePassword(''); }} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+              <button onClick={handleConfirmDelete} disabled={isDeleting}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
+                <Trash2 className="w-3.5 h-3.5" />
+                {isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}
               </button>
             </div>
           </div>

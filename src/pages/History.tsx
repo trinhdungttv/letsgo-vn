@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Archive } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
-import { undoActivity } from '../lib/audit';
-import type { AuditLogEntry, AuditAction } from '../lib/types';
+import { undoActivity, logActivity } from '../lib/audit';
+import type { AuditLogEntry, AuditAction, Client } from '../lib/types';
 
 interface Props {
   toast: (msg: string) => void;
+  onReload: () => void;
 }
 
 const TABLE_LABELS: Record<string, string> = {
@@ -39,14 +40,48 @@ const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {
 
 const PAGE_SIZE = 50;
 
-export default function History({ toast }: Props) {
+export default function History({ toast, onReload }: Props) {
   const { user } = useAuth();
+  const [tab, setTab] = useState<'history' | 'archive'>('history');
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const [tableFilter, setTableFilter] = useState('all');
   const [actionFilter, setActionFilter] = useState<'all' | AuditAction>('all');
   const [undoingId, setUndoingId] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [archivedClients, setArchivedClients] = useState<Client[]>([]);
+  const [loadingArchive, setLoadingArchive] = useState(true);
+
+  const loadArchived = useCallback(async () => {
+    setLoadingArchive(true);
+    const { data, error } = await supabase.from('clients').select('*').not('archived_at', 'is', null).order('archived_at', { ascending: false });
+    if (error) { toast('Lỗi tải lưu trữ: ' + error.message); setLoadingArchive(false); return; }
+    setArchivedClients((data || []) as Client[]);
+    setLoadingArchive(false);
+  }, [toast]);
+
+  useEffect(() => { loadArchived(); }, [loadArchived]);
+
+  const handleRestore = async (c: Client) => {
+    setRestoringId(c.id);
+    try {
+      const { error } = await supabase.from('clients').update({ archived_at: null, updated_at: new Date().toISOString() }).eq('id', c.id);
+      if (error) throw error;
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: c.id,
+        description: `Khôi phục công ty "${c.name}" từ Lưu trữ`,
+        oldData: c, newData: { ...c, archived_at: null },
+      });
+      toast(`Đã khôi phục "${c.name}"`);
+      setArchivedClients(prev => prev.filter(ac => ac.id !== c.id));
+      onReload();
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   const load = useCallback(async (offset: number) => {
     let query = supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).range(offset, offset + PAGE_SIZE - 1);
@@ -86,6 +121,50 @@ export default function History({ toast }: Props) {
     <>
       <PageHeader title="Lịch sử hoạt động" subtitle="Theo dõi thêm/sửa/xóa trên toàn hệ thống" />
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="flex gap-2">
+          <button onClick={() => setTab('history')} className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === 'history' ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+            Lịch sử hoạt động
+          </button>
+          <button onClick={() => setTab('archive')} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === 'archive' ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+            <Archive size={13} /> Lưu trữ {archivedClients.length > 0 && `(${archivedClients.length})`}
+          </button>
+        </div>
+
+        {tab === 'archive' ? (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr>
+                  {['Công ty', 'Chi nhánh', 'Quản lý', 'Đã xóa lúc', ''].map(h => (
+                    <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loadingArchive ? (
+                  <tr><td colSpan={5} className="text-center py-8 text-[#aaa]">Đang tải...</td></tr>
+                ) : archivedClients.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-8 text-[#aaa]">Không có công ty nào trong Lưu trữ</td></tr>
+                ) : archivedClients.map(c => (
+                  <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
+                    <td className="px-3 py-2 font-semibold">{c.name}</td>
+                    <td className="px-3 py-2 text-[#555]">{c.region || '—'}</td>
+                    <td className="px-3 py-2 text-[#555]">{c.manager || '—'}</td>
+                    <td className="px-3 py-2 text-[#888] whitespace-nowrap">{c.archived_at ? new Date(c.archived_at).toLocaleString('vi-VN') : '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {user?.role === 'admin' ? (
+                        <button onClick={() => handleRestore(c)} disabled={restoringId === c.id} className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline disabled:opacity-50">
+                          <RotateCcw size={11} /> {restoringId === c.id ? 'Đang xử lý...' : 'Khôi phục'}
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+        <>
         <div className="flex gap-2 flex-wrap">
           <select value={tableFilter} onChange={e => setTableFilter(e.target.value)} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
             <option value="all">Tất cả đối tượng</option>
@@ -142,6 +221,8 @@ export default function History({ toast }: Props) {
           <div className="text-center">
             <button onClick={loadMore} className="px-4 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Tải thêm</button>
           </div>
+        )}
+        </>
         )}
       </div>
     </>
