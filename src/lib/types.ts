@@ -252,7 +252,7 @@ export interface Quote {
   created_at: string;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline';
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline';
 
 export type AuditAction = 'insert' | 'update' | 'delete';
 
@@ -356,7 +356,21 @@ export interface ProjectPnl {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  split_temp_until: string | null;
+  split_reverted: boolean;
   clients?: { name: string } | null;
+}
+
+// Per-client default profit-split ratio + optional temporary override (auto-expires).
+export interface PnlSplitSettings {
+  id: string;
+  client_id: string;
+  lg_pct: number;
+  cn_pct: number;
+  pending_lg_pct: number | null;
+  pending_cn_pct: number | null;
+  pending_until_month: string | null;
+  updated_at: string;
 }
 
 export interface ProjectPnlCost {
@@ -376,4 +390,23 @@ export interface BranchOverhead {
   value: number;
   cost_type: OverheadCostType;
   sort_order: number;
+}
+
+export type BranchStatus = 'active' | 'paused';
+
+export interface Branch {
+  id: string;
+  name: string;
+  short_name: string | null;
+  manager_id: string | null;
+  manager_name: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  region: string | null;
+  established_date: string | null;
+  status: BranchStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }

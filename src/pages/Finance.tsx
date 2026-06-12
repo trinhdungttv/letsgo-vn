@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Lock, CheckCircle, Circle, Pencil, Check, X as XIcon, CalendarCheck } from 'lucide-react';
+import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import FinanceTimeline from '../components/FinanceTimeline';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
 import OverheadTab from '../components/finance/OverheadTab';
 import PerformanceTab from '../components/finance/PerformanceTab';
@@ -13,28 +12,10 @@ import { logActivity } from '../lib/audit';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useFinanceData } from '../hooks/useFinanceData';
+import { usePersistedState } from '../hooks/usePersistedState';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 
-type WorkspaceTab = 'clients' | 'payment' | 'pnl' | 'overhead' | 'performance';
-type DayEventType = 'cutoff' | 'calc' | 'payment' | 'salary';
-interface DayEvent { client: Client; type: DayEventType }
-
-const EVENT_CFG: Record<DayEventType, { dot: string; pill: string; text: string; label: string }> = {
-  cutoff:  { dot: 'bg-orange-400', pill: 'bg-orange-50 border-orange-200',   text: 'text-orange-700',  label: 'Chốt công' },
-  calc:    { dot: 'bg-blue-400',   pill: 'bg-blue-50 border-blue-200',       text: 'text-blue-700',    label: 'Tính lương' },
-  payment: { dot: 'bg-emerald-500',pill: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', label: 'Kỳ thanh toán' },
-  salary:  { dot: 'bg-purple-500', pill: 'bg-purple-50 border-purple-200',   text: 'text-purple-700',  label: 'Phát lương' },
-};
-
-// inclusive day range, clipped to 1..31; falls back to a single day if no end given
-function dayRange(start: number, end: number | null | undefined): number[] {
-  const e = end && end >= start ? end : start;
-  const days: number[] = [];
-  for (let d = start; d <= e; d++) if (d >= 1 && d <= 31) days.push(d);
-  return days;
-}
-
-const DAY_HEADERS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+type WorkspaceTab = 'clients' | 'pnl' | 'overhead' | 'performance';
 
 const todayFull = new Date();
 const todayStr = todayFull.toISOString().split('T')[0];
@@ -93,11 +74,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const finData = useFinanceData();
 
   // ── Shared filters ────────────────────────────────────────────────
-  const [filterRegion, setFilterRegion] = useState<string[]>([ALL_OPTION]);
-  const [filterManager, setFilterManager] = useState<string[]>([ALL_OPTION]);
-
-  // ── Calendar (payment mode) extra state ──────────────────────────
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [filterRegion, setFilterRegion] = usePersistedState<string[]>('lgvn_finance_filterRegion', [ALL_OPTION]);
+  const [filterManager, setFilterManager] = usePersistedState<string[]>('lgvn_finance_filterManager', [ALL_OPTION]);
 
   // ── Timeline edit modal (opened by clicking a company name) ──────
   const [editClient, setEditClient] = useState<Client | null>(null);
@@ -127,33 +105,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     return okR && okM;
   }), [clients, filterRegion, filterManager]);
 
-  // ── Calendar (payment mode) ──────────────────────────────────────
+  // ── Calendar dimensions (used by Gantt timeline) ──────────────────
   const [calYear, calMonthNum] = month.split('-').map(Number);
   const daysInMonth = new Date(calYear, calMonthNum, 0).getDate();
-  const firstDow = new Date(calYear, calMonthNum - 1, 1).getDay();
-  const firstColIndex = firstDow === 0 ? 6 : firstDow - 1;
-
-  const calCells: (number | null)[] = [];
-  for (let i = 0; i < firstColIndex; i++) calCells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) calCells.push(d);
-  while (calCells.length % 7 !== 0) calCells.push(null);
-
-  const eventsByDay = useMemo<Record<number, DayEvent[]>>(() => {
-    const map: Record<number, DayEvent[]> = {};
-    const add = (d: number, c: Client, type: DayEventType) => {
-      if (d >= 1 && d <= 31) (map[d] ??= []).push({ client: c, type });
-    };
-    for (const c of filteredClients) {
-      for (const d of dayRange(c.cutoff_day, c.cutoff_day_end)) add(d, c, 'cutoff');
-      for (const d of dayRange(c.calc_day, c.calc_day_end)) add(d, c, 'calc');
-      for (const d of dayRange(c.payment_start, c.payment_end)) add(d, c, 'payment');
-      for (const d of dayRange(c.salary_day, c.salary_day_end)) add(d, c, 'salary');
-    }
-    return map;
-  }, [filteredClients]);
-
-  const selectedEvents = selectedDay ? (eventsByDay[selectedDay] || []) : [];
-  const selectedClientIds = [...new Set(selectedEvents.map(e => e.client.id))];
 
   const startEdit = (c: Client) => {
     setEditClient(c);
@@ -257,10 +211,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         subtitle="Timeline · Chi phí · Khoán · Trạng thái TT"
         actions={
           <div className="flex items-center gap-2.5">
-            {activeTab === 'clients' || activeTab === 'payment' ? (
+            {activeTab === 'clients' ? (
               <select
                 value={month}
-                onChange={e => { setMonth(e.target.value); setSelectedDay(null); setEditClient(null); }}
+                onChange={e => { setMonth(e.target.value); setEditClient(null); }}
                 className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
               >
                 <option value="2026-06">Tháng 6/2026</option>
@@ -281,12 +235,6 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'clients' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
               >
                 Timeline KH
-              </button>
-              <button
-                onClick={() => setActiveTab('payment')}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'payment' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
-              >
-                Timeline TT
               </button>
               <button
                 onClick={() => setActiveTab('pnl')}
@@ -393,6 +341,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
                   </div>
                 </div>
+                <div className="overflow-y-auto" style={{ maxHeight: 640 }}>
                 {filteredClients.length === 0 ? (
                   <div className="text-center py-10 text-[#aaa] text-[13px]" style={{ minWidth: 900 }}>
                     Không có khách hàng
@@ -423,83 +372,83 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         </button>
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LĐ</div>
                       </div>
-                      <div className="flex-1 relative" style={{ height: 64 }}>
+                      <div className="flex-1 relative" style={{ height: 45 }}>
                         <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40"
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
-                        {/* Row 1: Chốt công + Tính lương */}
+                        {/* Tất cả trên 1 dòng: Chốt công, Tính lương, Kỳ TT, Phát lương */}
                         {cutoffEndX !== null && (
                           <div className="absolute border-t border-dashed border-orange-300"
-                            style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 14 }} />
+                            style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 10 }} />
                         )}
                         <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                          style={{ left: `calc(${cutoffX}% - 6px)`, top: 8 }}
+                          style={{ left: `calc(${cutoffX}% - 6px)`, top: 4 }}
                           title={`Chốt công: ngày ${c.cutoff_day}${cutoffEnd ? `–${cutoffEnd}` : ''}`} />
                         <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                          style={{ left: `${cutoffX}%`, top: 21, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
+                          style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
                         {cutoffEndX !== null && (
                           <>
                             <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 8 }}
+                              style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 4 }}
                               title={`Chốt công: ngày ${c.cutoff_day}–${cutoffEnd}`} />
                             <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                              style={{ left: `${cutoffEndX}%`, top: 21, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
+                              style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
                           </>
                         )}
                         {calcEndX !== null && (
                           <div className="absolute border-t border-dashed border-blue-300"
-                            style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 14 }} />
+                            style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 10 }} />
                         )}
                         <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                          style={{ left: `calc(${calcX}% - 6px)`, top: 8, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                          style={{ left: `calc(${calcX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
                           title={`Tính lương: ngày ${c.calc_day}${calcEnd ? `–${calcEnd}` : ''}`} />
                         <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                          style={{ left: `${calcX}%`, top: 21, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
+                          style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
                         {calcEndX !== null && (
                           <>
                             <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                              style={{ left: `calc(${calcEndX}% - 6px)`, top: 8, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                              style={{ left: `calc(${calcEndX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
                               title={`Tính lương: ngày ${c.calc_day}–${calcEnd}`} />
                             <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                              style={{ left: `${calcEndX}%`, top: 21, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                              style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEnd}</div>
                           </>
                         )}
 
-                        {/* Row 2: Kỳ TT + Phát lương */}
                         {showBar && (
                           <div
                             className={`absolute rounded-sm flex items-center justify-center text-[9px] font-semibold whitespace-nowrap overflow-hidden ${c.paid_this_month ? 'bg-emerald-400 text-emerald-900' : 'bg-emerald-300 opacity-70 text-emerald-800'}`}
-                            style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 38 }}
+                            style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 4 }}
                             title={`Kỳ TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Đã TT)' : ' (Chưa TT)'}`}
                           >
                             {c.payment_start}–{c.payment_end}
                           </div>
                         )}
                         {c.next_month_pay && (
-                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 40 }}>TT/T7</div>
+                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT/T7</div>
                         )}
                         {salaryEndX !== null && (
                           <div className="absolute border-t border-dashed border-purple-300"
-                            style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 44 }} />
+                            style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 10 }} />
                         )}
                         <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                          style={{ left: `calc(${salaryX}% - 6px)`, top: 38 }}
+                          style={{ left: `calc(${salaryX}% - 6px)`, top: 4 }}
                           title={`Phát lương: ngày ${c.salary_day}${salaryEnd ? `–${salaryEnd}` : ''}`} />
                         <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                          style={{ left: `${salaryX}%`, top: 51, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
+                          style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
                         {salaryEndX !== null && (
                           <>
                             <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${salaryEndX}% - 6px)`, top: 38 }}
+                              style={{ left: `calc(${salaryEndX}% - 6px)`, top: 4 }}
                               title={`Phát lương: ngày ${c.salary_day}–${salaryEnd}`} />
                             <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                              style={{ left: `${salaryEndX}%`, top: 51, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
+                              style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
                           </>
                         )}
                       </div>
                     </div>
                   );
                 })}
+                </div>
               </div>
             </div>
 
@@ -594,144 +543,6 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
           </>
         )}
 
-        {/* ══ MODE 2: Timeline Thanh Toán (Calendar) ══ */}
-        {activeTab === 'payment' && (
-          <>
-            {/* Filter row */}
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <FilterDropdown label="Chi nhánh" options={regions} selected={filterRegion} onChange={v => { setFilterRegion(v); setSelectedDay(null); }} allLabel="Tất cả chi nhánh" />
-              <FilterDropdown label="Quản lý" options={managers} selected={filterManager} onChange={v => { setFilterManager(v); setSelectedDay(null); }} allLabel="Tất cả quản lý" />
-              {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION)) && (
-                <button
-                  onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); setSelectedDay(null); }}
-                  className="text-[11.5px] text-blue-600 hover:underline"
-                >
-                  Xóa lọc
-                </button>
-              )}
-              <div className="ml-auto flex items-center gap-3">
-                {(Object.entries(EVENT_CFG) as [DayEventType, typeof EVENT_CFG[DayEventType]][]).map(([type, cfg]) => (
-                  <div key={type} className="flex items-center gap-1">
-                    <div className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                    <span className="text-[11px] text-[#666]">{cfg.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Calendar grid */}
-            <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-              <div className="grid grid-cols-7 bg-[#F9F9F7] border-b border-[#E8E7E2]">
-                {DAY_HEADERS.map(h => (
-                  <div key={h} className="text-center text-[11.5px] font-medium text-[#888] py-2">{h}</div>
-                ))}
-              </div>
-              {Array.from({ length: calCells.length / 7 }, (_, week) => (
-                <div key={week} className="grid grid-cols-7 border-b border-[#F0EEE9] last:border-0">
-                  {calCells.slice(week * 7, week * 7 + 7).map((day, col) => {
-                    const events = day ? (eventsByDay[day] || []) : [];
-                    const isToday = day === todayNum;
-                    const isSelected = day === selectedDay;
-                    const hasEvents = events.length > 0;
-                    return (
-                      <div
-                        key={col}
-                        onClick={() => day && hasEvents && setSelectedDay(isSelected ? null : day)}
-                        className={[
-                          'min-h-[72px] p-1.5 border-r border-[#F0EEE9] last:border-0 transition',
-                          !day ? 'bg-[#FAFAF8]' : '',
-                          hasEvents ? 'cursor-pointer hover:bg-blue-50/60' : '',
-                          isSelected ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : '',
-                          isToday && !isSelected ? 'bg-amber-50/40' : '',
-                        ].join(' ')}
-                      >
-                        {day && (
-                          <>
-                            <div className={`text-[12px] font-semibold mb-1.5 ${isToday ? 'text-amber-600' : 'text-[#555]'}`}>{day}</div>
-                            <div className="flex flex-col gap-0.5">
-                              {(['cutoff', 'payStart', 'payEnd'] as DayEventType[]).map(type => {
-                                const typeEvts = events.filter(e => e.type === type);
-                                if (!typeEvts.length) return null;
-                                const cfg = EVENT_CFG[type];
-                                return (
-                                  <div key={type} className="relative group">
-                                    <div className={`inline-flex items-center gap-0.5 text-[9.5px] font-medium px-1.5 py-0.5 rounded border max-w-full ${cfg.pill} ${cfg.text}`}>
-                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-                                      <span className="truncate">
-                                        {typeEvts.length === 1
-                                          ? typeEvts[0].client.name.split(/\s+/).slice(-1)[0]
-                                          : `${typeEvts.length} KH`}
-                                      </span>
-                                    </div>
-                                    <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
-                                      <div className="bg-gray-900 text-white text-[11px] rounded-lg px-2.5 py-1.5 shadow-xl whitespace-nowrap">
-                                        <div className="font-semibold mb-0.5 text-gray-300">{cfg.label} — Ngày {day}</div>
-                                        {typeEvts.map(e => <div key={e.client.id} className="text-gray-400">{e.client.name}</div>)}
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-
-            {/* Selected day edit panel */}
-            {selectedDay !== null && selectedEvents.length > 0 && (
-              <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
-                  <div className="text-[12.5px] font-semibold text-[#111]">
-                    Ngày {selectedDay} — {selectedClientIds.length} khách hàng
-                  </div>
-                  <button onClick={() => setSelectedDay(null)} className="text-[#aaa] hover:text-[#666] transition">
-                    <XIcon size={14} />
-                  </button>
-                </div>
-                <div className="divide-y divide-[#F0EEE9]">
-                  {selectedClientIds.map(clientId => {
-                    const evts = selectedEvents.filter(e => e.client.id === clientId);
-                    const c = evts[0].client;
-                    const seenTypes = [...new Set(evts.map(e => e.type))];
-                    return (
-                      <div key={clientId} className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
-                            <div className="flex gap-1.5 mt-1 flex-wrap">
-                              {seenTypes.map(type => {
-                                const cfg = EVENT_CFG[type];
-                                return (
-                                  <span key={type} className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${cfg.pill} ${cfg.text}`}>
-                                    {cfg.label}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                            <div className="text-[11.5px] text-[#aaa] mt-1">
-                              Chốt: ngày {c.cutoff_day}{c.cutoff_day_end ? `–${c.cutoff_day_end}` : ''} · Tính lương: {c.calc_day}{c.calc_day_end ? `–${c.calc_day_end}` : ''} · Kỳ TT: {c.payment_start}–{c.payment_end} · Phát lương: {c.salary_day}{c.salary_day_end ? `–${c.salary_day_end}` : ''}
-                            </div>
-                          </div>
-                          <button onClick={() => startEdit(c)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium border border-blue-400 text-blue-700 hover:bg-blue-50 transition shrink-0">
-                            <Pencil size={11} /> Chỉnh sửa
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <FinanceTimeline clients={clients} onClientClick={startEdit} />
-          </>
-        )}
-
         {/* ══ MODE 3: P&L Dự án ══ */}
         {activeTab === 'pnl' && (
           <PnLProjectTab
@@ -746,6 +557,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             onAddCost={finData.addPnlCost}
             onUpdateCost={finData.updatePnlCost}
             onDeleteCost={finData.deletePnlCost}
+            splitSettings={finData.splitSettings}
+            onSaveSplitSettings={finData.saveSplitSettings}
             currentUser={user?.full_name}
             toast={toast}
           />

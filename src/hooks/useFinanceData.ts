@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { ProjectPnl, ProjectPnlCost, BranchOverhead } from '../lib/types';
+import type { ProjectPnl, ProjectPnlCost, BranchOverhead, PnlSplitSettings } from '../lib/types';
 
 export function useFinanceData() {
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
   const [pnlCosts, setPnlCosts] = useState<Record<string, ProjectPnlCost[]>>({});
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
+  const [splitSettings, setSplitSettings] = useState<Record<string, PnlSplitSettings>>({});
   const [loading, setLoading] = useState(false);
 
   // ── projects_pnl ──────────────────────────────────────────────────
@@ -145,15 +146,47 @@ export function useFinanceData() {
     return added;
   }, []);
 
-  useEffect(() => { loadProjectsPnl(); loadOverhead(); }, [loadProjectsPnl, loadOverhead]);
+  // ── pnl_split_settings ────────────────────────────────────────────
+  const loadSplitSettings = useCallback(async () => {
+    const { data, error } = await supabase.from('pnl_split_settings').select('*');
+    if (error) throw error;
+    const rows = (data || []) as PnlSplitSettings[];
+    const map: Record<string, PnlSplitSettings> = {};
+    for (const row of rows) map[row.client_id] = row;
+    setSplitSettings(map);
+    return map;
+  }, []);
+
+  const saveSplitSettings = useCallback(async (clientId: string, fields: Partial<Omit<PnlSplitSettings, 'id' | 'client_id' | 'updated_at'>>) => {
+    const current = splitSettings[clientId];
+    const payload = {
+      client_id: clientId,
+      lg_pct: current?.lg_pct ?? 40,
+      cn_pct: current?.cn_pct ?? 60,
+      pending_lg_pct: current?.pending_lg_pct ?? null,
+      pending_cn_pct: current?.pending_cn_pct ?? null,
+      pending_until_month: current?.pending_until_month ?? null,
+      ...fields,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from('pnl_split_settings').upsert(payload, { onConflict: 'client_id' }).select().single();
+    if (error) throw error;
+    const saved = data as PnlSplitSettings;
+    setSplitSettings(prev => ({ ...prev, [clientId]: saved }));
+    return saved;
+  }, [splitSettings]);
+
+  useEffect(() => { loadProjectsPnl(); loadOverhead(); loadSplitSettings(); }, [loadProjectsPnl, loadOverhead, loadSplitSettings]);
 
   return {
     projectsPnl, setProjectsPnl,
     pnlCosts, setPnlCosts,
     overhead, setOverhead,
+    splitSettings, setSplitSettings,
     loading,
     loadProjectsPnl, addProjectPnl, updateProjectPnl, deleteProjectPnl,
     loadPnlCosts, addPnlCost, updatePnlCost, deletePnlCost,
     loadOverhead, addOverhead, updateOverhead, deleteOverhead, copyOverheadFromMonth,
+    loadSplitSettings, saveSplitSettings,
   };
 }

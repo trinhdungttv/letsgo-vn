@@ -6,11 +6,13 @@ import { useAuth, AuthProvider, canAccess } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { supabase } from './lib/supabase';
 import { logActivity } from './lib/audit';
+import { usePersistedState } from './hooks/usePersistedState';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
 import ClientDetail from './pages/ClientDetail';
+import Branches from './pages/Branches';
 import Finance from './pages/Finance';
 import Market from './pages/Market';
 import Quotes from './pages/Quotes';
@@ -24,7 +26,7 @@ import CRMProds from './pages/CRMProds';
 import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -56,7 +58,7 @@ function AppInner() {
     const saved = localStorage.getItem('lgvn_page');
     return saved && PAGES.includes(saved as Page) ? (saved as Page) : 'dashboard';
   });
-  const [activeRegion, setActiveRegion] = useState<string[]>(['Tất cả']);
+  const [activeRegion, setActiveRegion] = usePersistedState<string[]>('lgvn_activeRegion', ['Tất cả']);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedClientId'));
   const [selectedDealId, setSelectedDealId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedDealId'));
 
@@ -240,6 +242,11 @@ function AppInner() {
             toast={toast}
             onOpenDeal={handleSelectDeal}
           />
+        )}
+        {page === 'branches' && (
+          <div className="flex-1 overflow-y-auto p-5">
+            <Branches clients={clients} toast={toast} />
+          </div>
         )}
         {page === 'finance' && (
           <Finance finance={finance} clients={clients} onLoadFinance={loadFinance} onFinanceUpdate={handleFinanceUpdate} onClientUpdate={handleClientUpdate} toast={toast} />

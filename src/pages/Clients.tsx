@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 interface ClientsProps {
   clients: Client[];
@@ -43,8 +44,8 @@ export default function Clients({
   const { user } = useAuth();
   const [renewForm, setRenewForm] = useState<RenewForm | null>(null);
   const [isRenewing, setIsRenewing] = useState(false);
-  const [activeZones, setActiveZones] = useState<string[]>([ALL_OPTION]);
-  const [activeManagers, setActiveManagers] = useState<string[]>([ALL_OPTION]);
+  const [activeZones, setActiveZones] = usePersistedState<string[]>('lgvn_clients_activeZones', [ALL_OPTION]);
+  const [activeManagers, setActiveManagers] = usePersistedState<string[]>('lgvn_clients_activeManagers', [ALL_OPTION]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);

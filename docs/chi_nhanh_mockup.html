@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Chi Nhánh — Let's Go VN</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+:root{
+  --bg:#fff;--bg2:#f6f6f5;--bg3:#ededec;
+  --tx:#1a1a18;--tx2:#5f5e5a;--tx3:#8a8980;
+  --bd:rgba(0,0,0,.09);--bd2:rgba(0,0,0,.17);--bd3:rgba(0,0,0,.30);
+  --teal:#0F6E56;--teal-bg:#E1F5EE;--teal-tx:#085041;
+  --green:#3B6D11;--green-bg:#EAF3DE;--green-tx:#27500A;
+  --amber:#BA7517;--amber-bg:#FAEEDA;--amber-tx:#633806;
+  --red:#A32D2D;--red-bg:#FCEBEB;--red-tx:#791F1F;
+  --blue:#185FA5;--blue-bg:#E6F1FB;--blue-tx:#0C447C;
+  --r:8px;--rl:12px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#1c1c1a;--bg2:#242422;--bg3:#2d2d2a;
+  --tx:#e8e6de;--tx2:#9c9a92;--tx3:#6b6963;
+  --bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--bd3:rgba(255,255,255,.26);
+  --teal-bg:#04342C;--teal-tx:#9FE1CB;
+  --green-bg:#173404;--green-tx:#C0DD97;
+  --amber-bg:#412402;--amber-tx:#FAC775;
+  --red-bg:#501313;--red-tx:#F7C1C1;
+  --blue-bg:#042C53;--blue-tx:#B5D4F4;
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:var(--tx);background:var(--bg2);min-height:100vh;padding:24px}
+button,input,select,textarea{font-family:inherit}
+
+.wrap{max-width:1100px;margin:0 auto}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
+.page-title{font-size:20px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+.page-sub{font-size:12px;color:var(--tx3);margin-top:3px}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;font-weight:500;border-radius:var(--r);border:.5px solid var(--bd2);background:var(--bg);color:var(--tx);cursor:pointer;transition:all .13s;user-select:none}
+.btn:hover{background:var(--bg2);border-color:var(--bd3)}
+.btn-primary{background:var(--teal);color:#E1F5EE;border-color:var(--teal)}
+.btn-primary:hover{background:#0a5743}
+.btn-ghost{border-color:transparent;background:none;color:var(--tx2)}
+.btn-ghost:hover{background:var(--bg3)}
+.btn-sm{padding:5px 10px;font-size:11px}
+.ibt{width:26px;height:26px;border-radius:6px;border:.5px solid var(--bd2);background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--tx3);flex-shrink:0;transition:all .12s}
+.ibt:hover{background:var(--bg2);color:var(--tx)}
+.ibt.del:hover{background:var(--red-bg);color:var(--red)}
+
+/* KPI strip */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.kpi{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);padding:14px 16px;position:relative;overflow:hidden}
+.kpi-accent{position:absolute;top:0;left:0;right:0;height:2.5px}
+.kpi-label{font-size:11px;color:var(--tx3);font-weight:500;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between}
+.kpi-val{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.kpi-sub{font-size:11px;color:var(--tx3);margin-top:4px}
+
+/* View toggle */
+.view-toggle{display:flex;border:.5px solid var(--bd2);border-radius:var(--r);overflow:hidden;margin-bottom:16px;align-self:flex-end}
+.vt-btn{padding:6px 14px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;color:var(--tx2);transition:all .13s;display:flex;align-items:center;gap:5px}
+.vt-btn.active{background:var(--bg2);color:var(--tx)}
+
+/* Branch grid */
+.branch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+.branch-card{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);overflow:hidden;cursor:pointer;transition:all .15s}
+.branch-card:hover{border-color:var(--bd2);transform:translateY(-1px)}
+.branch-card.selected{border-color:var(--teal);border-width:1.5px}
+.bc-top{padding:14px 16px;border-bottom:.5px solid var(--bd);display:flex;align-items:flex-start;gap:12px}
+.bc-avatar{width:40px;height:40px;border-radius:50%;background:var(--teal-bg);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--teal-tx);flex-shrink:0}
+.bc-name{font-size:14px;font-weight:600;margin-bottom:2px;letter-spacing:-.01em}
+.bc-mgr{font-size:11.5px;color:var(--tx2);display:flex;align-items:center;gap:4px}
+.bc-badge{display:inline-flex;align-items:center;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600;white-space:nowrap}
+.bc-ok{background:var(--teal-bg);color:var(--teal-tx)}
+.bc-warn{background:var(--amber-bg);color:var(--amber-tx)}
+.bc-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-bottom:.5px solid var(--bd)}
+.bc-stat{padding:10px 14px;text-align:center;border-right:.5px solid var(--bd)}
+.bc-stat:last-child{border:none}
+.bc-sval{font-size:16px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+.bc-slabel{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.bc-foot{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.bc-alerts{display:flex;gap:5px;flex-wrap:wrap}
+.alert-chip{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500}
+.ac-warn{background:var(--amber-bg);color:var(--amber-tx)}
+.ac-red{background:var(--red-bg);color:var(--red-tx)}
+.ac-blue{background:var(--blue-bg);color:var(--blue-tx)}
+.spark{display:flex;align-items:flex-end;gap:1.5px;height:20px}
+.spark>div{width:8px;border-radius:1.5px 1.5px 0 0;background:var(--teal);opacity:.4}
+.spark>div:last-child{opacity:1}
+.spark>div.dn{background:var(--red)}
+
+/* Detail page */
+.detail-wrap{display:none}
+.detail-wrap.show{display:block}
+.grid-wrap{display:none}
+.grid-wrap.show{display:block}
+.back-btn{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--tx2);cursor:pointer;margin-bottom:16px;padding:6px 0;background:none;border:none;transition:color .13s}
+.back-btn:hover{color:var(--tx)}
+
+/* Detail layout */
+.det-layout{display:grid;grid-template-columns:260px 1fr;gap:14px;align-items:start}
+.det-sidebar{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);overflow:hidden;position:sticky;top:20px}
+.ds-head{padding:18px 16px;border-bottom:.5px solid var(--bd);text-align:center}
+.ds-avatar{width:56px;height:56px;border-radius:50%;background:var(--teal-bg);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:var(--teal-tx);margin:0 auto 10px}
+.ds-name{font-size:15px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
+.ds-mgr{font-size:12px;color:var(--tx2)}
+.ds-nav{padding:6px 0}
+.ds-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;font-size:12.5px;color:var(--tx2);transition:all .13s;font-weight:500;border-left:2.5px solid transparent}
+.ds-item:hover{background:var(--bg2);color:var(--tx)}
+.ds-item.active{background:var(--bg2);color:var(--tx);border-left-color:var(--teal)}
+.ds-item i{font-size:16px;color:var(--tx3);flex-shrink:0}
+.ds-item.active i{color:var(--teal)}
+
+/* Tabs content */
+.tab-content{display:none}
+.tab-content.active{display:block}
+.panel{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--rl);overflow:hidden;margin-bottom:12px}
+.panel-hd{padding:12px 16px;border-bottom:.5px solid var(--bd);display:flex;align-items:center;gap:8px}
+.panel-title{font-size:13px;font-weight:600;flex:1;letter-spacing:-.005em}
+.panel-body{padding:14px 16px}
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;color:var(--tx3);font-weight:500;text-transform:uppercase;letter-spacing:.05em}
+.field input,.field select,.field textarea{padding:8px 10px;font-size:12.5px;border-radius:var(--r);border:.5px solid var(--bd2);background:var(--bg);color:var(--tx);outline:none;transition:border-color .13s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--bd3)}
+.field textarea{resize:vertical;min-height:72px}
+.field.full{grid-column:1/-1}
+
+/* Table */
+.data-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.data-table th{font-size:10.5px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:.5px solid var(--bd);text-align:left;background:var(--bg2)}
+.data-table td{padding:10px 12px;border-bottom:.5px solid var(--bd);vertical-align:middle}
+.data-table tr:last-child td{border:none}
+.data-table tr:hover td{background:var(--bg2)}
+.badge{display:inline-flex;align-items:center;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600}
+.b-ok{background:var(--green-bg);color:var(--green-tx)}
+.b-warn{background:var(--amber-bg);color:var(--amber-tx)}
+.b-danger{background:var(--red-bg);color:var(--red-tx)}
+.b-blue{background:var(--blue-bg);color:var(--blue-tx)}
+.b-teal{background:var(--teal-bg);color:var(--teal-tx)}
+
+/* Staff rows */
+.staff-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:.5px solid var(--bd)}
+.staff-row:last-child{border:none}
+.savatiny{width:30px;height:30px;border-radius:50%;background:var(--blue-bg);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--blue-tx);flex-shrink:0}
+.add-row{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--tx3);cursor:pointer;padding:8px 0 2px;background:none;border:none;border-top:.5px dashed var(--bd2);width:100%;text-align:left;margin-top:6px}
+.add-row:hover{color:var(--tx)}
+
+/* Finance summary */
+.fin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.fin-card{background:var(--bg2);border-radius:var(--r);padding:12px 14px;text-align:center}
+.fin-val{font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.fin-label{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.fin-sub{font-size:11px;color:var(--tx3);margin-top:3px}
+.month-bar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
+.mchip{padding:4px 10px;font-size:11px;border-radius:20px;border:.5px solid var(--bd2);background:none;color:var(--tx2);cursor:pointer;transition:all .13s}
+.mchip.active{background:var(--bg2);border-color:var(--bd3);color:var(--tx);font-weight:500}
+
+/* Mini sparkline bars */
+.trend-bars{display:flex;align-items:flex-end;gap:3px;height:32px;margin-top:8px}
+.trend-bars>div{flex:1;border-radius:2px 2px 0 0;transition:opacity .2s}
+
+.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.teal{color:var(--teal)}
+.sep{height:.5px;background:var(--bd);margin:12px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- PAGE HEADER -->
+  <div class="page-head">
+    <div>
+      <div class="page-title"><i class="ti ti-building" aria-hidden="true"></i> Chi Nhánh</div>
+      <div class="page-sub" id="pageSub">10 chi nhánh đang hoạt động</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="view-toggle">
+        <button class="vt-btn active" id="vt-grid" onclick="setView('grid')"><i class="ti ti-layout-grid" aria-hidden="true"></i> Cards</button>
+        <button class="vt-btn" id="vt-list" onclick="setView('list')"><i class="ti ti-list" aria-hidden="true"></i> Danh sách</button>
+      </div>
+      <button class="btn btn-primary" onclick="alert('Thêm chi nhánh mới')"><i class="ti ti-plus" aria-hidden="true"></i> Thêm CN</button>
+    </div>
+  </div>
+
+  <!-- KPI STRIP -->
+  <div class="kpi-strip">
+    <div class="kpi">
+      <div class="kpi-accent" style="background:var(--teal)"></div>
+      <div class="kpi-label">Tổng lao động<i class="ti ti-users" style="font-size:14px" aria-hidden="true"></i></div>
+      <div class="kpi-val">2,840</div>
+      <div class="kpi-sub">↑ +120 so tháng trước</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-accent" style="background:var(--blue)"></div>
+      <div class="kpi-label">Tổng KH active<i class="ti ti-building-community" style="font-size:14px" aria-hidden="true"></i></div>
+      <div class="kpi-val">47</div>
+      <div class="kpi-sub">Trên 10 chi nhánh</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-accent" style="background:var(--green)"></div>
+      <div class="kpi-label">LN ròng tháng này<i class="ti ti-trending-up" style="font-size:14px" aria-hidden="true"></i></div>
+      <div class="kpi-val teal">+268M</div>
+      <div class="kpi-sub">Tổng 10 chi nhánh</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-accent" style="background:var(--amber)"></div>
+      <div class="kpi-label">Cần xử lý<i class="ti ti-alert-triangle" style="font-size:14px" aria-hidden="true"></i></div>
+      <div class="kpi-val amber">3</div>
+      <div class="kpi-sub">CN có vấn đề tháng này</div>
+    </div>
+  </div>
+
+  <!-- GRID VIEW -->
+  <div class="grid-wrap show" id="gridWrap">
+    <div class="branch-grid" id="branchGrid"></div>
+  </div>
+
+  <!-- DETAIL VIEW -->
+  <div class="detail-wrap" id="detailWrap">
+    <button class="back-btn" onclick="goBack()">
+      <i class="ti ti-arrow-left" aria-hidden="true"></i> Tất cả chi nhánh
+    </button>
+    <div class="det-layout">
+      <!-- Sidebar nav -->
+      <div class="det-sidebar">
+        <div class="ds-head">
+          <div class="ds-avatar" id="detAvatar">BH</div>
+          <div class="ds-name" id="detName">BH - Ms Thương</div>
+          <div class="ds-mgr" id="detMgr"><i class="ti ti-user" style="font-size:13px" aria-hidden="true"></i> Ms Thương</div>
+          <div style="margin-top:8px"><span class="bc-badge bc-ok">Hoạt động tốt</span></div>
+        </div>
+        <div class="ds-nav">
+          <div class="ds-item active" onclick="switchTab('profile',this)"><i class="ti ti-id-badge" aria-hidden="true"></i> Hồ sơ chi nhánh</div>
+          <div class="ds-item" onclick="switchTab('operations',this)"><i class="ti ti-list-check" aria-hidden="true"></i> Vận hành</div>
+          <div class="ds-item" onclick="switchTab('finance',this)"><i class="ti ti-report-money" aria-hidden="true"></i> Tài chính</div>
+          <div class="ds-item" onclick="switchTab('staff',this)"><i class="ti ti-users" aria-hidden="true"></i> Nhân sự VP</div>
+        </div>
+      </div>
+
+      <!-- Main content -->
+      <div>
+
+        <!-- TAB: HỒ SƠ -->
+        <div class="tab-content active" id="tab-profile">
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-building" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Thông tin chi nhánh</div>
+              <button class="btn btn-sm" onclick="alert('Lưu thay đổi')"><i class="ti ti-device-floppy" aria-hidden="true"></i> Lưu</button>
+            </div>
+            <div class="panel-body">
+              <div class="field-grid">
+                <div class="field"><label>Tên chi nhánh</label><input type="text" value="BH - Ms Thương"></div>
+                <div class="field"><label>Tên rút gọn</label><input type="text" value="Biên Hòa"></div>
+                <div class="field"><label>Quản lý phụ trách</label>
+                  <select><option>Ms Thương</option><option>Mr Tâm</option><option>Ms Phượng</option></select>
+                </div>
+                <div class="field"><label>Khu vực</label><input type="text" value="Biên Hòa, Đồng Nai"></div>
+                <div class="field"><label>Số điện thoại</label><input type="text" value="0912 xxx xxx"></div>
+                <div class="field"><label>Email</label><input type="text" value="bienboa@letsgovn.com"></div>
+                <div class="field"><label>Ngày thành lập</label><input type="date" value="2023-01-15"></div>
+                <div class="field"><label>Trạng thái</label>
+                  <select><option>Hoạt động</option><option>Tạm dừng</option></select>
+                </div>
+                <div class="field full"><label>Địa chỉ văn phòng</label><input type="text" value="123 Đường Đồng Khởi, TP Biên Hòa, Đồng Nai"></div>
+                <div class="field full"><label>Ghi chú</label><textarea>Chi nhánh lớn nhất khu vực Biên Hòa. Phụ trách chính các KCN Biên Hòa 1, 2 và Nhơn Trạch.</textarea></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-file-text" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Văn bản & Cam kết</div>
+              <button class="btn btn-sm" onclick="alert('Đính kèm file')"><i class="ti ti-paperclip" aria-hidden="true"></i> Đính kèm</button>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border:.5px solid var(--bd2);border-radius:var(--r)">
+                  <div style="display:flex;align-items:center;gap:8px"><i class="ti ti-file-description" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i><div><div style="font-size:12.5px;font-weight:500">Hợp đồng khoán - BH 2024.pdf</div><div style="font-size:11px;color:var(--tx3)">Tải lên 10/01/2024 · 2.4 MB</div></div></div>
+                  <button class="ibt"><i class="ti ti-download" aria-hidden="true"></i></button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border:.5px solid var(--bd2);border-radius:var(--r)">
+                  <div style="display:flex;align-items:center;gap:8px"><i class="ti ti-file-description" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i><div><div style="font-size:12.5px;font-weight:500">Quy chế nội bộ CN Biên Hòa.docx</div><div style="font-size:11px;color:var(--tx3)">Tải lên 15/03/2024 · 0.8 MB</div></div></div>
+                  <button class="ibt"><i class="ti ti-download" aria-hidden="true"></i></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: VẬN HÀNH -->
+        <div class="tab-content" id="tab-operations">
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-building-community" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Khách hàng đang phụ trách</div>
+              <span style="font-size:11px;color:var(--tx3)">2 KH · 405 LĐ tổng</span>
+            </div>
+            <table class="data-table">
+              <thead><tr><th>Công ty</th><th>Lao động</th><th>Tuần này</th><th>HĐ còn</th><th>Trạng thái</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><div style="font-weight:600;font-size:12.5px">Kuka Home Vietnam</div><div style="font-size:11px;color:var(--tx3)">KCN Mỹ Phước 3</div></td>
+                  <td><div style="font-weight:600">320</div><div class="spark"><div style="height:10px"></div><div style="height:13px"></div><div style="height:12px"></div><div style="height:16px"></div><div style="height:18px"></div></div></td>
+                  <td><span class="badge b-ok">↑ +12</span></td>
+                  <td><span style="color:var(--amber);font-weight:600;font-size:12px">18 ngày</span></td>
+                  <td><span class="badge b-warn">⚠ Sắp hết HĐ</span></td>
+                </tr>
+                <tr>
+                  <td><div style="font-weight:600;font-size:12.5px">Nippon Express VN</div><div style="font-size:11px;color:var(--tx3)">KCN Biên Hòa 2</div></td>
+                  <td><div style="font-weight:600">85</div><div class="spark"><div style="height:18px"></div><div style="height:16px"></div><div style="height:13px"></div><div style="height:10px"></div><div style="height:8px" class="dn"></div></div></td>
+                  <td><span class="badge b-danger">↓ −8</span></td>
+                  <td><span style="color:var(--red);font-weight:600;font-size:12px">5 ngày</span></td>
+                  <td><span class="badge b-danger">🔴 Khẩn cấp</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-chart-line" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Lao động theo tuần — T6/2026</div>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+                <span style="font-size:11px;color:var(--tx3)">Tuần:</span>
+                <button class="mchip">T6W1</button>
+                <button class="mchip">T6W2</button>
+                <button class="mchip active">T6W3</button>
+                <button class="mchip">T6W4</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:20px;padding:10px 14px;background:var(--bg2);border-radius:var(--r);margin-bottom:12px">
+                <div style="text-align:center"><div style="font-size:22px;font-weight:600">405</div><div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em">Tổng LĐ tuần này</div></div>
+                <div style="flex:1;height:.5px;background:var(--bd2)"></div>
+                <div style="font-size:11px;color:var(--tx2)">Kuka: <strong>320</strong></div>
+                <div style="font-size:11px;color:var(--tx2)">Nippon: <strong>85</strong></div>
+                <div style="font-size:11px;color:var(--green);font-weight:500">↑ +4 vs tuần trước</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--amber-bg);border-radius:var(--r);font-size:11.5px;color:var(--amber-tx)">
+                <i class="ti ti-alert-triangle" style="font-size:14px" aria-hidden="true"></i>
+                Nippon Express LĐ giảm 3 tuần liên tiếp — cần theo dõi sát
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: TÀI CHÍNH -->
+        <div class="tab-content" id="tab-finance">
+          <div style="display:flex;gap:6px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--tx3)">Tháng:</span>
+            <button class="mchip">T3</button><button class="mchip">T4</button><button class="mchip">T5</button>
+            <button class="mchip active">T6/2026</button>
+          </div>
+
+          <div class="fin-grid">
+            <div class="fin-card">
+              <div class="fin-label">Doanh thu</div>
+              <div class="fin-val teal">333M</div>
+              <div class="fin-sub">↑ +2.4% vs T5</div>
+            </div>
+            <div class="fin-card">
+              <div class="fin-label">LN từ dự án (phần CN)</div>
+              <div class="fin-val" style="color:var(--blue)">18M</div>
+              <div class="fin-sub">40/60 split với LGV</div>
+            </div>
+            <div class="fin-card" style="border:.5px solid var(--bd2)">
+              <div class="fin-label">LN ròng CN</div>
+              <div class="fin-val red">−85M</div>
+              <div class="fin-sub">Sau trừ CP cố định</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-building" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Chi phí cố định T6/2026</div>
+              <button class="btn btn-sm" onclick="alert('Chỉnh sửa chi phí cố định')"><i class="ti ti-edit" aria-hidden="true"></i> Sửa</button>
+            </div>
+            <table class="data-table">
+              <thead><tr><th>Khoản chi phí</th><th>Loại</th><th style="text-align:right">Giá trị</th></tr></thead>
+              <tbody>
+                <tr><td>Mặt bằng văn phòng</td><td><span class="badge b-blue">Cố định</span></td><td style="text-align:right;font-weight:600">25M</td></tr>
+                <tr><td>Lương nhân viên VP</td><td><span class="badge b-blue">Cố định</span></td><td style="text-align:right;font-weight:600">60M</td></tr>
+                <tr><td>Điện / nước / internet</td><td><span class="badge b-blue">Cố định</span></td><td style="text-align:right;font-weight:600">5M</td></tr>
+                <tr><td>Đi lại / công tác</td><td><span class="badge b-teal">Biến đổi</span></td><td style="text-align:right;font-weight:600">8M</td></tr>
+                <tr><td>Chi phí khác</td><td><span class="badge b-teal">Biến đổi</span></td><td style="text-align:right;font-weight:600">5M</td></tr>
+              </tbody>
+            </table>
+            <div style="display:flex;justify-content:space-between;padding:9px 12px;background:var(--bg2);border-top:.5px solid var(--bd);font-size:12.5px;font-weight:600">
+              <span>Tổng chi phí cố định</span><span class="red">103M</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-chart-bar" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Xu hướng LN ròng — 6 tháng</div>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;align-items:flex-end;gap:8px;height:60px;margin-bottom:6px">
+                ${['T1','T2','T3','T4','T5','T6'].map((m,i)=>{
+                  const vals=[-40,-44,-34,-40,-37,-85];
+                  const v=vals[i];
+                  const h=Math.abs(v)/85*54;
+                  return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+                    <div style="font-size:10px;color:${v>=0?'var(--teal)':'var(--red)'};font-weight:500">${v}M</div>
+                    <div style="width:100%;height:${h}px;border-radius:3px 3px 0 0;background:${v>=0?'var(--teal)':'var(--red)'};opacity:${m==='T6'?'1':'0.5'}"></div>
+                  </div>`;}).join('')}
+              </div>
+              <div style="display:flex;gap:8px">
+                ${['T1','T2','T3','T4','T5','T6'].map(m=>`<div style="flex:1;text-align:center;font-size:10px;color:var(--tx3)">${m}</div>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: NHÂN SỰ VP -->
+        <div class="tab-content" id="tab-staff">
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-users" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Nhân sự văn phòng chi nhánh</div>
+              <button class="btn btn-sm btn-primary" onclick="alert('Thêm nhân viên')"><i class="ti ti-plus" aria-hidden="true"></i> Thêm</button>
+            </div>
+            <div class="panel-body">
+              <div class="staff-row">
+                <div class="savatiny" style="background:var(--teal-bg);color:var(--teal-tx)">MT</div>
+                <div style="flex:1">
+                  <div style="font-size:12.5px;font-weight:600">Ms Thương</div>
+                  <div style="font-size:11px;color:var(--tx2)">Quản lý chi nhánh · 0912 xxx xxx</div>
+                </div>
+                <div style="text-align:right"><div style="font-size:12px;font-weight:500">—</div><div style="font-size:10px;color:var(--tx3)">Lương khoán</div></div>
+                <button class="ibt"><i class="ti ti-edit" aria-hidden="true"></i></button>
+              </div>
+              <div class="staff-row">
+                <div class="savatiny">NA</div>
+                <div style="flex:1">
+                  <div style="font-size:12.5px;font-weight:600">Nguyễn An</div>
+                  <div style="font-size:11px;color:var(--tx2)">Kế toán · 0901 xxx xxx</div>
+                </div>
+                <div style="text-align:right"><div style="font-size:12px;font-weight:500">12M</div><div style="font-size:10px;color:var(--tx3)">/ tháng</div></div>
+                <button class="ibt"><i class="ti ti-edit" aria-hidden="true"></i></button>
+              </div>
+              <div class="staff-row">
+                <div class="savatiny" style="background:var(--amber-bg);color:var(--amber-tx)">LH</div>
+                <div style="flex:1">
+                  <div style="font-size:12.5px;font-weight:600">Lê Hoa</div>
+                  <div style="font-size:11px;color:var(--tx2)">Admin / CSKH · 0908 xxx xxx</div>
+                </div>
+                <div style="text-align:right"><div style="font-size:12px;font-weight:500">9M</div><div style="font-size:10px;color:var(--tx3)">/ tháng</div></div>
+                <button class="ibt"><i class="ti ti-edit" aria-hidden="true"></i></button>
+              </div>
+              <button class="add-row"><i class="ti ti-plus" style="font-size:13px" aria-hidden="true"></i> Thêm nhân viên</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-hd">
+              <i class="ti ti-calculator" style="font-size:15px;color:var(--tx3)" aria-hidden="true"></i>
+              <div class="panel-title">Tổng quỹ lương VP / tháng</div>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <div style="flex:1;min-width:120px;background:var(--bg2);border-radius:var(--r);padding:12px;text-align:center">
+                  <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Số nhân viên VP</div>
+                  <div style="font-size:22px;font-weight:600">3</div>
+                </div>
+                <div style="flex:1;min-width:120px;background:var(--bg2);border-radius:var(--r);padding:12px;text-align:center">
+                  <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Quỹ lương tháng này</div>
+                  <div style="font-size:22px;font-weight:600" class="red">21M</div>
+                </div>
+                <div style="flex:1;min-width:120px;background:var(--bg2);border-radius:var(--r);padding:12px;text-align:center">
+                  <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">% CP cố định</div>
+                  <div style="font-size:22px;font-weight:600">20%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const BRANCHES=[
+  {id:1,name:'BH - Ms Thương',short:'BH',mgr:'Ms Thương',region:'Biên Hòa',clients:2,workers:405,trend:[360,355,380,390,400,405],pnl:-85,status:'warn',alerts:['2 HĐ sắp hết hạn','LĐ Nippon giảm']},
+  {id:2,name:'DG - Mr Tâm',short:'DG',mgr:'Mr Tâm',region:'Đồng Nai',clients:1,workers:450,trend:[380,400,410,430,445,450],pnl:-22,status:'ok',alerts:[]},
+  {id:3,name:'VSIP - Ms Phượng',short:'VS',mgr:'Ms Phượng',region:'VSIP Bình Dương',clients:2,workers:780,trend:[700,720,740,755,770,780],pnl:-20,status:'ok',alerts:[]},
+  {id:4,name:'Q9 - Mr Quyên',short:'Q9',mgr:'Mr Quyên',region:'Quận 9, HCM',clients:2,workers:220,trend:[180,195,200,210,218,220],pnl:12,status:'ok',alerts:[]},
+  {id:5,name:'BD - Mr Hiệp',short:'BD',mgr:'Mr Hiệp',region:'Bình Dương',clients:3,workers:310,trend:[280,290,295,300,305,310],pnl:-8,status:'ok',alerts:['1 KH mới onboard']},
+  {id:6,name:'NT - Mr Tuấn Anh',short:'NT',mgr:'Mr Tuấn Anh',region:'Nhơn Trạch',clients:1,workers:100,trend:[60,68,75,82,90,100],pnl:-45,status:'warn',alerts:['HĐ Ampacs sắp hết']},
+  {id:7,name:'LA - Ms Oanh',short:'LA',mgr:'Ms Oanh',region:'Long An',clients:2,workers:185,trend:[150,158,165,170,178,185],pnl:5,status:'ok',alerts:[]},
+  {id:8,name:'BD2 - Mr Chiến',short:'B2',mgr:'Mr Chiến',region:'Bình Dương 2',clients:1,workers:240,trend:[200,210,218,225,232,240],pnl:18,status:'ok',alerts:[]},
+  {id:9,name:'HN - Mr Tuấn Em',short:'HN',mgr:'Mr Tuấn Em',region:'Hà Nội',clients:2,workers:160,trend:[120,130,138,145,152,160],pnl:-12,status:'ok',alerts:[]},
+  {id:10,name:'DN2 - Ms Linh',short:'D2',mgr:'Ms Linh',region:'Đồng Nai 2',clients:2,workers:190,trend:[160,168,175,180,185,190],pnl:3,status:'ok',alerts:[]},
+];
+
+let viewMode='grid';
+
+function setView(v){
+  viewMode=v;
+  document.getElementById('vt-grid').classList.toggle('active',v==='grid');
+  document.getElementById('vt-list').classList.toggle('active',v==='list');
+  renderBranches();
+}
+
+function renderBranches(){
+  const grid=document.getElementById('branchGrid');
+  grid.innerHTML=BRANCHES.map(b=>{
+    const maxT=Math.max(...b.trend);
+    const spark=b.trend.map((v,i)=>`<div style="height:${Math.max(2,v/maxT*18)}px" class="${i===b.trend.length-1&&v<b.trend[i-1]?'dn':''}"></div>`).join('');
+    const alerts=b.alerts.map(a=>`<span class="alert-chip ac-warn">${a}</span>`).join('');
+    return`<div class="branch-card" onclick="openBranch(${b.id})">
+      <div class="bc-top">
+        <div class="bc-avatar">${b.short}</div>
+        <div style="flex:1;min-width:0">
+          <div class="bc-name">${b.name}</div>
+          <div class="bc-mgr"><i class="ti ti-map-pin" style="font-size:11px" aria-hidden="true"></i>${b.region}</div>
+          <div style="margin-top:5px"><span class="bc-badge ${b.status==='warn'?'bc-warn':'bc-ok'}">${b.status==='warn'?'Cần xử lý':'Hoạt động tốt'}</span></div>
+        </div>
+        <i class="ti ti-chevron-right" style="font-size:16px;color:var(--tx3)" aria-hidden="true"></i>
+      </div>
+      <div class="bc-stats">
+        <div class="bc-stat">
+          <div class="bc-sval">${b.clients}</div>
+          <div class="bc-slabel">Dự án</div>
+        </div>
+        <div class="bc-stat">
+          <div class="bc-sval">${b.workers}</div>
+          <div class="bc-slabel">Lao động</div>
+        </div>
+        <div class="bc-stat">
+          <div class="bc-sval ${b.pnl>=0?'teal':'red'}">${b.pnl>=0?'+':''}${b.pnl}M</div>
+          <div class="bc-slabel">LN ròng</div>
+        </div>
+      </div>
+      <div class="bc-foot">
+        <div class="bc-alerts">${alerts||'<span style="font-size:11px;color:var(--tx3)">Không có cảnh báo</span>'}</div>
+        <div class="spark">${spark}</div>
+      </div>
+    </div>`;}).join('');
+}
+
+function openBranch(id){
+  const b=BRANCHES.find(x=>x.id===id);
+  document.getElementById('detAvatar').textContent=b.short;
+  document.getElementById('detName').textContent=b.name;
+  document.getElementById('detMgr').innerHTML=`<i class="ti ti-user" style="font-size:13px"></i> ${b.mgr}`;
+  document.getElementById('gridWrap').classList.remove('show');
+  document.getElementById('detailWrap').classList.add('show');
+  switchTab('profile',document.querySelector('.ds-item'));
+  window.scrollTo(0,0);
+}
+
+function goBack(){
+  document.getElementById('detailWrap').classList.remove('show');
+  document.getElementById('gridWrap').classList.add('show');
+}
+
+function switchTab(tab,el){
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.ds-item').forEach(i=>i.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  if(el)el.classList.add('active');
+}
+
+renderBranches();
+</script>
+</body>
+</html>
