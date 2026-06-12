@@ -259,21 +259,6 @@ export default function Dashboard({ clients }: DashboardProps) {
     return counts;
   }, [filteredClients]);
 
-  // Group payment calendar by region
-  const paymentByRegion = useMemo(() => {
-    const regionKeys = [...new Set(filteredClients.map(c => c.region || 'Khác'))];
-    return regionKeys.map(region => {
-      const regionClients = filteredClients.filter(c => (c.region || 'Khác') === region);
-      const counts = new Array(31).fill(0);
-      for (const c of regionClients) {
-        const start = c.payment_start ?? 1;
-        const end = c.payment_end ?? 5;
-        for (let d = start; d <= Math.min(end, 31); d++) counts[d - 1]++;
-      }
-      return { region, counts };
-    });
-  }, [filteredClients]);
-
   const scopeOptions = scopeMode === 'region' ? regions : scopeMode === 'manager' ? managers : [];
 
   return (
@@ -536,7 +521,7 @@ export default function Dashboard({ clients }: DashboardProps) {
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5">
             <BarChart2 size={13} className="text-violet-500" />
             <span className="text-[12.5px] font-semibold text-[#111]">Chu kỳ thanh toán khách hàng</span>
-            <span className="text-[11px] text-gray-400 ml-1">— số KH thanh toán theo ngày trong tháng</span>
+            <span className="text-[11px] text-gray-400 ml-1">— số KH thanh toán theo ngày trong tháng. Dùng "Bộ lọc" phía trên để xem theo khu vực/quản lý.</span>
           </div>
 
           {/* Overall payment bar chart */}
@@ -568,41 +553,6 @@ export default function Dashboard({ clients }: DashboardProps) {
                 }}
               />
             </div>
-
-            {/* Per-region payment calendar */}
-            {paymentByRegion.length > 0 && (
-              <div className="mt-4 border-t border-[#F0EEE9] pt-4">
-                <div className="text-[11.5px] font-medium text-gray-600 mb-3">Theo khu vực</div>
-                <div className="space-y-2.5">
-                  {paymentByRegion.map(({ region, counts }) => {
-                    const maxCount = Math.max(...counts, 1);
-                    return (
-                      <div key={region}>
-                        <div className="text-[11px] font-semibold text-gray-700 mb-1">{region}</div>
-                        <div className="flex gap-px">
-                          {counts.map((count, idx) => (
-                            <div
-                              key={idx}
-                              title={`Ngày ${idx + 1}: ${count} KH`}
-                              className="flex-1 rounded-sm transition-all"
-                              style={{
-                                height: 20,
-                                backgroundColor: count === 0
-                                  ? '#F3F4F6'
-                                  : `rgba(139,92,246,${0.2 + (count / maxCount) * 0.8})`,
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <div className="flex justify-between text-[9px] text-gray-400 mt-0.5">
-                          <span>1</span><span>10</span><span>20</span><span>31</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
