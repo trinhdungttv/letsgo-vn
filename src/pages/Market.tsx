@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MapPin, Coins, Eye, Building2, FileText } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import type { MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
+import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client } from '../lib/types';
 import ZonesTab from './market/ZonesTab';
 import WageTab from './market/WageTab';
 import CompetitorsTab from './market/CompetitorsTab';
@@ -15,6 +15,7 @@ interface MarketProps {
   competitors: Competitor[];
   marketZones: MarketZone[];
   marketLeads: MarketLead[];
+  clients: Client[];
   onRefresh: () => Promise<void>;
   toast: (msg: string) => void;
 }
@@ -27,7 +28,7 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'quote', label: 'Báo giá', icon: <FileText size={13} /> },
 ];
 
-export default function Market({ marketSurveys, competitors, marketZones, marketLeads, onRefresh, toast }: MarketProps) {
+export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, onRefresh, toast }: MarketProps) {
   const [tab, setTab] = useState<MarketTab>('zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
@@ -37,7 +38,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
   };
 
   const shared = {
-    marketZones, marketSurveys, competitors, marketLeads,
+    marketZones, marketSurveys, competitors, marketLeads, clients,
     zoneFilter, setZoneFilter, goTab, onRefresh, toast,
   };
 

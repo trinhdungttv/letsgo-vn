@@ -5,6 +5,7 @@ import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
+import { formatDate } from '../../lib/format';
 
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
@@ -32,7 +33,7 @@ function TagList({ tags, onAdd, onRemove, color }: { tags: string[]; onAdd: (v: 
   );
 }
 
-export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh, toast }: MarketTabProps) {
+export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -121,6 +122,13 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
   if (selected && editForm) {
     const sh = selected.total_workers ? Math.round((selected.lgv_workers / selected.total_workers) * 100) : 0;
     const wageRows = marketSurveys.filter(s => s.zone_name === selected.name);
+    const zoneClients = clients.filter(c => c.industrial_zones?.includes(selected.name));
+    const contractStatus = (c: typeof clients[number]) => {
+      if (!c.contract_end) return { label: 'Đang hiệu lực', cls: 'bg-emerald-50 text-emerald-700' };
+      return new Date(c.contract_end) >= new Date()
+        ? { label: 'Đang hiệu lực', cls: 'bg-emerald-50 text-emerald-700' }
+        : { label: 'Hết hạn', cls: 'bg-red-50 text-red-700' };
+    };
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
@@ -225,6 +233,37 @@ export default function ZonesTab({ marketZones, marketSurveys, goTab, onRefresh,
                   </tr>
                 )) : (
                   <tr><td colSpan={5} className="text-center py-4 text-[#aaa]">Chưa có dữ liệu lương. Thêm ở tab Lương TT.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Building2 size={12} /> Công ty chúng tôi đang làm tại đây</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="border-b border-[#E8E7E2]">
+                {['Tên công ty', 'Số lao động hiện tại', 'Người quản lý', 'Trạng thái HĐ'].map(h => (
+                  <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {zoneClients.length ? zoneClients.map(c => {
+                  const cs = contractStatus(c);
+                  return (
+                    <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
+                      <td className="px-3 py-2 font-medium text-[#111]">{c.name}</td>
+                      <td className="px-3 py-2 text-blue-700">{(c.current_workers ?? 0).toLocaleString('vi-VN')}</td>
+                      <td className="px-3 py-2 text-[#666]">{c.manager || '—'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${cs.cls}`}>{cs.label}</span>
+                        {c.contract_end && <span className="ml-1.5 text-[10.5px] text-[#aaa]">{formatDate(c.contract_end)}</span>}
+                      </td>
+                    </tr>
+                  );
+                }) : (
+                  <tr><td colSpan={4} className="text-center py-4 text-[#aaa]">Chưa có công ty nào thuộc khu này. Gán "Khu Công Nghiệp" trong hồ sơ khách hàng để hiển thị tại đây.</td></tr>
                 )}
               </tbody>
             </table>

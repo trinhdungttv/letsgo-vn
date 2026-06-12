@@ -216,7 +216,7 @@ function AppInner() {
           <Finance finance={finance} clients={clients} onLoadFinance={loadFinance} onFinanceUpdate={handleFinanceUpdate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}
         {page === 'market' && (
-          <Market marketSurveys={marketSurveys} competitors={competitors} marketZones={marketZones} marketLeads={marketLeads} onRefresh={loadMarket} toast={toast} />
+          <Market marketSurveys={marketSurveys} competitors={competitors} marketZones={marketZones} marketLeads={marketLeads} clients={clients} onRefresh={loadMarket} toast={toast} />
         )}
         {page === 'quotes' && (
           <Quotes marketSurveys={marketSurveys} competitors={competitors} toast={toast} />

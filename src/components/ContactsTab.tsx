@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Edit2, UserX, Users, Star } from 'lucide-react';
 import type { Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
+import { supabase } from '../lib/supabase';
 
 const ROLES = ['HR Manager', 'Giám đốc', 'Kế toán', 'Khác'];
 
@@ -34,15 +35,28 @@ interface Props {
 
 export default function ContactsTab({ clientId, toast }: Props) {
   const { user } = useAuth();
-  const { contacts, loading, addContact, updateContact, markInactive, setPrimary } = useContacts(clientId);
+  const { contacts, loading, addContact, updateContact, markInactive, setPrimary, reload } = useContacts(clientId);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [unlinkedContacts, setUnlinkedContacts] = useState<Contact[]>([]);
+  const [linkContactIds, setLinkContactIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!showModal || editingId) return;
+    supabase.from('contacts').select('*').is('client_id', null).order('name')
+      .then(({ data }) => setUnlinkedContacts((data || []) as Contact[]));
+  }, [showModal, editingId]);
+
+  const toggleLinkContact = (id: string) => {
+    setLinkContactIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   const openAdd = () => {
     setEditingId(null);
     setForm(emptyForm());
+    setLinkContactIds([]);
     setShowModal(true);
   };
 
@@ -60,7 +74,31 @@ export default function ContactsTab({ clientId, toast }: Props) {
     setShowModal(true);
   };
 
+  const handleLinkExisting = async () => {
+    setSaving(true);
+    try {
+      for (const id of linkContactIds) {
+        const linked = unlinkedContacts.find(c => c.id === id);
+        if (!linked) continue;
+        const updated = await updateContact(id, { client_id: clientId });
+        await logActivity({
+          user, action: 'update', table: 'contacts', recordId: id,
+          description: `Gắn liên hệ CSKH "${linked.name}" vào công ty hiện tại`,
+          oldData: linked, newData: updated,
+        });
+      }
+      toast(`Đã gắn ${linkContactIds.length} người liên hệ vào công ty này`);
+      await reload();
+      setShowModal(false);
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (!editingId && linkContactIds.length > 0) return handleLinkExisting();
     if (!form.name.trim()) { toast('Vui lòng nhập họ tên'); return; }
     setSaving(true);
     try {
@@ -252,6 +290,25 @@ export default function ContactsTab({ clientId, toast }: Props) {
               <button onClick={() => setShowModal(false)} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
             </div>
             <div className="p-5 space-y-3">
+              {!editingId && unlinkedContacts.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[12px] text-[#666] font-medium">Chọn người có sẵn trong CSKH (chưa gắn công ty) — có thể chọn nhiều</label>
+                  <div className="border border-gray-300 rounded-lg divide-y divide-gray-100 max-h-36 overflow-y-auto">
+                    {unlinkedContacts.map(c => (
+                      <label key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 text-[13px] cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          checked={linkContactIds.includes(c.id)}
+                          onChange={() => toggleLinkContact(c.id)}
+                          className="accent-blue-600"
+                        />
+                        <span>{c.name}{c.phone ? ` - ${c.phone}` : ''}{c.role ? ` (${c.role})` : ''}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className={`space-y-3 ${linkContactIds.length > 0 ? 'opacity-40 pointer-events-none' : ''}`}>
               <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-[#666] font-medium">Họ tên <span className="text-red-500">*</span></label>
                 <input
@@ -327,6 +384,7 @@ export default function ContactsTab({ clientId, toast }: Props) {
                   {form.is_active ? 'Đang phụ trách' : 'Đã nghỉ'}
                 </span>
               </div>
+              </div>
             </div>
             <div className="flex gap-2 px-5 pb-5">
               <button
@@ -334,7 +392,7 @@ export default function ContactsTab({ clientId, toast }: Props) {
                 disabled={saving}
                 className="flex-1 py-2 rounded-lg text-[13px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-50 transition"
               >
-                {saving ? 'Đang lưu...' : 'Lưu'}
+                {saving ? 'Đang lưu...' : (linkContactIds.length > 0 ? `Gắn ${linkContactIds.length} người` : 'Lưu')}
               </button>
               <button
                 onClick={() => setShowModal(false)}

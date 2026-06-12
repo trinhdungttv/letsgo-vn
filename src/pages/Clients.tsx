@@ -51,6 +51,9 @@ export default function Clients({
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_end' | 'cutoff_day' | 'status' } | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [savingCell, setSavingCell] = useState(false);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
@@ -219,13 +222,58 @@ export default function Clients({
     }
   };
 
+  const QUICK_EDIT_LABELS: Record<string, string> = {
+    region: 'Chi nhánh', manager: 'Quản lý', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái',
+  };
+
+  const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
+    e.stopPropagation();
+    if (!isAdmin) return;
+    const current = field === 'cutoff_day' ? String(c.cutoff_day ?? '') : (c as any)[field] || '';
+    setEditingCell({ id: c.id, field });
+    setEditValue(current);
+  };
+
+  const cancelEdit = () => { setEditingCell(null); setEditValue(''); };
+
+  // Prevent the row's onClick (navigate to detail) from firing on the first click of a double-click in editable cells.
+  const stopForEdit = (e: React.MouseEvent) => { if (isAdmin) e.stopPropagation(); };
+
+  const saveEdit = async (c: Client) => {
+    if (!editingCell) return;
+    const field = editingCell.field;
+    const oldVal = field === 'cutoff_day' ? c.cutoff_day : (c as any)[field];
+    let newVal: any = editValue;
+    if (field === 'cutoff_day') newVal = Math.max(1, Math.min(31, parseInt(editValue) || 1));
+    if ((field === 'region' || field === 'manager' || field === 'contract_end') && !editValue) newVal = null;
+    if (String(oldVal ?? '') === String(newVal ?? '')) { cancelEdit(); return; }
+    setSavingCell(true);
+    try {
+      const updates: any = { [field]: newVal, updated_at: new Date().toISOString() };
+      const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
+      if (error) throw error;
+      onClientUpdate({ ...c, ...updates });
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: c.id,
+        description: `Cập nhật ${QUICK_EDIT_LABELS[field]} của "${c.name}": ${oldVal ?? '—'} → ${newVal ?? '—'}`,
+        oldData: c, newData: { ...c, ...updates },
+      });
+      toast('Đã cập nhật');
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setSavingCell(false);
+      cancelEdit();
+    }
+  };
+
   const col = (key: ColumnKey) => columns[key] !== false;
 
   return (
     <>
       <PageHeader
         title="Khách hàng"
-        subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết`}
+        subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết${isAdmin ? ' · Double-click vào Chi nhánh/Quản lý/Chốt/Hết HĐ/TT để sửa nhanh' : ''}`}
         actions={
           <div className="flex items-center gap-2">
             {isAdmin && (
@@ -306,10 +354,38 @@ export default function Clients({
                           </div>
                         </div>
                       </td>
-                      {col('region') && <td className="px-3 py-2 text-[12px] text-[#555]">{c.region || '—'}</td>}
+                      {col('region') && (
+                        <td className="px-3 py-2 text-[12px] text-[#555]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'region')}>
+                          {editingCell?.id === c.id && editingCell.field === 'region' ? (
+                            <select
+                              autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
+                            >
+                              <option value="">—</option>
+                              {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                            </select>
+                          ) : (c.region || '—')}
+                        </td>
+                      )}
                       {col('manager') && (
-                        <td className="px-3 py-2 text-[12px] whitespace-nowrap">
-                          {c.manager ? (
+                        <td className="px-3 py-2 text-[12px] whitespace-nowrap" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'manager')}>
+                          {editingCell?.id === c.id && editingCell.field === 'manager' ? (
+                            <select
+                              autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
+                            >
+                              <option value="">—</option>
+                              {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                            </select>
+                          ) : c.manager ? (
                             <button
                               onClick={e => {
                                 e.stopPropagation();
@@ -342,23 +418,47 @@ export default function Clients({
                           </span>
                         ) : '—'}
                       </td>
-                      {col('cutoff') && <td className="px-3 py-2 text-[12px]">Ngày {c.cutoff_day}</td>}
+                      {col('cutoff') && (
+                        <td className="px-3 py-2 text-[12px]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'cutoff_day')}>
+                          {editingCell?.id === c.id && editingCell.field === 'cutoff_day' ? (
+                            <input
+                              type="number" min={1} max={31} autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] w-14 px-1.5 py-1 rounded border border-blue-400 outline-none"
+                            />
+                          ) : `Ngày ${c.cutoff_day}`}
+                        </td>
+                      )}
                       {col('payment') && <td className="px-3 py-2 text-[12px] whitespace-nowrap">{c.next_month_pay ? 'T sau' : `${c.payment_start}–${c.payment_end}`}</td>}
                       {col('contract_end') && (
-                        <td className="px-3 py-2" onClick={e => isWarn && openRenew(e, c)}>
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[12px] whitespace-nowrap" style={{ color: d !== null && d <= 7 ? '#DC2626' : d !== null && d <= 30 ? '#D97706' : undefined }}>
-                              {formatDate(c.contract_end)}
-                            </span>
-                            {isWarn && (
-                              <button
-                                onClick={e => openRenew(e, c)}
-                                className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 transition w-fit"
-                              >
-                                <RefreshCw className="w-2.5 h-2.5" /> Gia hạn
-                              </button>
-                            )}
-                          </div>
+                        <td className="px-3 py-2" onClick={e => { stopForEdit(e); if (editingCell) return; isWarn && openRenew(e, c); }} onDoubleClick={e => startEdit(e, c, 'contract_end')}>
+                          {editingCell?.id === c.id && editingCell.field === 'contract_end' ? (
+                            <input
+                              type="date" autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none"
+                            />
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[12px] whitespace-nowrap" style={{ color: d !== null && d <= 7 ? '#DC2626' : d !== null && d <= 30 ? '#D97706' : undefined }}>
+                                {formatDate(c.contract_end)}
+                              </span>
+                              {isWarn && (
+                                <button
+                                  onClick={e => openRenew(e, c)}
+                                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 transition w-fit"
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" /> Gia hạn
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
                       )}
                       {col('progress') && (
@@ -371,8 +471,23 @@ export default function Clients({
                         </td>
                       )}
                       {col('status') && (
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pill.cls}`}>{pill.label}</span>
+                        <td className="px-3 py-2" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'status')}>
+                          {editingCell?.id === c.id && editingCell.field === 'status' ? (
+                            <select
+                              autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
+                            >
+                              <option value="ok">Bình thường</option>
+                              <option value="warn">Sắp hết HĐ</option>
+                              <option value="danger">Khẩn cấp</option>
+                            </select>
+                          ) : (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pill.cls}`}>{pill.label}</span>
+                          )}
                         </td>
                       )}
                       {isAdmin && (

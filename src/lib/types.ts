@@ -130,6 +130,19 @@ export interface CRMGift {
   created_at: string;
 }
 
+export interface ClientGift {
+  id: string;
+  client_id: string;
+  item_name: string;
+  value: number | null;
+  gift_date: string;
+  notes: string | null;
+  recipient_name: string | null;
+  recipient_contact_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export type PipelineTaskStatus = 'pending' | 'in_progress' | 'done';
 
 export interface CRMPipelineTask {

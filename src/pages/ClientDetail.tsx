@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, MarketZone, CRMDeal as CRMDealType, CRMActivity } from '../lib/types';
+import type { Client, LaborHistoryEntry, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact } from '../lib/types';
 import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, statusPill, formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -63,8 +63,14 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   const [dealActivities, setDealActivities] = useState<CRMActivity[]>([]);
   const [activeActivityTab, setActiveActivityTab] = useState<'note' | 'call' | 'email' | 'meeting'>('note');
   const [activityContent, setActivityContent] = useState('');
-  const [activityCreatedBy, setActivityCreatedBy] = useState('');
   const [savingActivity, setSavingActivity] = useState(false);
+  const [gifts, setGifts] = useState<ClientGift[]>([]);
+  const [cskhContacts, setCskhContacts] = useState<Contact[]>([]);
+  const [showNewRecipient, setShowNewRecipient] = useState(false);
+  const [newRecipientForm, setNewRecipientForm] = useState({ name: '', phone: '', role: '' });
+  const [savingRecipient, setSavingRecipient] = useState(false);
+  const [giftForm, setGiftForm] = useState({ item_name: '', value: '', gift_date: new Date().toISOString().slice(0, 10), notes: '', recipient_contact_id: '' });
+  const [savingGift, setSavingGift] = useState(false);
   const [editingDealTitle, setEditingDealTitle] = useState(false);
   const [dealTitleInput, setDealTitleInput] = useState('');
 
@@ -79,6 +85,15 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
         setDeals(rows);
         setSelectedDealId(prev => prev && rows.some(d => d.id === prev) ? prev : (rows[0]?.id || null));
       });
+    supabase.from('client_gifts')
+      .select('*')
+      .eq('client_id', client.id)
+      .order('gift_date', { ascending: false })
+      .then(({ data }) => setGifts((data || []) as ClientGift[]));
+    supabase.from('contacts')
+      .select('*, clients(name)')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setCskhContacts((data || []) as Contact[]));
   }, [activeTab, client.id]);
 
   useEffect(() => {
@@ -158,13 +173,12 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
         deal_id: selectedDeal.id,
         type: activeActivityTab,
         content: activityContent.trim(),
-        created_by: activityCreatedBy.trim() || user?.full_name || 'System',
+        created_by: user?.full_name || 'System',
         created_at: new Date().toISOString(),
       }).select().single();
       if (error) throw error;
       setDealActivities(prev => [data as CRMActivity, ...prev]);
       setActivityContent('');
-      setActivityCreatedBy('');
       toast('Đã thêm hoạt động');
       await logActivity({
         user, action: 'insert', table: 'crm_activities', recordId: data.id,
@@ -175,6 +189,67 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
       toast('Lỗi: ' + e.message);
     } finally {
       setSavingActivity(false);
+    }
+  };
+
+  const handleAddGift = async () => {
+    if (!giftForm.item_name.trim()) { toast('Vui lòng nhập tên quà'); return; }
+    setSavingGift(true);
+    try {
+      const recipient = cskhContacts.find(c => c.id === giftForm.recipient_contact_id);
+      const { data, error } = await supabase.from('client_gifts').insert({
+        client_id: client.id,
+        item_name: giftForm.item_name.trim(),
+        value: giftForm.value ? Number(giftForm.value) : null,
+        gift_date: giftForm.gift_date,
+        notes: giftForm.notes.trim() || null,
+        recipient_contact_id: giftForm.recipient_contact_id || null,
+        recipient_name: recipient?.name || null,
+        created_by: user?.full_name || 'System',
+      }).select().single();
+      if (error) throw error;
+      setGifts(prev => [data as ClientGift, ...prev]);
+      setGiftForm({ item_name: '', value: '', gift_date: new Date().toISOString().slice(0, 10), notes: '', recipient_contact_id: '' });
+      toast('Đã thêm quà tặng');
+      await logActivity({
+        user, action: 'insert', table: 'client_gifts', recordId: data.id,
+        description: `Thêm quà tặng "${data.item_name}" cho khách hàng "${client.name}"`,
+        newData: data,
+      });
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    } finally {
+      setSavingGift(false);
+    }
+  };
+
+  const handleAddRecipient = async () => {
+    if (!newRecipientForm.name.trim()) { toast('Vui lòng nhập họ tên'); return; }
+    setSavingRecipient(true);
+    try {
+      const { data, error } = await supabase.from('contacts').insert({
+        client_id: client.id,
+        name: newRecipientForm.name.trim(),
+        phone: newRecipientForm.phone.trim() || null,
+        role: newRecipientForm.role.trim() || 'Khác',
+        updated_at: new Date().toISOString(),
+      }).select('*, clients(name)').single();
+      if (error) throw error;
+      const contact = data as Contact;
+      setCskhContacts(prev => [contact, ...prev]);
+      setGiftForm(prev => ({ ...prev, recipient_contact_id: contact.id }));
+      setNewRecipientForm({ name: '', phone: '', role: '' });
+      setShowNewRecipient(false);
+      toast('Đã thêm người nhận mới vào CSKH');
+      await logActivity({
+        user, action: 'insert', table: 'contacts', recordId: contact.id,
+        description: `Thêm liên hệ CSKH "${contact.name}" cho khách hàng "${client.name}"`,
+        newData: contact,
+      });
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    } finally {
+      setSavingRecipient(false);
     }
   };
 
@@ -203,15 +278,6 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
       meeting: { label: 'Cuộc họp', bg: 'bg-violet-100', text: 'text-violet-700' },
     };
     return badges[type] || badges.note;
-  };
-
-  const toggleZone = (name: string) => {
-    setForm(f => ({
-      ...f,
-      industrial_zones: f.industrial_zones.includes(name)
-        ? f.industrial_zones.filter(z => z !== name)
-        : [...f.industrial_zones, name],
-    }));
   };
 
   const hist = useMemo(() => [...laborHistory].sort((a, b) => a.created_at.localeCompare(b.created_at)), [laborHistory]);
@@ -525,13 +591,7 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                         placeholder="Nội dung..."
                         className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none h-20 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
                       />
-                      <input
-                        type="text"
-                        value={activityCreatedBy}
-                        onChange={e => setActivityCreatedBy(e.target.value)}
-                        placeholder="Tạo bởi (tùy chọn)"
-                        className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
-                      />
+                      <p className="text-[11px] text-gray-400 mb-2">Sẽ ghi nhận bởi: <span className="font-medium text-gray-600">{user?.full_name || 'System'}</span></p>
                       <button
                         onClick={handleActivitySubmit}
                         disabled={savingActivity}
@@ -568,6 +628,139 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Quà tặng */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-xs font-semibold uppercase text-gray-600 mb-4 flex items-center gap-1.5"><Gift size={14} className="text-pink-500" /> Quà tặng</h3>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-4">
+              <input
+                type="text"
+                value={giftForm.item_name}
+                onChange={e => setGiftForm({ ...giftForm, item_name: e.target.value })}
+                placeholder="Tên quà"
+                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+              />
+              <input
+                type="number"
+                value={giftForm.value}
+                onChange={e => setGiftForm({ ...giftForm, value: e.target.value })}
+                placeholder="Trị giá (VNĐ)"
+                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+              />
+              <input
+                type="date"
+                value={giftForm.gift_date}
+                onChange={e => setGiftForm({ ...giftForm, gift_date: e.target.value })}
+                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+              />
+              <select
+                value={showNewRecipient ? '__new__' : giftForm.recipient_contact_id}
+                onChange={e => {
+                  if (e.target.value === '__new__') { setShowNewRecipient(true); return; }
+                  setShowNewRecipient(false);
+                  setGiftForm({ ...giftForm, recipient_contact_id: e.target.value });
+                }}
+                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+              >
+                <option value="">Người nhận (CSKH)...</option>
+                {cskhContacts.filter(c => c.client_id === client.id).length > 0 && (
+                  <optgroup label="⭐ Người phụ trách công ty này">
+                    {cskhContacts.filter(c => c.client_id === client.id).map(c => (
+                      <option key={c.id} value={c.id}>⭐ {c.name}{c.role ? ` - ${c.role}` : ''}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {cskhContacts.filter(c => c.client_id !== client.id).length > 0 && (
+                  <optgroup label="Khác (CSKH)">
+                    {cskhContacts.filter(c => c.client_id !== client.id).map(c => (
+                      <option key={c.id} value={c.id}>{c.name}{c.role ? ` - ${c.role}` : ''}{c.clients?.name ? ` (${c.clients.name})` : ''}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <option value="__new__">+ Tạo người nhận mới...</option>
+              </select>
+              <input
+                type="text"
+                value={giftForm.notes}
+                onChange={e => setGiftForm({ ...giftForm, notes: e.target.value })}
+                placeholder="Ghi chú"
+                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {showNewRecipient && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <input
+                  type="text"
+                  value={newRecipientForm.name}
+                  onChange={e => setNewRecipientForm({ ...newRecipientForm, name: e.target.value })}
+                  placeholder="Họ tên *"
+                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  value={newRecipientForm.phone}
+                  onChange={e => setNewRecipientForm({ ...newRecipientForm, phone: e.target.value })}
+                  placeholder="SĐT"
+                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  value={newRecipientForm.role}
+                  onChange={e => setNewRecipientForm({ ...newRecipientForm, role: e.target.value })}
+                  placeholder="Chức vụ"
+                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddRecipient}
+                    disabled={savingRecipient}
+                    className="flex-1 px-3 py-1.5 text-[12.5px] font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
+                  >
+                    {savingRecipient ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button
+                    onClick={() => { setShowNewRecipient(false); setNewRecipientForm({ name: '', phone: '', role: '' }); }}
+                    className="px-3 py-1.5 text-[12.5px] font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={handleAddGift}
+              disabled={savingGift}
+              className="px-3 py-1.5 text-[12.5px] font-medium text-white bg-pink-500 hover:bg-pink-600 disabled:opacity-50 rounded-lg transition-colors mb-4"
+            >
+              {savingGift ? 'Đang lưu...' : '+ Thêm quà tặng'}
+            </button>
+            {gifts.length === 0 ? (
+              <p className="text-[12.5px] text-[#aaa]">Chưa có quà tặng nào được ghi nhận.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead><tr className="border-b border-gray-200">
+                    {['Tên quà', 'Trị giá', 'Ngày tặng', 'Người nhận', 'Ghi chú', 'Tạo bởi'].map(h => (
+                      <th key={h} className="text-left px-2 py-1.5 text-[11.5px] text-[#888] font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {gifts.map(g => (
+                      <tr key={g.id} className="border-b border-gray-100 last:border-0">
+                        <td className="px-2 py-1.5 font-medium">{g.item_name}</td>
+                        <td className="px-2 py-1.5">{g.value != null ? formatCurrency(g.value) : '—'}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap"><span className="inline-flex items-center gap-1 text-gray-600"><CalendarDays size={12} />{formatDate(g.gift_date)}</span></td>
+                        <td className="px-2 py-1.5">{g.recipient_name || '—'}</td>
+                        <td className="px-2 py-1.5 text-gray-600">{g.notes || '—'}</td>
+                        <td className="px-2 py-1.5 text-gray-400">{g.created_by || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
           </div>
         ) : (
@@ -612,19 +805,17 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
-                    <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-gray-300">
-                      {marketZones.length === 0 && <span className="text-[12px] text-[#aaa]">Chưa có khu vực nào trong Thị trường &gt; Khu vực</span>}
+                    <select
+                      value={form.industrial_zones[0] || ''}
+                      onChange={e => setForm({ ...form, industrial_zones: e.target.value ? [e.target.value] : [] })}
+                      className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                    >
+                      <option value="">— Chọn khu công nghiệp —</option>
                       {marketZones.map(z => (
-                        <button
-                          key={z.id}
-                          type="button"
-                          onClick={() => toggleZone(z.name)}
-                          className={`px-2.5 py-1 rounded-full text-[12px] font-medium border transition ${form.industrial_zones.includes(z.name) ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-700'}`}
-                        >
-                          {z.name}
-                        </button>
+                        <option key={z.id} value={z.name}>{z.name}</option>
                       ))}
-                    </div>
+                    </select>
+                    {marketZones.length === 0 && <span className="text-[12px] text-[#aaa]">Chưa có khu vực nào trong Thị trường &gt; Khu vực</span>}
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
@@ -685,9 +876,7 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                     <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
                     <div className="py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px] flex flex-wrap gap-1.5 items-center">
                       {client.industrial_zones && client.industrial_zones.length > 0 ? (
-                        client.industrial_zones.map(z => (
-                          <span key={z} className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">{z}</span>
-                        ))
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">{client.industrial_zones[0]}</span>
                       ) : (
                         <span className="text-[13px] text-[#111]">—</span>
                       )}

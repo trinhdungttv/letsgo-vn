@@ -1,4 +1,4 @@
-import type { MarketZone, MarketSurvey, Competitor, MarketLead } from '../../lib/types';
+import type { MarketZone, MarketSurvey, Competitor, MarketLead, Client } from '../../lib/types';
 import type { MarketTab } from '../Market';
 
 export const fmtTr = (v: number | null | undefined) => v != null ? (v / 1_000_000).toFixed(1) + 'tr' : '—';
@@ -18,6 +18,7 @@ export interface MarketTabProps {
   marketSurveys: MarketSurvey[];
   competitors: Competitor[];
   marketLeads: MarketLead[];
+  clients: Client[];
   zoneFilter: string;
   setZoneFilter: (z: string) => void;
   goTab: (tab: MarketTab, zone?: string) => void;
