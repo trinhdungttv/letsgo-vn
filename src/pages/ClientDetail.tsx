@@ -58,11 +58,15 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   };
 
   const addExtraMonth = () => {
-    if (!extraMonth) return;
+    if (!extraMonth) { toast('Vui lòng chọn tháng/năm cần thêm'); return; }
     const [y, m] = extraMonth.split('-').map(Number);
     if (!y || !m) return;
     setExtraMonths(prev => prev.some(e => e.year === y && e.month === m) ? prev : [...prev, { year: y, month: m }]);
     setExtraMonth('');
+    // Jump the week selector to this month's most recent week so it's immediately visible
+    const labels = weekLabelsForMonth(y, m);
+    selectWeek(labels[labels.length - 1]);
+    toast(`Đã thêm Tháng ${m}/${y} vào danh sách tuần`);
   };
   const [openInfo, setOpenInfo] = useState(false);
   const [openLabor, setOpenLabor] = useState(true);
