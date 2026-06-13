@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Trash2, X, Shield, Check, Lock, Unlock, Inbox } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Shield, Check, Lock, Unlock, Inbox, Image, Upload } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import type { AppUser, PermissionRequest, PermissionAction } from '../lib/types';
+import type { AppUser, PermissionRequest, PermissionAction, RolePermissionLevel } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { ROLE_LABELS, ROLE_COLORS } from '../lib/constants';
+import { getAppLogoUrl, setAppLogoUrl } from '../lib/appSettings';
 
 interface AdminPageProps {
   toast: (msg: string) => void;
@@ -17,7 +18,7 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-type Tab = 'requests' | 'accounts' | 'matrix';
+type Tab = 'requests' | 'accounts' | 'matrix' | 'branding';
 
 const ACTION_LABELS: Record<PermissionAction, string> = {
   view: 'Xem', edit: 'Sửa/Nhập', delete: 'Xóa', export: 'Export',
@@ -29,22 +30,44 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   rejected: { label: 'Đã từ chối', cls: 'bg-red-50 text-red-700 border border-red-200' },
 };
 
-const MODULES = ['Dashboard', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
+const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
 
-// Access level per role per module: 'full' | 'view' | 'none' — derived from canAccess() rules,
-// used only for the read-only matrix overview in Tab 3.
-const MATRIX: Record<string, Record<string, 'full' | 'view' | 'none'>> = {
-  admin:     { Dashboard: 'full', 'Khách hàng': 'full', 'Chi nhánh': 'full', 'Tài chính': 'full', 'Thị trường': 'full', 'Báo giá': 'full', CRM: 'full', 'Báo cáo': 'view', 'Quản lý Users': 'full', 'Lịch sử': 'full', 'Bảng KD': 'full', Admin: 'full' },
-  ketoan:    { Dashboard: 'view', 'Khách hàng': 'full', 'Chi nhánh': 'none', 'Tài chính': 'full', 'Thị trường': 'none', 'Báo giá': 'none', CRM: 'none', 'Báo cáo': 'view', 'Quản lý Users': 'none', 'Lịch sử': 'none', 'Bảng KD': 'none', Admin: 'none' },
-  kinhdoanh: { Dashboard: 'view', 'Khách hàng': 'full', 'Chi nhánh': 'none', 'Tài chính': 'none', 'Thị trường': 'full', 'Báo giá': 'full', CRM: 'full', 'Báo cáo': 'view', 'Quản lý Users': 'none', 'Lịch sử': 'none', 'Bảng KD': 'full', Admin: 'none' },
-  bdh:       { Dashboard: 'view', 'Khách hàng': 'full', 'Chi nhánh': 'full', 'Tài chính': 'full', 'Thị trường': 'none', 'Báo giá': 'none', CRM: 'full', 'Báo cáo': 'view', 'Quản lý Users': 'none', 'Lịch sử': 'none', 'Bảng KD': 'full', Admin: 'none' },
-};
+const LEVEL_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'view', view: 'none', none: 'full' };
+
+// Modules an admin must keep at least "view" access to, so they can't lock themselves out of user/permission management.
+const LOCKED_FOR_ADMIN = ['Admin', 'Quản lý Users'];
 
 const emptyForm = { username: '', full_name: '', email: '', password: '', role: 'kinhdoanh' as AppUser['role'] };
 
 export default function AdminPage({ toast }: AdminPageProps) {
-  const { user } = useAuth();
+  const { user, rolePermissions, refreshRolePermissions } = useAuth();
   const [tab, setTab] = useState<Tab>('requests');
+  const [savingCell, setSavingCell] = useState<string | null>(null);
+
+  const matrixLevel = (role: string, mod: string): RolePermissionLevel =>
+    rolePermissions.find(p => p.role === role && p.module === mod)?.level ?? 'none';
+
+  const handleToggleLevel = async (role: string, mod: string) => {
+    const current = matrixLevel(role, mod);
+    let next = LEVEL_CYCLE[current];
+    if (role === 'admin' && LOCKED_FOR_ADMIN.includes(mod) && next === 'none') next = LEVEL_CYCLE[next];
+    const key = `${role}-${mod}`;
+    setSavingCell(key);
+    try {
+      const { error } = await supabase.from('role_permissions')
+        .upsert({ role, module: mod, level: next, updated_at: new Date().toISOString() }, { onConflict: 'role,module' });
+      if (error) throw error;
+      await refreshRolePermissions();
+      await logActivity({
+        user, action: 'update', table: 'role_permissions', recordId: `${role}:${mod}`,
+        description: `Cập nhật quyền "${mod}" cho vai trò "${ROLE_LABELS[role] || role}": ${current} → ${next}`,
+      });
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setSavingCell(null);
+    }
+  };
 
   // Tab 1 - permission requests
   const [requests, setRequests] = useState<PermissionRequest[]>([]);
@@ -60,6 +83,50 @@ export default function AdminPage({ toast }: AdminPageProps) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Tab 4 - branding (logo App)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  useEffect(() => {
+    getAppLogoUrl().then(setLogoUrl).catch(() => {});
+  }, []);
+
+  const handleLogoUpload = async (file: File) => {
+    setUploadingLogo(true);
+    try {
+      const ext = file.name.split('.').pop() || 'png';
+      const path = `app-logo/logo-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+      await setAppLogoUrl(data.publicUrl);
+      setLogoUrl(data.publicUrl);
+      await logActivity({
+        user, action: 'update', table: 'app_settings', recordId: 'app_logo_url',
+        description: 'Cập nhật logo App',
+      });
+      toast('Đã cập nhật logo App');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    try {
+      await setAppLogoUrl(null);
+      setLogoUrl(null);
+      await logActivity({
+        user, action: 'update', table: 'app_settings', recordId: 'app_logo_url',
+        description: 'Xóa logo App (dùng lại logo mặc định "LG")',
+      });
+      toast('Đã xóa logo App');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    }
+  };
 
   const loadRequests = useCallback(async () => {
     setLoadingReq(true);
@@ -217,6 +284,7 @@ export default function AdminPage({ toast }: AdminPageProps) {
             { key: 'requests', label: 'Yêu cầu quyền truy cập' },
             { key: 'accounts', label: 'Quản lý tài khoản' },
             { key: 'matrix', label: 'Ma trận phân quyền' },
+            { key: 'branding', label: 'Logo App' },
           ] as { key: Tab; label: string }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === t.key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
@@ -345,17 +413,17 @@ export default function AdminPage({ toast }: AdminPageProps) {
           </div>
         )}
 
-        {/* TAB 3: Permission matrix (read-only overview) */}
+        {/* TAB 3: Permission matrix (editable — click a cell to cycle Toàn quyền → Chỉ xem → Không có quyền) */}
         {tab === 'matrix' && (
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Ma trận phân quyền theo vai trò</div>
-            <div className="px-4 pt-2.5 text-[11px] text-[#888]">✓ Toàn quyền &nbsp;·&nbsp; 👁 Chỉ xem &nbsp;·&nbsp; ✗ Không có quyền</div>
+            <div className="px-4 pt-2.5 text-[11px] text-[#888]">✓ Toàn quyền &nbsp;·&nbsp; 👁 Chỉ xem &nbsp;·&nbsp; ✗ Không có quyền — bấm vào ô để thay đổi</div>
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">
                 <thead>
                   <tr className="border-b border-[#E8E7E2]">
                     <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] w-40">Module</th>
-                    {Object.keys(MATRIX).map(r => (
+                    {Object.keys(ROLE_LABELS).map(r => (
                       <th key={r} className="text-center px-3 py-2 text-[11.5px] font-medium bg-[#F9F9F7]">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] ${ROLE_COLORS[r] || 'bg-gray-100 text-gray-600'}`}>{ROLE_LABELS[r] || r}</span>
                       </th>
@@ -366,13 +434,21 @@ export default function AdminPage({ toast }: AdminPageProps) {
                   {MODULES.map(mod => (
                     <tr key={mod} className="border-b border-[#F0EEE9] last:border-0">
                       <td className="px-3 py-2 text-[#555] font-medium">{mod}</td>
-                      {Object.keys(MATRIX).map(role => {
-                        const level = MATRIX[role][mod] || 'none';
+                      {Object.keys(ROLE_LABELS).map(role => {
+                        const level = matrixLevel(role, mod);
+                        const key = `${role}-${mod}`;
                         return (
                           <td key={role} className="px-3 py-2 text-center">
-                            {level === 'full' && <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100" title="Toàn quyền"><Check size={10} className="text-emerald-600" strokeWidth={3} /></span>}
-                            {level === 'view' && <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-[11px]" title="Chỉ xem">👁</span>}
-                            {level === 'none' && <span className="inline-block w-5 h-5 rounded-full bg-gray-50 border border-gray-100" title="Không có quyền" />}
+                            <button
+                              onClick={() => handleToggleLevel(role, mod)}
+                              disabled={savingCell === key}
+                              title="Bấm để đổi mức quyền"
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:ring-2 hover:ring-blue-200 transition disabled:opacity-40"
+                            >
+                              {level === 'full' && <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100" title="Toàn quyền"><Check size={10} className="text-emerald-600" strokeWidth={3} /></span>}
+                              {level === 'view' && <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-[11px]" title="Chỉ xem">👁</span>}
+                              {level === 'none' && <span className="inline-block w-5 h-5 rounded-full bg-gray-50 border border-gray-100" title="Không có quyền" />}
+                            </button>
                           </td>
                         );
                       })}
@@ -380,6 +456,38 @@ export default function AdminPage({ toast }: AdminPageProps) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: App logo (hiển thị ở Sidebar + trang Đăng nhập) */}
+        {tab === 'branding' && (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-5 max-w-md">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-1">Logo App</div>
+            <p className="text-[11.5px] text-[#888] mb-4">Logo này sẽ hiển thị thay cho ô "LG" ở menu bên trái và trang Đăng nhập.</p>
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-xl bg-[#0c2340] flex items-center justify-center overflow-hidden shrink-0">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-white font-bold text-lg">LG</span>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 cursor-pointer transition w-fit">
+                  {uploadingLogo ? <Image size={13} className="animate-pulse" /> : <Upload size={13} />}
+                  {uploadingLogo ? 'Đang tải lên...' : 'Tải logo mới'}
+                  <input
+                    type="file" accept="image/*" className="hidden" disabled={uploadingLogo}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ''; }}
+                  />
+                </label>
+                {logoUrl && (
+                  <button onClick={handleRemoveLogo} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition w-fit">
+                    <Trash2 size={13} /> Xóa, dùng logo mặc định
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

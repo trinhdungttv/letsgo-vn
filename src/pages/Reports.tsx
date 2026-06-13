@@ -1,8 +1,10 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip } from 'chart.js';
 import PageHeader from '../components/PageHeader';
-import type { Client, LaborHistoryEntry } from '../lib/types';
+import type { Client, LaborHistoryEntry, ProjectPnl } from '../lib/types';
 import { getMonthLast, formatCurrency } from '../lib/format';
+import { supabase } from '../lib/supabase';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip);
 
@@ -11,15 +13,41 @@ interface ReportsProps {
   laborHistory: Record<string, LaborHistoryEntry[]>;
 }
 
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export default function Reports({ clients, laborHistory }: ReportsProps) {
   const totalWorkers = clients.reduce((s, c) => s + (c.current_workers || 0), 0);
 
-  const regionMap: Record<string, { clients: number; workers: number }> = {};
+  // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu (giống Dashboard)
+  const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
+  useEffect(() => {
+    supabase.from('projects_pnl').select('*').eq('month', currentMonthStr()).then(({ data }) => {
+      setProjectsPnl((data || []) as ProjectPnl[]);
+    });
+  }, []);
+
+  const pnlByClient = useMemo(() => {
+    const map: Record<string, ProjectPnl[]> = {};
+    for (const p of projectsPnl) {
+      if (!map[p.client_id]) map[p.client_id] = [];
+      map[p.client_id].push(p);
+    }
+    return map;
+  }, [projectsPnl]);
+
+  const revenueOf = (clientId: string) => (pnlByClient[clientId] || []).reduce((s, p) => s + (p.revenue || 0), 0);
+  const totalRevenue = clients.reduce((s, c) => s + revenueOf(c.id), 0);
+
+  const regionMap: Record<string, { clients: number; workers: number; revenue: number }> = {};
   for (const c of clients) {
     const r = c.region || 'Khác';
-    if (!regionMap[r]) regionMap[r] = { clients: 0, workers: 0 };
+    if (!regionMap[r]) regionMap[r] = { clients: 0, workers: 0, revenue: 0 };
     regionMap[r].clients++;
     regionMap[r].workers += c.current_workers || 0;
+    regionMap[r].revenue += revenueOf(c.id);
   }
   const regions = Object.entries(regionMap).sort((a, b) => b[1].workers - a[1].workers);
 
@@ -42,9 +70,9 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
             <div className="text-[11px] text-[#aaa] mt-0.5">{Object.keys(regionMap).length} khu vực</div>
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
-            <div className="text-[11.5px] text-[#888] mb-1">Doanh thu ước tính T6</div>
-            <div className="text-[24px] font-bold text-[#111]">{formatCurrency(totalWorkers * 850000 * 30)}</div>
-            <div className="text-[11px] text-[#aaa] mt-0.5">850K phí × {totalWorkers.toLocaleString()} LĐ</div>
+            <div className="text-[11.5px] text-[#888] mb-1">Doanh thu tháng (P&L Dự án)</div>
+            <div className="text-[24px] font-bold text-[#111]">{formatCurrency(totalRevenue)}</div>
+            <div className="text-[11px] text-[#aaa] mt-0.5">Tổng doanh thu từ P&L Dự án tháng hiện tại</div>
           </div>
         </div>
 
@@ -72,7 +100,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="border-b border-[#E8E7E2]">
-                {['Khu vực', 'Số KH', 'Tổng LĐ', 'TB/KH', 'Tỷ trọng', 'Doanh thu ước'].map(h => (
+                {['Khu vực', 'Số KH', 'Tổng LĐ', 'TB/KH', 'Tỷ trọng', 'Doanh thu (P&L)'].map(h => (
                   <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
@@ -91,7 +119,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
                         <span className="text-[11.5px] text-[#888]">{totalWorkers > 0 ? ((data.workers / totalWorkers) * 100).toFixed(1) : 0}%</span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-emerald-600">{formatCurrency(data.workers * 850000 * 30)}</td>
+                    <td className="px-3 py-2 text-emerald-600">{formatCurrency(data.revenue)}</td>
                   </tr>
                 ))}
               </tbody>

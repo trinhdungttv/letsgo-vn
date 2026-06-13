@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
+import { getAppLogoUrl } from '../lib/appSettings';
 
 export default function Login() {
   const { login } = useAuth();
@@ -7,6 +8,11 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAppLogoUrl().then(setLogoUrl).catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,8 +28,12 @@ export default function Login() {
     <div className="min-h-screen bg-[#F5F4EF] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0c2340] mb-4 shadow-lg">
-            <span className="text-white font-bold text-xl">LG</span>
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0c2340] mb-4 shadow-lg overflow-hidden">
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-white font-bold text-xl">LG</span>
+            )}
           </div>
           <h1 className="text-[20px] font-bold text-[#111]">P. Kinh Doanh</h1>
           <p className="text-[13px] text-[#888] mt-1">Hệ thống quản lý nội bộ</p>

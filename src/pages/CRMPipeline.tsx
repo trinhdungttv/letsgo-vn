@@ -2,18 +2,37 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
-  ClipboardList, Circle, Clock, CheckCircle2,
+  ClipboardList, Circle, Clock, CheckCircle2, Briefcase,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus } from '../lib/types';
+import { formatCurrency } from '../lib/format';
+import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMDeal, CRMProduct, Contact } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
+import { useRegions } from '../hooks/useRegions';
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
+  products: CRMProduct[];
   onRefresh: () => Promise<void>;
+  onDealCreate: (d: CRMDeal) => void;
   toast: (msg: string) => void;
+}
+
+const DEAL_STAGE_LABELS: Record<string, string> = {
+  new: 'Mới', contacted: 'Đã liên hệ', in_progress: 'Đang xử lý',
+  proposal: 'Báo giá', won: 'Đã ký HĐ', lost: 'Không thành',
+};
+
+interface AddDealForm {
+  title: string;
+  contactId: string;
+  productId: string;
+  value: number;
+  stage: CRMDeal['stage'];
+  owner: string;
+  expectedClose: string;
 }
 
 const STAGES = [
@@ -78,6 +97,8 @@ function InlineEdit({ label, value, onSave, type = 'text' }: {
 // ── Profile Modal ────────────────────────────────────────────────────────────
 interface ProfileModalProps {
   entry: CRMPipelineEntry;
+  contacts: Contact[];
+  products: CRMProduct[];
   onClose: () => void;
   onUpdate: (updated: CRMPipelineEntry) => void;
   onDelete: () => void;
@@ -85,7 +106,7 @@ interface ProfileModalProps {
   isAdmin: boolean;
 }
 
-function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: ProfileModalProps) {
+function ProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin }: ProfileModalProps) {
   const { user } = useAuth();
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
@@ -94,6 +115,8 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
 
   // Info section state
   const [rating, setRating] = useState(entry.rating || 'normal');
+  const [customPriceInput, setCustomPriceInput] = useState(entry.custom_price != null ? String(entry.custom_price) : '');
+  useEffect(() => { setCustomPriceInput(entry.custom_price != null ? String(entry.custom_price) : ''); }, [entry.id, entry.custom_price]);
 
   // Interaction form
   const [intType, setIntType] = useState('call');
@@ -140,6 +163,17 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
       await logActivity({
         user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
         description, oldData: entry, newData: { ...entry, ...patch },
+      });
+    } else toast('Lỗi: ' + error.message);
+  };
+
+  const updateLink = async (dbPatch: Partial<CRMPipelineEntry>, localPatch: Partial<CRMPipelineEntry>, description: string) => {
+    const { error } = await supabase.from('crm_pipeline').update(dbPatch).eq('id', entry.id);
+    if (!error) {
+      onUpdate({ ...entry, ...localPatch });
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
+        description, oldData: entry, newData: { ...entry, ...localPatch },
       });
     } else toast('Lỗi: ' + error.message);
   };
@@ -398,6 +432,77 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
                   <div className="text-[12.5px] font-medium text-[#111]">
                     {entry.last_contact || '—'}
                   </div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-[#888] font-medium mb-0.5">Người liên hệ (CSKH)</div>
+                  <select
+                    value={entry.contact_id || ''}
+                    onChange={e => {
+                      const v = e.target.value || null;
+                      const contact = contacts.find(c => c.id === v);
+                      updateLink(
+                        { contact_id: v },
+                        { contact_id: v, contacts: contact ? { name: contact.name, phone: contact.phone } : null },
+                        `Cập nhật người liên hệ cho "${entry.company_name}"${contact ? ` → ${contact.name}` : ''}`
+                      );
+                    }}
+                    className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  >
+                    <option value="">Chưa chọn</option>
+                    {contacts.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.role ? ` — ${c.role}` : ''}{(c as any).clients?.name ? ` (${(c as any).clients.name})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-[11px] text-[#888] font-medium mb-0.5">Sản phẩm / Dịch vụ quan tâm</div>
+                  <select
+                    value={entry.product_id || ''}
+                    onChange={e => {
+                      const v = e.target.value || null;
+                      const product = products.find(p => p.id === v);
+                      updateLink(
+                        { product_id: v, custom_price: null },
+                        { product_id: v, custom_price: null, crm_products: product ? { name: product.name, category: product.category, price: product.price } : null },
+                        `Cập nhật sản phẩm/dịch vụ quan tâm cho "${entry.company_name}"${product ? ` → ${product.category || 'Khác'} — ${product.name}` : ''}`
+                      );
+                    }}
+                    className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  >
+                    <option value="">Chưa chọn</option>
+                    {products.map(p => <option key={p.id} value={p.id}>{p.category || 'Khác'} — {p.name}</option>)}
+                  </select>
+                  {entry.product_id && (() => {
+                    const product = products.find(p => p.id === entry.product_id);
+                    const standardPrice = product?.price || 0;
+                    return (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <span className="text-[11px] text-[#888]">Giá chuẩn: {formatCurrency(standardPrice)}</span>
+                        <input
+                          type="number"
+                          value={customPriceInput}
+                          placeholder="Giá tuỳ chỉnh"
+                          onChange={e => setCustomPriceInput(e.target.value)}
+                          onBlur={e => {
+                            const raw = e.target.value;
+                            const v = raw === '' ? null : parseFloat(raw);
+                            if (v === entry.custom_price) return;
+                            updateLink(
+                              { custom_price: v },
+                              { custom_price: v },
+                              `Cập nhật giá tuỳ chỉnh cho "${entry.company_name}" → ${v !== null ? formatCurrency(v) : 'dùng giá chuẩn'}`
+                            );
+                          }}
+                          className="flex-1 text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                        />
+                        {entry.custom_price !== null && (
+                          <span className="text-[11px] font-medium text-purple-700">Đang dùng giá tuỳ chỉnh</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -775,16 +880,70 @@ function ProfileModal({ entry, onClose, onUpdate, onDelete, toast, isAdmin }: Pr
 }
 
 // ── Main CRMPipeline ────────────────────────────────────────────────────────
-export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineProps) {
+export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreate, toast }: CRMPipelineProps) {
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
-  const [modalForm, setModalForm] = useState({ name: '', region: '', estimate: '', rating: 'normal' });
+  const [modalForm, setModalForm] = useState({ name: '', region: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [showDealModal, setShowDealModal] = useState(false);
+  const [dealForm, setDealForm] = useState<AddDealForm>({ title: '', contactId: '', productId: '', value: 0, stage: 'new', owner: '', expectedClose: '' });
+  const [isSubmittingDeal, setIsSubmittingDeal] = useState(false);
+
+  const { regions, add: addRegion } = useRegions();
+  const [showAddRegion, setShowAddRegion] = useState(false);
+  const [newRegionName, setNewRegionName] = useState('');
+
+  const handleAddRegion = async () => {
+    const name = newRegionName.trim();
+    if (!name) return;
+    try {
+      await addRegion(name);
+      setModalForm(f => ({ ...f, region: name }));
+      setNewRegionName('');
+      setShowAddRegion(false);
+      toast('Đã thêm khu vực mới');
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+  };
+
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
+
+  useEffect(() => {
+    supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
+      .then(({ data }) => { if (data) setContacts(data as Contact[]); });
+  }, []);
+
+  const handleCreateDeal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dealForm.title || !dealForm.productId) { toast('Vui lòng điền tiêu đề và sản phẩm'); return; }
+    setIsSubmittingDeal(true);
+    try {
+      const { data, error } = await supabase.from('crm_deals').insert({
+        title: dealForm.title,
+        contact_id: dealForm.contactId || null,
+        product_id: dealForm.productId,
+        value: dealForm.value,
+        stage: dealForm.stage,
+        owner: dealForm.owner,
+        expected_closing_date: dealForm.expectedClose || null,
+      }).select('*, crm_leads(name, company), crm_products(name), contacts(name, phone)').single();
+      if (error) throw error;
+      onDealCreate(data as CRMDeal);
+      setShowDealModal(false);
+      setDealForm({ title: '', contactId: '', productId: '', value: 0, stage: 'new', owner: '', expectedClose: '' });
+      toast('Tạo thương vụ thành công');
+      await logActivity({
+        user, action: 'insert', table: 'crm_deals', recordId: data.id,
+        description: `Tạo thương vụ "${dealForm.title}"`,
+        newData: data,
+      });
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    finally { setIsSubmittingDeal(false); }
+  };
 
   const handleAdd = async () => {
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
@@ -793,11 +952,14 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
         company_name: modalForm.name, region: modalForm.region || null,
         worker_estimate: parseInt(modalForm.estimate) || null,
         stage: 'tiem-nang', rating: modalForm.rating,
+        contact_id: modalForm.contactId || null,
+        product_id: modalForm.productId || null,
+        custom_price: modalForm.customPrice ? parseFloat(modalForm.customPrice) : null,
         last_contact: new Date().toISOString().split('T')[0],
-      }).select().single();
+      }).select('*, contacts(name, phone), crm_products(name, category, price)').single();
       if (error) throw error;
       await onRefresh();
-      setModalForm({ name: '', region: '', estimate: '', rating: 'normal' });
+      setModalForm({ name: '', region: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
       setShowModal(false);
       toast('Đã thêm vào pipeline!');
       await logActivity({
@@ -860,12 +1022,20 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
         title="CRM Pipeline BD"
         subtitle="Phễu bán hàng — kéo thả thẻ để chuyển giai đoạn"
         actions={
-          <button
-            onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"
-          >
-            <Plus size={13} /> Thêm công ty
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowDealModal(true)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-[#1D4ED8] text-[#1D4ED8] hover:bg-blue-50 transition"
+            >
+              <Briefcase size={13} /> Tạo thương vụ mới
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"
+            >
+              <Plus size={13} /> Thêm công ty
+            </button>
+          </div>
         }
       />
 
@@ -951,8 +1121,33 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-[#666] font-medium">Khu vực/KCN</label>
-                <input value={modalForm.region} onChange={e => setModalForm(f => ({ ...f, region: e.target.value }))}
-                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" placeholder="KCN Biên Hòa 2" />
+                <div className="flex items-center gap-1.5">
+                  <select value={modalForm.region} onChange={e => setModalForm(f => ({ ...f, region: e.target.value }))}
+                    className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                    <option value="">Chọn khu vực</option>
+                    {!regions.some(r => r.name === modalForm.region) && modalForm.region && (
+                      <option value={modalForm.region}>{modalForm.region}</option>
+                    )}
+                    {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => setShowAddRegion(s => !s)}
+                    title="Thêm khu vực mới"
+                    className="shrink-0 px-2.5 py-1.5 border border-gray-300 rounded-lg text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition">
+                    <Plus size={14} />
+                  </button>
+                </div>
+                {showAddRegion && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <input value={newRegionName} onChange={e => setNewRegionName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddRegion())}
+                      placeholder="Tên khu vực/KCN mới"
+                      className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" autoFocus />
+                    <button type="button" onClick={handleAddRegion}
+                      className="shrink-0 px-3 py-1.5 bg-[#1D4ED8] text-white rounded-lg text-[12px] font-medium hover:bg-[#1E40AF] transition">
+                      Thêm
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
@@ -970,6 +1165,41 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
                   </select>
                 </div>
               </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Người liên hệ (từ CSKH)</label>
+                <select value={modalForm.contactId} onChange={e => setModalForm(f => ({ ...f, contactId: e.target.value }))}
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  <option value="">Chọn người liên hệ</option>
+                  {contacts.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.role ? ` — ${c.role}` : ''}{(c as any).clients?.name ? ` (${(c as any).clients.name})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Sản phẩm / Dịch vụ quan tâm</label>
+                <select value={modalForm.productId} onChange={e => setModalForm(f => ({ ...f, productId: e.target.value }))}
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  <option value="">Chọn sản phẩm</option>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.category || 'Khác'} — {p.name}</option>)}
+                </select>
+              </div>
+              {modalForm.productId && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[12px] text-[#666] font-medium">
+                    Giá tuỳ chỉnh (tuỳ chọn)
+                    {(() => {
+                      const p = products.find(pr => pr.id === modalForm.productId);
+                      return p ? ` — Giá chuẩn: ${formatCurrency(p.price || 0)}` : '';
+                    })()}
+                  </label>
+                  <input type="number" value={modalForm.customPrice}
+                    onChange={e => setModalForm(f => ({ ...f, customPrice: e.target.value }))}
+                    placeholder="Để trống = dùng giá chuẩn, có thể nhập cao hơn hoặc thấp hơn"
+                    className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowModal(false)}
@@ -985,12 +1215,85 @@ export default function CRMPipeline({ pipeline, onRefresh, toast }: CRMPipelineP
       {profileEntry && (
         <ProfileModal
           entry={profileEntry}
+          contacts={contacts}
+          products={products}
           onClose={() => setProfileEntry(null)}
           onUpdate={handleUpdate}
           onDelete={() => handleDelete(profileEntry.id)}
           toast={toast}
           isAdmin={user?.role === 'admin'}
         />
+      )}
+
+      {/* Create Deal modal */}
+      {showDealModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 sticky top-0 bg-white">
+              <h2 className="text-base font-semibold text-gray-900">Tạo thương vụ mới</h2>
+              <button onClick={() => setShowDealModal(false)} className="p-1 hover:bg-gray-100 rounded-md"><X className="w-5 h-5 text-gray-500" /></button>
+            </div>
+            <form onSubmit={handleCreateDeal} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Tiêu đề thương vụ <span className="text-red-500">*</span></label>
+                <input type="text" value={dealForm.title} onChange={e => setDealForm({ ...dealForm, title: e.target.value })}
+                  placeholder="VD: Dự án cung ứng lao động Q3" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Người liên hệ</label>
+                <select value={dealForm.contactId} onChange={e => setDealForm({ ...dealForm, contactId: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Chọn người liên hệ (từ CSKH)</option>
+                  {contacts.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.role ? ` — ${c.role}` : ''}{(c as any).clients?.name ? ` (${(c as any).clients.name})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Sản phẩm / Dịch vụ <span className="text-red-500">*</span></label>
+                <select value={dealForm.productId} onChange={e => setDealForm({ ...dealForm, productId: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Chọn sản phẩm</option>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.category || 'Khác'} — {p.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (₫)</label>
+                  <input type="number" value={dealForm.value} onChange={e => setDealForm({ ...dealForm, value: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giai đoạn</label>
+                  <select value={dealForm.stage} onChange={e => setDealForm({ ...dealForm, stage: e.target.value as CRMDeal['stage'] })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {Object.entries(DEAL_STAGE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Người phụ trách</label>
+                  <input type="text" value={dealForm.owner} onChange={e => setDealForm({ ...dealForm, owner: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Ngày dự kiến đóng</label>
+                  <input type="date" value={dealForm.expectedClose} onChange={e => setDealForm({ ...dealForm, expectedClose: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowDealModal(false)} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+                <button type="submit" disabled={isSubmittingDeal} className="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
+                  {isSubmittingDeal ? 'Đang tạo...' : 'Tạo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </>
   );

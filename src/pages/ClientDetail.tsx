@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType } from '../lib/types';
 import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -12,8 +12,19 @@ import { useContacts } from '../hooks/useContacts';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
+import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+const DOC_TYPE_LABELS: Record<ClientDocumentType, string> = {
+  contract: 'Hợp đồng',
+  appendix: 'Phụ lục',
+  other: 'Khác',
+};
 
 interface ClientDetailProps {
   client: Client;
@@ -74,6 +85,12 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
   const [openInfo, setOpenInfo] = useState(false);
   const [openLabor, setOpenLabor] = useState(true);
   const [openManagerHist, setOpenManagerHist] = useState(false);
+  const [openDocs, setOpenDocs] = useState(false);
+  const [documents, setDocuments] = useState<ClientDocument[]>([]);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [uploadDocType, setUploadDocType] = useState<ClientDocumentType>('contract');
+  const [askingDocId, setAskingDocId] = useState<string | null>(null);
+  const [docAnswers, setDocAnswers] = useState<Record<string, string>>({});
   const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
   const [newZoneOpen, setNewZoneOpen] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
@@ -142,6 +159,76 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
       .order('created_at', { ascending: false })
       .then(({ data }) => setDealActivities((data || []) as CRMActivity[]));
   }, [selectedDealId]);
+
+  const loadDocuments = () => {
+    supabase.from('client_documents')
+      .select('*')
+      .eq('client_id', client.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setDocuments((data || []) as ClientDocument[]));
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadDocuments(); }, [client.id]);
+
+  const handleUploadDocument = async (file: File) => {
+    setUploadingDoc(true);
+    try {
+      const path = `${client.id}/${Date.now()}-${file.name}`;
+      const { error: upErr } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from('documents').getPublicUrl(path);
+      const { error: insErr, data: row } = await supabase.from('client_documents').insert({
+        client_id: client.id,
+        name: file.name,
+        file_url: data.publicUrl,
+        file_path: path,
+        doc_type: uploadDocType,
+        uploaded_by: user?.full_name || null,
+      }).select().single();
+      if (insErr) throw insErr;
+      setDocuments(prev => [row as ClientDocument, ...prev]);
+      toast('Đã tải lên tài liệu');
+      await logActivity({
+        user, action: 'insert', table: 'client_documents', recordId: row.id,
+        description: `Tải lên tài liệu "${file.name}" (${DOC_TYPE_LABELS[uploadDocType]}) cho "${client.name}"`,
+        newData: row,
+      });
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  const handleDeleteDocument = async (doc: ClientDocument) => {
+    if (!confirm(`Xóa tài liệu "${doc.name}"?`)) return;
+    try {
+      await supabase.storage.from('documents').remove([doc.file_path]);
+      const { error } = await supabase.from('client_documents').delete().eq('id', doc.id);
+      if (error) throw error;
+      setDocuments(prev => prev.filter(d => d.id !== doc.id));
+      await logActivity({
+        user, action: 'delete', table: 'client_documents', recordId: doc.id,
+        description: `Xóa tài liệu "${doc.name}" của "${client.name}"`,
+        oldData: doc,
+      });
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    }
+  };
+
+  const handleAskAboutDocument = async (doc: ClientDocument) => {
+    setAskingDocId(doc.id);
+    try {
+      const answer = await askGeminiAboutDocument(doc.file_url, 'Tóm tắt ngắn gọn nội dung chính của tài liệu này bằng tiếng Việt (loại hợp đồng, các bên liên quan, thời hạn, điều khoản quan trọng).');
+      setDocAnswers(prev => ({ ...prev, [doc.id]: answer }));
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setAskingDocId(null);
+    }
+  };
 
   const selectedDeal = deals.find(d => d.id === selectedDealId) || null;
 
@@ -1048,6 +1135,75 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
                       ))}
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Documents */}
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <button onClick={() => setOpenDocs(!openDocs)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
+            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">📄 Hợp đồng & Tài liệu — <span className="text-blue-700">{documents.length}</span></span>
+            {openDocs ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
+          </button>
+          {openDocs && (
+            <div className="p-4">
+              <div className="flex items-center gap-2 flex-wrap mb-3 bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2.5">
+                <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value as ClientDocumentType)} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  {Object.entries(DOC_TYPE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 cursor-pointer hover:bg-white transition ${uploadingDoc ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <Upload size={13} /> {uploadingDoc ? 'Đang tải lên...' : 'Tải lên PDF'}
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadDocument(f); e.target.value = ''; }}
+                    disabled={uploadingDoc}
+                  />
+                </label>
+              </div>
+              {documents.length === 0 ? (
+                <div className="text-[12.5px] text-[#999] py-3 text-center">Chưa có tài liệu nào</div>
+              ) : (
+                <div className="space-y-2">
+                  {documents.map(doc => (
+                    <div key={doc.id} className="border border-[#E8E7E2] rounded-lg p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText size={15} className="text-[#888] shrink-0" />
+                          <div className="min-w-0">
+                            <a href={doc.file_url} target="_blank" rel="noreferrer" className="text-[12.5px] font-medium text-[#111] hover:text-blue-600 truncate block">{doc.name}</a>
+                            <div className="text-[10.5px] text-[#999]">
+                              {DOC_TYPE_LABELS[doc.doc_type]} · {doc.uploaded_by || '—'} · {formatDate(doc.created_at)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {geminiConfigured() && (
+                            <button
+                              onClick={() => handleAskAboutDocument(doc)}
+                              disabled={askingDocId === doc.id}
+                              title="Tóm tắt bằng AI"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition disabled:opacity-50"
+                            >
+                              <Sparkles size={11} /> {askingDocId === doc.id ? 'Đang đọc...' : 'Tóm tắt AI'}
+                            </button>
+                          )}
+                          <a href={doc.file_url} target="_blank" rel="noreferrer" title="Tải xuống" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition">
+                            <Download size={12} />
+                          </a>
+                          <button onClick={() => handleDeleteDocument(doc)} title="Xóa" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-red-500 hover:bg-red-50 transition">
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      {docAnswers[doc.id] && (
+                        <div className="mt-2 p-2.5 rounded-lg bg-[#F9F9F7] text-[12px] text-[#444] whitespace-pre-wrap">{docAnswers[doc.id]}</div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

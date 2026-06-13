@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bell, AlertTriangle, ShieldQuestion, Wallet, Users, Building2,
-  TrendingUp, ClipboardList, CalendarClock, CheckCircle2, X,
+  TrendingUp, ClipboardList, CalendarClock, CheckCircle2, X, Sparkles, Send, Trash2,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../lib/auth';
@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import type { Client, FinanceRecord, CRMPipelineEntry, AppNotification, Page } from '../lib/types';
 import { ROLE_LABELS, CRM_STAGES } from '../lib/constants';
 import { formatCurrency, formatDate, daysUntil } from '../lib/format';
+import { askGemini, buildWorkspaceContext, geminiConfigured, type ChatMessage } from '../lib/gemini';
 
 interface WorkspaceProps {
   clients: Client[];
@@ -62,6 +63,10 @@ export default function Workspace({ clients, finance, pipeline, onNavigate, toas
   const [pendingRequests, setPendingRequests] = useState(0);
   const [myTasks, setMyTasks] = useState<{ id: string; title: string; deadline: string | null; status: string }[]>([]);
   const [branchRegion, setBranchRegion] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const month = currentMonth();
 
@@ -77,6 +82,17 @@ export default function Workspace({ clients, finance, pipeline, onNavigate, toas
   }, [user]);
 
   useEffect(() => { loadNotifications(); }, [loadNotifications]);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase.from('ai_chat_messages')
+      .select('role, text')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data) setChatMessages(data as ChatMessage[]);
+      });
+  }, [user]);
 
   useEffect(() => {
     if (!user || user.role !== 'admin') return;
@@ -123,6 +139,41 @@ export default function Workspace({ clients, finance, pipeline, onNavigate, toas
   const dismissNotif = async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
     await supabase.from('notifications').delete().eq('id', id);
+  };
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatSending]);
+
+  const handleSendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || chatSending || !user) return;
+    const nextHistory: ChatMessage[] = [...chatMessages, { role: 'user', text }];
+    setChatMessages(nextHistory);
+    setChatInput('');
+    setChatSending(true);
+    await supabase.from('ai_chat_messages').insert({ user_id: user.id, role: 'user', text });
+    try {
+      const context = buildWorkspaceContext(clients, finance, pipeline);
+      const reply = await askGemini(context, nextHistory);
+      setChatMessages(prev => [...prev, { role: 'model', text: reply }]);
+      await supabase.from('ai_chat_messages').insert({ user_id: user.id, role: 'model', text: reply });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const icon = msg.includes('chờ khoảng') && msg.includes('giây') ? '⏳' : '⚠️';
+      const errText = `${icon} ${msg}`;
+      setChatMessages(prev => [...prev, { role: 'model', text: errText }]);
+      await supabase.from('ai_chat_messages').insert({ user_id: user.id, role: 'model', text: errText });
+    } finally {
+      setChatSending(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!user) return;
+    if (!confirm('Xóa toàn bộ lịch sử chat?')) return;
+    setChatMessages([]);
+    await supabase.from('ai_chat_messages').delete().eq('user_id', user.id);
   };
 
   if (!user) return null;
@@ -305,6 +356,61 @@ export default function Workspace({ clients, finance, pipeline, onNavigate, toas
           </SectionCard>
         )}
       </div>
+
+      {/* AI Chat (Gemini) */}
+      <SectionCard title="Trợ lý AI" icon={<Sparkles size={14} className="text-[#888]" />} action={
+        chatMessages.length > 0 ? (
+          <button onClick={handleClearChat} className="inline-flex items-center gap-1 text-[11.5px] text-[#999] hover:text-red-500 transition">
+            <Trash2 size={12} /> Xóa lịch sử
+          </button>
+        ) : undefined
+      }>
+        {!geminiConfigured() ? (
+          <div className="text-[12.5px] text-[#999] py-4 text-center">Chưa cấu hình Gemini API key (VITE_GEMINI_API_KEY)</div>
+        ) : (
+          <div className="flex flex-col">
+            <div className="max-h-[360px] overflow-y-auto space-y-2 mb-2">
+              {chatMessages.length === 0 && (
+                <div className="text-[12.5px] text-[#999] py-3 text-center">
+                  Hỏi về khách hàng, doanh thu, hợp đồng sắp hết hạn, pipeline kinh doanh...
+                </div>
+              )}
+              {chatMessages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-lg px-3 py-2 text-[12.5px] whitespace-pre-wrap ${
+                    m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-[#F4F4F1] text-[#333]'
+                  }`}>
+                    {m.text}
+                  </div>
+                </div>
+              ))}
+              {chatSending && (
+                <div className="flex justify-start">
+                  <div className="bg-[#F4F4F1] text-[#999] rounded-lg px-3 py-2 text-[12.5px]">Đang trả lời...</div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
+                placeholder="Nhập câu hỏi..."
+                disabled={chatSending}
+                className="flex-1 border border-[#E8E7E2] rounded-lg px-3 py-2 text-[12.5px] outline-none focus:border-blue-400"
+              />
+              <button
+                onClick={handleSendChat}
+                disabled={chatSending || !chatInput.trim()}
+                className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center disabled:opacity-40 hover:bg-blue-700 transition shrink-0"
+              >
+                <Send size={15} />
+              </button>
+            </div>
+          </div>
+        )}
+      </SectionCard>
 
       {/* kinhdoanh: prospects need follow-up */}
       {user.role === 'kinhdoanh' && (

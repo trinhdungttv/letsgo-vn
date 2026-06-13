@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Building2, Building, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, KanbanSquare, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, ListChecks, Settings } from 'lucide-react';
+import { Home, Building2, Building, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, ListChecks, Settings } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
+import { getAppLogoUrl } from '../lib/appSettings';
 
 interface SidebarProps {
   currentPage: Page;
@@ -26,7 +27,6 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
 const CRM_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'crm-dash',     label: 'Dashboard',   icon: <LayoutDashboard size={13} /> },
   { page: 'crm-pipeline', label: 'BD Pipeline', icon: <Network size={13} /> },
-  { page: 'crm-board',    label: 'Deals',       icon: <KanbanSquare size={13} /> },
   { page: 'crm-leads',    label: 'CSKH',        icon: <UserCircle2 size={13} /> },
   { page: 'crm-prods',    label: 'Sản phẩm',   icon: <Package size={13} /> },
 ];
@@ -36,13 +36,18 @@ const CRM_PAGES: Page[] = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'c
 const IDLE_TIMEOUT = 5_000; // auto-collapse sidebar after 5s of no interaction
 
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, rolePermissions } = useAuth();
   const role = user?.role || 'kinhdoanh';
   const activeP = (currentPage === 'client-detail' ? 'clients' : currentPage) as Page;
   const isCrmActive = CRM_PAGES.includes(currentPage);
   const [crmOpen, setCrmOpen] = useState(isCrmActive);
   const [collapsed, setCollapsed] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    getAppLogoUrl().then(setLogoUrl).catch(() => {});
+  }, []);
 
   const scheduleCollapse = () => {
     if (idleTimer.current) clearTimeout(idleTimer.current);
@@ -73,7 +78,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     scheduleCollapse();
   };
 
-  const hasCRM = CRM_ITEMS.some(item => canAccess(role, item.page));
+  const hasCRM = CRM_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
 
   return (
     <aside
@@ -82,8 +87,12 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       className={`${collapsed ? 'w-[52px]' : 'w-[190px]'} bg-[#0c2340] flex-shrink-0 flex flex-col h-screen transition-all duration-200`}
     >
       <div className="px-4 py-4 border-b border-white/10 flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
-          <span className="text-white font-bold text-[12px]">LG</span>
+        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shrink-0 overflow-hidden">
+          {logoUrl ? (
+            <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-white font-bold text-[12px]">LG</span>
+          )}
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0">
@@ -104,7 +113,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       </div>
 
       <nav className="flex-1 py-1.5 overflow-y-auto">
-        {NAV_ITEMS.filter(item => canAccess(role, item.page)).map(item => {
+        {NAV_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
           const isActive = activeP === item.page;
           return (
             <button
@@ -136,7 +145,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                 {crmOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               </button>
             )}
-            {(collapsed || crmOpen) && CRM_ITEMS.filter(item => canAccess(role, item.page)).map(item => {
+            {(collapsed || crmOpen) && CRM_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
               const isActive = activeP === item.page || (currentPage === 'crm-deal' && item.page === 'crm-board');
               return (
                 <button

@@ -22,17 +22,20 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-// Các loại dịch vụ thực tế của công ty. Admin có thể nhập danh mục khác (qua datalist) khi cần.
-const PRESET_CATEGORIES = ['Cho thuê lao động (thời vụ)', 'Giới thiệu việc làm'];
+// 2 loại hình dịch vụ chính của công ty + 1 loại "Tuỳ chỉnh" cho giá thoả thuận riêng
+// (có thể cao hơn hoặc thấp hơn giá chuẩn đã cài sẵn cho 2 loại hình trên).
+const PRESET_CATEGORIES = ['Cho thuê lao động (thời vụ)', 'Giới thiệu việc làm', 'Tuỳ chỉnh'];
 
 const CATEGORY_COLORS: Record<string, string> = {
   'Cho thuê lao động (thời vụ)': 'bg-blue-100 text-blue-700',
   'Giới thiệu việc làm': 'bg-emerald-100 text-emerald-700',
+  'Tuỳ chỉnh': 'bg-purple-100 text-purple-700',
 };
 
 const PRICE_HINTS: Record<string, string> = {
   'Cho thuê lao động (thời vụ)': 'VNĐ / ngày công thực tế của lao động',
   'Giới thiệu việc làm': 'VNĐ / lần (thu 1 lần khi giới thiệu thành công)',
+  'Tuỳ chỉnh': 'Giá thoả thuận riêng, có thể cao hơn hoặc thấp hơn giá chuẩn của 2 loại hình trên',
 };
 
 const emptyForm = { name: '', price: 0, category: PRESET_CATEGORIES[0], industry: '', description: '' };
@@ -46,6 +49,14 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
 
   const categoryOptions = Array.from(new Set([...PRESET_CATEGORIES, ...products.map(p => p.category).filter((c): c is string => !!c)]));
   const industryOptions = Array.from(new Set(products.map(p => p.industry).filter((c): c is string => !!c)));
+
+  // Nhóm sản phẩm theo loại hình dịch vụ để hiển thị thành từng khu vực riêng
+  const grouped: Record<string, CRMProduct[]> = {};
+  for (const product of products) {
+    const cat = product.category || 'Khác';
+    (grouped[cat] = grouped[cat] || []).push(product);
+  }
+  const groupOrder = [...PRESET_CATEGORIES, ...Object.keys(grouped).filter(c => !PRESET_CATEGORIES.includes(c))];
 
   const openAddModal = () => {
     setEditingProduct(null);
@@ -171,66 +182,79 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         }
       />
 
-      {/* Product Grid */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Product Grid — nhóm theo loại hình dịch vụ */}
+      <div className="space-y-6">
         {products.length > 0 ? (
-          products.map(product => (
-            <div key={product.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-              <div className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-gray-900 flex-1">{product.name}</h3>
-                  {isAdmin && (
-                    <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                      <button
-                        onClick={() => openEditModal(product)}
-                        className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                        title="Sửa"
-                      >
-                        <Edit2 className="w-4 h-4 text-gray-600" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(product)}
-                        className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Xóa"
-                      >
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex gap-2 mb-3 flex-wrap">
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${CATEGORY_COLORS[product.category || ''] || 'bg-gray-100 text-gray-600'}`}>
-                    {product.category || 'Khác'}
+          groupOrder.map(category => {
+            const items = grouped[category];
+            if (!items || items.length === 0) return null;
+            return (
+              <div key={category}>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${CATEGORY_COLORS[category] || 'bg-gray-100 text-gray-600'}`}>
+                    {category}
                   </span>
-                  {product.industry && (
-                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
-                      {product.industry}
-                    </span>
-                  )}
+                  <span className="text-[11px] text-gray-400">{items.length} sản phẩm</span>
                 </div>
-
-                <div className="mb-1">
-                  <div className="text-2xl font-bold text-gray-900">{formatCurrency(product.price || 0)}</div>
-                </div>
-                {PRICE_HINTS[product.category || ''] && (
-                  <div className="text-[11px] text-gray-500 mb-2">{PRICE_HINTS[product.category || '']}</div>
+                {PRICE_HINTS[category] && (
+                  <div className="text-[11px] text-gray-500 mb-2.5">{PRICE_HINTS[category]}</div>
                 )}
+                <div className="grid grid-cols-3 gap-4">
+                  {items.map(product => (
+                    <div key={product.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+                      <div className="p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <h3 className="text-sm font-semibold text-gray-900 flex-1">{product.name}</h3>
+                          {isAdmin && (
+                            <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                              <button
+                                onClick={() => openEditModal(product)}
+                                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                                title="Sửa"
+                              >
+                                <Edit2 className="w-4 h-4 text-gray-600" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(product)}
+                                className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Xóa"
+                              >
+                                <Trash2 className="w-4 h-4 text-red-500" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
 
-                {product.description && (
-                  <p className="text-xs text-gray-600 mb-3 line-clamp-2">{truncate(product.description, 100)}</p>
-                )}
+                        {product.industry && (
+                          <div className="mb-2">
+                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+                              {product.industry}
+                            </span>
+                          </div>
+                        )}
 
-                <div className="pt-3 border-t border-gray-100">
-                  <div className="text-xs text-gray-600">
-                    Dùng trong <span className="font-semibold text-gray-900">{dealCount(product.id)}</span> thương vụ
-                  </div>
+                        <div className="mb-1">
+                          <div className="text-2xl font-bold text-gray-900">{formatCurrency(product.price || 0)}</div>
+                        </div>
+
+                        {product.description && (
+                          <p className="text-xs text-gray-600 mb-3 line-clamp-2">{truncate(product.description, 100)}</p>
+                        )}
+
+                        <div className="pt-3 border-t border-gray-100">
+                          <div className="text-xs text-gray-600">
+                            Dùng trong <span className="font-semibold text-gray-900">{dealCount(product.id)}</span> thương vụ
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
-          <div className="col-span-3 bg-white rounded-lg border border-gray-200 p-12 text-center">
+          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
             <p className="text-gray-500 text-sm">Không có sản phẩm nào</p>
           </div>
         )}

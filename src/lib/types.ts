@@ -61,6 +61,27 @@ export interface Client {
   archived_at: string | null;
 }
 
+export interface AiChatMessage {
+  id: string;
+  user_id: string;
+  role: 'user' | 'model';
+  text: string;
+  created_at: string;
+}
+
+export type ClientDocumentType = 'contract' | 'appendix' | 'other';
+
+export interface ClientDocument {
+  id: string;
+  client_id: string;
+  name: string;
+  file_url: string;
+  file_path: string;
+  doc_type: ClientDocumentType;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
 export interface ClientManagerHistory {
   id: string;
   client_id: string;
@@ -120,6 +141,11 @@ export interface CRMPipelineEntry {
   preferences: string | null;
   last_contact: string | null;
   notes: string | null;
+  contact_id: string | null;
+  product_id: string | null;
+  custom_price: number | null;
+  contacts?: { name: string; phone: string | null } | null;
+  crm_products?: { name: string; category: string | null; price?: number } | null;
   created_at: string;
 }
 
@@ -296,6 +322,15 @@ export interface PermissionRequest {
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
+}
+
+export type RolePermissionLevel = 'full' | 'view' | 'none';
+
+export interface RolePermission {
+  role: string;
+  module: string;
+  level: RolePermissionLevel;
+  updated_at: string;
 }
 
 export interface UserPermission {

@@ -37,7 +37,7 @@ function Toast({ message }: { message: string }) {
 }
 
 function AppInner() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, rolePermissions } = useAuth();
 
   const {
     clients, setClients,
@@ -86,9 +86,9 @@ function AppInner() {
 
   // Guard against a restored page the current user no longer has access to
   useEffect(() => {
-    if (user && !canAccess(user.role, page)) setPage('dashboard');
+    if (user && rolePermissions.length && !canAccess(user.role, page, rolePermissions)) setPage('dashboard');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, rolePermissions]);
   const [toastMsg, setToastMsg] = useState('');
   const [toastTimer, setToastTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
@@ -321,7 +321,7 @@ function AppInner() {
           />
         )}
         {page === 'crm-pipeline' && (
-          <CRMPipeline pipeline={pipeline} onRefresh={reloadPipeline} toast={toast} />
+          <CRMPipeline pipeline={pipeline} products={products} onRefresh={reloadPipeline} onDealCreate={handleDealCreate} toast={toast} />
         )}
       </div>
       <Toast message={toastMsg} />
