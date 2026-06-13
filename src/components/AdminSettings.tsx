@@ -16,6 +16,7 @@ type Tab = 'regions' | 'managers' | 'columns';
 const ALL_COLUMNS = [
   { key: 'region', label: 'Chi Nhánh' },
   { key: 'manager', label: 'Quản lý' },
+  { key: 'zone', label: 'KCN' },
   { key: 'workers', label: 'LĐ' },
   { key: 'cutoff', label: 'Chốt' },
   { key: 'payment', label: 'Kỳ TT' },

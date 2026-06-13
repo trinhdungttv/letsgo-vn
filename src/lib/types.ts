@@ -61,6 +61,15 @@ export interface Client {
   archived_at: string | null;
 }
 
+export interface ClientManagerHistory {
+  id: string;
+  client_id: string;
+  manager_name: string;
+  effective_from: string; // "YYYY-MM"
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface LaborHistoryEntry {
   id: string;
   client_id: string;

@@ -26,6 +26,7 @@ interface ClientsProps {
   onReload: () => void;
   isAdmin: boolean;
   marketZones: MarketZone[];
+  onMarketZoneAdd: (zone: MarketZone) => void;
   toast: (m: string) => void;
 }
 
@@ -44,7 +45,7 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onAddClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, toast,
+  onSelectClient, onAddClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -53,6 +54,9 @@ export default function Clients({
   const [renewForm, setRenewForm] = useState<RenewForm | null>(null);
   const [isRenewing, setIsRenewing] = useState(false);
   const [activeZones, setActiveZones] = usePersistedState<string[]>('lgvn_clients_activeZones', [ALL_OPTION]);
+  const [addZoneFor, setAddZoneFor] = useState<Client | null>(null);
+  const [newZoneName, setNewZoneName] = useState('');
+  const [savingZone, setSavingZone] = useState(false);
   const [activeManagers, setActiveManagers] = usePersistedState<string[]>('lgvn_clients_activeManagers', [ALL_OPTION]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [editingManager, setEditingManager] = useState<Manager | null>(null);
@@ -65,7 +69,7 @@ export default function Clients({
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
@@ -179,6 +183,58 @@ export default function Clients({
     const startDate = new Date(new Date(oldEnd).getTime() + 86400000).toISOString().slice(0, 10);
     const endDate = new Date(new Date(startDate).setFullYear(new Date(startDate).getFullYear() + 1)).toISOString().slice(0, 10);
     setRenewForm({ client: c, startDate, endDate, notes: '' });
+  };
+
+  const assignZoneToClient = async (c: Client, zoneName: string) => {
+    const updates = { industrial_zones: zoneName ? [zoneName] : [], updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
+    if (error) throw error;
+    onClientUpdate({ ...c, ...updates });
+    await logActivity({
+      user, action: 'update', table: 'clients', recordId: c.id,
+      description: `Cập nhật Khu công nghiệp của "${c.name}": ${(c.industrial_zones || [])[0] ?? '—'} → ${zoneName || '—'}`,
+      oldData: c, newData: { ...c, ...updates },
+    });
+  };
+
+  const handleAddZone = async () => {
+    if (!addZoneFor) return;
+    const name = newZoneName.trim();
+    if (!name) return;
+    const existing = marketZones.find(z => z.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      toast(`Khu công nghiệp "${existing.name}" đã có — đã gán cho công ty này`);
+      try {
+        await assignZoneToClient(addZoneFor, existing.name);
+      } catch (e: unknown) {
+        toast('Lỗi: ' + errMsg(e));
+        return;
+      }
+      setAddZoneFor(null);
+      setNewZoneName('');
+      return;
+    }
+    setSavingZone(true);
+    try {
+      const { data, error } = await supabase.from('market_zones')
+        .insert({ name, labor_availability: 'Trung bình' })
+        .select().single();
+      if (error) throw error;
+      onMarketZoneAdd(data as MarketZone);
+      await logActivity({
+        user, action: 'insert', table: 'market_zones', recordId: data.id,
+        description: `Thêm khu công nghiệp "${name}" (từ trang Khách hàng)`,
+        newData: data,
+      });
+      await assignZoneToClient(addZoneFor, name);
+      setAddZoneFor(null);
+      setNewZoneName('');
+      toast(`Đã tạo Khu công nghiệp "${name}" và đồng bộ vào Thị trường > Khu vực`);
+    } catch (e: unknown) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setSavingZone(false);
+    }
   };
 
   const handleRenew = async () => {
@@ -323,7 +379,7 @@ export default function Clients({
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
     e.stopPropagation();
     if (!isAdmin && field !== 'labor') return;
-    const current = field === 'cutoff_day' ? String(c.cutoff_day ?? '') : field === 'labor' ? String(c.current_workers ?? 0) : (c as any)[field] || '';
+    const current = field === 'cutoff_day' ? String(c.cutoff_day ?? '') : field === 'labor' ? String(c.current_workers ?? 0) : field === 'zone' ? ((c.industrial_zones || [])[0] || '') : (c as any)[field] || '';
     setEditingCell({ id: c.id, field });
     setEditValue(current);
   };
@@ -398,6 +454,42 @@ export default function Clients({
       setSavingCell(false);
       cancelEdit();
     }
+  };
+
+  const commitZoneEdit = async (c: Client) => {
+    const typed = editValue.trim();
+    const current = (c.industrial_zones || [])[0] || '';
+    if (typed === current) { cancelEdit(); return; }
+    if (!typed) {
+      setSavingCell(true);
+      try {
+        await assignZoneToClient(c, '');
+        toast('Đã cập nhật');
+      } catch (err: unknown) {
+        toast('Lỗi: ' + errMsg(err));
+      } finally {
+        setSavingCell(false);
+        cancelEdit();
+      }
+      return;
+    }
+    const existing = marketZones.find(z => z.name.toLowerCase() === typed.toLowerCase());
+    if (existing) {
+      setSavingCell(true);
+      try {
+        await assignZoneToClient(c, existing.name);
+        toast('Đã cập nhật');
+      } catch (err: unknown) {
+        toast('Lỗi: ' + errMsg(err));
+      } finally {
+        setSavingCell(false);
+        cancelEdit();
+      }
+      return;
+    }
+    cancelEdit();
+    setNewZoneName(typed);
+    setAddZoneFor(c);
   };
 
   const assignManagerToClient = async (c: Client, managerName: string) => {
@@ -545,6 +637,7 @@ export default function Clients({
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Công ty</th>
                   {col('region') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Chi Nhánh</th>}
                   {col('manager') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Quản lý</th>}
+                  {col('zone') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">KCN</th>}
                   {col('workers') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">LĐ</th>}
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Δ</th>
                   {col('cutoff') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Chốt</th>}
@@ -558,7 +651,7 @@ export default function Clients({
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center py-8 text-[#aaa]">Không có dữ liệu</td></tr>
+                  <tr><td colSpan={11} className="text-center py-8 text-[#aaa]">Không có dữ liệu</td></tr>
                 ) : filtered.map(c => {
                   const delta = getDelta(c.id);
                   const d = daysUntil(c.contract_end);
@@ -633,6 +726,27 @@ export default function Clients({
                               {c.manager}
                             </button>
                           ) : '—'}
+                        </td>
+                      )}
+                      {col('zone') && (
+                        <td className="px-3 py-2 text-[12px] text-[#555] whitespace-nowrap" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'zone')}>
+                          {editingCell?.id === c.id && editingCell.field === 'zone' ? (
+                            <>
+                              <input
+                                type="text" autoFocus value={editValue} disabled={savingCell}
+                                list={`zone-options-${c.id}`}
+                                onClick={e => e.stopPropagation()}
+                                onChange={e => setEditValue(e.target.value)}
+                                onBlur={() => commitZoneEdit(c)}
+                                onKeyDown={e => { if (e.key === 'Enter') commitZoneEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                                placeholder="Gõ để tìm hoặc thêm KCN..."
+                                className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white w-[170px]"
+                              />
+                              <datalist id={`zone-options-${c.id}`}>
+                                {marketZones.map(z => <option key={z.id} value={z.name} />)}
+                              </datalist>
+                            </>
+                          ) : ((c.industrial_zones || [])[0] || '—')}
                         </td>
                       )}
                       {col('workers') && (
@@ -1072,6 +1186,32 @@ export default function Clients({
               <button onClick={() => setAddManagerFor(null)} disabled={savingNewManager} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">Hủy</button>
               <button onClick={confirmAddManager} disabled={savingNewManager || !newManagerForm.name.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50">
                 <Plus className="w-3.5 h-3.5" /> {savingNewManager ? 'Đang lưu...' : 'Thêm & gán'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {addZoneFor && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[12px] w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8E7E2]">
+              <h3 className="text-[14px] font-semibold text-[#111]">Thêm Khu công nghiệp mới</h3>
+              <button onClick={() => setAddZoneFor(null)} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-[12.5px] text-[#888]">Sẽ tạo mới trong Thị trường &gt; Khu vực và gán cho khách hàng "{addZoneFor.name}". Nếu tên đã tồn tại, sẽ chỉ gán mà không tạo trùng.</p>
+              <div>
+                <label className="text-[12px] text-[#666] font-medium">Tên Khu công nghiệp *</label>
+                <input autoFocus value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddZone(); }}
+                  className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => setAddZoneFor(null)} disabled={savingZone} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">Hủy</button>
+              <button onClick={handleAddZone} disabled={savingZone || !newZoneName.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50">
+                <Plus className="w-3.5 h-3.5" /> {savingZone ? 'Đang lưu...' : 'Thêm & gán'}
               </button>
             </div>
           </div>

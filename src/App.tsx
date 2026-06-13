@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider, canAccess } from './lib/auth';
-import type { Page, Client, LaborHistoryEntry, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
+import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { supabase } from './lib/supabase';
 import { logActivity } from './lib/audit';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -42,8 +42,9 @@ function AppInner() {
   const {
     clients, setClients,
     laborHistory, setLaborHistory,
+    managerHistory, setManagerHistory,
     finance, setFinance,
-    marketSurveys, competitors, marketZones, marketLeads,
+    marketSurveys, competitors, marketZones, setMarketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
   } = useAppData(!!user);
@@ -140,6 +141,14 @@ function AppInner() {
       return prev.map(c => c.id === entry.client_id ? { ...c, current_workers: latest } : c);
     });
   }, [setLaborHistory, setClients, laborHistory]);
+
+  const handleMarketZoneAdd = useCallback((zone: MarketZone) => {
+    setMarketZones(prev => [...prev, zone].sort((a, b) => a.name.localeCompare(b.name)));
+  }, [setMarketZones]);
+
+  const handleManagerHistoryAdd = useCallback((entry: ClientManagerHistory) => {
+    setManagerHistory(prev => ({ ...prev, [entry.client_id]: [...(prev[entry.client_id] || []), entry] }));
+  }, [setManagerHistory]);
 
   const handleFinanceUpdate = useCallback((rec: FinanceRecord) => {
     setFinance(prev => prev.map(r => r.id === rec.id ? rec : r));
@@ -239,6 +248,7 @@ function AppInner() {
             onReload={loadClients}
             isAdmin={user?.role === 'admin'}
             marketZones={marketZones}
+            onMarketZoneAdd={handleMarketZoneAdd}
             toast={toast}
           />
         )}
@@ -246,9 +256,12 @@ function AppInner() {
           <ClientDetail
             client={selectedClient}
             laborHistory={laborHistory[selectedClient.id] || []}
+            managerHistory={managerHistory[selectedClient.id] || []}
             onBack={() => setPage('clients')}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
+            onManagerHistoryAdd={handleManagerHistoryAdd}
+            onMarketZoneAdd={handleMarketZoneAdd}
             marketZones={marketZones}
             toast={toast}
             onOpenDeal={handleSelectDeal}

@@ -6,6 +6,7 @@ import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import { formatDate } from '../../lib/format';
+import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
@@ -40,12 +41,16 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [addForm, setAddForm] = useState(emptyAddForm);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<MarketZone> | null>(null);
+  const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
+  const provinceNames = [ALL_OPTION, ...Array.from(new Set(marketZones.map(z => z.location).filter((v): v is string => !!v))).sort()];
+  const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
 
   useEffect(() => {
     if (selected) {
       setEditForm({
+        location: selected.location,
         operator: selected.operator, area: selected.area, established_year: selected.established_year,
         characteristics: selected.characteristics, strengths: selected.strengths, weaknesses: selected.weaknesses,
         labor_availability: selected.labor_availability, lgv_clients: selected.lgv_clients, lgv_workers: selected.lgv_workers,
@@ -168,6 +173,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Thông tin khu vực <span className="text-[11px] font-normal text-[#aaa]">· Click ô để sửa</span></div>
           <div className="p-4 space-y-2.5">
+            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Tỉnh / Thành phố</span>
+              <input value={editForm.location || ''} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} placeholder="Đồng Nai, Bình Dương..." className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+            </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ban quản lý</span>
               <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
             </div>
@@ -282,13 +290,16 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
           <div className="text-[12.5px] font-medium text-[#111]">Hồ sơ khu vực</div>
           <div className="text-[11px] text-[#888]">Click vào khu vực để xem & chỉnh sửa hồ sơ đầy đủ</div>
         </div>
-        <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-          <Plus size={13} /> Thêm khu vực
-        </button>
+        <div className="flex items-center gap-2">
+          <FilterDropdown label="Tỉnh/Thành" options={provinceNames} selected={activeProvinces} onChange={setActiveProvinces} />
+          <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+            <Plus size={13} /> Thêm khu vực
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
-        {marketZones.map(z => (
+        {filteredZones.map(z => (
           <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 cursor-pointer hover:border-blue-300 transition">
             <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
             <div className="text-[11px] text-[#888] mb-1.5">{z.location || '—'}</div>
@@ -309,6 +320,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
       {marketZones.length === 0 && (
         <div className="text-center py-8 text-[12px] text-[#aaa]">Chưa có hồ sơ khu vực nào. Bấm "Thêm khu vực" để bắt đầu.</div>
+      )}
+      {marketZones.length > 0 && filteredZones.length === 0 && (
+        <div className="text-center py-8 text-[12px] text-[#aaa]">Không có khu vực nào thuộc tỉnh/thành đã chọn.</div>
       )}
 
       {showAdd && (

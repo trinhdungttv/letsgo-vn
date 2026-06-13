@@ -9,7 +9,7 @@ import { useRegions } from '../hooks/useRegions';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import type { Client, Branch, BranchStatus, ProjectPnl, BranchOverhead } from '../lib/types';
+import type { Client, Branch, BranchStatus, ProjectPnl, BranchOverhead, ClientManagerHistory } from '../lib/types';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth } from '../lib/format';
 
 interface BranchesProps {
@@ -19,7 +19,7 @@ interface BranchesProps {
   onFocusConsumed?: () => void;
 }
 
-type Tab = 'profile' | 'operations' | 'finance' | 'staff';
+type Tab = 'profile' | 'operations' | 'finance' | 'staff' | 'performance';
 type ViewMode = 'grid' | 'list';
 
 function errMsg(e: unknown): string {
@@ -38,6 +38,7 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'operations', label: 'Vận hành', icon: <ClipboardList size={15} /> },
   { key: 'finance', label: 'Tài chính', icon: <Wallet size={15} /> },
   { key: 'staff', label: 'Nhân sự VP', icon: <Users size={15} /> },
+  { key: 'performance', label: 'Hiệu suất QL', icon: <User size={15} /> },
 ];
 
 export default function Branches({ clients, toast, focusRegion, onFocusConsumed }: BranchesProps) {
@@ -92,6 +93,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
 
+  // ── Manager performance report ──────────────────────────────────
+  const [perfHistory, setPerfHistory] = useState<(ClientManagerHistory & { clients?: { name: string } | null })[]>([]);
+  const [perfPnl, setPerfPnl] = useState<ProjectPnl[]>([]);
+  const [perfLoading, setPerfLoading] = useState(false);
+
   const months = useMemo(() => {
     const cur = currentMonthStr();
     return [shiftMonth(cur, -2), shiftMonth(cur, -1), cur];
@@ -109,6 +115,61 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   }, [month]);
 
   const selected = branches.find(b => b.id === selectedId) || null;
+
+  // Fetch manager-transfer history + P&L for the performance report tab.
+  useEffect(() => {
+    if (activeTab !== 'performance' || !selected?.manager_name) {
+      setPerfHistory([]);
+      setPerfPnl([]);
+      return;
+    }
+    let active = true;
+    setPerfLoading(true);
+    (async () => {
+      const { data: hist } = await supabase.from('client_manager_history').select('*, clients(name)').eq('manager_name', selected.manager_name).order('effective_from');
+      const histList = (hist || []) as (ClientManagerHistory & { clients?: { name: string } | null })[];
+      const clientIds = Array.from(new Set(histList.map(h => h.client_id)));
+      let pnlList: ProjectPnl[] = [];
+      if (clientIds.length) {
+        const { data: pnl } = await supabase.from('projects_pnl').select('*').in('client_id', clientIds);
+        pnlList = (pnl || []) as ProjectPnl[];
+      }
+      if (!active) return;
+      setPerfHistory(histList);
+      setPerfPnl(pnlList);
+      setPerfLoading(false);
+    })();
+    return () => { active = false; };
+  }, [activeTab, selected?.manager_name]);
+
+  // Compute the period each history entry covers, and the revenue/profit within it.
+  const perfRows = useMemo(() => {
+    if (!perfHistory.length) return [];
+    const byClient: Record<string, (ClientManagerHistory & { clients?: { name: string } | null })[]> = {};
+    for (const h of perfHistory) {
+      if (!byClient[h.client_id]) byClient[h.client_id] = [];
+      byClient[h.client_id].push(h);
+    }
+    const nowMonth = currentMonthStr();
+    const rows: { id: string; clientName: string; from: string; to: string; revenue: number; profit: number }[] = [];
+    for (const clientId of Object.keys(byClient)) {
+      const entries = [...byClient[clientId]].sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        if (e.manager_name !== selected?.manager_name) continue;
+        const from = e.effective_from;
+        const to = i + 1 < entries.length ? shiftMonth(entries[i + 1].effective_from, -1) : nowMonth;
+        const pnlInRange = perfPnl.filter(p => p.client_id === clientId && p.month >= from && p.month <= to);
+        const revenue = pnlInRange.reduce((s, p) => s + (p.revenue || 0), 0);
+        const profit = pnlInRange.reduce((s, p) => {
+          if (p.project_type === 'shared') return s + (p.revenue || 0) * (p.cn_pct || 0) / 100;
+          return s;
+        }, 0);
+        rows.push({ id: e.id, clientName: e.clients?.name || '—', from, to, revenue, profit });
+      }
+    }
+    return rows.sort((a, b) => b.from.localeCompare(a.from));
+  }, [perfHistory, perfPnl, selected?.manager_name]);
 
   // Open a specific branch when navigated here from another page (e.g. Dashboard region table)
   useEffect(() => {
@@ -593,6 +654,43 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">
                   Chưa có dữ liệu nhân sự văn phòng. Tính năng này sẽ sớm được bổ sung.
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'performance' && (
+              <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
+                  <User size={15} className="text-[#999]" />
+                  <div className="text-[12.5px] font-semibold text-[#111] flex-1">Hiệu suất theo Quản lý {selected.manager_name ? `— ${selected.manager_name}` : ''}</div>
+                </div>
+                {!selected.manager_name ? (
+                  <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">Chưa gán Người quản lý cho chi nhánh này</div>
+                ) : perfLoading ? (
+                  <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">Đang tải...</div>
+                ) : perfRows.length === 0 ? (
+                  <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">Chưa có lịch sử bàn giao quản lý cho "{selected.manager_name}"</div>
+                ) : (
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
+                        <th className="text-left font-medium px-3.5 py-2">Công ty</th>
+                        <th className="text-left font-medium px-3 py-2">Giai đoạn</th>
+                        <th className="text-right font-medium px-3 py-2">Doanh thu</th>
+                        <th className="text-right font-medium px-3.5 py-2">Lợi nhuận (phần CN)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {perfRows.map(r => (
+                        <tr key={r.id} className="border-t border-[#F0EEE9]">
+                          <td className="px-3.5 py-2 font-medium text-[#111]">{r.clientName}</td>
+                          <td className="px-3 py-2 text-[#666]">{monthLabel(r.from)} → {monthLabel(r.to)}</td>
+                          <td className="px-3 py-2 text-right font-semibold">{fmtTrieu(r.revenue)} tr</td>
+                          <td className={`px-3.5 py-2 text-right font-semibold ${r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtTrieu(r.profit)} tr</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
           </div>

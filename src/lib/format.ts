@@ -1,4 +1,4 @@
-import type { ProjectPnlType, CostPayer } from './types';
+import type { ProjectPnlType, CostPayer, ClientManagerHistory } from './types';
 
 export function formatCurrency(value: number): string {
   if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + ' tỷ';
@@ -73,6 +73,13 @@ export function shiftMonth(month: string, delta: number): string {
   const [y, m] = month.split('-').map(Number);
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Trả về người quản lý đang phụ trách tại tháng `month` ("YYYY-MM"), dựa trên lịch sử bàn giao.
+export function getManagerForMonth(history: ClientManagerHistory[], month: string): string | null {
+  const applicable = history.filter(h => h.effective_from <= month);
+  if (!applicable.length) return null;
+  return applicable.reduce((a, b) => (a.effective_from > b.effective_from ? a : b)).manager_name;
 }
 
 export function fmtTrieu(value: number): string {

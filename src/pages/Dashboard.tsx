@@ -9,7 +9,7 @@ import {
   AlertCircle, TrendingUp, Users, BarChart2, Target,
   ChevronDown, CheckCircle2, Clock, Circle, RefreshCw, ClipboardList, X, Phone, Mail,
 } from 'lucide-react';
-import type { Client } from '../lib/types';
+import type { Client, ProjectPnl } from '../lib/types';
 import { statusPill, formatCurrency, formatDate, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 
@@ -76,6 +76,11 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactN
   done:        { label: 'Hoàn thành', icon: <CheckCircle2 size={13} />, cls: 'text-emerald-600', bg: 'bg-emerald-100' },
 };
 
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export default function Dashboard({ clients, onOpenBranch }: DashboardProps) {
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
   const [selectedScope, setSelectedScope] = useState<string>('');
@@ -97,29 +102,50 @@ export default function Dashboard({ clients, onOpenBranch }: DashboardProps) {
     return clients.filter(c => c.manager === selectedScope);
   }, [clients, scopeMode, selectedScope]);
 
+  // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu/lợi nhuận trên Dashboard
+  const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
+  useEffect(() => {
+    supabase.from('projects_pnl').select('*').eq('month', currentMonthStr()).then(({ data }) => {
+      setProjectsPnl((data || []) as ProjectPnl[]);
+    });
+  }, []);
+
+  const pnlByClient = useMemo(() => {
+    const map: Record<string, ProjectPnl[]> = {};
+    for (const p of projectsPnl) {
+      if (!map[p.client_id]) map[p.client_id] = [];
+      map[p.client_id].push(p);
+    }
+    return map;
+  }, [projectsPnl]);
+
   const totalWorkers = filteredClients.reduce((s, c) => s + (c.current_workers || 0), 0);
-  const totalRevenue = totalWorkers * 850000 * 30;
+  const totalRevenue = filteredClients.reduce((s, c) => s + (pnlByClient[c.id] || []).reduce((t, p) => t + (p.revenue || 0), 0), 0);
   const paid = filteredClients.filter(c => c.paid_this_month).length;
   const danger = filteredClients.filter(c => c.status === 'danger').length;
   const warn = filteredClients.filter(c => c.status === 'warn').length;
 
-  // Groups for bar chart & table
+  // Groups for bar chart & table — doanh thu & lợi nhuận lấy từ P&L dự án (projects_pnl)
   const groups = useMemo((): GroupRow[] => {
     const map: Record<string, GroupRow> = {};
     for (const c of filteredClients) {
       const key = (groupMode === 'region' ? c.region : c.manager) || 'Khác';
       if (!map[key]) map[key] = { key, count: 0, workers: 0, revenue: 0, costs: 0, profit: 0 };
       const w = c.current_workers || 0;
-      const rev = w * 850000 * 30;
-      const cost = w * 720000 * 30;
+      const projects = pnlByClient[c.id] || [];
+      const rev = projects.reduce((s, p) => s + (p.revenue || 0), 0);
+      const profit = projects.reduce((s, p) => {
+        if (p.project_type === 'shared') return s + (p.revenue || 0) * (p.cn_pct || 0) / 100;
+        return s;
+      }, 0);
       map[key].count++;
       map[key].workers += w;
       map[key].revenue += rev;
-      map[key].costs += cost;
-      map[key].profit += rev - cost;
+      map[key].costs += rev - profit;
+      map[key].profit += profit;
     }
     return Object.values(map).sort((a, b) => b.workers - a.workers);
-  }, [filteredClients, groupMode]);
+  }, [filteredClients, groupMode, pnlByClient]);
 
   const trendData = [2420, 2510, 2590, 2670, 2790, totalWorkers || 2847];
   const expiringClients = filteredClients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; });

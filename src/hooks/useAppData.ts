@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Client, LaborHistoryEntry, FinanceRecord, MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, FinanceRecord, MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
 
 function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
   return new Promise((res, rej) => {
@@ -12,6 +12,7 @@ function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
 export function useAppData(enabled = false) {
   const [clients, setClients] = useState<Client[]>([]);
   const [laborHistory, setLaborHistory] = useState<Record<string, LaborHistoryEntry[]>>({});
+  const [managerHistory, setManagerHistory] = useState<Record<string, ClientManagerHistory[]>>({});
   const [finance, setFinance] = useState<FinanceRecord[]>([]);
   const [marketSurveys, setMarketSurveys] = useState<MarketSurvey[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
@@ -42,8 +43,24 @@ export function useAppData(enabled = false) {
       const h = laborMap[c.id] || [];
       c.current_workers = h.length ? h[h.length - 1].count : 0;
     }
+
+    let allManagerHist: ClientManagerHistory[] = [];
+    if (ids.length) {
+      const { data: mhData, error: mhe } = await withTimeout(
+        supabase.from('client_manager_history').select('*').in('client_id', ids).order('effective_from', { ascending: true })
+      );
+      if (mhe) throw new Error(mhe.message);
+      allManagerHist = (mhData || []) as ClientManagerHistory[];
+    }
+    const managerMap: Record<string, ClientManagerHistory[]> = {};
+    for (const e of allManagerHist) {
+      if (!managerMap[e.client_id]) managerMap[e.client_id] = [];
+      managerMap[e.client_id].push(e);
+    }
+
     setClients(clientList);
     setLaborHistory(laborMap);
+    setManagerHistory(managerMap);
   }, []);
 
   const loadFinance = useCallback(async (month: string) => {
@@ -79,7 +96,8 @@ export function useAppData(enabled = false) {
 
   return {
     clients, setClients, laborHistory, setLaborHistory,
-    finance, setFinance, marketSurveys, competitors, marketZones, marketLeads,
+    managerHistory, setManagerHistory,
+    finance, setFinance, marketSurveys, competitors, marketZones, setMarketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
   };

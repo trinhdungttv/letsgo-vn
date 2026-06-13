@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact } from '../lib/types';
-import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency } from '../lib/format';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact } from '../lib/types';
+import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -18,15 +18,18 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 interface ClientDetailProps {
   client: Client;
   laborHistory: LaborHistoryEntry[];
+  managerHistory: ClientManagerHistory[];
   onBack: () => void;
   onClientUpdate: (client: Client) => void;
   onLaborUpdate: (entry: LaborHistoryEntry) => void;
+  onManagerHistoryAdd: (entry: ClientManagerHistory) => void;
+  onMarketZoneAdd: (zone: MarketZone) => void;
   marketZones: MarketZone[];
   toast: (msg: string) => void;
   onOpenDeal?: (dealId: string) => void;
 }
 
-export default function ClientDetail({ client, laborHistory, onBack, onClientUpdate, onLaborUpdate, marketZones, toast, onOpenDeal }: ClientDetailProps) {
+export default function ClientDetail({ client, laborHistory, managerHistory, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
   const { regions } = useRegions();
   const { managers } = useManagers();
@@ -70,6 +73,10 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
   };
   const [openInfo, setOpenInfo] = useState(false);
   const [openLabor, setOpenLabor] = useState(true);
+  const [openManagerHist, setOpenManagerHist] = useState(false);
+  const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
+  const [newZoneOpen, setNewZoneOpen] = useState(false);
+  const [newZoneName, setNewZoneName] = useState('');
   const [form, setForm] = useState({
     name: client.name || '',
     region: client.region || '',
@@ -355,6 +362,61 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
         description: `Cập nhật thông tin khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, ...updates },
       });
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    }
+  };
+
+  const handleManagerTransfer = async () => {
+    if (!transferForm?.manager_name) return;
+    try {
+      const { data, error } = await supabase.from('client_manager_history')
+        .insert({ client_id: client.id, manager_name: transferForm.manager_name, effective_from: transferForm.effective_from, created_by: user?.full_name || null })
+        .select().single();
+      if (error) throw error;
+      onManagerHistoryAdd(data as ClientManagerHistory);
+      const updates = { manager: transferForm.manager_name, updated_at: new Date().toISOString() };
+      const { error: e2 } = await supabase.from('clients').update(updates).eq('id', client.id);
+      if (e2) throw e2;
+      onClientUpdate({ ...client, ...updates });
+      await logActivity({
+        user, action: 'insert', table: 'client_manager_history', recordId: data.id,
+        description: `Chuyển quản lý "${client.name}" sang "${transferForm.manager_name}" từ ${monthLabel(transferForm.effective_from)}`,
+        newData: data,
+      });
+      setTransferForm(null);
+      toast('Đã ghi nhận chuyển đổi quản lý');
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    }
+  };
+
+  const handleAddZone = async () => {
+    const name = newZoneName.trim();
+    if (!name) return;
+    const existing = marketZones.find(z => z.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      toast(`Khu công nghiệp "${existing.name}" đã có — đã chọn cho công ty này`);
+      setForm({ ...form, industrial_zones: [existing.name] });
+      setNewZoneOpen(false);
+      setNewZoneName('');
+      return;
+    }
+    try {
+      const { data, error } = await supabase.from('market_zones')
+        .insert({ name, labor_availability: 'Trung bình' })
+        .select().single();
+      if (error) throw error;
+      onMarketZoneAdd(data as MarketZone);
+      await logActivity({
+        user, action: 'insert', table: 'market_zones', recordId: data.id,
+        description: `Thêm khu công nghiệp "${name}" (từ trang khách hàng "${client.name}")`,
+        newData: data,
+      });
+      setForm({ ...form, industrial_zones: [name] });
+      setNewZoneOpen(false);
+      setNewZoneName('');
+      toast(`Đã tạo Khu công nghiệp "${name}" và đồng bộ vào Thị trường > Khu vực`);
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
     }
@@ -836,17 +898,39 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
-                    <select
-                      value={form.industrial_zones[0] || ''}
-                      onChange={e => setForm({ ...form, industrial_zones: e.target.value ? [e.target.value] : [] })}
-                      className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                    >
-                      <option value="">— Chọn khu công nghiệp —</option>
-                      {marketZones.map(z => (
-                        <option key={z.id} value={z.name}>{z.name}</option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={form.industrial_zones[0] || ''}
+                        onChange={e => setForm({ ...form, industrial_zones: e.target.value ? [e.target.value] : [] })}
+                        className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                      >
+                        <option value="">— Chọn khu công nghiệp —</option>
+                        {marketZones.map(z => (
+                          <option key={z.id} value={z.name}>{z.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => setNewZoneOpen(v => !v)}
+                        className="px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
+                      >
+                        + Thêm KCN mới
+                      </button>
+                    </div>
                     {marketZones.length === 0 && <span className="text-[12px] text-[#aaa]">Chưa có khu vực nào trong Thị trường &gt; Khu vực</span>}
+                    {newZoneOpen && (
+                      <div className="mt-1 p-3 rounded-lg border border-blue-200 bg-blue-50 flex items-center gap-2">
+                        <input
+                          value={newZoneName}
+                          onChange={e => setNewZoneName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleAddZone(); }}
+                          placeholder="Tên khu công nghiệp mới"
+                          autoFocus
+                          className="flex-1 text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                        />
+                        <button onClick={handleAddZone} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Thêm</button>
+                        <button onClick={() => { setNewZoneOpen(false); setNewZoneName(''); }} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
@@ -894,7 +978,6 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     ['Chi Nhánh', client.region],
-                    ['Người quản lý', client.manager],
                     ['Ngày bắt đầu HĐ', formatDate(client.contract_start)],
                     ['Ngày hết hạn HĐ', formatDate(client.contract_end)],
                   ].map(([label, val]) => (
@@ -903,6 +986,37 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                       <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
                     </div>
                   ))}
+                  <div>
+                    <label className="text-[12px] text-[#666] font-medium">Người quản lý</label>
+                    <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
+                      <span className="text-[13px] text-[#111]">{client.manager || '—'}</span>
+                      <button
+                        onClick={() => setTransferForm(transferForm ? null : { manager_name: '', effective_from: new Date().toISOString().slice(0, 7) })}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
+                      >
+                        <ArrowRightLeft size={11} /> Chuyển đổi
+                      </button>
+                    </div>
+                    {transferForm && (
+                      <div className="mt-2 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-[#666] font-medium">Quản lý mới</label>
+                          <select value={transferForm.manager_name} onChange={e => setTransferForm({ ...transferForm, manager_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                            <option value="">— Chọn quản lý —</option>
+                            {managers.map(m => <option key={m.id}>{m.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-[#666] font-medium">Có hiệu lực từ tháng</label>
+                          <input type="month" value={transferForm.effective_from} onChange={e => setTransferForm({ ...transferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={handleManagerTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Xác nhận</button>
+                          <button onClick={() => setTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="col-span-2">
                     <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
                     <div className="py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px] flex flex-wrap gap-1.5 items-center">
@@ -1018,6 +1132,30 @@ export default function ClientDetail({ client, laborHistory, onBack, onClientUpd
                     </tbody>
                   </table>
                 </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Manager Transfer History */}
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <button onClick={() => setOpenManagerHist(!openManagerHist)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
+            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">🔄 Lịch sử quản lý</span>
+            {openManagerHist ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
+          </button>
+          {openManagerHist && (
+            <div className="p-4">
+              {managerHistory.length > 0 ? (
+                <div className="space-y-2">
+                  {[...managerHistory].sort((a, b) => b.effective_from.localeCompare(a.effective_from)).map(h => (
+                    <div key={h.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-[#E8E7E2] bg-[#FAFAF8]">
+                      <div className="text-[13px] text-[#111]">Từ <span className="font-semibold">{monthLabel(h.effective_from)}</span>: {h.manager_name}</div>
+                      <div className="text-[11px] text-[#aaa]">ghi nhận bởi {h.created_by || '—'} · {formatDate(h.created_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[13px] text-[#888]">Chưa có lịch sử chuyển đổi quản lý.</div>
               )}
             </div>
           )}
