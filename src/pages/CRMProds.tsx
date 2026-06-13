@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Edit2 } from 'lucide-react';
+import { Edit2, Trash2 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -12,28 +12,44 @@ interface Props {
   deals: CRMDeal[];
   onProductCreate: (p: CRMProduct) => void;
   onProductUpdate: (p: CRMProduct) => void;
+  onProductDelete: (id: string) => void;
   toast: (m: string) => void;
 }
 
-const CATEGORIES = {
-  recruitment: 'Recruitment',
-  software: 'Software',
-  training: 'Training',
-  consulting: 'Consulting',
-  outsourcing: 'Outsourcing',
-} as const;
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
 
-type CategoryKey = keyof typeof CATEGORIES;
+// Các loại dịch vụ thực tế của công ty. Admin có thể nhập danh mục khác (qua datalist) khi cần.
+const PRESET_CATEGORIES = ['Cho thuê lao động (thời vụ)', 'Giới thiệu việc làm'];
 
-const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProductUpdate, toast }) => {
+const CATEGORY_COLORS: Record<string, string> = {
+  'Cho thuê lao động (thời vụ)': 'bg-blue-100 text-blue-700',
+  'Giới thiệu việc làm': 'bg-emerald-100 text-emerald-700',
+};
+
+const PRICE_HINTS: Record<string, string> = {
+  'Cho thuê lao động (thời vụ)': 'VNĐ / ngày công thực tế của lao động',
+  'Giới thiệu việc làm': 'VNĐ / lần (thu 1 lần khi giới thiệu thành công)',
+};
+
+const emptyForm = { name: '', price: 0, category: PRESET_CATEGORIES[0], industry: '', description: '' };
+
+const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProductUpdate, onProductDelete, toast }) => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<CRMProduct | null>(null);
-  const [formData, setFormData] = useState({ name: '', price: 0, category: 'software', description: '' });
+  const [formData, setFormData] = useState(emptyForm);
+
+  const categoryOptions = Array.from(new Set([...PRESET_CATEGORIES, ...products.map(p => p.category).filter((c): c is string => !!c)]));
+  const industryOptions = Array.from(new Set(products.map(p => p.industry).filter((c): c is string => !!c)));
 
   const openAddModal = () => {
     setEditingProduct(null);
-    setFormData({ name: '', price: 0, category: 'software', description: '' });
+    setFormData(emptyForm);
     setShowModal(true);
   };
 
@@ -42,7 +58,8 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
     setFormData({
       name: product.name,
       price: product.price || 0,
-      category: product.category || 'software',
+      category: product.category || PRESET_CATEGORIES[0],
+      industry: product.industry || '',
       description: product.description || '',
     });
     setShowModal(true);
@@ -56,23 +73,26 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
 
     try {
       if (editingProduct) {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('crm_products')
           .update({
             name: formData.name,
             price: formData.price,
             category: formData.category,
+            industry: formData.industry || null,
             description: formData.description,
           })
-          .eq('id', editingProduct.id);
+          .eq('id', editingProduct.id)
+          .select()
+          .single();
 
         if (error) throw error;
-        onProductUpdate({ ...editingProduct, ...formData });
+        onProductUpdate(data as CRMProduct);
         toast('Cập nhật sản phẩm thành công');
         await logActivity({
           user, action: 'update', table: 'crm_products', recordId: editingProduct.id,
           description: `Cập nhật sản phẩm "${formData.name}"`,
-          oldData: editingProduct, newData: { ...editingProduct, ...formData },
+          oldData: editingProduct, newData: data,
         });
       } else {
         const { data, error } = await supabase
@@ -82,6 +102,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
               name: formData.name,
               price: formData.price,
               category: formData.category,
+              industry: formData.industry || null,
               description: formData.description,
             },
           ])
@@ -102,7 +123,29 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
 
       setShowModal(false);
     } catch (error) {
-      toast(`Lỗi: ${error instanceof Error ? error.message : 'Không xác định'}`);
+      toast(`Lỗi: ${errMsg(error)}`);
+    }
+  };
+
+  const handleDelete = async (product: CRMProduct) => {
+    const usedIn = dealCount(product.id);
+    const confirmMsg = usedIn > 0
+      ? `Sản phẩm "${product.name}" đang được dùng trong ${usedIn} thương vụ. Vẫn xóa?`
+      : `Xóa sản phẩm "${product.name}"?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const { error } = await supabase.from('crm_products').delete().eq('id', product.id);
+      if (error) throw error;
+      onProductDelete(product.id);
+      toast('Đã xóa sản phẩm');
+      await logActivity({
+        user, action: 'delete', table: 'crm_products', recordId: product.id,
+        description: `Xóa sản phẩm "${product.name}"`,
+        oldData: product,
+      });
+    } catch (error) {
+      toast(`Lỗi: ${errMsg(error)}`);
     }
   };
 
@@ -118,11 +161,13 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Sản phẩm"
+        title="Sản phẩm / Dịch vụ"
         actions={
-          <button onClick={openAddModal} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-            + Thêm sản phẩm
-          </button>
+          isAdmin ? (
+            <button onClick={openAddModal} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+              + Thêm sản phẩm
+            </button>
+          ) : undefined
         }
       />
 
@@ -134,24 +179,43 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
               <div className="p-4">
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="text-sm font-semibold text-gray-900 flex-1">{product.name}</h3>
-                  <button
-                    onClick={() => openEditModal(product)}
-                    className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 ml-2"
-                    title="Edit"
-                  >
-                    <Edit2 className="w-4 h-4 text-gray-600" />
-                  </button>
+                  {isAdmin && (
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                      <button
+                        onClick={() => openEditModal(product)}
+                        className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Sửa"
+                      >
+                        <Edit2 className="w-4 h-4 text-gray-600" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(product)}
+                        className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Xóa"
+                      >
+                        <Trash2 className="w-4 h-4 text-red-500" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 mb-3 flex-wrap">
-                  <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-                    {CATEGORIES[product.category as CategoryKey] || product.category}
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${CATEGORY_COLORS[product.category || ''] || 'bg-gray-100 text-gray-600'}`}>
+                    {product.category || 'Khác'}
                   </span>
+                  {product.industry && (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+                      {product.industry}
+                    </span>
+                  )}
                 </div>
 
-                <div className="mb-3">
+                <div className="mb-1">
                   <div className="text-2xl font-bold text-gray-900">{formatCurrency(product.price || 0)}</div>
                 </div>
+                {PRICE_HINTS[product.category || ''] && (
+                  <div className="text-[11px] text-gray-500 mb-2">{PRICE_HINTS[product.category || '']}</div>
+                )}
 
                 {product.description && (
                   <p className="text-xs text-gray-600 mb-3 line-clamp-2">{truncate(product.description, 100)}</p>
@@ -173,7 +237,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
       </div>
 
       {/* Modal */}
-      {showModal && (
+      {showModal && isAdmin && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -185,19 +249,49 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
             <div className="px-6 py-4 space-y-4 max-h-96 overflow-y-auto">
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1">
-                  Tên <span className="text-red-500">*</span>
+                  Khu vực báo giá <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Tên sản phẩm"
+                  placeholder="Ví dụ: Bình Dương, Đồng Nai..."
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Giá</label>
+                <label className="text-xs font-semibold text-gray-700 block mb-1">Danh mục dịch vụ</label>
+                <input
+                  type="text"
+                  value={formData.category}
+                  onChange={e => setFormData({ ...formData, category: e.target.value })}
+                  list="category-options"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Chọn hoặc nhập danh mục mới"
+                />
+                <datalist id="category-options">
+                  {categoryOptions.map(c => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1">Ngành nghề</label>
+                <input
+                  type="text"
+                  value={formData.industry}
+                  onChange={e => setFormData({ ...formData, industry: e.target.value })}
+                  list="industry-options"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Ví dụ: May mặc, Điện tử... (để trống nếu áp dụng chung)"
+                />
+                <datalist id="industry-options">
+                  {industryOptions.map(c => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1">Đơn giá (VNĐ)</label>
                 <input
                   type="number"
                   value={formData.price}
@@ -205,21 +299,9 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="0"
                 />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Danh mục</label>
-                <select
-                  value={formData.category}
-                  onChange={e => setFormData({ ...formData, category: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {Object.entries(CATEGORIES).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                {PRICE_HINTS[formData.category] && (
+                  <div className="text-[11px] text-gray-500 mt-1">{PRICE_HINTS[formData.category]}</div>
+                )}
               </div>
 
               <div>
@@ -229,7 +311,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                   onChange={e => setFormData({ ...formData, description: e.target.value })}
                   rows={4}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                  placeholder="Mô tả chi tiết về sản phẩm"
+                  placeholder="Mô tả chi tiết về sản phẩm / dịch vụ"
                 />
               </div>
             </div>

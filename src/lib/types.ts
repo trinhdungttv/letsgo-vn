@@ -346,6 +346,7 @@ export interface CRMProduct {
   sku: string | null;
   description: string | null;
   category: string | null;
+  industry: string | null;
   created_at: string;
 }
 

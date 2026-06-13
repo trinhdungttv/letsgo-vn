@@ -153,6 +153,7 @@ function AppInner() {
   }, [setClients]);
   const handleProductCreate = useCallback((p: CRMProduct) => setProducts(prev => [...prev, p]), [setProducts]);
   const handleProductUpdate = useCallback((p: CRMProduct) => setProducts(prev => prev.map(x => x.id === p.id ? p : x)), [setProducts]);
+  const handleProductDelete = useCallback((id: string) => setProducts(prev => prev.filter(x => x.id !== id)), [setProducts]);
   const handleDealCreate = useCallback((d: CRMDealType) => setDeals(prev => [d, ...prev]), [setDeals]);
   const handleDealUpdate = useCallback((d: CRMDealType) => {
     setDeals(prev => prev.map(x => x.id === d.id ? d : x));
@@ -293,7 +294,7 @@ function AppInner() {
         {page === 'crm-prods' && (
           <CRMProds
             products={products} deals={deals}
-            onProductCreate={handleProductCreate} onProductUpdate={handleProductUpdate}
+            onProductCreate={handleProductCreate} onProductUpdate={handleProductUpdate} onProductDelete={handleProductDelete}
             toast={toast}
           />
         )}
