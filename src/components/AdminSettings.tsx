@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
-import { X, Plus, Pencil, Trash2, Check } from 'lucide-react';
-import type { Region, Manager } from '../lib/types';
+import { X, Plus, Pencil, Trash2, Check, AlertTriangle } from 'lucide-react';
+import type { Region, Manager, Client, Branch } from '../lib/types';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
+
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
 
 type Tab = 'regions' | 'managers' | 'columns';
 
@@ -32,6 +41,9 @@ interface AdminSettingsProps {
   regions: Region[];
   managers: Manager[];
   columns: Record<ColumnKey, boolean>;
+  clients: Client[];
+  branches: Branch[];
+  onDeleteBranch: (id: string) => Promise<void>;
   onAddRegion: (name: string) => Promise<void>;
   onUpdateRegion: (id: string, name: string) => Promise<void>;
   onDeleteRegion: (id: string) => Promise<void>;
@@ -44,17 +56,21 @@ interface AdminSettingsProps {
 }
 
 export default function AdminSettings({
-  regions, managers, columns,
+  regions, managers, columns, clients, branches, onDeleteBranch,
   onAddRegion, onUpdateRegion, onDeleteRegion,
   onAddManager, onUpdateManager, onDeleteManager,
   onColumnsChange, onClose, toast,
 }: AdminSettingsProps) {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('regions');
   const [saving, setSaving] = useState(false);
 
   // Regions state
   const [newRegion, setNewRegion] = useState('');
   const [editingRegion, setEditingRegion] = useState<{ id: string; name: string } | null>(null);
+  const [deletingRegion, setDeletingRegion] = useState<Region | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeletingRegion, setIsDeletingRegion] = useState(false);
 
   // Managers state
   const [newMgr, setNewMgr] = useState<Omit<Manager, 'id' | 'created_at'>>({ name: '', phone: '', email: '', region: '' });
@@ -80,9 +96,50 @@ export default function AdminSettings({
     wrap(async () => { await onUpdateRegion(editingRegion.id, editingRegion.name.trim()); setEditingRegion(null); }, 'Đã cập nhật chi nhánh');
   };
 
-  const handleDeleteRegion = (id: string, name: string) => {
-    if (!confirm(`Xóa chi nhánh "${name}"?`)) return;
-    wrap(() => onDeleteRegion(id), 'Đã xóa chi nhánh');
+  const handleDeleteRegion = (r: Region) => {
+    setDeletingRegion(r);
+    setDeletePassword('');
+  };
+
+  const affectedClients = deletingRegion ? clients.filter(c => c.region === deletingRegion.name) : [];
+  const linkedBranch = deletingRegion ? branches.find(b => b.region === deletingRegion.name) : undefined;
+
+  const confirmDeleteRegion = async () => {
+    if (!deletingRegion) return;
+    if (!deletePassword) { toast('Vui lòng nhập mật khẩu'); return; }
+    setIsDeletingRegion(true);
+    try {
+      const { data: authCheck, error: authErr } = await supabase
+        .from('app_users')
+        .select('id')
+        .eq('id', user?.id || '')
+        .eq('password', deletePassword)
+        .maybeSingle();
+      if (authErr) throw authErr;
+      if (!authCheck) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
+
+      if (linkedBranch) {
+        await onDeleteBranch(linkedBranch.id);
+        await logActivity({
+          user, action: 'delete', table: 'branches', recordId: linkedBranch.id,
+          description: `Xóa chi nhánh "${linkedBranch.name}" (theo khu vực "${deletingRegion.name}")`,
+          oldData: linkedBranch,
+        });
+      }
+      await onDeleteRegion(deletingRegion.id);
+      await logActivity({
+        user, action: 'delete', table: 'regions', recordId: deletingRegion.id,
+        description: `Xóa khu vực phụ trách "${deletingRegion.name}"`,
+        oldData: deletingRegion,
+      });
+      toast('Đã xóa chi nhánh');
+      setDeletingRegion(null);
+      setDeletePassword('');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setIsDeletingRegion(false);
+    }
   };
 
   const handleAddMgr = () => {
@@ -173,7 +230,7 @@ export default function AdminSettings({
                         <button onClick={() => setEditingRegion({ id: r.id, name: r.name })} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded-md">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={() => handleDeleteRegion(r.id, r.name)} disabled={saving} className="p-1.5 text-red-500 hover:bg-red-50 rounded-md">
+                        <button onClick={() => handleDeleteRegion(r)} disabled={saving} className="p-1.5 text-red-500 hover:bg-red-50 rounded-md">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -294,6 +351,60 @@ export default function AdminSettings({
           </div>
         )}
       </div>
+
+      {/* Delete Region Confirmation */}
+      {deletingRegion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Xóa chi nhánh</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{deletingRegion.name}</p>
+              </div>
+              <button onClick={() => { setDeletingRegion(null); setDeletePassword(''); }} className="p-1 hover:bg-gray-100 rounded-md">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {(affectedClients.length > 0 || linkedBranch) && (
+                <div className="flex gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="text-[12.5px] space-y-1">
+                    {linkedBranch && (
+                      <p>Chi nhánh vận hành <strong>"{linkedBranch.name}"</strong> liên kết với khu vực này sẽ bị xóa luôn.</p>
+                    )}
+                    {affectedClients.length > 0 && (
+                      <>
+                        <p><strong>{affectedClients.length} công ty</strong> đang thuộc khu vực này sẽ mất liên kết chi nhánh (dữ liệu công ty vẫn giữ nguyên):</p>
+                        <ul className="list-disc list-inside max-h-24 overflow-y-auto">
+                          {affectedClients.map(c => <li key={c.id}>{c.name}</li>)}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              <p className="text-[12.5px] text-gray-600">Vui lòng nhập mật khẩu của bạn để xác nhận xóa.</p>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Mật khẩu</label>
+                <input type="password" value={deletePassword}
+                  onChange={e => setDeletePassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') confirmDeleteRegion(); }}
+                  autoFocus
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => { setDeletingRegion(null); setDeletePassword(''); }} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+              <button onClick={confirmDeleteRegion} disabled={isDeletingRegion}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
+                <Trash2 className="w-3.5 h-3.5" />
+                {isDeletingRegion ? 'Đang xóa...' : 'Xác nhận xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

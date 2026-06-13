@@ -5,6 +5,7 @@ import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
+import { useBranchData } from '../hooks/useBranchData';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
 import { getMonthLast, statusPill, formatDate, daysUntil, getCurrentWeekLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -58,6 +59,7 @@ export default function Clients({
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
+  const { branches, deleteBranch } = useBranchData();
 
   const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
@@ -517,6 +519,9 @@ export default function Clients({
           regions={regions}
           managers={managers}
           columns={columns}
+          clients={clients}
+          branches={branches}
+          onDeleteBranch={deleteBranch}
           onAddRegion={addRegion}
           onUpdateRegion={updateRegion}
           onDeleteRegion={removeRegion}

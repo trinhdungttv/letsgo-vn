@@ -404,6 +404,8 @@ export interface Branch {
   phone: string | null;
   email: string | null;
   region: string | null;
+  location: string | null;
+  map_link: string | null;
   established_date: string | null;
   status: BranchStatus;
   notes: string | null;

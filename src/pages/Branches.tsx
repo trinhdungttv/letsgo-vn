@@ -1,21 +1,32 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Building2, MapPin, ChevronRight, ArrowLeft, ClipboardList, Wallet, Users,
-  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User,
+  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
 import { useManagers } from '../hooks/useManagers';
+import { useRegions } from '../hooks/useRegions';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { logActivity } from '../lib/audit';
 import type { Client, Branch, BranchStatus, ProjectPnl, BranchOverhead } from '../lib/types';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth } from '../lib/format';
 
 interface BranchesProps {
   clients: Client[];
   toast: (msg: string) => void;
+  focusRegion?: string | null;
+  onFocusConsumed?: () => void;
 }
 
 type Tab = 'profile' | 'operations' | 'finance' | 'staff';
 type ViewMode = 'grid' | 'list';
+
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
 
 function currentMonthStr(): string {
   const d = new Date();
@@ -29,16 +40,53 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'staff', label: 'Nhân sự VP', icon: <Users size={15} /> },
 ];
 
-export default function Branches({ clients, toast }: BranchesProps) {
+export default function Branches({ clients, toast, focusRegion, onFocusConsumed }: BranchesProps) {
+  const { user } = useAuth();
   const { branches, addBranch, updateBranch, deleteBranch } = useBranchData();
-  const { managers } = useManagers();
+  const { managers, add: addManager } = useManagers();
+  const { regions, add: addRegion, remove: removeRegion } = useRegions();
+  const regionNames = regions.map(r => r.name).filter(n => n !== 'Tất cả');
+  const managerNames = managers.map(m => m.name);
+
+  // Ensure a "Khu vực phụ trách" name exists in the regions table (creates it if new),
+  // so it immediately shows up as a "Chi nhánh" filter option on the Clients page too.
+  const ensureRegion = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || regionNames.includes(trimmed)) return;
+    try {
+      await addRegion(trimmed);
+    } catch (e) {
+      toast('Lỗi tạo khu vực: ' + errMsg(e));
+    }
+  };
+
+  // Resolve a manager by name, creating a new manager record if it doesn't exist yet
+  // so new people can be assigned without going through a separate "Manager" admin page.
+  const resolveManager = async (name: string): Promise<{ id: string | null; name: string | null }> => {
+    const trimmed = name.trim();
+    if (!trimmed) return { id: null, name: null };
+    const existing = managers.find(m => m.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return { id: existing.id, name: existing.name };
+    try {
+      const created = await addManager({ name: trimmed, phone: null, email: null, region: null });
+      return { id: created.id, name: created.name };
+    } catch (e) {
+      toast('Lỗi tạo quản lý: ' + errMsg(e));
+      return { id: null, name: trimmed };
+    }
+  };
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [activeTab, setActiveTab] = useState<Tab>('profile');
 
   const [adding, setAdding] = useState(false);
-  const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_id: '' });
+  const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '' });
+  const [regionTouched, setRegionTouched] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [month, setMonth] = useState(currentMonthStr());
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
@@ -62,6 +110,14 @@ export default function Branches({ clients, toast }: BranchesProps) {
 
   const selected = branches.find(b => b.id === selectedId) || null;
 
+  // Open a specific branch when navigated here from another page (e.g. Dashboard region table)
+  useEffect(() => {
+    if (!focusRegion || !branches.length) return;
+    const match = branches.find(b => b.region === focusRegion);
+    if (match) setSelectedId(match.id);
+    onFocusConsumed?.();
+  }, [focusRegion, branches, onFocusConsumed]);
+
   // ── Profile form state ──────────────────────────────────────────
   const [form, setForm] = useState<Partial<Branch>>({});
   useEffect(() => {
@@ -73,14 +129,21 @@ export default function Branches({ clients, toast }: BranchesProps) {
 
   const saveProfile = async () => {
     if (!selected) return;
+    const region = (form.region ?? '').trim();
+    if (region && branches.some(b => b.id !== selected.id && b.region === region)) {
+      toast(`"${region}" đã được liên kết với chi nhánh khác — vui lòng đặt tên khu vực phụ trách khác`);
+      return;
+    }
     try {
-      const mgr = managers.find(m => m.id === form.manager_id);
+      const mgr = await resolveManager(form.manager_name ?? '');
       await updateBranch(selected.id, {
         name: form.name || selected.name,
         short_name: form.short_name ?? null,
-        manager_id: form.manager_id ?? null,
-        manager_name: mgr?.name ?? form.manager_name ?? null,
+        manager_id: mgr.id,
+        manager_name: mgr.name,
         region: form.region ?? null,
+        location: form.location ?? null,
+        map_link: form.map_link ?? null,
         address: form.address ?? null,
         phone: form.phone ?? null,
         email: form.email ?? null,
@@ -88,22 +151,30 @@ export default function Branches({ clients, toast }: BranchesProps) {
         status: (form.status as BranchStatus) || 'active',
         notes: form.notes ?? null,
       });
+      if (form.region) await ensureRegion(form.region);
       toast('Đã lưu thông tin chi nhánh');
     } catch (e) {
-      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)));
+      toast('Lỗi: ' + errMsg(e));
     }
   };
 
   const handleAddBranch = async () => {
     if (!newBranch.name.trim()) { toast('Vui lòng nhập tên chi nhánh'); return; }
+    const region = newBranch.region.trim();
+    if (region && branches.some(b => b.region === region)) {
+      toast(`"${region}" đã được liên kết với chi nhánh khác — vui lòng đặt tên khu vực phụ trách khác`);
+      return;
+    }
     try {
-      const mgr = managers.find(m => m.id === newBranch.manager_id);
+      const mgr = await resolveManager(newBranch.manager_name);
       const created = await addBranch({
         name: newBranch.name.trim(),
         short_name: newBranch.short_name.trim() || null,
-        manager_id: newBranch.manager_id || null,
-        manager_name: mgr?.name || null,
-        region: newBranch.region.trim() || null,
+        manager_id: mgr.id,
+        manager_name: mgr.name,
+        region: region || null,
+        location: newBranch.location.trim() || null,
+        map_link: newBranch.map_link.trim() || null,
         address: null,
         phone: null,
         email: null,
@@ -111,23 +182,119 @@ export default function Branches({ clients, toast }: BranchesProps) {
         status: 'active',
         notes: null,
       });
+      if (region) await ensureRegion(region);
       toast('Đã thêm chi nhánh');
       setAdding(false);
-      setNewBranch({ name: '', short_name: '', region: '', manager_id: '' });
+      setNewBranch({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '' });
+      setRegionTouched(false);
       setSelectedId(created.id);
     } catch (e) {
-      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)));
+      toast('Lỗi: ' + errMsg(e));
     }
   };
 
-  const handleDeleteBranch = async (b: Branch) => {
-    if (!confirm(`Xoá chi nhánh "${b.name}"?`)) return;
+  const locationNames = useMemo(
+    () => Array.from(new Set(branches.map(b => b.location).filter((l): l is string => !!l))).sort(),
+    [branches]
+  );
+
+  const missingRegions = useMemo(
+    () => regionNames.filter(name => !branches.some(b => b.region === name)),
+    [regionNames, branches]
+  );
+
+  const syncFromRegions = async (names: string[], silent: boolean) => {
     try {
-      await deleteBranch(b.id);
-      if (selectedId === b.id) setSelectedId(null);
-      toast('Đã xoá chi nhánh');
+      for (const name of names) {
+        const parts = name.split(' - ');
+        const shortName = parts.length > 1 ? parts[0].trim() : name.slice(0, 2).toUpperCase();
+        const mgrName = parts.length > 1 ? parts[1].trim() : null;
+        const mgr = mgrName ? managers.find(m => m.name === mgrName) : undefined;
+        await addBranch({
+          name,
+          short_name: shortName,
+          manager_id: mgr?.id || null,
+          manager_name: mgr?.name || mgrName,
+          region: name,
+          location: null,
+          map_link: null,
+          address: null,
+          phone: null,
+          email: null,
+          established_date: null,
+          status: 'active',
+          notes: null,
+        });
+      }
+      if (!silent) toast(`Đã thêm ${names.length} chi nhánh từ Khu vực`);
     } catch (e) {
-      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)));
+      toast('Lỗi: ' + errMsg(e));
+    }
+  };
+
+  const handleSyncFromRegions = () => {
+    if (!missingRegions.length) { toast('Tất cả khu vực đã có chi nhánh tương ứng'); return; }
+    syncFromRegions(missingRegions, false);
+  };
+
+  // Auto-create a branch whenever a new "Chi nhánh" region is added on the Clients page,
+  // so the two lists never drift apart without requiring a manual sync click.
+  const autoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (autoSyncedRef.current) return;
+    if (!regionNames.length || !branches.length) return;
+    if (!missingRegions.length) return;
+    autoSyncedRef.current = true;
+    syncFromRegions(missingRegions, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingRegions, regionNames, branches]);
+
+  const handleDeleteBranch = (b: Branch) => {
+    setDeleteTarget(b);
+    setDeletePassword('');
+  };
+
+  const confirmDeleteBranch = async () => {
+    if (!deleteTarget) return;
+    if (!deletePassword) { toast('Vui lòng nhập mật khẩu'); return; }
+    setIsDeleting(true);
+    try {
+      const { data: authCheck, error: authErr } = await supabase
+        .from('app_users')
+        .select('id')
+        .eq('id', user?.id || '')
+        .eq('password', deletePassword)
+        .maybeSingle();
+      if (authErr) throw authErr;
+      if (!authCheck) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
+
+      await deleteBranch(deleteTarget.id);
+      if (selectedId === deleteTarget.id) setSelectedId(null);
+      await logActivity({
+        user, action: 'delete', table: 'branches', recordId: deleteTarget.id,
+        description: `Xóa chi nhánh "${deleteTarget.name}"`,
+        oldData: deleteTarget,
+      });
+      // Also remove the linked "Khu vực phụ trách" region entry, otherwise the
+      // auto-sync effect will detect it as a missing region and re-create the branch.
+      if (deleteTarget.region) {
+        const linkedRegion = regions.find(r => r.name === deleteTarget.region);
+        if (linkedRegion) {
+          await removeRegion(linkedRegion.id);
+          await logActivity({
+            user, action: 'delete', table: 'regions', recordId: linkedRegion.id,
+            description: `Xóa khu vực phụ trách "${linkedRegion.name}" (theo chi nhánh "${deleteTarget.name}")`,
+            oldData: linkedRegion,
+          });
+        }
+      }
+      toast('Đã xoá chi nhánh');
+      setDeleteTarget(null);
+      setDeletePassword('');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -180,6 +347,15 @@ export default function Branches({ clients, toast }: BranchesProps) {
 
     return (
       <div className="space-y-3">
+        <datalist id="region-options">
+          {regionNames.map(r => <option key={r} value={r} />)}
+        </datalist>
+        <datalist id="location-options">
+          {locationNames.map(l => <option key={l} value={l} />)}
+        </datalist>
+        <datalist id="manager-options">
+          {managerNames.map(m => <option key={m} value={m} />)}
+        </datalist>
         <button onClick={() => setSelectedId(null)} className="flex items-center gap-1.5 text-[12.5px] text-[#666] hover:text-[#111] transition">
           <ArrowLeft size={14} /> Tất cả chi nhánh
         </button>
@@ -241,13 +417,23 @@ export default function Branches({ clients, toast }: BranchesProps) {
                     <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="field-input" />
                   </Field>
                   <Field label="Quản lý phụ trách">
-                    <select value={form.manager_id || ''} onChange={e => setF({ manager_id: e.target.value })} className="field-input">
-                      <option value="">—</option>
-                      {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
+                    <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
                   </Field>
-                  <Field label="Khu vực">
-                    <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} placeholder="VD: Biên Hòa" className="field-input" />
+                  <Field label="Khu vực phụ trách (liên kết KH)">
+                    <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Tên khu vực phụ trách của chi nhánh" />
+                  </Field>
+                  <Field label="Địa danh">
+                    <input value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input" list="location-options" placeholder="VD: Biên Hòa, Nhơn Trạch, Củ Chi, Quận 9" />
+                  </Field>
+                  <Field label="Link Google Maps" full>
+                    <div className="flex gap-2">
+                      <input value={form.map_link || ''} onChange={e => setF({ map_link: e.target.value })} className="field-input flex-1" placeholder="https://maps.app.goo.gl/..." />
+                      {form.map_link && (
+                        <a href={form.map_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0">
+                          <MapPin size={13} /> Xem
+                        </a>
+                      )}
+                    </div>
                   </Field>
                   <Field label="Số điện thoại">
                     <input value={form.phone || ''} onChange={e => setF({ phone: e.target.value })} className="field-input" />
@@ -411,6 +597,14 @@ export default function Branches({ clients, toast }: BranchesProps) {
             )}
           </div>
         </div>
+        <DeleteBranchModal
+          deleteTarget={deleteTarget}
+          deletePassword={deletePassword}
+          setDeletePassword={setDeletePassword}
+          isDeleting={isDeleting}
+          onCancel={() => { setDeleteTarget(null); setDeletePassword(''); }}
+          onConfirm={confirmDeleteBranch}
+        />
       </div>
     );
   }
@@ -420,6 +614,15 @@ export default function Branches({ clients, toast }: BranchesProps) {
   // ════════════════════════════════════════════════════════════════
   return (
     <div className="space-y-3">
+      <datalist id="region-options">
+        {regionNames.map(r => <option key={r} value={r} />)}
+      </datalist>
+      <datalist id="location-options">
+        {locationNames.map(l => <option key={l} value={l} />)}
+      </datalist>
+      <datalist id="manager-options">
+        {managerNames.map(m => <option key={m} value={m} />)}
+      </datalist>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <div className="text-[18px] font-semibold text-[#111] flex items-center gap-2">
@@ -436,6 +639,11 @@ export default function Branches({ clients, toast }: BranchesProps) {
               <List size={13} /> Danh sách
             </button>
           </div>
+          {missingRegions.length > 0 && (
+            <button onClick={handleSyncFromRegions} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">
+              <RefreshCw size={13} /> Đồng bộ từ Khu vực ({missingRegions.length})
+            </button>
+          )}
           <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
             <Plus size={13} /> Thêm CN
           </button>
@@ -445,19 +653,35 @@ export default function Branches({ clients, toast }: BranchesProps) {
       {adding && (
         <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5 grid grid-cols-4 gap-2.5 items-end">
           <Field label="Tên chi nhánh">
-            <input value={newBranch.name} onChange={e => setNewBranch(v => ({ ...v, name: e.target.value }))} className="field-input" placeholder="BH - Ms Thương" />
+            <input
+              value={newBranch.name}
+              onChange={e => {
+                const name = e.target.value;
+                setNewBranch(v => ({ ...v, name, region: regionTouched ? v.region : name }));
+              }}
+              className="field-input"
+              placeholder="BH - Ms Thương"
+            />
           </Field>
           <Field label="Tên rút gọn">
             <input value={newBranch.short_name} onChange={e => setNewBranch(v => ({ ...v, short_name: e.target.value }))} className="field-input" placeholder="BH" />
           </Field>
-          <Field label="Khu vực">
-            <input value={newBranch.region} onChange={e => setNewBranch(v => ({ ...v, region: e.target.value }))} className="field-input" placeholder="Biên Hòa" />
+          <Field label="Khu vực phụ trách (liên kết KH)">
+            <input
+              value={newBranch.region}
+              onChange={e => { setRegionTouched(true); setNewBranch(v => ({ ...v, region: e.target.value })); }}
+              className="field-input"
+              placeholder="Tự điền theo Tên chi nhánh — chỉ sửa nếu cần liên kết khác"
+            />
           </Field>
           <Field label="Quản lý phụ trách">
-            <select value={newBranch.manager_id} onChange={e => setNewBranch(v => ({ ...v, manager_id: e.target.value }))} className="field-input">
-              <option value="">—</option>
-              {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
+            <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
+          </Field>
+          <Field label="Địa danh">
+            <input value={newBranch.location} onChange={e => setNewBranch(v => ({ ...v, location: e.target.value }))} className="field-input" list="location-options" placeholder="VD: Biên Hòa, Nhơn Trạch, Củ Chi, Quận 9" />
+          </Field>
+          <Field label="Link Google Maps">
+            <input value={newBranch.map_link} onChange={e => setNewBranch(v => ({ ...v, map_link: e.target.value }))} className="field-input" placeholder="https://maps.app.goo.gl/..." />
           </Field>
           <div className="col-span-4 flex gap-2">
             <button onClick={handleAddBranch} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">Lưu</button>
@@ -488,7 +712,14 @@ export default function Branches({ clients, toast }: BranchesProps) {
                   <div className="w-10 h-10 rounded-full bg-[#E1F5EE] text-[#085041] flex items-center justify-center text-[13px] font-semibold shrink-0">{initials(b)}</div>
                   <div className="flex-1 min-w-0">
                     <div className="text-[13.5px] font-semibold text-[#111] truncate">{b.name}</div>
-                    <div className="text-[11.5px] text-[#666] flex items-center gap-1 truncate"><MapPin size={11} /> {b.region || '—'}</div>
+                    <div className="text-[11.5px] text-[#666] flex items-center gap-1 truncate">
+                      <MapPin size={11} />
+                      {b.map_link ? (
+                        <a href={b.map_link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-[#0F6E56] hover:underline">
+                          {b.location || 'Chưa có địa danh'}
+                        </a>
+                      ) : (b.location || 'Chưa có địa danh')}
+                    </div>
                     <div className="mt-1">
                       {stats?.alerts.length ? (
                         <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#FAEEDA] text-[#633806]">Cần xử lý</span>
@@ -533,6 +764,7 @@ export default function Branches({ clients, toast }: BranchesProps) {
             <thead>
               <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
                 <th className="text-left font-medium px-3.5 py-2">Chi nhánh</th>
+                <th className="text-left font-medium px-3 py-2">Địa danh</th>
                 <th className="text-left font-medium px-3 py-2">Khu vực</th>
                 <th className="text-left font-medium px-3 py-2">Quản lý</th>
                 <th className="text-right font-medium px-3 py-2">KH</th>
@@ -546,6 +778,13 @@ export default function Branches({ clients, toast }: BranchesProps) {
                 return (
                   <tr key={b.id} onClick={() => setSelectedId(b.id)} className="border-t border-[#F0EEE9] cursor-pointer hover:bg-[#FAFAF8]">
                     <td className="px-3.5 py-2 font-medium text-[#111]">{b.name}</td>
+                    <td className="px-3 py-2 text-[#666]">
+                      {b.map_link ? (
+                        <a href={b.map_link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-[#0F6E56] hover:underline flex items-center gap-1">
+                          <MapPin size={11} /> {b.location || '—'}
+                        </a>
+                      ) : (b.location || '—')}
+                    </td>
                     <td className="px-3 py-2 text-[#666]">{b.region || '—'}</td>
                     <td className="px-3 py-2 text-[#666]">{b.manager_name || '—'}</td>
                     <td className="px-3 py-2 text-right">{stats?.branchClients.length || 0}</td>
@@ -560,6 +799,61 @@ export default function Branches({ clients, toast }: BranchesProps) {
           </table>
         </div>
       )}
+      <DeleteBranchModal
+        deleteTarget={deleteTarget}
+        deletePassword={deletePassword}
+        setDeletePassword={setDeletePassword}
+        isDeleting={isDeleting}
+        onCancel={() => { setDeleteTarget(null); setDeletePassword(''); }}
+        onConfirm={confirmDeleteBranch}
+      />
+    </div>
+  );
+}
+
+function DeleteBranchModal({ deleteTarget, deletePassword, setDeletePassword, isDeleting, onCancel, onConfirm }: {
+  deleteTarget: Branch | null;
+  deletePassword: string;
+  setDeletePassword: (v: string) => void;
+  isDeleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!deleteTarget) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Xóa chi nhánh</h2>
+            <p className="text-xs text-gray-500 mt-0.5">{deleteTarget.name}</p>
+          </div>
+          <button onClick={onCancel} className="p-1 hover:bg-gray-100 rounded-md">
+            <span className="text-gray-500 text-lg leading-none">×</span>
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-[12.5px] text-gray-600">
+            Hành động này sẽ xóa vĩnh viễn chi nhánh và không thể khôi phục. Vui lòng nhập mật khẩu của bạn để xác nhận.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">Mật khẩu</label>
+            <input type="password" value={deletePassword}
+              onChange={e => setDeletePassword(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') onConfirm(); }}
+              autoFocus
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+          </div>
+        </div>
+        <div className="px-5 pb-5 flex gap-2">
+          <button onClick={onCancel} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+          <button onClick={onConfirm} disabled={isDeleting}
+            className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
+            <Trash2 className="w-3.5 h-3.5" />
+            {isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

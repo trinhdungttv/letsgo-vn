@@ -42,7 +42,7 @@ const targetLinePlugin = {
 };
 ChartJS.register(targetLinePlugin);
 
-interface DashboardProps { clients: Client[]; }
+interface DashboardProps { clients: Client[]; onOpenBranch?: (region: string) => void; }
 
 type ScopeMode = 'all' | 'region' | 'manager';
 type GroupMode = 'region' | 'manager';
@@ -76,7 +76,7 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactN
   done:        { label: 'Hoàn thành', icon: <CheckCircle2 size={13} />, cls: 'text-emerald-600', bg: 'bg-emerald-100' },
 };
 
-export default function Dashboard({ clients }: DashboardProps) {
+export default function Dashboard({ clients, onOpenBranch }: DashboardProps) {
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
   const [selectedScope, setSelectedScope] = useState<string>('');
   const [groupMode, setGroupMode] = useState<GroupMode>('region');
@@ -594,7 +594,11 @@ export default function Dashboard({ clients }: DashboardProps) {
               </thead>
               <tbody>
                 {groups.map(g => (
-                  <tr key={g.key} className="border-b border-[#F0EEE9] last:border-0 hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={g.key}
+                    onClick={groupMode === 'region' && onOpenBranch ? () => onOpenBranch(g.key) : undefined}
+                    className={`border-b border-[#F0EEE9] last:border-0 hover:bg-gray-50 transition-colors ${groupMode === 'region' && onOpenBranch ? 'cursor-pointer' : ''}`}
+                  >
                     <td className="px-3 py-2 font-semibold">{g.key}</td>
                     <td className="px-3 py-2">{g.count}</td>
                     <td className="px-3 py-2">

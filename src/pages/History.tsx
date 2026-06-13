@@ -30,6 +30,8 @@ const TABLE_LABELS: Record<string, string> = {
   crm_activities: 'CRM Hoạt động',
   contacts: 'Liên hệ',
   app_users: 'Người dùng',
+  branches: 'Chi nhánh',
+  regions: 'Khu vực phụ trách',
 };
 
 const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {

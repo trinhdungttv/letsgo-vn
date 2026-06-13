@@ -101,6 +101,12 @@ function AppInner() {
     if (p === 'market') loadMarket();
   }, [loadFinance, loadMarket]);
 
+  const [branchFocusRegion, setBranchFocusRegion] = useState<string | null>(null);
+  const openBranch = useCallback((region: string) => {
+    setBranchFocusRegion(region);
+    setPage('branches');
+  }, []);
+
   const handleSelectClient = useCallback((id: string) => {
     setSelectedClientId(id);
     setPage('client-detail');
@@ -215,7 +221,7 @@ function AppInner() {
     <div className="flex h-screen overflow-hidden bg-[#F1F0EA]">
       <Sidebar currentPage={page} onNavigate={navigate} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF]">
-        {page === 'dashboard' && <Dashboard clients={clients} />}
+        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} />}
         {page === 'clients' && (
           <Clients
             clients={clients}
@@ -245,7 +251,7 @@ function AppInner() {
         )}
         {page === 'branches' && (
           <div className="flex-1 overflow-y-auto p-5">
-            <Branches clients={clients} toast={toast} />
+            <Branches clients={clients} toast={toast} focusRegion={branchFocusRegion} onFocusConsumed={() => setBranchFocusRegion(null)} />
           </div>
         )}
         {page === 'finance' && (
