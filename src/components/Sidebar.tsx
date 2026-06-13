@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Building2, Building, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, KanbanSquare, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History } from 'lucide-react';
+import { Home, Building2, Building, DollarSign, MapPin, Calculator, BarChart3, Users, LogOut, LayoutDashboard, KanbanSquare, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, ListChecks, Settings } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 
@@ -10,7 +10,9 @@ interface SidebarProps {
 
 const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'dashboard', label: 'Dashboard', icon: <Home size={15} /> },
+  { page: 'workspace', label: 'Workspace', icon: <Home size={15} /> },
   { page: 'clients', label: 'Khách hàng', icon: <Building2 size={15} /> },
+  { page: 'sales-board', label: 'Bảng KD', icon: <ListChecks size={15} /> },
   { page: 'branches', label: 'Chi Nhánh', icon: <Building size={15} /> },
   { page: 'finance', label: 'Tài chính', icon: <DollarSign size={15} /> },
   { page: 'market', label: 'Thị trường', icon: <MapPin size={15} /> },
@@ -18,6 +20,7 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'reports', label: 'Báo cáo', icon: <BarChart3 size={15} /> },
   { page: 'users', label: 'Quản lý Users', icon: <Users size={15} /> },
   { page: 'history', label: 'Lịch sử', icon: <History size={15} /> },
+  { page: 'admin-settings', label: 'Admin', icon: <Settings size={15} /> },
 ];
 
 const CRM_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [

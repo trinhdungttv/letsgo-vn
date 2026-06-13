@@ -63,10 +63,10 @@ export function useAuth() {
 export function canAccess(role: string, page: string): boolean {
   const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
   const rules: Record<string, string[]> = {
-    admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', ...crm],
-    ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports'],
-    kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'quotes', 'reports', ...crm],
-    bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', ...crm],
+    admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'sales-board', ...crm],
+    ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace'],
+    kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'quotes', 'reports', 'workspace', 'sales-board', ...crm],
+    bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'sales-board', ...crm],
   };
   return (rules[role] || []).includes(page);
 }

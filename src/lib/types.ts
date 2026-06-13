@@ -3,6 +3,8 @@ export interface AppUser {
   username: string;
   full_name: string;
   role: 'admin' | 'ketoan' | 'kinhdoanh' | 'bdh';
+  email?: string | null;
+  is_active?: boolean;
 }
 
 export interface Region {
@@ -252,7 +254,7 @@ export interface Quote {
   created_at: string;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline';
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'sales-board';
 
 export type AuditAction = 'insert' | 'update' | 'delete';
 
@@ -268,6 +270,64 @@ export interface AuditLogEntry {
   new_data: any;
   undone: boolean;
   created_at: string;
+}
+
+export type PermissionAction = 'view' | 'edit' | 'delete' | 'export';
+export type PermissionStatus = 'pending' | 'approved' | 'rejected';
+
+export interface PermissionRequest {
+  id: string;
+  requester_email: string;
+  requester_name: string | null;
+  requester_role: string | null;
+  module: string;
+  action_requested: PermissionAction;
+  reason: string | null;
+  status: PermissionStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface UserPermission {
+  id: string;
+  user_email: string;
+  module: string;
+  can_view: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_export: boolean;
+  granted_by: string | null;
+  created_at: string;
+}
+
+export type NotificationType = 'alert' | 'info' | 'success' | 'warning';
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  title: string;
+  body: string | null;
+  type: NotificationType;
+  is_read: boolean;
+  action_url: string | null;
+  created_at: string;
+}
+
+export type SalesTaskStatus = 'todo' | 'inprogress' | 'done' | 'overdue';
+
+export interface SalesTask {
+  id: string;
+  title: string;
+  sub_label: string | null;
+  client_name: string | null;
+  deadline: string | null;
+  assigned_to: string | null;
+  assigned_name: string | null;
+  status: SalesTaskStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DashboardTarget {

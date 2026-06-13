@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2 } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
@@ -28,6 +28,12 @@ interface ClientsProps {
   toast: (m: string) => void;
 }
 
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
+
 interface RenewForm {
   client: Client;
   startDate: string;
@@ -48,12 +54,17 @@ export default function Clients({
   const [activeZones, setActiveZones] = usePersistedState<string[]>('lgvn_clients_activeZones', [ALL_OPTION]);
   const [activeManagers, setActiveManagers] = usePersistedState<string[]>('lgvn_clients_activeManagers', [ALL_OPTION]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
+  const [editingManager, setEditingManager] = useState<Manager | null>(null);
+  const [savingManager, setSavingManager] = useState(false);
+  const [addManagerFor, setAddManagerFor] = useState<Client | null>(null);
+  const [newManagerForm, setNewManagerForm] = useState({ name: '', phone: '', email: '', region: '' });
+  const [savingNewManager, setSavingNewManager] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_end' | 'cutoff_day' | 'status' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
 
@@ -226,7 +237,7 @@ export default function Clients({
   };
 
   const QUICK_EDIT_LABELS: Record<string, string> = {
-    region: 'Chi nhánh', manager: 'Quản lý', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái',
+    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái',
   };
 
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
@@ -248,7 +259,7 @@ export default function Clients({
     const oldVal = field === 'cutoff_day' ? c.cutoff_day : (c as any)[field];
     let newVal: any = editValue;
     if (field === 'cutoff_day') newVal = Math.max(1, Math.min(31, parseInt(editValue) || 1));
-    if ((field === 'region' || field === 'manager' || field === 'contract_end') && !editValue) newVal = null;
+    if ((field === 'region' || field === 'manager' || field === 'contract_start' || field === 'contract_end') && !editValue) newVal = null;
     if (String(oldVal ?? '') === String(newVal ?? '')) { cancelEdit(); return; }
     setSavingCell(true);
     try {
@@ -270,13 +281,103 @@ export default function Clients({
     }
   };
 
+  const assignManagerToClient = async (c: Client, managerName: string) => {
+    const updates = { manager: managerName, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
+    if (error) throw error;
+    onClientUpdate({ ...c, ...updates });
+    await logActivity({
+      user, action: 'update', table: 'clients', recordId: c.id,
+      description: `Cập nhật Quản lý của "${c.name}": ${c.manager ?? '—'} → ${managerName}`,
+      oldData: c, newData: { ...c, ...updates },
+    });
+  };
+
+  const confirmAddManager = async () => {
+    if (!addManagerFor) return;
+    if (!newManagerForm.name.trim()) { toast('Vui lòng nhập tên quản lý'); return; }
+    setSavingNewManager(true);
+    try {
+      const added = await addManager({
+        name: newManagerForm.name.trim(),
+        phone: newManagerForm.phone || null,
+        email: newManagerForm.email || null,
+        region: newManagerForm.region || null,
+      });
+      await logActivity({
+        user, action: 'insert', table: 'managers', recordId: added.id,
+        description: `Thêm quản lý "${added.name}"`, newData: added,
+      });
+      await assignManagerToClient(addManagerFor, added.name);
+      toast('Đã thêm quản lý mới và gán cho khách hàng');
+      setAddManagerFor(null);
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setSavingNewManager(false);
+    }
+  };
+
+  const confirmManagerEdit = async () => {
+    if (!editingManager || !selectedManager) return;
+    if (!editingManager.name.trim()) { toast('Vui lòng nhập tên quản lý'); return; }
+    setSavingManager(true);
+    try {
+      const isNew = !selectedManager.created_at;
+      const fields = {
+        name: editingManager.name.trim(),
+        phone: editingManager.phone || null,
+        email: editingManager.email || null,
+        region: editingManager.region || null,
+      };
+      let saved: Manager;
+      if (isNew) {
+        saved = await addManager(fields);
+        await logActivity({
+          user, action: 'insert', table: 'managers', recordId: saved.id,
+          description: `Thêm quản lý "${saved.name}"`, newData: saved,
+        });
+      } else {
+        await updateManager(selectedManager.id, fields);
+        saved = { ...selectedManager, ...fields };
+        await logActivity({
+          user, action: 'update', table: 'managers', recordId: saved.id,
+          description: `Cập nhật thông tin quản lý "${saved.name}"`,
+          oldData: selectedManager, newData: saved,
+        });
+      }
+
+      const oldName = selectedManager.name;
+      if (oldName && oldName !== saved.name) {
+        const affected = clients.filter(c => c.manager === oldName);
+        if (affected.length > 0) {
+          const { error } = await supabase.from('clients').update({ manager: saved.name, updated_at: new Date().toISOString() }).eq('manager', oldName);
+          if (error) throw error;
+          affected.forEach(c => onClientUpdate({ ...c, manager: saved.name }));
+          await logActivity({
+            user, action: 'update', table: 'clients', recordId: saved.id,
+            description: `Đổi tên quản lý "${oldName}" → "${saved.name}" (${affected.length} khách hàng)`,
+          });
+        }
+      }
+
+      setSelectedManager(saved);
+      setEditingManager(null);
+      toast('Đã lưu thông tin quản lý');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setSavingManager(false);
+    }
+  };
+
   const col = (key: ColumnKey) => columns[key] !== false;
 
   return (
     <>
       <PageHeader
         title="Khách hàng"
-        subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết${isAdmin ? ' · Double-click vào Chi nhánh/Quản lý/Chốt/Hết HĐ/TT để sửa nhanh' : ''}`}
+        subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết${isAdmin ? ' · Double-click vào Chi nhánh/Quản lý/Chốt/Bắt đầu HĐ/Hết HĐ/TT để sửa nhanh' : ''}`}
         actions={
           <div className="flex items-center gap-2">
             {isAdmin && (
@@ -326,6 +427,7 @@ export default function Clients({
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Δ</th>
                   {col('cutoff') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Chốt</th>}
                   {col('payment') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Kỳ TT</th>}
+                  {col('contract_start') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Bắt đầu HĐ</th>}
                   {col('contract_end') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Hết HĐ</th>}
                   {col('progress') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Tiến độ</th>}
                   {col('status') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">TT</th>}
@@ -380,13 +482,22 @@ export default function Clients({
                             <select
                               autoFocus value={editValue} disabled={savingCell}
                               onClick={e => e.stopPropagation()}
-                              onChange={e => setEditValue(e.target.value)}
+                              onChange={e => {
+                                if (e.target.value === '__new__') {
+                                  cancelEdit();
+                                  setNewManagerForm({ name: '', phone: '', email: '', region: c.region || '' });
+                                  setAddManagerFor(c);
+                                  return;
+                                }
+                                setEditValue(e.target.value);
+                              }}
                               onBlur={() => saveEdit(c)}
                               onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
                               className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
                             >
                               <option value="">—</option>
                               {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                              <option value="__new__">+ Thêm quản lý mới…</option>
                             </select>
                           ) : c.manager ? (
                             <button
@@ -436,6 +547,22 @@ export default function Clients({
                         </td>
                       )}
                       {col('payment') && <td className="px-3 py-2 text-[12px] whitespace-nowrap">{c.next_month_pay ? 'T sau' : `${c.payment_start}–${c.payment_end}`}</td>}
+                      {col('contract_start') && (
+                        <td className="px-3 py-2" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'contract_start')}>
+                          {editingCell?.id === c.id && editingCell.field === 'contract_start' ? (
+                            <input
+                              type="date" autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none"
+                            />
+                          ) : (
+                            <span className="text-[12px] whitespace-nowrap">{formatDate(c.contract_start)}</span>
+                          )}
+                        </td>
+                      )}
                       {col('contract_end') && (
                         <td className="px-3 py-2" onClick={e => { stopForEdit(e); if (editingCell) return; isWarn && openRenew(e, c); }} onDoubleClick={e => startEdit(e, c, 'contract_end')}>
                           {editingCell?.id === c.id && editingCell.field === 'contract_end' ? (
@@ -623,22 +750,61 @@ export default function Clients({
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[12px] w-full max-w-md shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8E7E2]">
-              <h3 className="text-[14px] font-semibold text-[#111]">{selectedManager.name}</h3>
-              <button onClick={() => setSelectedManager(null)} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
+              {editingManager ? (
+                <input
+                  autoFocus value={editingManager.name}
+                  onChange={e => setEditingManager({ ...editingManager, name: e.target.value })}
+                  placeholder="Tên quản lý *"
+                  className="text-[14px] font-semibold text-[#111] px-2 py-1 rounded border border-blue-400 outline-none flex-1 mr-2"
+                />
+              ) : (
+                <h3 className="text-[14px] font-semibold text-[#111]">{selectedManager.name}</h3>
+              )}
+              <div className="flex items-center gap-1.5">
+                {isAdmin && !editingManager && (
+                  <button onClick={() => setEditingManager({ ...selectedManager })} className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition" title="Sửa thông tin quản lý">
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+                <button onClick={() => { setSelectedManager(null); setEditingManager(null); }} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
+              </div>
             </div>
             <div className="p-5 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  ['Số điện thoại', selectedManager.phone],
-                  ['Email', selectedManager.email],
-                  ['Chi nhánh', selectedManager.region],
-                ].map(([label, val]) => (
-                  <div key={label}>
-                    <label className="text-[12px] text-[#666] font-medium">{label}</label>
-                    <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
+              {editingManager ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[12px] text-[#666] font-medium">Số điện thoại</label>
+                    <input value={editingManager.phone || ''} onChange={e => setEditingManager({ ...editingManager, phone: e.target.value })}
+                      className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
                   </div>
-                ))}
-              </div>
+                  <div>
+                    <label className="text-[12px] text-[#666] font-medium">Email</label>
+                    <input value={editingManager.email || ''} onChange={e => setEditingManager({ ...editingManager, email: e.target.value })}
+                      className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[12px] text-[#666] font-medium">Chi nhánh</label>
+                    <select value={editingManager.region || ''} onChange={e => setEditingManager({ ...editingManager, region: e.target.value })}
+                      className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
+                      <option value="">—</option>
+                      {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    ['Số điện thoại', selectedManager.phone],
+                    ['Email', selectedManager.email],
+                    ['Chi nhánh', selectedManager.region],
+                  ].map(([label, val]) => (
+                    <div key={label}>
+                      <label className="text-[12px] text-[#666] font-medium">{label}</label>
+                      <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div>
                 <label className="text-[12px] text-[#666] font-medium">
                   Khách hàng phụ trách ({clients.filter(c => c.manager === selectedManager.name).length})
@@ -661,8 +827,63 @@ export default function Clients({
                 </div>
               </div>
             </div>
-            <div className="px-5 pb-5">
-              <button onClick={() => setSelectedManager(null)} className="w-full py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Đóng</button>
+            <div className="px-5 pb-5 flex gap-2">
+              {editingManager ? (
+                <>
+                  <button onClick={() => setEditingManager(null)} disabled={savingManager} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">Hủy</button>
+                  <button onClick={confirmManagerEdit} disabled={savingManager} className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50">
+                    <Check className="w-3.5 h-3.5" /> {savingManager ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                </>
+              ) : (
+                <button onClick={() => setSelectedManager(null)} className="w-full py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Đóng</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add New Manager Modal (from quick-edit Quản lý) */}
+      {addManagerFor && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[12px] w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8E7E2]">
+              <h3 className="text-[14px] font-semibold text-[#111]">Thêm quản lý mới</h3>
+              <button onClick={() => setAddManagerFor(null)} className="text-[#aaa] hover:text-[#555] transition text-lg leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-[12.5px] text-[#888]">Gán cho khách hàng "{addManagerFor.name}" sau khi tạo.</p>
+              <div>
+                <label className="text-[12px] text-[#666] font-medium">Tên quản lý *</label>
+                <input autoFocus value={newManagerForm.name} onChange={e => setNewManagerForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[12px] text-[#666] font-medium">Số điện thoại</label>
+                  <input value={newManagerForm.phone} onChange={e => setNewManagerForm(f => ({ ...f, phone: e.target.value }))}
+                    className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
+                </div>
+                <div>
+                  <label className="text-[12px] text-[#666] font-medium">Email</label>
+                  <input value={newManagerForm.email} onChange={e => setNewManagerForm(f => ({ ...f, email: e.target.value }))}
+                    className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[12px] text-[#666] font-medium">Chi nhánh</label>
+                <select value={newManagerForm.region} onChange={e => setNewManagerForm(f => ({ ...f, region: e.target.value }))}
+                  className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
+                  <option value="">—</option>
+                  {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => setAddManagerFor(null)} disabled={savingNewManager} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">Hủy</button>
+              <button onClick={confirmAddManager} disabled={savingNewManager || !newManagerForm.name.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50">
+                <Plus className="w-3.5 h-3.5" /> {savingNewManager ? 'Đang lưu...' : 'Thêm & gán'}
+              </button>
             </div>
           </div>
         </div>

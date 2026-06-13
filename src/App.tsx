@@ -25,8 +25,11 @@ import CRMLeads from './pages/CRMLeads';
 import CRMProds from './pages/CRMProds';
 import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
+import AdminPage from './pages/AdminPage';
+import Workspace from './pages/Workspace';
+import SalesBoard from './pages/SalesBoard';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'sales-board'];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -75,7 +78,7 @@ function AppInner() {
 
   // Load data needed by the restored page on first mount
   useEffect(() => {
-    if (page === 'finance') loadFinance('2026-06');
+    if (page === 'finance' || page === 'workspace') loadFinance('2026-06');
     if (page === 'market') loadMarket();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,7 +100,7 @@ function AppInner() {
 
   const navigate = useCallback((p: Page) => {
     setPage(p);
-    if (p === 'finance') loadFinance('2026-06');
+    if (p === 'finance' || p === 'workspace') loadFinance('2026-06');
     if (p === 'market') loadMarket();
   }, [loadFinance, loadMarket]);
 
@@ -266,6 +269,11 @@ function AppInner() {
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
+        {page === 'admin-settings' && <AdminPage toast={toast} />}
+        {page === 'workspace' && (
+          <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} toast={toast} />
+        )}
+        {page === 'sales-board' && <SalesBoard toast={toast} />}
 
         {/* CRM Module */}
         {page === 'crm-dash' && (

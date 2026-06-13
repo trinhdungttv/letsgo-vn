@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>Workspace + Admin Mockup</title></head>
+<body>
+<!--
+=== MOCKUP: 3 TRANG MỚI — LET'S GO VN ===
+
+TRANG 1: Admin Settings (src/pages/AdminSettings.tsx)
+- Chỉ role 'admin' truy cập
+- Tab 1: Yêu cầu quyền truy cập
+  + Danh sách request từ user (tên, role, module xin, hành động xin: xem/nhập/xoá/export)
+  + Nút Duyệt / Từ chối
+  + Khi duyệt → cập nhật bảng user_permissions trong Supabase
+- Tab 2: Quản lý tài khoản
+  + Danh sách users từ bảng app_users
+  + Tạo user mới: nhập tên + email + role → gửi invite qua Supabase Auth
+  + Sửa role
+  + Khoá / mở khoá tài khoản (cột is_active)
+- Tab 3: Ma trận phân quyền
+  + Bảng modules x roles
+  + Icon: ✓ toàn quyền | 👁 chỉ xem | ✗ không có
+  + Không cần edit trực tiếp trên bảng (chỉ xem tổng quan)
+
+TRANG 2: My Workspace (src/pages/Workspace.tsx)
+- Tất cả roles đều truy cập, hiển thị khác nhau theo role
+- Phần chung tất cả roles:
+  + KPI cards (số liệu theo role)
+  + Thông báo cá nhân (từ bảng notifications)
+- Role admin: KPI toàn cty + alerts hệ thống + yêu cầu quyền chờ duyệt
+- Role ketoan: tiến độ thu tiền + KH chưa TT + CP chưa nhập
+- Role kinhdoanh: pipeline snapshot + tasks chưa xong + prospects cần follow
+- Role bdh (Trưởng CN): LĐ chi nhánh mình + HĐ sắp hết + thông báo CN
+
+TRANG 3: Bảng làm việc KD (src/pages/SalesBoard.tsx)
+- Tất cả roles kinhdoanh + bdh + admin truy cập
+- Danh sách tasks dạng list (không phải Kanban)
+- Columns: checkbox | nội dung + sub-label | khách hàng | deadline | người làm | trạng thái
+- Filter: Tất cả / Của tôi / Chưa xong / Hôm nay / Tuần này
+- Mỗi user tự tạo/sửa/xoá task của mình
+- Admin xoá được tất cả
+- Trạng thái: Chưa làm / Đang làm / Xong / Trễ (auto nếu deadline qua mà chưa xong)
+- Ô thêm nhanh task mới ở cuối list
+
+=== SUPABASE TABLES CẦN TẠO ===
+
+1. notifications (thông báo cá nhân)
+   - id uuid PK
+   - user_id text (email hoặc role)
+   - title text
+   - body text
+   - type text ('alert'|'info'|'success'|'warning')
+   - is_read boolean default false
+   - action_url text (link đến module liên quan)
+   - created_at timestamptz
+
+2. permission_requests (yêu cầu quyền)
+   - id uuid PK
+   - requester_email text
+   - requester_name text
+   - requester_role text
+   - module text
+   - action_requested text ('view'|'edit'|'delete'|'export')
+   - reason text
+   - status text default 'pending' ('pending'|'approved'|'rejected')
+   - reviewed_by text
+   - reviewed_at timestamptz
+   - created_at timestamptz
+
+3. sales_tasks (bảng làm việc KD)
+   - id uuid PK
+   - title text
+   - sub_label text
+   - client_name text
+   - deadline date
+   - assigned_to text (email)
+   - assigned_name text
+   - status text default 'todo' ('todo'|'inprogress'|'done'|'overdue')
+   - created_by text (email)
+   - created_at timestamptz
+   - updated_at timestamptz
+
+4. user_permissions (quyền bổ sung cho từng user)
+   - id uuid PK
+   - user_email text
+   - module text
+   - can_view boolean default false
+   - can_edit boolean default false
+   - can_delete boolean default false
+   - can_export boolean default false
+   - granted_by text
+   - created_at timestamptz
+   - UNIQUE(user_email, module)
+-->
+</body></html>

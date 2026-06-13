@@ -19,6 +19,7 @@ const ALL_COLUMNS = [
   { key: 'workers', label: 'LĐ' },
   { key: 'cutoff', label: 'Chốt' },
   { key: 'payment', label: 'Kỳ TT' },
+  { key: 'contract_start', label: 'Bắt đầu HĐ' },
   { key: 'contract_end', label: 'Hết HĐ' },
   { key: 'progress', label: 'Tiến độ' },
   { key: 'status', label: 'TT' },
