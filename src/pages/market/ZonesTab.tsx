@@ -44,7 +44,8 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
-  const provinceNames = [ALL_OPTION, ...Array.from(new Set(marketZones.map(z => z.location).filter((v): v is string => !!v))).sort()];
+  const provinceOptions = Array.from(new Set(marketZones.map(z => z.location).filter((v): v is string => !!v))).sort();
+  const provinceNames = [ALL_OPTION, ...provinceOptions];
   const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
 
   useEffect(() => {
@@ -174,7 +175,19 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Thông tin khu vực <span className="text-[11px] font-normal text-[#aaa]">· Click ô để sửa</span></div>
           <div className="p-4 space-y-2.5">
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Tỉnh / Thành phố</span>
-              <input value={editForm.location || ''} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} placeholder="Đồng Nai, Bình Dương..." className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+              <select value={editForm.location || ''} onChange={e => {
+                if (e.target.value === '__new__') {
+                  const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                  if (v && v.trim()) setEditForm(f => ({ ...f, location: v.trim() }));
+                  return;
+                }
+                setEditForm(f => ({ ...f, location: e.target.value || null }));
+              }} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
+                <option value="">—</option>
+                {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                {editForm.location && !provinceOptions.includes(editForm.location) && <option value={editForm.location}>{editForm.location}</option>}
+                <option value="__new__">+ Thêm tỉnh/thành mới…</option>
+              </select>
             </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ban quản lý</span>
               <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
@@ -338,7 +351,19 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Tên đầy đủ</label>
                 <input value={addForm.full_name} onChange={e => setAddForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Khu Công Nghiệp..." className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Tỉnh / Thành phố</label>
-                <input value={addForm.location} onChange={e => setAddForm(f => ({ ...f, location: e.target.value }))} placeholder="Đồng Nai" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <select value={addForm.location} onChange={e => {
+                  if (e.target.value === '__new__') {
+                    const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                    if (v && v.trim()) setAddForm(f => ({ ...f, location: v.trim() }));
+                    return;
+                  }
+                  setAddForm(f => ({ ...f, location: e.target.value }));
+                }} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white">
+                  <option value="">—</option>
+                  {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                  {addForm.location && !provinceOptions.includes(addForm.location) && <option value={addForm.location}>{addForm.location}</option>}
+                  <option value="__new__">+ Thêm tỉnh/thành mới…</option>
+                </select></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Ban quản lý</label>
                 <input value={addForm.operator} onChange={e => setAddForm(f => ({ ...f, operator: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Diện tích</label>

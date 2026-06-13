@@ -188,6 +188,38 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const setF = (fields: Partial<Branch>) => setForm(prev => ({ ...prev, ...fields }));
 
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const handleAvatarUpload = async (file: File) => {
+    if (!selected) return;
+    setUploadingAvatar(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `branch-managers/${selected.id}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+      await updateBranch(selected.id, { manager_avatar_url: data.publicUrl });
+      setF({ manager_avatar_url: data.publicUrl });
+      toast('Đã cập nhật ảnh đại diện');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    if (!selected) return;
+    try {
+      await updateBranch(selected.id, { manager_avatar_url: null });
+      setF({ manager_avatar_url: null });
+      toast('Đã xóa ảnh đại diện');
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    }
+  };
+
   const saveProfile = async () => {
     if (!selected) return;
     const region = (form.region ?? '').trim();
@@ -397,7 +429,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const totalLnRong = Object.values(branchStats).reduce((s, v) => s + v.lnRong, 0);
   const needsAttention = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0).length;
 
-  const initials = (b: Branch) => (b.short_name || b.name.slice(0, 2)).toUpperCase().slice(0, 2);
+  // Avatar of the branch's "Trưởng Chi Nhánh" — falls back to the branch initials circle.
+  const renderAvatar = (b: { manager_avatar_url?: string | null; name?: string; short_name?: string | null }, size: number) => {
+    if (b.manager_avatar_url) {
+      return <img src={b.manager_avatar_url} alt="" className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />;
+    }
+    const label = (b.short_name || b.name || '??').slice(0, 2).toUpperCase();
+    return (
+      <div className="rounded-full bg-[#E1F5EE] text-[#085041] flex items-center justify-center font-semibold shrink-0" style={{ width: size, height: size, fontSize: Math.round(size * 0.35) }}>
+        {label}
+      </div>
+    );
+  };
 
   // ════════════════════════════════════════════════════════════════
   // DETAIL VIEW
@@ -425,8 +468,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           {/* Sidebar */}
           <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden self-start">
             <div className="px-4 py-4 border-b border-[#E8E7E2] text-center">
-              <div className="w-12 h-12 rounded-full bg-[#E1F5EE] text-[#085041] flex items-center justify-center text-[15px] font-semibold mx-auto mb-2">
-                {initials(selected)}
+              <div className="flex justify-center mb-2">
+                {renderAvatar(selected, 48)}
               </div>
               <div className="text-[14px] font-semibold text-[#111]">{selected.name}</div>
               <div className="text-[11.5px] text-[#666] flex items-center justify-center gap-1 mt-0.5">
@@ -479,6 +522,21 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </Field>
                   <Field label="Quản lý phụ trách">
                     <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
+                  </Field>
+                  <Field label="Ảnh đại diện Trưởng CN" full>
+                    <div className="flex items-center gap-3">
+                      {renderAvatar(form, 48)}
+                      <input
+                        type="file" accept="image/*" id="manager-avatar-input" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
+                      />
+                      <label htmlFor="manager-avatar-input" className={`px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition cursor-pointer ${uploadingAvatar ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {uploadingAvatar ? 'Đang tải lên...' : 'Tải ảnh lên'}
+                      </label>
+                      {form.manager_avatar_url && (
+                        <button onClick={handleRemoveAvatar} className="text-[12px] text-red-600 hover:underline">Xóa ảnh</button>
+                      )}
+                    </div>
                   </Field>
                   <Field label="Khu vực phụ trách (liên kết KH)">
                     <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Tên khu vực phụ trách của chi nhánh" />
@@ -807,7 +865,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             return (
               <div key={b.id} onClick={() => setSelectedId(b.id)} className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden cursor-pointer hover:border-gray-300 hover:-translate-y-0.5 transition">
                 <div className="px-3.5 py-3 border-b border-[#E8E7E2] flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#E1F5EE] text-[#085041] flex items-center justify-center text-[13px] font-semibold shrink-0">{initials(b)}</div>
+                  {renderAvatar(b, 40)}
                   <div className="flex-1 min-w-0">
                     <div className="text-[13.5px] font-semibold text-[#111] truncate">{b.name}</div>
                     <div className="text-[11.5px] text-[#666] flex items-center gap-1 truncate">
@@ -884,7 +942,12 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       ) : (b.location || '—')}
                     </td>
                     <td className="px-3 py-2 text-[#666]">{b.region || '—'}</td>
-                    <td className="px-3 py-2 text-[#666]">{b.manager_name || '—'}</td>
+                    <td className="px-3 py-2 text-[#666]">
+                      <div className="flex items-center gap-1.5">
+                        {renderAvatar(b, 18)}
+                        <span>{b.manager_name || '—'}</span>
+                      </div>
+                    </td>
                     <td className="px-3 py-2 text-right">{stats?.branchClients.length || 0}</td>
                     <td className="px-3 py-2 text-right">{(stats?.workers || 0).toLocaleString()}</td>
                     <td className={`px-3.5 py-2 text-right font-semibold ${(stats?.lnRong || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>

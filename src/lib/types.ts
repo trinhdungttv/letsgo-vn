@@ -470,6 +470,7 @@ export interface Branch {
   short_name: string | null;
   manager_id: string | null;
   manager_name: string | null;
+  manager_avatar_url: string | null;
   address: string | null;
   phone: string | null;
   email: string | null;
