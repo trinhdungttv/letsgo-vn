@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check } from 'lucide-react';
+import { useState, useRef, useMemo } from 'react';
+import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
@@ -7,7 +7,7 @@ import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, statusPill, formatDate, daysUntil, getCurrentWeekLabel } from '../lib/format';
+import { getMonthLast, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -22,6 +22,7 @@ interface ClientsProps {
   onSelectClient: (id: string) => void;
   onAddClient: (regionName?: string, managerName?: string) => void;
   onClientUpdate: (c: Client) => void;
+  onLaborUpdate: (entry: LaborHistoryEntry) => void;
   onReload: () => void;
   isAdmin: boolean;
   marketZones: MarketZone[];
@@ -43,7 +44,7 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onAddClient, onClientUpdate, onReload, isAdmin, marketZones, toast,
+  onSelectClient, onAddClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -64,9 +65,16 @@ export default function Clients({
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
+  const [showBulkLabor, setShowBulkLabor] = useState(false);
+  const [bulkWeek, setBulkWeek] = useState('');
+  const [bulkExtraMonths, setBulkExtraMonths] = useState(0);
+  const [bulkValues, setBulkValues] = useState<Record<string, string>>({});
+  const [bulkSearch, setBulkSearch] = useState('');
+  const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION]);
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
@@ -84,6 +92,78 @@ export default function Clients({
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
     return matchRegion && matchManager && matchZones && matchSearch;
   });
+
+  const bulkClients = useMemo(() => {
+    return clients
+      .filter(c => !c.archived_at)
+      .filter(c => bulkRegions.includes(ALL_OPTION) || bulkRegions.includes(c.region || ''))
+      .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [clients, bulkSearch, bulkRegions]);
+
+  const bulkWeekGroups = useMemo(() => {
+    const future: { month: string; labels: string[] }[] = [];
+    const now = new Date();
+    for (let i = 1; i <= bulkExtraMonths; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const m = d.getMonth() + 1;
+      const y = d.getFullYear();
+      future.push({ month: `Tháng ${m}/${y}`, labels: weekLabelsForMonth(y, m) });
+    }
+    return [...future, ...recentWeekLabels(6)];
+  }, [bulkExtraMonths]);
+
+  const openBulkLabor = () => {
+    setBulkWeek(getCurrentWeekLabel());
+    setBulkExtraMonths(0);
+    setBulkValues({});
+    setBulkSearch('');
+    setBulkRegions([ALL_OPTION]);
+    setShowBulkLabor(true);
+  };
+
+  const saveBulkLabor = async () => {
+    const entries = Object.entries(bulkValues).filter(([, v]) => v.trim() !== '');
+    if (entries.length === 0) { toast('Chưa nhập số liệu nào'); return; }
+    setBulkSaving(true);
+    let success = 0;
+    try {
+      for (const [clientId, valStr] of entries) {
+        const newCount = Math.max(0, parseInt(valStr) || 0);
+        const c = clients.find(cl => cl.id === clientId);
+        if (!c) continue;
+        const hist = laborHistory[clientId] || [];
+        const existing = hist.find(h => h.week_label === bulkWeek);
+        if (existing) {
+          if (existing.count === newCount) continue;
+          const { error } = await supabase.from('client_labor_history').update({ count: newCount }).eq('id', existing.id);
+          if (error) throw error;
+          onLaborUpdate({ ...existing, count: newCount });
+          await logActivity({
+            user, action: 'update', table: 'client_labor_history', recordId: existing.id,
+            description: `Cập nhật LĐ tuần ${bulkWeek} cho "${c.name}": ${existing.count.toLocaleString()} → ${newCount.toLocaleString()}`,
+            oldData: existing, newData: { ...existing, count: newCount },
+          });
+        } else {
+          const { data, error } = await supabase.from('client_labor_history').insert({ client_id: clientId, week_label: bulkWeek, count: newCount, updated_by: user?.full_name || null }).select().single();
+          if (error) throw error;
+          onLaborUpdate(data);
+          await logActivity({
+            user, action: 'insert', table: 'client_labor_history', recordId: data.id,
+            description: `Thêm số liệu LĐ tuần ${bulkWeek} cho "${c.name}": ${newCount.toLocaleString()}`,
+            newData: data,
+          });
+        }
+        success++;
+      }
+      toast(`Đã lưu LĐ tuần ${bulkWeek} cho ${success} công ty`);
+      setShowBulkLabor(false);
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setBulkSaving(false);
+    }
+  };
 
   const getDelta = (clientId: string) => {
     const hist = laborHistory[clientId] || [];
@@ -242,8 +322,8 @@ export default function Clients({
 
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
     e.stopPropagation();
-    if (!isAdmin) return;
-    const current = field === 'cutoff_day' ? String(c.cutoff_day ?? '') : (c as any)[field] || '';
+    if (!isAdmin && field !== 'labor') return;
+    const current = field === 'cutoff_day' ? String(c.cutoff_day ?? '') : field === 'labor' ? String(c.current_workers ?? 0) : (c as any)[field] || '';
     setEditingCell({ id: c.id, field });
     setEditValue(current);
   };
@@ -253,9 +333,48 @@ export default function Clients({
   // Prevent the row's onClick (navigate to detail) from firing on the first click of a double-click in editable cells.
   const stopForEdit = (e: React.MouseEvent) => { if (isAdmin) e.stopPropagation(); };
 
+  // LĐ column is editable for everyone, regardless of isAdmin.
+  const stopForLaborEdit = (e: React.MouseEvent) => { e.stopPropagation(); };
+
   const saveEdit = async (c: Client) => {
     if (!editingCell) return;
     const field = editingCell.field;
+    if (field === 'labor') {
+      const newCount = Math.max(0, parseInt(editValue) || 0);
+      if (newCount === (c.current_workers || 0)) { cancelEdit(); return; }
+      const wk = getCurrentWeekLabel();
+      setSavingCell(true);
+      try {
+        const hist = laborHistory[c.id] || [];
+        const existing = hist.find(h => h.week_label === wk);
+        if (existing) {
+          const { error } = await supabase.from('client_labor_history').update({ count: newCount }).eq('id', existing.id);
+          if (error) throw error;
+          onLaborUpdate({ ...existing, count: newCount });
+          await logActivity({
+            user, action: 'update', table: 'client_labor_history', recordId: existing.id,
+            description: `Cập nhật LĐ tuần ${wk} cho "${c.name}": ${existing.count.toLocaleString()} → ${newCount.toLocaleString()}`,
+            oldData: existing, newData: { ...existing, count: newCount },
+          });
+        } else {
+          const { data, error } = await supabase.from('client_labor_history').insert({ client_id: c.id, week_label: wk, count: newCount, updated_by: user?.full_name || null }).select().single();
+          if (error) throw error;
+          onLaborUpdate(data);
+          await logActivity({
+            user, action: 'insert', table: 'client_labor_history', recordId: data.id,
+            description: `Thêm số liệu LĐ tuần ${wk} cho "${c.name}": ${newCount.toLocaleString()}`,
+            newData: data,
+          });
+        }
+        toast('Đã cập nhật');
+      } catch (err: any) {
+        toast('Lỗi: ' + err.message);
+      } finally {
+        setSavingCell(false);
+        cancelEdit();
+      }
+      return;
+    }
     const oldVal = field === 'cutoff_day' ? c.cutoff_day : (c as any)[field];
     let newVal: any = editValue;
     if (field === 'cutoff_day') newVal = Math.max(1, Math.min(31, parseInt(editValue) || 1));
@@ -396,6 +515,9 @@ export default function Clients({
             <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50" title="Import danh sách khách hàng từ Excel">
               <FileUp size={13} /> {isImporting ? 'Đang nhập...' : 'Import Excel'}
             </button>
+            <button onClick={openBulkLabor} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh số lao động cho nhiều công ty">
+              <ClipboardList size={13} /> Nhập nhanh LĐ
+            </button>
             <button onClick={() => onAddClient()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm KH
             </button>
@@ -514,13 +636,26 @@ export default function Clients({
                         </td>
                       )}
                       {col('workers') && (
-                        <td className="px-3 py-2">
-                          <div className={`font-semibold ${underMin ? 'text-red-700' : ''}`}>
-                            {curW.toLocaleString()}
-                            {minW > 0 && <span className="text-[11px] font-normal ml-1 text-gray-400">/{minW.toLocaleString()}</span>}
-                          </div>
-                          {underMin && (
-                            <div className="text-[10px] text-red-600 font-medium">-{(minW - curW).toLocaleString()}</div>
+                        <td className="px-3 py-2" onClick={stopForLaborEdit} onDoubleClick={e => startEdit(e, c, 'labor')}>
+                          {editingCell?.id === c.id && editingCell.field === 'labor' ? (
+                            <input
+                              type="number" min={0} autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] w-16 px-1.5 py-1 rounded border border-blue-400 outline-none"
+                            />
+                          ) : (
+                            <>
+                              <div className={`font-semibold ${underMin ? 'text-red-700' : ''}`}>
+                                {curW.toLocaleString()}
+                                {minW > 0 && <span className="text-[11px] font-normal ml-1 text-gray-400">/{minW.toLocaleString()}</span>}
+                              </div>
+                              {underMin && (
+                                <div className="text-[10px] text-red-600 font-medium">-{(minW - curW).toLocaleString()}</div>
+                              )}
+                            </>
                           )}
                         </td>
                       )}
@@ -739,6 +874,60 @@ export default function Clients({
                 className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
                 <Trash2 className="w-3.5 h-3.5" />
                 {isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk labor entry modal */}
+      {showBulkLabor && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Nhập nhanh số lao động</h2>
+              <button onClick={() => setShowBulkLabor(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <span className="text-gray-500 text-lg leading-none">×</span>
+              </button>
+            </div>
+            <div className="px-5 py-3 border-b border-gray-200 space-y-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-gray-700">Tuần:</label>
+                <select value={bulkWeek} onChange={e => setBulkWeek(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                  {bulkWeekGroups.map(g => (
+                    <optgroup key={g.month} label={g.month}>
+                      {g.labels.map(l => <option key={l} value={l}>{l}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <button onClick={() => setBulkExtraMonths(n => n + 1)} className="text-[12px] text-blue-600 hover:underline">+ Tạo tháng mới</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <FilterDropdown label="Chi nhánh" options={regionNames} selected={bulkRegions} onChange={setBulkRegions} />
+                <input type="text" placeholder="Tìm công ty..." value={bulkSearch} onChange={e => setBulkSearch(e.target.value)}
+                  className="flex-1 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-2 divide-y divide-gray-100">
+              {bulkClients.map(c => (
+                <div key={c.id} className="flex items-center justify-between py-1.5 gap-3">
+                  <span className="text-[12.5px] text-gray-800 truncate">{c.name}</span>
+                  <input
+                    type="number" min={0}
+                    placeholder={String(c.current_workers ?? 0)}
+                    value={bulkValues[c.id] ?? ''}
+                    onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
+                    className="w-20 text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                  />
+                </div>
+              ))}
+              {bulkClients.length === 0 && <div className="text-center py-6 text-[12px] text-gray-400">Không tìm thấy công ty</div>}
+            </div>
+            <div className="px-5 py-4 border-t border-gray-200 flex gap-2">
+              <button onClick={() => setShowBulkLabor(false)} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+              <button onClick={saveBulkLabor} disabled={bulkSaving}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
+                {bulkSaving ? 'Đang lưu...' : 'Lưu tất cả'}
               </button>
             </div>
           </div>

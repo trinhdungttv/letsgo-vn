@@ -235,6 +235,7 @@ function AppInner() {
             onSelectClient={handleSelectClient}
             onAddClient={handleAddClient}
             onClientUpdate={handleClientUpdate}
+            onLaborUpdate={handleLaborUpdate}
             onReload={loadClients}
             isAdmin={user?.role === 'admin'}
             marketZones={marketZones}
