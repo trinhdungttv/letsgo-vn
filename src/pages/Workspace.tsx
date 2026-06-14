@@ -4,6 +4,8 @@ import {
   TrendingUp, ClipboardList, CalendarClock, CheckCircle2, X, Sparkles, Send, Trash2,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import AlertsTasksPanel from '../components/AlertsTasksPanel';
+import SalesTaskBoard from '../components/SalesTaskBoard';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import type { Client, FinanceRecord, CRMPipelineEntry, AppNotification, Page } from '../lib/types';
@@ -242,6 +244,14 @@ export default function Workspace({ clients, finance, pipeline, onNavigate, toas
           </>
         )}
       </div>
+
+      {/* Cảnh báo & Việc cần làm */}
+      <AlertsTasksPanel clients={clients} regionFilter={user.role === 'bdh' ? branchRegion : null} />
+
+      {/* Bảng công việc Kinh doanh — thêm/sửa/xoá, theo dõi chung */}
+      <SectionCard title="Bảng công việc Kinh doanh" icon={<ClipboardList size={14} className="text-[#888]" />}>
+        <SalesTaskBoard toast={toast} />
+      </SectionCard>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Notifications - common */}

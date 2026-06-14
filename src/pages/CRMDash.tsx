@@ -2,15 +2,29 @@ import React, { useMemo, useState } from 'react';
 import { Phone, Mail, PenTool, Calendar } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
-import type { Client, CRMDeal, CRMActivity, Page } from '../lib/types';
+import type { Client, CRMActivity, CRMPipelineEntry, Page } from '../lib/types';
 
 interface Props {
-  deals: CRMDeal[];
   leads: Client[];
   activities: CRMActivity[];
   clients: Client[];
+  pipeline: CRMPipelineEntry[];
   isAdmin: boolean;
   onNavigate: (p: Page) => void;
+}
+
+// Các giai đoạn của BD Pipeline (đồng bộ với src/pages/CRMPipeline.tsx)
+const PIPELINE_STAGES = [
+  { id: 'tiem-nang', label: 'Tiềm năng', badge: 'bg-blue-100 text-blue-700', color: 'bg-blue-500' },
+  { id: 'dang-lh', label: 'Đang liên hệ', badge: 'bg-amber-100 text-amber-700', color: 'bg-amber-500' },
+  { id: 'quan-tam', label: 'Quan tâm/Chờ', badge: 'bg-emerald-100 text-emerald-700', color: 'bg-emerald-500' },
+  { id: 'dam-phan', label: 'Đàm phán HĐ', badge: 'bg-violet-100 text-violet-700', color: 'bg-violet-500' },
+  { id: 'hop-tac', label: 'Đang HT', badge: 'bg-teal-100 text-teal-700', color: 'bg-teal-500' },
+] as const;
+
+// Giá hiệu lực của 1 công ty trong pipeline: ưu tiên giá tuỳ chỉnh, nếu không có thì lấy giá chuẩn của sản phẩm
+function effectivePrice(entry: CRMPipelineEntry): number {
+  return entry.custom_price ?? entry.crm_products?.price ?? 0;
 }
 
 type PeriodFilter = 'all' | 'month' | 'quarter' | 'year';
@@ -35,27 +49,17 @@ function isWithinPeriod(dateStr: string | null | undefined, period: PeriodFilter
   return quarterOf(date.getMonth()) === quarterOf(now.getMonth());
 }
 
-const STAGES = {
-  new: { label: 'Mới', color: 'bg-slate-500', badge: 'bg-slate-100 text-slate-700' },
-  contacted: { label: 'Đã liên hệ', color: 'bg-blue-500', badge: 'bg-blue-100 text-blue-700' },
-  in_progress: { label: 'Đang xử lý', color: 'bg-amber-500', badge: 'bg-amber-100 text-amber-700' },
-  proposal: { label: 'Báo giá', color: 'bg-violet-500', badge: 'bg-violet-100 text-violet-700' },
-  won: { label: 'Đã thắng', color: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700' },
-  lost: { label: 'Thua', color: 'bg-red-500', badge: 'bg-red-100 text-red-700' },
-} as const;
-
-type StageKey = keyof typeof STAGES;
-
-const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavigate }) => {
+const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNavigate }) => {
   const [period, setPeriod] = useState<PeriodFilter>('all');
 
   const stats = useMemo(() => {
-    const pipelineValue = deals
-      .filter(d => d.stage !== 'won' && d.stage !== 'lost')
-      .reduce((sum, d) => sum + (d.value || 0), 0);
-    const wonCount = deals.filter(d => d.stage === 'won').length;
-    const lostCount = deals.filter(d => d.stage === 'lost').length;
-    const winRate = wonCount + lostCount > 0 ? Math.round((wonCount / (wonCount + lostCount)) * 100) : 0;
+    // Giá trị pipeline: tổng giá (tuỳ chỉnh hoặc giá chuẩn) của các công ty chưa "Đang HT"
+    const pipelineValue = pipeline
+      .filter(e => e.stage !== 'hop-tac')
+      .reduce((sum, e) => sum + effectivePrice(e), 0);
+    // Tỷ lệ thắng: % công ty đã chuyển sang "Đang HT" trên tổng số công ty trong pipeline
+    const wonCount = pipeline.filter(e => e.stage === 'hop-tac').length;
+    const winRate = pipeline.length > 0 ? Math.round((wonCount / pipeline.length) * 100) : 0;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const recentActivities = activities.filter(a => new Date(a.created_at || '') > sevenDaysAgo).length;
@@ -65,7 +69,7 @@ const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavig
       winRate,
       recentActivities,
     };
-  }, [deals, activities]);
+  }, [pipeline, activities]);
 
   const runningProjects = useMemo(() => {
     const active = clients.filter(c => c.client_type === 'active');
@@ -79,29 +83,24 @@ const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavig
   }, [clients, period]);
 
   const stageDistribution = useMemo(() => {
-    const distribution: Record<string, number> = {
-      new: 0,
-      contacted: 0,
-      in_progress: 0,
-      proposal: 0,
-      won: 0,
-      lost: 0,
-    };
-    deals.forEach(d => {
-      if (distribution.hasOwnProperty(d.stage)) {
-        distribution[d.stage as StageKey] += 1;
+    const distribution: Record<string, number> = {};
+    PIPELINE_STAGES.forEach(s => { distribution[s.id] = 0; });
+    pipeline.forEach(e => {
+      if (Object.prototype.hasOwnProperty.call(distribution, e.stage)) {
+        distribution[e.stage] += 1;
       }
     });
     const total = Object.values(distribution).reduce((a, b) => a + b, 0);
     return { distribution, total };
-  }, [deals]);
+  }, [pipeline]);
 
-  const topDeals = useMemo(() => {
-    return deals
-      .filter(d => d.stage !== 'lost')
-      .sort((a, b) => (b.value || 0) - (a.value || 0))
+  const topPipeline = useMemo(() => {
+    return pipeline
+      .filter(e => e.stage !== 'hop-tac')
+      .slice()
+      .sort((a, b) => effectivePrice(b) - effectivePrice(a))
       .slice(0, 5);
-  }, [deals]);
+  }, [pipeline]);
 
   const recentActivitiesData = useMemo(() => {
     return activities
@@ -197,14 +196,13 @@ const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavig
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-sm font-semibold text-gray-900 mb-4">Phân bố giai đoạn</h3>
         <div className="flex gap-1 h-8 mb-4 rounded-full overflow-hidden border border-gray-200 bg-gray-50">
-          {Object.entries(stageDistribution.distribution).map(([stage, count]) => {
+          {PIPELINE_STAGES.map(stageConfig => {
+            const count = stageDistribution.distribution[stageConfig.id] || 0;
             const pct = stageDistribution.total > 0 ? (count / stageDistribution.total) * 100 : 0;
             if (pct === 0) return null;
-            const stageKey = stage as StageKey;
-            const stageConfig = STAGES[stageKey];
             return (
               <div
-                key={stage}
+                key={stageConfig.id}
                 className={`${stageConfig.color} transition-all`}
                 style={{ width: `${pct}%` }}
                 title={`${stageConfig.label}: ${count}`}
@@ -212,43 +210,44 @@ const CRMDash: React.FC<Props> = ({ deals, activities, clients, isAdmin, onNavig
             );
           })}
         </div>
-        <div className="grid grid-cols-6 gap-2">
-          {Object.entries(stageDistribution.distribution).map(([stage, count]) => {
-            const stageKey = stage as StageKey;
-            const stageConfig = STAGES[stageKey];
-            return (
-              <div key={stage} className="text-center">
-                <div className="text-xs font-medium text-gray-900 mb-1">{stageConfig.label}</div>
-                <div className="text-sm font-bold text-gray-900">{count}</div>
-              </div>
-            );
-          })}
+        <div className="grid grid-cols-5 gap-2">
+          {PIPELINE_STAGES.map(stageConfig => (
+            <div key={stageConfig.id} className="text-center">
+              <div className="text-xs font-medium text-gray-900 mb-1">{stageConfig.label}</div>
+              <div className="text-sm font-bold text-gray-900">{stageDistribution.distribution[stageConfig.id] || 0}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Top Deals & Recent Activities */}
+      {/* Top Pipeline & Recent Activities */}
       <div className="grid grid-cols-2 gap-6">
-        {/* Top Deals */}
+        {/* Top Pipeline */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Thương vụ hàng đầu</h3>
+          <h3 className="text-sm font-semibold text-gray-900 mb-4">Công ty tiềm năng hàng đầu</h3>
           <div className="space-y-3">
-            {topDeals.length > 0 ? (
-              topDeals.map(deal => (
-                <div key={deal.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-gray-900 truncate">{deal.title}</div>
-                    <div className="text-xs text-gray-500 truncate">{deal.crm_leads?.name || deal.clients?.name || '—'}</div>
-                  </div>
-                  <div className="ml-4 text-right">
-                    <div className="text-xs font-bold text-gray-900">{formatCurrency(deal.value || 0)}</div>
-                    <div className={`text-xs font-semibold px-2 py-0.5 rounded-full inline-block ${STAGES[deal.stage as StageKey].badge}`}>
-                      {STAGES[deal.stage as StageKey].label}
+            {topPipeline.length > 0 ? (
+              topPipeline.map(entry => {
+                const stageConfig = PIPELINE_STAGES.find(s => s.id === entry.stage);
+                return (
+                  <div key={entry.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-gray-900 truncate">{entry.company_name}</div>
+                      <div className="text-xs text-gray-500 truncate">{entry.region || '—'}{entry.crm_products?.category ? ` · ${entry.crm_products.category}` : ''}</div>
+                    </div>
+                    <div className="ml-4 text-right">
+                      <div className="text-xs font-bold text-gray-900">{formatCurrency(effectivePrice(entry))}</div>
+                      {stageConfig && (
+                        <div className={`text-xs font-semibold px-2 py-0.5 rounded-full inline-block ${stageConfig.badge}`}>
+                          {stageConfig.label}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
-              <div className="text-xs text-gray-500 py-4 text-center">Không có thương vụ</div>
+              <div className="text-xs text-gray-500 py-4 text-center">Không có công ty trong pipeline</div>
             )}
           </div>
         </div>

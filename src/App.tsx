@@ -292,7 +292,7 @@ function AppInner() {
 
         {/* CRM Module */}
         {page === 'crm-dash' && (
-          <CRMDash deals={deals} leads={leads} activities={activities} clients={clients} isAdmin={user?.role === 'admin'} onNavigate={navigate} />
+          <CRMDash leads={leads} activities={activities} clients={clients} pipeline={pipeline} isAdmin={user?.role === 'admin'} onNavigate={navigate} />
         )}
         {page === 'crm-board' && (
           <CRMBoard
