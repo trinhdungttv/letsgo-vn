@@ -4,10 +4,12 @@ import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import type { Client, Contact } from '../lib/types';
+import { RelationshipRadar } from '../components/crm/RelationshipRadar';
+import type { Client, Contact, CRMProduct } from '../lib/types';
 
 interface Props {
   clients: Client[];
+  products: CRMProduct[];
   toast: (m: string) => void;
 }
 
@@ -122,8 +124,9 @@ const emptyForm = (): FormData => ({
   rich_notes: '', is_active: true,
 });
 
-const CRMLeads: React.FC<Props> = ({ clients, toast }) => {
+const CRMLeads: React.FC<Props> = ({ clients, products, toast }) => {
   const { user } = useAuth();
+  const [view, setView] = useState<'radar' | 'contacts'>('radar');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -225,84 +228,111 @@ const CRMLeads: React.FC<Props> = ({ clients, toast }) => {
     <div className="space-y-4">
       <PageHeader
         title="CSKH"
-        subtitle={`${contacts.length} liên hệ`}
+        subtitle={view === 'radar' ? 'Chăm sóc & Follow-up' : `${contacts.length} liên hệ`}
         actions={
-          <button onClick={openAdd} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-            <span className="flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Thêm liên hệ</span>
-          </button>
+          view === 'contacts' ? (
+            <button onClick={openAdd} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+              <span className="flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Thêm liên hệ</span>
+            </button>
+          ) : undefined
         }
       />
 
-      {/* Search */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input type="text" placeholder="Tìm tên, SĐT, email, công ty..." value={search} onChange={e => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-        </div>
+      {/* View tabs */}
+      <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5 w-fit">
+        {([
+          { key: 'radar' as const, label: 'Relationship Radar' },
+          { key: 'contacts' as const, label: 'Danh sách liên hệ' },
+        ]).map(t => (
+          <button
+            key={t.key}
+            onClick={() => setView(t.key)}
+            className={[
+              'px-3 py-1.5 rounded-md text-[12px] transition-all whitespace-nowrap',
+              view === t.key ? 'bg-white text-[#333] font-medium border border-[#E0DFDA]' : 'text-[#888] hover:text-[#555]',
+            ].join(' ')}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                {['Họ tên', 'Công ty gắn', 'Chức vụ', 'SĐT', 'Email', 'Ngày tạo', ''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-xs">Đang tải...</td></tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center">
-                    <div className="text-gray-400 text-xs mb-2">Chưa có liên hệ nào</div>
-                    <button onClick={openAdd} className="text-xs text-blue-600 hover:underline">+ Thêm ngay</button>
-                  </td>
-                </tr>
-              ) : filtered.map(c => (
-                <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-gray-900">{c.name}</div>
-                    {!c.is_active && <span className="text-[10px] text-gray-400">Không hoạt động</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {linkingId === c.id ? (
-                      <div className="flex items-center gap-1">
-                        <select value={linkClientId} onChange={e => setLinkClientId(e.target.value)} autoFocus
-                          className="text-xs px-2 py-1 border border-blue-400 rounded-md focus:outline-none min-w-[140px]">
-                          <option value="">-- Chọn công ty --</option>
-                          {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
-                        </select>
-                        <button onClick={() => handleLinkCompany(c.id)} className="text-[11px] px-2 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700">OK</button>
-                        <button onClick={() => { setLinkingId(null); setLinkClientId(''); }} className="text-[11px] px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-100">Hủy</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => { setLinkingId(c.id); setLinkClientId(c.client_id || ''); }}
-                        className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 transition">
-                        <Link2 className="w-3.5 h-3.5" />
-                        {c.clients?.name || <span className="text-gray-400 italic">Gắn công ty</span>}
-                      </button>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{c.role || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{c.phone || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{c.email || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-gray-500">{new Date(c.created_at).toLocaleDateString('vi-VN')}</td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => openEdit(c)} className="p-1.5 hover:bg-gray-100 rounded-lg transition" title="Sửa">
-                      <Edit2 className="w-3.5 h-3.5 text-gray-500" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {view === 'radar' && <RelationshipRadar clients={clients} contacts={contacts} products={products} toast={toast} />}
+
+      {view === 'contacts' && (
+        <>
+          {/* Search */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="relative max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input type="text" placeholder="Tìm tên, SĐT, email, công ty..." value={search} onChange={e => setSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50">
+                    {['Họ tên', 'Công ty gắn', 'Chức vụ', 'SĐT', 'Email', 'Ngày tạo', ''].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-xs">Đang tải...</td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center">
+                        <div className="text-gray-400 text-xs mb-2">Chưa có liên hệ nào</div>
+                        <button onClick={openAdd} className="text-xs text-blue-600 hover:underline">+ Thêm ngay</button>
+                      </td>
+                    </tr>
+                  ) : filtered.map(c => (
+                    <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-gray-900">{c.name}</div>
+                        {!c.is_active && <span className="text-[10px] text-gray-400">Không hoạt động</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {linkingId === c.id ? (
+                          <div className="flex items-center gap-1">
+                            <select value={linkClientId} onChange={e => setLinkClientId(e.target.value)} autoFocus
+                              className="text-xs px-2 py-1 border border-blue-400 rounded-md focus:outline-none min-w-[140px]">
+                              <option value="">-- Chọn công ty --</option>
+                              {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
+                            </select>
+                            <button onClick={() => handleLinkCompany(c.id)} className="text-[11px] px-2 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700">OK</button>
+                            <button onClick={() => { setLinkingId(null); setLinkClientId(''); }} className="text-[11px] px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-100">Hủy</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => { setLinkingId(c.id); setLinkClientId(c.client_id || ''); }}
+                            className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 transition">
+                            <Link2 className="w-3.5 h-3.5" />
+                            {c.clients?.name || <span className="text-gray-400 italic">Gắn công ty</span>}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{c.role || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{c.phone || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{c.email || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{new Date(c.created_at).toLocaleDateString('vi-VN')}</td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => openEdit(c)} className="p-1.5 hover:bg-gray-100 rounded-lg transition" title="Sửa">
+                          <Edit2 className="w-3.5 h-3.5 text-gray-500" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Add/Edit Modal */}
       {showModal && (

@@ -15,7 +15,6 @@ import ClientDetail from './pages/ClientDetail';
 import Branches from './pages/Branches';
 import Finance from './pages/Finance';
 import Market from './pages/Market';
-import Quotes from './pages/Quotes';
 import Reports from './pages/Reports';
 import UserManagement from './pages/UserManagement';
 import History from './pages/History';
@@ -27,9 +26,8 @@ import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
 import AdminPage from './pages/AdminPage';
 import Workspace from './pages/Workspace';
-import SalesBoard from './pages/SalesBoard';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'sales-board'];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace'];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -257,6 +255,7 @@ function AppInner() {
             client={selectedClient}
             laborHistory={laborHistory[selectedClient.id] || []}
             managerHistory={managerHistory[selectedClient.id] || []}
+            products={products}
             onBack={() => setPage('clients')}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
@@ -278,9 +277,6 @@ function AppInner() {
         {page === 'market' && (
           <Market marketSurveys={marketSurveys} competitors={competitors} marketZones={marketZones} marketLeads={marketLeads} clients={clients} onRefresh={loadMarket} toast={toast} />
         )}
-        {page === 'quotes' && (
-          <Quotes marketSurveys={marketSurveys} competitors={competitors} toast={toast} />
-        )}
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
@@ -288,8 +284,6 @@ function AppInner() {
         {page === 'workspace' && (
           <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} toast={toast} />
         )}
-        {page === 'sales-board' && <SalesBoard toast={toast} />}
-
         {/* CRM Module */}
         {page === 'crm-dash' && (
           <CRMDash leads={leads} activities={activities} clients={clients} pipeline={pipeline} isAdmin={user?.role === 'admin'} onNavigate={navigate} />
@@ -303,7 +297,7 @@ function AppInner() {
           />
         )}
         {page === 'crm-leads' && (
-          <CRMLeads clients={clients} toast={toast} />
+          <CRMLeads clients={clients} products={products} toast={toast} />
         )}
         {page === 'crm-prods' && (
           <CRMProds

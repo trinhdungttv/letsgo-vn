@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
+import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
+import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
 import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -30,6 +32,7 @@ interface ClientDetailProps {
   client: Client;
   laborHistory: LaborHistoryEntry[];
   managerHistory: ClientManagerHistory[];
+  products: CRMProduct[];
   onBack: () => void;
   onClientUpdate: (client: Client) => void;
   onLaborUpdate: (entry: LaborHistoryEntry) => void;
@@ -40,11 +43,13 @@ interface ClientDetailProps {
   onOpenDeal?: (dealId: string) => void;
 }
 
-export default function ClientDetail({ client, laborHistory, managerHistory, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
+export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
   const { regions } = useRegions();
   const { managers } = useManagers();
-  const [activeTab, setActiveTab] = useState<'overview' | 'crm'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'profile' | 'crm'>('overview');
+  const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
   const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
@@ -111,6 +116,16 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
   });
   const { contacts: primaryContacts } = useContacts(client.id);
   const primaryContact = primaryContacts.find(c => c.is_primary);
+
+  useEffect(() => {
+    if (activeTab !== 'profile' || profileEntry) return;
+    setProfileLoading(true);
+    getOrCreatePipelineEntryForClient(client).then(entry => {
+      setProfileEntry(entry);
+      setProfileLoading(false);
+      if (!entry) toast('Lỗi: không thể mở hồ sơ công ty');
+    });
+  }, [activeTab, client, profileEntry, toast]);
 
   // CRM deal info for this client
   const [deals, setDeals] = useState<CRMDealType[]>([]);
@@ -563,7 +578,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
 
       {/* Tab bar */}
       <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-6">
-        {(['overview', 'crm'] as const).map(tab => (
+        {(['overview', 'profile', 'crm'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -573,13 +588,27 @@ export default function ClientDetail({ client, laborHistory, managerHistory, onB
                 : 'border-transparent text-[#888] hover:text-[#555]'
             }`}
           >
-            {tab === 'overview' ? '📊 Tổng quan' : '🤝 Chi tiết thương vụ'}
+            {tab === 'overview' ? '📊 Tổng quan' : tab === 'profile' ? '🗂️ Hồ sơ chăm sóc' : '🤝 Chi tiết thương vụ'}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        {activeTab === 'crm' ? (
+        {activeTab === 'profile' ? (
+          profileLoading || !profileEntry ? (
+            <div className="text-[12px] text-[#999] text-center py-8">Đang tải hồ sơ...</div>
+          ) : (
+            <CompanyProfileModal
+              entry={profileEntry}
+              contacts={primaryContacts}
+              products={products}
+              onUpdate={setProfileEntry}
+              toast={toast}
+              isAdmin={user?.role === 'admin'}
+              variant="panel"
+            />
+          )
+        ) : activeTab === 'crm' ? (
           <div className="space-y-4">
             {/* Stage progress bar + Won/Lost */}
             {selectedDeal && (

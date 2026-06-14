@@ -80,7 +80,6 @@ export const PAGE_MODULE: Record<string, string> = {
   branches: 'Chi nhánh',
   finance: 'Tài chính',
   market: 'Thị trường',
-  quotes: 'Báo giá',
   'crm-dash': 'CRM',
   'crm-board': 'CRM',
   'crm-leads': 'CRM',
@@ -91,15 +90,14 @@ export const PAGE_MODULE: Record<string, string> = {
   users: 'Quản lý Users',
   history: 'Lịch sử',
   'admin-settings': 'Admin',
-  'sales-board': 'Bảng KD',
 };
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'quotes', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'sales-board', ...crm],
+  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', ...crm],
   ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace'],
-  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'quotes', 'reports', 'workspace', 'sales-board', ...crm],
-  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'sales-board', ...crm],
+  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', ...crm],
+  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', ...crm],
 };
 
 export function canAccess(role: string, page: string, rolePermissions?: RolePermission[]): boolean {

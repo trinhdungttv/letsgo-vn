@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Clock, CalendarClock, Circle, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { logActivity } from '../lib/audit';
@@ -53,6 +53,35 @@ function displayStatus(task: SalesTask): SalesTaskStatus {
   return task.status;
 }
 
+const AVATAR_COLORS = [
+  'bg-blue-100 text-blue-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-violet-100 text-violet-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+  'bg-cyan-100 text-cyan-700',
+];
+
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[Math.abs(hash)];
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[parts.length - 2][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+interface TaskGroup {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  cls: string;
+  tasks: SalesTask[];
+}
+
 export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<SalesTask[]>([]);
@@ -64,6 +93,7 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
   const [newClient, setNewClient] = useState('');
   const [newDeadline, setNewDeadline] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
+  const [showDone, setShowDone] = useState(false);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -107,6 +137,35 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
   }, [tasks, filter, user]);
 
   const canEdit = (t: SalesTask) => user?.role === 'admin' || t.created_by === user?.id;
+
+  const stats = useMemo(() => ({
+    total: tasks.length,
+    overdue: tasks.filter(t => displayStatus(t) === 'overdue').length,
+    inprogress: tasks.filter(t => t.status === 'inprogress').length,
+    done: tasks.filter(t => t.status === 'done').length,
+  }), [tasks]);
+
+  const groups = useMemo((): TaskGroup[] => {
+    const { start, end } = weekRange();
+    const today = todayStr();
+    const open = filtered.filter(t => displayStatus(t) !== 'done');
+    const done = filtered.filter(t => displayStatus(t) === 'done');
+
+    const result: TaskGroup[] = [
+      { key: 'overdue', label: 'Quá hạn', icon: <AlertTriangle size={11} />, cls: 'text-red-700 bg-red-50', tasks: open.filter(t => displayStatus(t) === 'overdue') },
+      { key: 'today', label: 'Hôm nay', icon: <Clock size={11} />, cls: 'text-amber-700 bg-amber-50', tasks: open.filter(t => t.deadline === today && displayStatus(t) !== 'overdue') },
+      { key: 'week', label: 'Trong tuần', icon: <CalendarClock size={11} />, cls: 'text-blue-700 bg-blue-50', tasks: open.filter(t => !!t.deadline && t.deadline !== today && t.deadline >= start && t.deadline <= end && displayStatus(t) !== 'overdue') },
+      { key: 'later', label: 'Sắp tới', icon: <CalendarClock size={11} />, cls: 'text-violet-700 bg-violet-50', tasks: open.filter(t => !!t.deadline && t.deadline > end) },
+      { key: 'none', label: 'Chưa có hạn', icon: <Circle size={11} />, cls: 'text-gray-600 bg-gray-100', tasks: open.filter(t => !t.deadline) },
+    ].filter(g => g.tasks.length > 0);
+
+    if (done.length > 0 && showDone) {
+      result.push({ key: 'done', label: 'Hoàn thành', icon: <CheckCircle2 size={11} />, cls: 'text-emerald-700 bg-emerald-50', tasks: done });
+    }
+    return result;
+  }, [filtered, showDone]);
+
+  const doneCount = useMemo(() => filtered.filter(t => displayStatus(t) === 'done').length, [filtered]);
 
   const handleAdd = async () => {
     if (!newTitle.trim() || !user) return;
@@ -174,6 +233,37 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
 
   return (
     <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center shrink-0"><Circle size={13} /></span>
+          <div>
+            <div className="text-[14px] font-semibold text-[#1a1a1a] leading-tight">{stats.total}</div>
+            <div className="text-[11px] text-[#999]">Tổng công việc</div>
+          </div>
+        </div>
+        <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-full bg-red-50 text-red-600 flex items-center justify-center shrink-0"><AlertTriangle size={13} /></span>
+          <div>
+            <div className="text-[14px] font-semibold text-[#1a1a1a] leading-tight">{stats.overdue}</div>
+            <div className="text-[11px] text-[#999]">Quá hạn</div>
+          </div>
+        </div>
+        <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><Clock size={13} /></span>
+          <div>
+            <div className="text-[14px] font-semibold text-[#1a1a1a] leading-tight">{stats.inprogress}</div>
+            <div className="text-[11px] text-[#999]">Đang làm</div>
+          </div>
+        </div>
+        <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><CheckCircle2 size={13} /></span>
+          <div>
+            <div className="text-[14px] font-semibold text-[#1a1a1a] leading-tight">{stats.done}</div>
+            <div className="text-[11px] text-[#999]">Hoàn thành</div>
+          </div>
+        </div>
+      </div>
+
       <div className="flex gap-2">
         {FILTERS.map(f => (
           <button
@@ -206,11 +296,20 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
             {!loading && filtered.length === 0 && (
               <tr><td colSpan={7} className="text-center py-6 text-[#999]">Không có công việc nào</td></tr>
             )}
-            {!loading && filtered.map(task => {
+            {!loading && groups.flatMap(g => [
+              <tr key={`g-${g.key}`} className="bg-[#FBFBF9]">
+                <td colSpan={7} className="px-3 py-1.5">
+                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${g.cls}`}>
+                    {g.icon} {g.label} <span className="opacity-60 font-normal">({g.tasks.length})</span>
+                  </span>
+                </td>
+              </tr>,
+              ...g.tasks.map(task => {
               const ds = displayStatus(task);
               const editable = canEdit(task);
+              const borderCls = ds === 'overdue' ? 'border-l-2 border-l-red-400' : ds === 'todo' && task.deadline === todayStr() ? 'border-l-2 border-l-amber-400' : 'border-l-2 border-l-transparent';
               return (
-                <tr key={task.id} className="border-t border-[#F0EFEA] hover:bg-[#FAFAF8]">
+                <tr key={task.id} className={`border-t border-[#F0EFEA] hover:bg-[#FAFAF8] ${borderCls}`}>
                   <td className="px-3 py-2">
                     <input
                       type="checkbox"
@@ -278,8 +377,15 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
                         <option value="">—</option>
                         {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                       </select>
+                    ) : task.assigned_name ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9.5px] font-semibold shrink-0 ${avatarColor(task.assigned_name)}`}>
+                          {initials(task.assigned_name)}
+                        </span>
+                        <span className="text-[#555] truncate">{task.assigned_name}</span>
+                      </div>
                     ) : (
-                      <span className="text-[#555]">{task.assigned_name || '—'}</span>
+                      <span className="text-[#555]">—</span>
                     )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
@@ -306,7 +412,18 @@ export default function SalesTaskBoard({ toast }: SalesTaskBoardProps) {
                   </td>
                 </tr>
               );
-            })}
+            }),
+            ])}
+            {!loading && doneCount > 0 && (
+              <tr className="border-t border-[#F0EFEA]">
+                <td colSpan={7} className="px-3 py-1.5">
+                  <button onClick={() => setShowDone(v => !v)} className="inline-flex items-center gap-1 text-[11px] text-[#999] hover:text-blue-600 transition">
+                    {showDone ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {showDone ? 'Ẩn' : 'Hiện'} {doneCount} công việc đã hoàn thành
+                  </button>
+                </td>
+              </tr>
+            )}
             {/* Quick add row */}
             <tr className="border-t border-[#F0EFEA] bg-[#FAFAF8]">
               <td className="px-3 py-2 text-[#bbb]"><Plus size={14} /></td>

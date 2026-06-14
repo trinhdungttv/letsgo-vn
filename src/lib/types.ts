@@ -130,6 +130,7 @@ export interface CSKHLog {
 
 export interface CRMPipelineEntry {
   id: string;
+  client_id?: string | null;
   company_name: string;
   region: string | null;
   worker_estimate: number | null;
@@ -289,7 +290,7 @@ export interface Quote {
   created_at: string;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'quotes' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'sales-board';
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace';
 
 export type AuditAction = 'insert' | 'update' | 'delete';
 
@@ -517,4 +518,92 @@ export interface Branch {
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// --- Morning Priority -------------------------------------------
+export type GoalType = 'tai_ky' | 'chot_bao_gia' | 'follow_up' | 'tham_quan' | 'other'
+export type OutcomeStatus = 'done' | 'partial' | 'missed'
+
+export interface MorningPriority {
+  id: string
+  user_id: string
+  priority_date: string          // 'YYYY-MM-DD'
+  target_client: string | null
+  target_kcn: string | null
+  goal_type: GoalType | null
+  goal_note: string | null
+  outcome_note: string | null
+  outcome_status: OutcomeStatus | null
+  created_at: string
+  updated_at: string
+}
+
+// --- Win/Loss Tracker -------------------------------------------
+export type DealType   = 'new_client' | 'renewal' | 'expansion'
+export type DealResult = 'win' | 'loss' | 'pending'
+export type LossReason = 'price' | 'labor_quality' | 'competitor' | 'relationship' | 'timing' | 'requirements' | 'other'
+
+export interface WinLossRecord {
+  id: string
+  user_id: string
+  client_name: string
+  client_id: string | null
+  deal_type: DealType
+  result: DealResult
+  labor_count: number | null
+  monthly_value: number | null
+  loss_reason: LossReason | null
+  competitor_name: string | null
+  competitor_price: number | null
+  decision_maker: string | null
+  first_contact_date: string | null
+  deal_closed_date: string | null
+  days_to_close: number | null   // generated column
+  notes: string | null
+  created_at: string
+  updated_at: string
+  // joined
+  profiles?: { full_name: string }
+}
+
+// --- KCN Grid ---------------------------------------------------
+export interface KCNZone {
+  id: string
+  name: string
+  province: string
+  potential_score: number        // 1–5
+  notes: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface KCNSummary extends KCNZone {
+  client_count: number
+  last_visit_date: string | null
+  days_since_visit: number | null
+}
+
+// Labels / constants
+export const GOAL_TYPE_LABELS: Record<GoalType, string> = {
+  tai_ky:       'Tái ký hợp đồng',
+  chot_bao_gia: 'Chốt báo giá',
+  follow_up:    'Follow-up khách',
+  tham_quan:    'Thăm quan nhà máy',
+  other:        'Khác',
+}
+
+export const LOSS_REASON_LABELS: Record<LossReason, string> = {
+  price:          'Giá cao hơn đối thủ',
+  labor_quality:  'Chất lượng lao động',
+  competitor:     'Đối thủ có quan hệ tốt hơn',
+  relationship:   'Thiếu quan hệ bên KH',
+  timing:         'Sai thời điểm',
+  requirements:   'Không đáp ứng yêu cầu',
+  other:          'Lý do khác',
+}
+
+export const DEAL_TYPE_LABELS: Record<DealType, string> = {
+  new_client: 'Khách hàng mới',
+  renewal:    'Tái ký hợp đồng',
+  expansion:  'Mở rộng (thêm lao động)',
 }
