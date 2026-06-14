@@ -4,8 +4,9 @@ import {
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
   ClipboardList, Circle, Clock, CheckCircle2,
 } from 'lucide-react';
-import { formatCurrency } from '../../lib/format';
-import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact } from '../../lib/types';
+import { formatCurrency, formatDate } from '../../lib/format';
+import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask } from '../../lib/types';
+import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
@@ -31,7 +32,7 @@ export const INTERACTION_TYPES = [
   { id: 'zalo',    label: 'Zalo',     icon: <MessageSquare size={12} />, color: 'bg-teal-100 text-teal-700'   },
 ];
 
-export type Section = 'info' | 'interactions' | 'gifts' | 'preferences' | 'tasks';
+export type Section = 'info' | 'interactions' | 'gifts' | 'preferences' | 'tasks' | 'worklog';
 
 // ── Inline editable field ────────────────────────────────────────────────────
 export function InlineEdit({ label, value, onSave, type = 'text' }: {
@@ -91,6 +92,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
+  const [workTasks, setWorkTasks] = useState<WorkTask[]>([]);
   const [activeSection, setActiveSection] = useState<Section>('info');
 
   // Info section state
@@ -132,7 +134,16 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
     if (!ir.error) setInteractions(ir.data as CRMInteraction[]);
     if (!gr.error) setGifts(gr.data as CRMGift[]);
     if (!tr.error) setPipelineTasks(tr.data as CRMPipelineTask[]);
-  }, [entry.id]);
+
+    if (entry.client_id) {
+      const { data, error } = await supabase
+        .from('work_tasks')
+        .select('*')
+        .eq('client_id', entry.client_id)
+        .order('due_date', { ascending: false });
+      if (!error) setWorkTasks(data as WorkTask[]);
+    }
+  }, [entry.id, entry.client_id]);
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
@@ -308,6 +319,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   const SECTIONS: { id: Section; label: string; count?: number }[] = [
     { id: 'info',         label: 'Thông tin'                                    },
     { id: 'tasks',        label: 'Việc cần xử lý', count: pipelineTasks.filter(t => t.status !== 'done').length },
+    { id: 'worklog',      label: 'Công việc (Workspace)', count: workTasks.length },
     { id: 'interactions', label: 'Trao đổi',        count: interactions.length  },
     { id: 'gifts',        label: 'Quà tặng',        count: gifts.length         },
     { id: 'preferences',  label: 'Sở thích'                                     },
@@ -773,6 +785,46 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
                 );
               })}
             </div>
+
+          </div>
+        )}
+
+        {/* ── Công việc (Workspace) — chỉ đọc, đồng bộ từ Morning Priority ── */}
+        {activeSection === 'worklog' && (
+          <div className="p-5 space-y-2">
+            {workTasks.length === 0 ? (
+              <div className="text-center text-[12px] text-gray-400 py-6">Chưa có công việc nào liên quan đến công ty này</div>
+            ) : workTasks.map(t => (
+              <div key={t.id} className="p-3 bg-white border border-[#E8E7E2] rounded-lg space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
+                      {t.title}
+                    </div>
+                    <div className="flex items-center gap-1 mt-1 text-[11px] text-gray-400">
+                      <CalendarDays size={10} />
+                      {formatDate(t.due_date)}
+                      {t.kcn ? ` · ${t.kcn}` : ''}
+                    </div>
+                  </div>
+                  <span className={`text-[10.5px] px-2 py-0.5 rounded-full border whitespace-nowrap ${TASK_PRIORITY_COLORS[t.priority]}`}>
+                    {TASK_PRIORITY_LABELS[t.priority]}
+                  </span>
+                  <span className={`text-[10.5px] px-2 py-0.5 rounded-full border whitespace-nowrap ${
+                    t.status === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                    t.status === 'in_progress' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                    'bg-gray-100 text-gray-600 border-gray-200'
+                  }`}>
+                    {t.status === 'done' ? 'Hoàn thành' : t.status === 'in_progress' ? 'Đang làm' : 'Cần làm'}
+                  </span>
+                </div>
+                {t.status === 'done' && t.notes && (
+                  <div className="text-[11.5px] text-gray-600 bg-[#F9F9F7] border border-[#F0EFEB] rounded-md px-2.5 py-1.5">
+                    <span className="font-medium text-[#555]">Báo cáo: </span>{t.notes}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

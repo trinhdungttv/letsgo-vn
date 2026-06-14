@@ -3,6 +3,7 @@ import { Sun, Trophy, Map } from 'lucide-react'
 import { MorningPrioritySection } from './MorningPrioritySection'
 import { WinLossSection } from './WinLossSection'
 import { KCNGridSection } from './KCNGridSection'
+import type { Client } from '../../lib/types'
 
 type ModuleKey = 'morning' | 'winloss' | 'kcn'
 
@@ -12,7 +13,11 @@ const TABS: { key: ModuleKey; label: string; icon: typeof Sun }[] = [
   { key: 'kcn', label: 'KCN Grid', icon: Map },
 ]
 
-export function WorkspaceModulesTabs() {
+interface Props {
+  clients: Client[]
+}
+
+export function WorkspaceModulesTabs({ clients }: Props) {
   const [activeTab, setActiveTab] = useState<ModuleKey>('morning')
 
   return (
@@ -36,7 +41,7 @@ export function WorkspaceModulesTabs() {
         ))}
       </div>
 
-      {activeTab === 'morning' && <MorningPrioritySection />}
+      {activeTab === 'morning' && <MorningPrioritySection clients={clients} />}
       {activeTab === 'winloss' && <WinLossSection />}
       {activeTab === 'kcn' && <KCNGridSection />}
     </div>

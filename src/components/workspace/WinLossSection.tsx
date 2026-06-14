@@ -53,7 +53,7 @@ export function WinLossSection() {
     setLoading(true)
     const { data } = await supabase
       .from('win_loss_records')
-      .select('*, profiles(full_name)')
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(50)
     if (data) setRecords(data as WinLossRecord[])

@@ -521,8 +521,9 @@ export interface Branch {
 }
 
 // --- Morning Priority -------------------------------------------
-export type GoalType = 'tai_ky' | 'chot_bao_gia' | 'follow_up' | 'tham_quan' | 'other'
+export type GoalType = 'tai_ky' | 'chot_bao_gia' | 'follow_up' | 'tham_quan' | 'other' | 'hoi_tham' | 'cap_nhat' | 'kho_khan'
 export type OutcomeStatus = 'done' | 'partial' | 'missed'
+export type MorningWorkType = 'field' | 'office_contract' | 'office_branch'
 
 export interface MorningPriority {
   id: string
@@ -562,8 +563,6 @@ export interface WinLossRecord {
   notes: string | null
   created_at: string
   updated_at: string
-  // joined
-  profiles?: { full_name: string }
 }
 
 // --- KCN Grid ---------------------------------------------------
@@ -589,7 +588,33 @@ export const GOAL_TYPE_LABELS: Record<GoalType, string> = {
   chot_bao_gia: 'Chốt báo giá',
   follow_up:    'Follow-up khách',
   tham_quan:    'Thăm quan nhà máy',
+  hoi_tham:     'Hỏi thăm tình hình',
+  cap_nhat:     'Cập nhật thông tin',
+  kho_khan:     'Ghi nhận khó khăn',
   other:        'Khác',
+}
+
+// Bộ mục tiêu hiển thị theo loại công việc (field / xử lý HĐ tại VP / hỏi thăm chi nhánh)
+export const GOAL_SETS: Record<MorningWorkType, { value: GoalType; label: string }[]> = {
+  office_contract: [
+    { value: 'tai_ky',       label: 'Soạn / gửi HĐ' },
+    { value: 'chot_bao_gia', label: 'Chuẩn bị báo giá' },
+    { value: 'follow_up',    label: 'Email / Zalo follow-up' },
+    { value: 'other',        label: 'Giấy tờ khác' },
+  ],
+  office_branch: [
+    { value: 'hoi_tham', label: 'Hỏi thăm tình hình' },
+    { value: 'cap_nhat', label: 'Cập nhật thông tin' },
+    { value: 'kho_khan', label: 'Ghi nhận khó khăn' },
+    { value: 'other',    label: 'Việc khác' },
+  ],
+  field: [
+    { value: 'tai_ky',       label: 'Tái ký HĐ' },
+    { value: 'chot_bao_gia', label: 'Chốt báo giá' },
+    { value: 'follow_up',    label: 'Follow-up' },
+    { value: 'tham_quan',    label: 'Thăm quan nhà máy' },
+    { value: 'other',        label: 'Khác' },
+  ],
 }
 
 export const LOSS_REASON_LABELS: Record<LossReason, string> = {
@@ -607,3 +632,31 @@ export const DEAL_TYPE_LABELS: Record<DealType, string> = {
   renewal:    'Tái ký hợp đồng',
   expansion:  'Mở rộng (thêm lao động)',
 }
+
+export type TaskPriority = 'high' | 'medium' | 'low'
+export type TaskStatus = 'pending' | 'in_progress' | 'done'
+
+export interface WorkTask {
+  id: string
+  user_id: string
+  client_id: string | null
+  title: string
+  task_type: string | null
+  due_date: string
+  priority: TaskPriority
+  kcn: string | null
+  notes: string | null
+  status: TaskStatus
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = { high: 'Cao', medium: 'TB', low: 'Thấp' }
+export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
+  high:   'bg-red-50 text-red-700 border-red-200',
+  medium: 'bg-amber-50 text-amber-700 border-amber-200',
+  low:    'bg-green-50 text-green-700 border-green-200',
+}
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = { pending: 'Cần làm', in_progress: 'Đang làm', done: 'Hoàn thành' }
+export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác']
