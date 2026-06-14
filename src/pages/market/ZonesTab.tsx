@@ -7,6 +7,7 @@ import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import { formatDate } from '../../lib/format';
 import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
+import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
 
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
@@ -233,6 +234,8 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
             </div>
           </div>
         </div>
+
+        <KCNVisitHistory zoneId={selected.id} zoneName={selected.name} toast={toast} onChanged={onRefresh} />
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Coins size={12} /> Lương theo ngành tại khu vực này</div>

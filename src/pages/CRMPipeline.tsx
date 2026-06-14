@@ -17,6 +17,9 @@ interface CRMPipelineProps {
   onRefresh: () => Promise<void>;
   onDealCreate: (d: CRMDeal) => void;
   toast: (msg: string) => void;
+  /** Khi được truyền (vd. từ Dashboard), tự động mở hồ sơ công ty có id này. */
+  focusEntryId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 const DEAL_STAGE_LABELS: Record<string, string> = {
@@ -35,7 +38,7 @@ interface AddDealForm {
 }
 
 // ── Main CRMPipeline ────────────────────────────────────────────────────────
-export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreate, toast }: CRMPipelineProps) {
+export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreate, toast, focusEntryId, onFocusHandled }: CRMPipelineProps) {
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
@@ -66,6 +69,15 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   };
 
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
+
+  useEffect(() => {
+    if (!focusEntryId) return;
+    const entry = localPipeline.find(p => p.id === focusEntryId);
+    if (entry) {
+      setProfileEntry(entry);
+      onFocusHandled?.();
+    }
+  }, [focusEntryId, localPipeline, onFocusHandled]);
 
   useEffect(() => {
     supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')

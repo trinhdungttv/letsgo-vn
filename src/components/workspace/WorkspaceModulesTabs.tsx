@@ -15,9 +15,11 @@ const TABS: { key: ModuleKey; label: string; icon: typeof Sun }[] = [
 
 interface Props {
   clients: Client[]
+  onClientUpdate: (client: Client) => void
+  toast: (msg: string) => void
 }
 
-export function WorkspaceModulesTabs({ clients }: Props) {
+export function WorkspaceModulesTabs({ clients, onClientUpdate, toast }: Props) {
   const [activeTab, setActiveTab] = useState<ModuleKey>('morning')
 
   return (
@@ -41,9 +43,9 @@ export function WorkspaceModulesTabs({ clients }: Props) {
         ))}
       </div>
 
-      {activeTab === 'morning' && <MorningPrioritySection clients={clients} />}
-      {activeTab === 'winloss' && <WinLossSection />}
-      {activeTab === 'kcn' && <KCNGridSection />}
+      {activeTab === 'morning' && <MorningPrioritySection clients={clients} onClientUpdate={onClientUpdate} />}
+      {activeTab === 'winloss' && <WinLossSection clients={clients} />}
+      {activeTab === 'kcn' && <KCNGridSection toast={toast} />}
     </div>
   )
 }

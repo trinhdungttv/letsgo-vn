@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Building2, MapPin, ChevronRight, ArrowLeft, ClipboardList, Wallet, Users,
-  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw,
+  Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
+  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
+import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
 import { useManagers } from '../hooks/useManagers';
 import { useRegions } from '../hooks/useRegions';
 import { supabase } from '../lib/supabase';
@@ -188,6 +189,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const setF = (fields: Partial<Branch>) => setForm(prev => ({ ...prev, ...fields }));
 
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [recordDate, setRecordDate] = useState(todayStr());
+  useEffect(() => { setShowHistory(false); setRecordDate(todayStr()); }, [selectedId]);
+
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const handleAvatarUpload = async (file: File) => {
@@ -243,8 +249,20 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         established_date: form.established_date ?? null,
         status: (form.status as BranchStatus) || 'active',
         notes: form.notes ?? null,
+        status_note: form.status_note ?? null,
+        difficulties: form.difficulties ?? null,
+        opportunities: form.opportunities ?? null,
       });
       if (form.region) await ensureRegion(form.region);
+      if (user && form.region) {
+        await recordBranchUpdateSession(user.id, form.region, {
+          status_note: form.status_note ?? null,
+          difficulties: form.difficulties ?? null,
+          opportunities: form.opportunities ?? null,
+        }, recordDate);
+        setHistoryRefreshKey(k => k + 1);
+        setRecordDate(todayStr());
+      }
       toast('Đã lưu thông tin chi nhánh');
     } catch (e) {
       toast('Lỗi: ' + errMsg(e));
@@ -274,6 +292,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         established_date: null,
         status: 'active',
         notes: null,
+        status_note: null,
+        difficulties: null,
+        opportunities: null,
       });
       if (region) await ensureRegion(region);
       toast('Đã thêm chi nhánh');
@@ -317,6 +338,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           established_date: null,
           status: 'active',
           notes: null,
+          status_note: null,
+          difficulties: null,
+          opportunities: null,
         });
       }
       if (!silent) toast(`Đã thêm ${names.length} chi nhánh từ Khu vực`);
@@ -575,6 +599,23 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   <Field label="Ghi chú" full>
                     <textarea value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="field-input min-h-[72px] resize-y" />
                   </Field>
+                  <div className="col-span-2 -mx-3.5 -mb-3.5 border-t border-[#E8E7E2]">
+                    <button
+                      onClick={() => setShowHistory(v => !v)}
+                      className="w-full flex items-center justify-between px-3.5 py-2.5 text-[12.5px] font-medium text-[#333] hover:bg-[#F5F4EF] transition-colors"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <History size={13} className="text-[#888]" />
+                        Lịch sử trao đổi & ghi nhận tình trạng / khó khăn / cơ hội
+                      </span>
+                      {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {showHistory && (
+                      <div className="px-3.5 pb-3.5">
+                        <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

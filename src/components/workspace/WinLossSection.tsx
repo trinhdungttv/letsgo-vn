@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Trophy, TrendingUp, TrendingDown, Clock, Plus, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
-import type { WinLossRecord, DealType, DealResult, LossReason } from '../../lib/types'
+import type { WinLossRecord, DealType, DealResult, LossReason, Client, Contact } from '../../lib/types'
 import { LOSS_REASON_LABELS, DEAL_TYPE_LABELS } from '../../lib/types'
 import { formatCurrency } from '../../lib/format'
 
@@ -35,7 +35,11 @@ const emptyForm = {
 
 type FilterResult = 'all' | DealResult
 
-export function WinLossSection() {
+interface Props {
+  clients: Client[]
+}
+
+export function WinLossSection({ clients }: Props) {
   const { user } = useAuth()
   const [records, setRecords] = useState<WinLossRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -45,8 +49,20 @@ export function WinLossSection() {
   const [editId, setEditId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [form, setForm] = useState({ ...emptyForm })
+  const [contacts, setContacts] = useState<Contact[]>([])
 
   useEffect(() => { load() }, [user])
+
+  useEffect(() => {
+    if (!form.client_id) { setContacts([]); return }
+    supabase.from('contacts').select('*').eq('client_id', form.client_id).eq('is_active', true).order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) { setContacts([]); return }
+        const list = (data as Contact[]) || []
+        list.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
+        setContacts(list)
+      })
+  }, [form.client_id])
 
   async function load() {
     if (!user) return
@@ -191,7 +207,22 @@ export function WinLossSection() {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className={labelCls}>Tên khách hàng *</label>
-              <input className={inputCls} placeholder="Tên công ty / nhà máy..." value={form.client_name} onChange={f('client_name')} />
+              {form.result !== 'loss' ? (
+                <select
+                  className={inputCls}
+                  value={form.client_id ?? ''}
+                  onChange={e => {
+                    const id = e.target.value
+                    const c = clients.find(c => c.id === id)
+                    setForm(prev => ({ ...prev, client_id: id || null, client_name: c ? c.name : prev.client_name, decision_maker: '' }))
+                  }}
+                >
+                  <option value="">-- Chọn khách hàng (đã ký hợp đồng) --</option>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              ) : (
+                <input className={inputCls} placeholder="Tên công ty / nhà máy (chưa chốt, sẽ cập nhật sau)..." value={form.client_name} onChange={f('client_name')} />
+              )}
             </div>
 
             <div>
@@ -230,7 +261,18 @@ export function WinLossSection() {
 
             <div>
               <label className={labelCls}>Người quyết định bên KH</label>
-              <input className={inputCls} placeholder="Mr. Tanaka – HR Manager..." value={form.decision_maker} onChange={f('decision_maker')} />
+              {form.client_id && contacts.length > 0 ? (
+                <select className={inputCls} value={form.decision_maker} onChange={f('decision_maker')}>
+                  <option value="">-- Chọn người liên hệ --</option>
+                  {contacts.map(c => (
+                    <option key={c.id} value={c.role ? `${c.name} – ${c.role}` : c.name}>
+                      {c.name}{c.role ? ` – ${c.role}` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input className={inputCls} placeholder="Mr. Tanaka – HR Manager..." value={form.decision_maker} onChange={f('decision_maker')} />
+              )}
             </div>
 
             {form.result === 'loss' && (

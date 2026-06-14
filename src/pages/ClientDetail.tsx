@@ -5,11 +5,10 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
 import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
-import { formatDate, getMonthLast, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, statusPill, formatCurrency, monthLabel } from '../lib/format';
+import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import ContactsTab from '../components/ContactsTab';
 import { useContacts } from '../hooks/useContacts';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
@@ -115,7 +114,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     salary_day: client.salary_day, salary_day_end: client.salary_day_end,
   });
   const { contacts: primaryContacts } = useContacts(client.id);
-  const primaryContact = primaryContacts.find(c => c.is_primary);
 
   useEffect(() => {
     if (activeTab !== 'profile' || profileEntry) return;
@@ -420,7 +418,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     return badges[type] || badges.note;
   };
 
-  const hist = useMemo(() => [...laborHistory].sort((a, b) => a.created_at.localeCompare(b.created_at)), [laborHistory]);
+  const hist = useMemo(() => sortLaborHistory(laborHistory), [laborHistory]);
   const currentWorkers = hist.length ? hist[hist.length - 1].count : 0;
 
   const chartData = useMemo(() => {
@@ -430,24 +428,18 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         datasets: [{ label: 'LĐ', data: hist.map(h => h.count), borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 4 }],
       };
     }
-    const t4 = getMonthLast(hist, 'T4');
-    const t5 = getMonthLast(hist, 'T5');
-    const t6 = getMonthLast(hist, 'T6');
+    const months = recentMonths(3);
+    const counts = months.map(mo => getMonthLast(hist, mo.month));
     return {
-      labels: ['T4/2026', 'T5/2026', 'T6/2026'],
-      datasets: [{ label: 'LĐ', data: [t4, t5, t6], backgroundColor: ['rgba(59,130,246,.3)', 'rgba(59,130,246,.3)', '#3B82F6'], borderRadius: 6, barPercentage: 0.6 }],
+      labels: months.map(mo => mo.label),
+      datasets: [{ label: 'LĐ', data: counts, backgroundColor: counts.map((_, i) => i === counts.length - 1 ? '#3B82F6' : 'rgba(59,130,246,.3)'), borderRadius: 6, barPercentage: 0.6 }],
     };
   }, [hist, chartView]);
 
   const monthRows = useMemo(() => {
-    const t4 = getMonthLast(hist, 'T4');
-    const t5 = getMonthLast(hist, 'T5');
-    const t6 = getMonthLast(hist, 'T6');
-    return [
-      { m: 'T4/2026', cnt: t4, prev: null },
-      { m: 'T5/2026', cnt: t5, prev: t4 },
-      { m: 'T6/2026', cnt: t6, prev: t5 },
-    ];
+    const months = recentMonths(3);
+    const counts = months.map(mo => getMonthLast(hist, mo.month));
+    return months.map((mo, i) => ({ m: mo.label, cnt: counts[i], prev: i === 0 ? null : counts[i - 1] }));
   }, [hist]);
 
   const handleSave = async () => {
@@ -606,6 +598,13 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
               toast={toast}
               isAdmin={user?.role === 'admin'}
               variant="panel"
+              dealOwner={selectedDeal?.owner}
+              onDealOwnerChange={selectedDeal ? async (owner) => {
+                const { error } = await supabase.from('crm_deals').update({ owner, updated_at: new Date().toISOString() }).eq('id', selectedDeal.id);
+                if (error) { toast('Lỗi: ' + error.message); return; }
+                setDeals(prev => prev.map(d => d.id === selectedDeal.id ? { ...d, owner } : d));
+                toast('Đã cập nhật người phụ trách');
+              } : undefined}
             />
           )
         ) : activeTab === 'crm' ? (
@@ -717,10 +716,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         </div>
                         <div className="space-y-3 border-t border-gray-200 pt-4">
                           <div>
-                            <p className="text-xs font-medium text-gray-600 mb-1">Người phụ trách</p>
-                            <p className="text-sm text-gray-900 font-medium">{selectedDeal.owner || 'N/A'}</p>
-                          </div>
-                          <div>
                             <p className="text-xs font-medium text-gray-600 mb-1">Ngày dự kiến đóng</p>
                             <p className="text-sm font-medium text-gray-900">{formatDate(selectedDeal.expected_closing_date) || 'N/A'}</p>
                           </div>
@@ -747,26 +742,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     )}
                   </>
                 )}
-              </div>
-
-              {/* Người liên hệ chính */}
-              <div className="bg-white rounded-lg border border-gray-200 p-4">
-                <h3 className="text-xs font-semibold uppercase text-gray-600 mb-3">Người liên hệ chính</h3>
-                {primaryContact ? (
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-[#111]">{primaryContact.name}</p>
-                    {primaryContact.role && <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">{primaryContact.role}</span>}
-                    <p className="text-[12.5px] text-[#555]">{primaryContact.phone || '—'}</p>
-                    <p className="text-[12.5px] text-[#555]">{primaryContact.email || '—'}</p>
-                  </div>
-                ) : (
-                  <p className="text-[12.5px] text-[#aaa]">Chưa đặt — chọn ở danh sách bên dưới (biểu tượng ★)</p>
-                )}
-              </div>
-
-              {/* Full contacts list */}
-              <div className="bg-white rounded-lg border border-gray-200 p-4">
-                <ContactsTab clientId={client.id} toast={toast} />
               </div>
             </div>
 

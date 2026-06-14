@@ -7,6 +7,7 @@ import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone,
 import { supabase } from './lib/supabase';
 import { logActivity } from './lib/audit';
 import { usePersistedState } from './hooks/usePersistedState';
+import { sortLaborHistory } from './lib/format';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -114,6 +115,12 @@ function AppInner() {
     setPage('client-detail');
   }, []);
 
+  const [pipelineFocusId, setPipelineFocusId] = useState<string | null>(null);
+  const openPipelineEntry = useCallback((crmId: string) => {
+    setPipelineFocusId(crmId);
+    setPage('crm-pipeline');
+  }, []);
+
   const handleSelectDeal = useCallback((id: string) => {
     setSelectedDealId(id);
     setPage('crm-deal');
@@ -134,7 +141,7 @@ function AppInner() {
       const client = prev.find(c => c.id === entry.client_id);
       if (!client) return prev;
       const hist = laborHistory[entry.client_id] || [];
-      const allHist = [...hist.filter(e => e.id !== entry.id), entry].sort((a, b) => a.created_at.localeCompare(b.created_at));
+      const allHist = sortLaborHistory([...hist.filter(e => e.id !== entry.id), entry]);
       const latest = allHist[allHist.length - 1]?.count ?? client.current_workers;
       return prev.map(c => c.id === entry.client_id ? { ...c, current_workers: latest } : c);
     });
@@ -232,7 +239,7 @@ function AppInner() {
     <div className="flex h-screen overflow-hidden bg-[#F1F0EA]">
       <Sidebar currentPage={page} onNavigate={navigate} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF]">
-        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} />}
+        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} />}
         {page === 'clients' && (
           <Clients
             clients={clients}
@@ -282,7 +289,7 @@ function AppInner() {
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'workspace' && (
-          <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} toast={toast} />
+          <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}
         {/* CRM Module */}
         {page === 'crm-dash' && (
@@ -315,7 +322,15 @@ function AppInner() {
           />
         )}
         {page === 'crm-pipeline' && (
-          <CRMPipeline pipeline={pipeline} products={products} onRefresh={reloadPipeline} onDealCreate={handleDealCreate} toast={toast} />
+          <CRMPipeline
+            pipeline={pipeline}
+            products={products}
+            onRefresh={reloadPipeline}
+            onDealCreate={handleDealCreate}
+            toast={toast}
+            focusEntryId={pipelineFocusId}
+            onFocusHandled={() => setPipelineFocusId(null)}
+          />
         )}
       </div>
       <Toast message={toastMsg} />

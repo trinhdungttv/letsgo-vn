@@ -7,7 +7,7 @@ import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth } from '../lib/format';
+import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -74,7 +74,7 @@ export default function Clients({
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
   const [bulkWeek, setBulkWeek] = useState('');
-  const [bulkExtraMonths, setBulkExtraMonths] = useState(0);
+  const [bulkExtraWeeks, setBulkExtraWeeks] = useState(0);
   const [bulkValues, setBulkValues] = useState<Record<string, string>>({});
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION]);
@@ -106,20 +106,12 @@ export default function Clients({
   }, [clients, bulkSearch, bulkRegions]);
 
   const bulkWeekGroups = useMemo(() => {
-    const future: { month: string; labels: string[] }[] = [];
-    const now = new Date();
-    for (let i = 1; i <= bulkExtraMonths; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const m = d.getMonth() + 1;
-      const y = d.getFullYear();
-      future.push({ month: `Tháng ${m}/${y}`, labels: weekLabelsForMonth(y, m) });
-    }
-    return [...future, ...recentWeekLabels(6)];
-  }, [bulkExtraMonths]);
+    return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)];
+  }, [bulkExtraWeeks]);
 
   const openBulkLabor = () => {
     setBulkWeek(getCurrentWeekLabel());
-    setBulkExtraMonths(0);
+    setBulkExtraWeeks(0);
     setBulkValues({});
     setBulkSearch('');
     setBulkRegions([ALL_OPTION]);
@@ -171,9 +163,10 @@ export default function Clients({
 
   const getDelta = (clientId: string) => {
     const hist = laborHistory[clientId] || [];
-    const t5 = getMonthLast(hist, 'T5');
-    const t6 = getMonthLast(hist, 'T6');
-    if (t5 !== null && t6 !== null) return t6 - t5;
+    const months = recentMonths(2);
+    const prev = getMonthLast(hist, months[0].month);
+    const curr = getMonthLast(hist, months[1].month);
+    if (prev !== null && curr !== null) return curr - prev;
     return null;
   };
 
@@ -1014,7 +1007,11 @@ export default function Clients({
                     </optgroup>
                   ))}
                 </select>
-                <button onClick={() => setBulkExtraMonths(n => n + 1)} className="text-[12px] text-blue-600 hover:underline">+ Tạo tháng mới</button>
+                <button onClick={() => {
+                  const next = nextWeekLabels(bulkExtraWeeks + 1)[0].labels[0];
+                  setBulkExtraWeeks(n => n + 1);
+                  setBulkWeek(next);
+                }} className="text-[12px] text-blue-600 hover:underline">+ Tuần tiếp theo</button>
               </div>
               <div className="flex items-center gap-2">
                 <FilterDropdown label="Chi nhánh" options={regionNames} selected={bulkRegions} onChange={setBulkRegions} />

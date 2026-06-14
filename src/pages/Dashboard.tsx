@@ -43,7 +43,12 @@ const targetLinePlugin = {
 };
 ChartJS.register(targetLinePlugin);
 
-interface DashboardProps { clients: Client[]; onOpenBranch?: (region: string) => void; }
+interface DashboardProps {
+  clients: Client[];
+  onOpenBranch?: (region: string) => void;
+  onOpenClient?: (id: string) => void;
+  onOpenPipelineEntry?: (crmId: string) => void;
+}
 
 type ScopeMode = 'all' | 'region' | 'manager';
 type GroupMode = 'region' | 'manager';
@@ -62,7 +67,7 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Dashboard({ clients, onOpenBranch }: DashboardProps) {
+export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenPipelineEntry }: DashboardProps) {
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
   const [selectedScope, setSelectedScope] = useState<string>('');
   const [groupMode, setGroupMode] = useState<GroupMode>('region');
@@ -355,6 +360,8 @@ export default function Dashboard({ clients, onOpenBranch }: DashboardProps) {
               clients={filteredClients}
               regionFilter={scopeMode === 'region' ? selectedScope : null}
               onSelectClient={setSelectedClient}
+              onOpenClient={onOpenClient}
+              onOpenPipelineEntry={onOpenPipelineEntry}
             />
           </div>
         </div>

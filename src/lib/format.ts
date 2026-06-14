@@ -22,12 +22,47 @@ export function daysUntil(dateStr: string | null | undefined): number | null {
   return Math.ceil(diff / 86400000);
 }
 
+// Lấy số LĐ của tuần cuối cùng (lớn nhất) thuộc tháng `month` (1-12).
+// Dùng regex khớp chính xác "TmWw" để tránh nhầm vd "T1" khớp luôn cả "T10/T11/T12".
 export function getMonthLast(
   hist: { week_label: string; count: number }[],
-  prefix: string
+  month: number
 ): number | null {
-  const entries = hist.filter(h => h.week_label.startsWith(prefix));
-  return entries.length ? entries[entries.length - 1].count : null;
+  const re = new RegExp(`^T${month}W(\\d+)$`);
+  const entries = hist
+    .map(h => ({ h, m: h.week_label.match(re) }))
+    .filter((x): x is { h: typeof hist[number]; m: RegExpMatchArray } => !!x.m)
+    .sort((a, b) => Number(a.m[1]) - Number(b.m[1]));
+  return entries.length ? entries[entries.length - 1].h.count : null;
+}
+
+// Trả về `n` tháng gần nhất tính theo ngày hôm nay (cũ -> mới, tháng hiện tại ở cuối).
+// Dùng để tự động hiển thị "Theo tháng" / "Báo cáo tăng giảm theo tháng" theo thời gian thực,
+// không hardcode tên tháng.
+export function recentMonths(n = 3): { month: number; year: number; label: string }[] {
+  const now = new Date();
+  const result: { month: number; year: number; label: string }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const month = d.getMonth() + 1;
+    const year = d.getFullYear();
+    result.push({ month, year, label: `T${month}/${year}` });
+  }
+  return result;
+}
+
+// Sắp xếp lịch sử lao động theo đúng trình tự thời gian thực tế (cũ -> mới),
+// dựa trên kỳ (tháng/tuần) ghi trong week_label (dạng "TmWw") — KHÔNG theo
+// thứ tự nhập (created_at), vì người dùng có thể nhập các tháng không theo
+// thứ tự (vd: nhập T5 trước rồi mới nhập T1-T4).
+export function sortLaborHistory<T extends { week_label: string; created_at: string }>(entries: T[]): T[] {
+  const sortKey = (label: string): number => {
+    const wIdx = label.indexOf('W');
+    const month = parseInt(label.slice(1, wIdx), 10);
+    const week = parseInt(label.slice(wIdx + 1), 10);
+    return month * 10 + week;
+  };
+  return [...entries].sort((a, b) => sortKey(a.week_label) - sortKey(b.week_label) || a.created_at.localeCompare(b.created_at));
 }
 
 export function getCurrentWeekLabel(): string {
@@ -59,6 +94,38 @@ export function recentWeekLabels(monthsBack = 6): { month: string; labels: strin
     const labels = (isCurrent ? all.slice(0, Math.ceil(now.getDate() / 7)) : all).slice().reverse();
     groups.push({ month: `Tháng ${m}/${y}`, labels });
   }
+  return groups;
+}
+
+// Trả về `n` tuần kế tiếp ngay sau tuần hiện tại (chưa nằm trong recentWeekLabels),
+// nhóm theo tháng, mới nhất (xa nhất trong tương lai) ở đầu — cùng thứ tự với
+// recentWeekLabels. Dùng cho nút "+ Tuần tiếp theo" trong "Nhập nhanh số lao động":
+// thêm từng tuần một (kể cả khi cần sang tháng mới), thay vì tạo nguyên 1 tháng.
+export function nextWeekLabels(n: number): { month: string; labels: string[] }[] {
+  if (n <= 0) return [];
+  const now = new Date();
+  let month = now.getMonth() + 1;
+  let year = now.getFullYear();
+  let week = Math.ceil(now.getDate() / 7);
+  const flat: { groupKey: string; label: string }[] = [];
+  for (let i = 0; i < n; i++) {
+    const maxWeek = weekLabelsForMonth(year, month).length;
+    week++;
+    if (week > maxWeek) {
+      week = 1;
+      month++;
+      if (month > 12) { month = 1; year++; }
+    }
+    flat.push({ groupKey: `Tháng ${month}/${year}`, label: `T${month}W${week}` });
+  }
+  const groups: { month: string; labels: string[] }[] = [];
+  for (const { groupKey, label } of flat) {
+    const last = groups[groups.length - 1];
+    if (last && last.month === groupKey) last.labels.push(label);
+    else groups.push({ month: groupKey, labels: [label] });
+  }
+  groups.reverse();
+  for (const g of groups) g.labels.reverse();
   return groups;
 }
 

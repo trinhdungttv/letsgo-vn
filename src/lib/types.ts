@@ -165,6 +165,8 @@ export interface CRMGift {
   gift_date: string;
   item_name: string | null;
   value: string | null;
+  recipient_contact_id: string | null;
+  recipient_name: string | null;
   created_at: string;
 }
 
@@ -191,6 +193,7 @@ export interface CRMPipelineTask {
   description: string | null;
   due_date: string | null;
   status: PipelineTaskStatus;
+  result_note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -516,6 +519,9 @@ export interface Branch {
   established_date: string | null;
   status: BranchStatus;
   notes: string | null;
+  status_note: string | null;
+  difficulties: string | null;
+  opportunities: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -579,7 +585,26 @@ export interface KCNZone {
 export interface KCNSummary extends KCNZone {
   client_count: number
   last_visit_date: string | null
+  next_visit_date: string | null
   days_since_visit: number | null
+}
+
+// Lịch khảo sát KCN + báo cáo (dùng chung giữa Workspace > KCN Grid và Market > Hồ sơ khu vực)
+export interface KCNVisit {
+  id: string
+  zone_id: string
+  user_id: string
+  visit_date: string
+  status: 'planned' | 'done'
+  report_summary: string | null
+  occupancy_note: string | null
+  labor_note: string | null
+  wage_note: string | null
+  competitor_note: string | null
+  notes: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 // Labels / constants

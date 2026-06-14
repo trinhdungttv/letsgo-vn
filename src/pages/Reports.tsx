@@ -3,7 +3,7 @@ import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip } from 'chart.js';
 import PageHeader from '../components/PageHeader';
 import type { Client, LaborHistoryEntry, ProjectPnl } from '../lib/types';
-import { getMonthLast, formatCurrency } from '../lib/format';
+import { getMonthLast, recentMonths, formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip);
@@ -20,6 +20,7 @@ function currentMonthStr(): string {
 
 export default function Reports({ clients, laborHistory }: ReportsProps) {
   const totalWorkers = clients.reduce((s, c) => s + (c.current_workers || 0), 0);
+  const months = useMemo(() => recentMonths(3), []);
 
   // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu (giống Dashboard)
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
@@ -129,20 +130,20 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
 
         {/* Per-client detail table */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Chi tiết từng dự án — biến động T4→T5→T6</div>
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Chi tiết từng dự án — biến động {months[0].label}→{months[1].label}→{months[2].label}</div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="border-b border-[#E8E7E2]">
-                {['Dự án','Khu vực','Quản lý','T4 (cuối)','T5 (cuối)','T6 (hiện tại)','T5→T6'].map(h => (
+                {['Dự án','Khu vực','Quản lý',`${months[0].label} (cuối)`,`${months[1].label} (cuối)`,`${months[2].label} (hiện tại)`,`${months[1].label}→${months[2].label}`].map(h => (
                   <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
               <tbody>
                 {sorted.map(c => {
                   const hist = laborHistory[c.id] || [];
-                  const t4 = getMonthLast(hist, 'T4');
-                  const t5 = getMonthLast(hist, 'T5');
-                  const t6 = getMonthLast(hist, 'T6');
+                  const t4 = getMonthLast(hist, months[0].month);
+                  const t5 = getMonthLast(hist, months[1].month);
+                  const t6 = getMonthLast(hist, months[2].month);
                   const delta = t5 !== null && t6 !== null ? t6 - t5 : null;
                   return (
                     <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">

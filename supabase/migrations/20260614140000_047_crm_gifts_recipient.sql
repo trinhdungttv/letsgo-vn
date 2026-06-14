@@ -1,0 +1,2 @@
+ALTER TABLE crm_gifts ADD COLUMN IF NOT EXISTS recipient_contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL;
+ALTER TABLE crm_gifts ADD COLUMN IF NOT EXISTS recipient_name TEXT;

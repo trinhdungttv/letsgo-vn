@@ -15,8 +15,9 @@ interface DashboardTask {
   status: TaskStatus;
   source_status: string | null;
   created_at: string;
-  source_type?: 'contract' | 'pipeline';
+  source_type?: 'contract' | 'pipeline' | 'workspace';
   due_date?: string | null;
+  crm_id?: string | null;
 }
 
 const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactNode; cls: string; bg: string }> = {
@@ -30,20 +31,27 @@ interface Props {
   clients: Client[];
   // Extra filter applied to the task list (e.g. region scope).
   regionFilter?: string | null;
-  // When provided, client names become clickable links.
+  // When provided, client names become clickable links (quick preview).
   onSelectClient?: (client: Client) => void;
+  // When provided, opens the full client detail page for management.
+  onOpenClient?: (id: string) => void;
+  // When provided, opens the CRM Pipeline company profile for management.
+  onOpenPipelineEntry?: (crmId: string) => void;
 }
 
-export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient }: Props) {
+export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry }: Props) {
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{ id: string; title: string } | null>(null);
+  const [reportNote, setReportNote] = useState('');
 
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     try {
-      const [{ data: contractTasks }, { data: pipelineTasks }] = await Promise.all([
+      const [{ data: contractTasks }, { data: pipelineTasks }, { data: workTasks }] = await Promise.all([
         supabase.from('dashboard_tasks').select('*').order('created_at', { ascending: false }),
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('created_at', { ascending: false }),
+        supabase.from('work_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
       ]);
 
       // De-dupe contract tasks by client_id (keep most recent, list is ordered by created_at desc)
@@ -66,14 +74,31 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         created_at: t.created_at,
         source_type: 'pipeline' as const,
         due_date: t.due_date,
+        crm_id: t.crm_id,
         _real_id: t.id,
       } as any));
+      const wt: DashboardTask[] = (workTasks || []).map((t: any) => {
+        const relatedClient = t.client_id ? clients.find(c => c.id === t.client_id) : null;
+        return {
+          id: `wt_${t.id}`,
+          client_id: t.client_id,
+          client_name: relatedClient?.name || t.title,
+          client_region: relatedClient?.region || null,
+          description: relatedClient ? t.title : (t.task_type || ''),
+          status: t.status as TaskStatus,
+          source_status: null,
+          created_at: t.created_at,
+          source_type: 'workspace' as const,
+          due_date: t.due_date,
+          _real_id: t.id,
+        } as any;
+      });
 
-      setTasks([...ct, ...pt]);
+      setTasks([...ct, ...pt, ...wt]);
     } finally {
       setTasksLoading(false);
     }
-  }, []);
+  }, [clients]);
 
   // Sync alerts → tasks (insert missing ones; guarded against concurrent runs to avoid duplicates)
   const syncInFlight = useRef(false);
@@ -127,17 +152,39 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
   }, [alertAndExpiringClients.length]);
 
   const updateTaskStatus = async (id: string, status: TaskStatus) => {
+    if ((id.startsWith('pt_') || id.startsWith('wt_')) && status === 'done') {
+      const task = tasks.find(t => t.id === id);
+      setReportTarget({ id, title: task?.description || task?.client_name || '' });
+      setReportNote('');
+      return;
+    }
     if (id.startsWith('pt_')) {
       const realId = id.replace('pt_', '');
       await supabase.from('crm_pipeline_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', realId);
-      if (status === 'done') {
-        setTasks(prev => prev.filter(t => t.id !== id));
-        return;
-      }
+    } else if (id.startsWith('wt_')) {
+      const realId = id.replace('wt_', '');
+      await supabase.from('work_tasks').update({ status, updated_at: new Date().toISOString(), completed_at: null }).eq('id', realId);
     } else {
       await supabase.from('dashboard_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
     }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+  };
+
+  const confirmTaskDone = async () => {
+    if (!reportTarget || !reportNote.trim()) return;
+    const note = reportNote.trim();
+    const id = reportTarget.id;
+    const updatedAt = new Date().toISOString();
+    if (id.startsWith('pt_')) {
+      const realId = id.replace('pt_', '');
+      await supabase.from('crm_pipeline_tasks').update({ status: 'done', result_note: note, updated_at: updatedAt }).eq('id', realId);
+    } else if (id.startsWith('wt_')) {
+      const realId = id.replace('wt_', '');
+      await supabase.from('work_tasks').update({ status: 'done', notes: note, completed_at: updatedAt, updated_at: updatedAt }).eq('id', realId);
+    }
+    setTasks(prev => prev.filter(t => t.id !== id));
+    setReportTarget(null);
+    setReportNote('');
   };
 
   const findClientForTask = useCallback((task: DashboardTask): Client | null => {
@@ -150,6 +197,67 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     return tasks.filter(t => t.client_region === regionFilter);
   }, [tasks, regionFilter]);
 
+  const contractTasks = useMemo(() => visibleTasks.filter(t => t.source_type === 'contract'), [visibleTasks]);
+  const workTasks = useMemo(() => visibleTasks.filter(t => t.source_type !== 'contract'), [visibleTasks]);
+
+  const renderTask = (task: DashboardTask) => {
+    const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.pending;
+    const relatedClient = findClientForTask(task);
+    const daysLeft = task.source_type === 'contract' && relatedClient ? daysUntil(relatedClient.contract_end) : null;
+    return (
+      <div key={task.id} className="flex items-center gap-2 px-3 py-2 border-b border-[#F0EEE9]">
+        {task.source_type === 'pipeline' ? (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-orange-100 text-orange-700">
+            <ClipboardList size={10} /> BD
+          </span>
+        ) : task.source_type === 'workspace' ? (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-indigo-100 text-indigo-700">
+            <ClipboardList size={10} /> WS
+          </span>
+        ) : daysLeft !== null ? (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-red-100 text-red-700">
+            {daysLeft <= 0 ? 'Hết hạn' : `${daysLeft} ngày`}
+          </span>
+        ) : null}
+        <div className="flex-1 min-w-0">
+          {task.source_type === 'pipeline' && task.crm_id && onOpenPipelineEntry ? (
+            <button onClick={() => onOpenPipelineEntry(task.crm_id!)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
+          ) : relatedClient && onOpenClient ? (
+            <button onClick={() => onOpenClient(relatedClient.id)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
+          ) : relatedClient && onSelectClient ? (
+            <button onClick={() => onSelectClient(relatedClient)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
+          ) : (
+            <div className="font-medium text-[12px] truncate">{task.client_name}</div>
+          )}
+          <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
+          {task.due_date && (
+            <div className={`text-[10.5px] mt-0.5 ${new Date(task.due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+              Hạn: {task.due_date}
+            </div>
+          )}
+        </div>
+        {task.client_region && (
+          <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
+        )}
+        {/* Status selector */}
+        <div className="relative shrink-0">
+          <select
+            value={task.status}
+            onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+            className={`appearance-none text-[10.5px] font-medium pl-5 pr-4 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 ${cfg.bg} ${cfg.cls}`}
+          >
+            {(Object.entries(TASK_STATUS_CONFIG) as [TaskStatus, typeof TASK_STATUS_CONFIG[TaskStatus]][]).map(([val, c]) => (
+              <option key={val} value={val}>{c.label}</option>
+            ))}
+          </select>
+          <span className={`absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none ${cfg.cls}`}>
+            {cfg.icon}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
       <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
@@ -161,63 +269,61 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           <RefreshCw size={13} className={tasksLoading ? 'animate-spin' : ''} />
         </button>
       </div>
-      <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
-        {visibleTasks.length === 0 ? (
-          <div className="text-center text-[#aaa] text-[13px] py-4">Không có việc cần làm</div>
-        ) : (
-          <div className="grid grid-cols-2">
-            {visibleTasks.map(task => {
-              const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.pending;
-              const relatedClient = findClientForTask(task);
-              const daysLeft = task.source_type !== 'pipeline' && relatedClient ? daysUntil(relatedClient.contract_end) : null;
-              return (
-                <div key={task.id} className="flex items-center gap-2 px-3 py-2 border-b border-r border-[#F0EEE9] [&:nth-child(2n)]:border-r-0">
-                  {task.source_type === 'pipeline' ? (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-orange-100 text-orange-700">
-                      <ClipboardList size={10} /> BD
-                    </span>
-                  ) : daysLeft !== null ? (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-red-100 text-red-700">
-                      {daysLeft <= 0 ? 'Hết hạn' : `${daysLeft} ngày`}
-                    </span>
-                  ) : null}
-                  <div className="flex-1 min-w-0">
-                    {relatedClient && onSelectClient ? (
-                      <button onClick={() => onSelectClient(relatedClient)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
-                    ) : (
-                      <div className="font-medium text-[12px] truncate">{task.client_name}</div>
-                    )}
-                    <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
-                    {task.due_date && (
-                      <div className={`text-[10.5px] mt-0.5 ${new Date(task.due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                        Hạn: {task.due_date}
-                      </div>
-                    )}
-                  </div>
-                  {task.client_region && (
-                    <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
-                  )}
-                  {/* Status selector */}
-                  <div className="relative shrink-0">
-                    <select
-                      value={task.status}
-                      onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                      className={`appearance-none text-[10.5px] font-medium pl-5 pr-4 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 ${cfg.bg} ${cfg.cls}`}
-                    >
-                      {(Object.entries(TASK_STATUS_CONFIG) as [TaskStatus, typeof TASK_STATUS_CONFIG[TaskStatus]][]).map(([val, c]) => (
-                        <option key={val} value={val}>{c.label}</option>
-                      ))}
-                    </select>
-                    <span className={`absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none ${cfg.cls}`}>
-                      {cfg.icon}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+      <div className="grid grid-cols-2 divide-x divide-[#F0EEE9]">
+        <div>
+          <div className="px-3 py-1.5 text-[10.5px] font-semibold text-[#888] uppercase tracking-wide bg-[#FAFAFA] border-b border-[#F0EEE9]">
+            Tái ký hợp đồng
           </div>
-        )}
+          <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
+            {contractTasks.length === 0 ? (
+              <div className="text-center text-[#aaa] text-[13px] py-4">Không có cảnh báo</div>
+            ) : contractTasks.map(renderTask)}
+          </div>
+        </div>
+        <div>
+          <div className="px-3 py-1.5 text-[10.5px] font-semibold text-[#888] uppercase tracking-wide bg-[#FAFAFA] border-b border-[#F0EEE9]">
+            Việc cần làm (BD &amp; Workspace)
+          </div>
+          <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
+            {workTasks.length === 0 ? (
+              <div className="text-center text-[#aaa] text-[13px] py-4">Không có việc cần làm</div>
+            ) : workTasks.map(renderTask)}
+          </div>
+        </div>
       </div>
+
+      {reportTarget && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => { setReportTarget(null); setReportNote(''); }}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-4 space-y-2.5" onClick={e => e.stopPropagation()}>
+            <div className="text-[12.5px] font-semibold text-[#333]">
+              Hoàn thành: <span className="font-normal">{reportTarget.title}</span>
+            </div>
+            <textarea
+              value={reportNote}
+              onChange={e => setReportNote(e.target.value)}
+              placeholder="Anh chị vui lòng nhập kết quả công việc tại đây, để team cùng nắm thông tin , thanks."
+              rows={3}
+              autoFocus
+              className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setReportTarget(null); setReportNote(''); }}
+                className="flex-1 py-1.5 border border-gray-300 text-gray-500 rounded-lg text-[12px] font-medium hover:bg-gray-50 transition"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={confirmTaskDone}
+                disabled={!reportNote.trim()}
+                className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-[12px] font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
+              >
+                Xác nhận hoàn thành
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

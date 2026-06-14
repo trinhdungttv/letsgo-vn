@@ -1,9 +1,11 @@
 // src/components/workspace/KCNGridSection.tsx
-import { useState, useEffect } from 'react'
-import { MapPin, TrendingUp, Settings } from 'lucide-react'
+import { useState, useEffect, Fragment } from 'react'
+import { MapPin, TrendingUp, Settings, ChevronDown, ChevronUp, CalendarClock } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
+import { formatDate } from '../../lib/format'
 import type { KCNSummary } from '../../lib/types'
+import { KCNVisitHistory } from './KCNVisitHistory'
 
 // Màu theo số ngày chưa ghé thăm
 function visitColor(days: number | null): { row: string; badge: string; label: string } {
@@ -23,12 +25,17 @@ function PotentialDots({ score }: { score: number }) {
   )
 }
 
-export function KCNGridSection() {
+interface Props {
+  toast: (msg: string) => void
+}
+
+export function KCNGridSection({ toast }: Props) {
   const { user } = useAuth()
   const [zones, setZones] = useState<KCNSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [sortBy, setSortBy] = useState<'risk' | 'clients' | 'potential'>('risk')
   const [filterProvince, setFilterProvince] = useState<string>('all')
+  const [expandedZoneId, setExpandedZoneId] = useState<string | null>(null)
   const isAdmin = user?.role === 'admin'
 
   useEffect(() => { load() }, [])
@@ -134,7 +141,7 @@ export function KCNGridSection() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#E8E7E2] bg-[#fafafa]">
-                  {['KCN', 'Tỉnh', 'KH active', 'Tiềm năng', 'Lần ghé gần nhất', 'Trạng thái'].map(h => (
+                  {['KCN', 'Tỉnh', 'KH active', 'Tiềm năng', 'Lần ghé gần nhất', 'Lịch khảo sát', 'Trạng thái', ''].map(h => (
                     <th key={h} className="text-left text-[10px] font-medium text-[#999] uppercase tracking-wide px-3 py-2">{h}</th>
                   ))}
                 </tr>
@@ -142,8 +149,10 @@ export function KCNGridSection() {
               <tbody className="divide-y divide-[#F0EFEB]">
                 {sorted.map(zone => {
                   const vc = visitColor(zone.days_since_visit)
+                  const isExpanded = expandedZoneId === zone.id
                   return (
-                    <tr key={zone.id} className={`${vc.row} hover:brightness-95 transition-all`}>
+                    <Fragment key={zone.id}>
+                    <tr className={`${vc.row} hover:brightness-95 transition-all cursor-pointer`} onClick={() => setExpandedZoneId(isExpanded ? null : zone.id)}>
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-1.5">
                           <MapPin size={11} className="text-[#bbb] shrink-0" />
@@ -168,6 +177,12 @@ export function KCNGridSection() {
                         }
                       </td>
                       <td className="px-3 py-2.5">
+                        {zone.next_visit_date
+                          ? <span className="text-[11px] text-blue-600 inline-flex items-center gap-1"><CalendarClock size={10} /> {formatDate(zone.next_visit_date)}</span>
+                          : <span className="text-[11px] text-[#ccc]">—</span>
+                        }
+                      </td>
+                      <td className="px-3 py-2.5">
                         {zone.client_count === 0
                           ? <span className="text-[11px] px-2 py-0.5 rounded-full border bg-blue-50 text-blue-600 border-blue-200">
                               <TrendingUp size={10} className="inline mr-0.5" />Cơ hội
@@ -177,7 +192,18 @@ export function KCNGridSection() {
                             </span>
                         }
                       </td>
+                      <td className="px-3 py-2.5 text-[#bbb]">
+                        {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </td>
                     </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={8} className="p-3 bg-[#fafafa]">
+                          <KCNVisitHistory zoneId={zone.id} zoneName={zone.name} toast={toast} onChanged={load} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>

@@ -5,11 +5,12 @@ import {
   ClipboardList, Circle, Clock, CheckCircle2,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/format';
-import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask } from '../../lib/types';
+import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus } from '../../lib/types';
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
+import ContactsTab from '../ContactsTab';
 
 export const STAGES = [
   { id: 'tiem-nang',  label: 'Tiềm năng',    headerBg: 'bg-blue-50',    headerText: 'text-blue-700',    border: 'border-blue-200'   },
@@ -32,7 +33,16 @@ export const INTERACTION_TYPES = [
   { id: 'zalo',    label: 'Zalo',     icon: <MessageSquare size={12} />, color: 'bg-teal-100 text-teal-700'   },
 ];
 
-export type Section = 'info' | 'interactions' | 'gifts' | 'preferences' | 'tasks' | 'worklog';
+export type Section = 'info' | 'contacts' | 'history' | 'gifts' | 'preferences';
+
+function giftMissingFields(date: string, item: string, value: string, recipientId: string): string[] {
+  const missing: string[] = [];
+  if (!date.trim()) missing.push('ngày tặng');
+  if (!item.trim()) missing.push('tên quà');
+  if (!value.trim()) missing.push('giá trị');
+  if (!recipientId) missing.push('người nhận');
+  return missing;
+}
 
 // ── Inline editable field ────────────────────────────────────────────────────
 export function InlineEdit({ label, value, onSave, type = 'text' }: {
@@ -85,15 +95,21 @@ export interface CompanyProfileModalProps {
   isAdmin: boolean;
   /** 'modal' (mặc định): overlay trượt từ phải. 'panel': hiển thị inline trong trang. */
   variant?: 'modal' | 'panel';
+  /** Người phụ trách (deal owner) từ crm_deals — hiển thị/sửa ngay tại trang Thông tin. */
+  dealOwner?: string | null;
+  onDealOwnerChange?: (owner: string) => void;
 }
 
-export function CompanyProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal' }: CompanyProfileModalProps) {
+export function CompanyProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange }: CompanyProfileModalProps) {
   const { user } = useAuth();
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
   const [workTasks, setWorkTasks] = useState<WorkTask[]>([]);
   const [activeSection, setActiveSection] = useState<Section>('info');
+  const [historyForm, setHistoryForm] = useState<'interaction' | 'task' | null>(null);
+  const [reportTarget, setReportTarget] = useState<{ kind: 'pipeline_task' | 'work_task'; id: string; title: string } | null>(null);
+  const [reportNote, setReportNote] = useState('');
 
   // Info section state
   const [rating, setRating] = useState(entry.rating || 'normal');
@@ -110,7 +126,14 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   const [giftItem, setGiftItem] = useState('');
   const [giftValue, setGiftValue] = useState('');
   const [giftDate, setGiftDate] = useState(new Date().toISOString().split('T')[0]);
+  const [giftRecipientId, setGiftRecipientId] = useState('');
   const [addingGift, setAddingGift] = useState(false);
+  const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
+  const [editGiftDate, setEditGiftDate] = useState('');
+  const [editGiftItem, setEditGiftItem] = useState('');
+  const [editGiftValue, setEditGiftValue] = useState('');
+  const [editGiftRecipientId, setEditGiftRecipientId] = useState('');
+  const [savingGift, setSavingGift] = useState(false);
 
   // Task form
   const [taskTitle, setTaskTitle] = useState('');
@@ -201,21 +224,62 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
 
   const addGift = async () => {
     if (!giftItem.trim()) return;
+    const missing = giftMissingFields(giftDate, giftItem, giftValue, giftRecipientId);
+    if (missing.length > 0 && !confirm(`Bạn chưa nhập: ${missing.join(', ')}. Vẫn lưu quà tặng này?`)) return;
     setAddingGift(true);
+    const recipient = contacts.find(c => c.id === giftRecipientId);
     const { data, error } = await supabase.from('crm_gifts').insert({
       crm_id: entry.id, item_name: giftItem.trim(),
       value: giftValue.trim() || null, gift_date: giftDate,
+      recipient_contact_id: recipient?.id || null,
+      recipient_name: recipient?.name || null,
     }).select().single();
     setAddingGift(false);
     if (!error) {
-      setGiftItem(''); setGiftValue('');
+      setGiftItem(''); setGiftValue(''); setGiftRecipientId('');
       setGiftDate(new Date().toISOString().split('T')[0]);
       loadDetails();
       toast('Đã ghi nhận quà tặng');
       await logActivity({
         user, action: 'insert', table: 'crm_gifts', recordId: data.id,
-        description: `Thêm quà tặng "${data.item_name}" cho "${entry.company_name}"`,
+        description: `Thêm quà tặng "${data.item_name}" cho "${entry.company_name}"${recipient ? ` — gửi ${recipient.name}` : ''}`,
         newData: data,
+      });
+    } else toast('Lỗi: ' + error.message);
+  };
+
+  const startEditGift = (g: CRMGift) => {
+    setEditingGiftId(g.id);
+    setEditGiftDate(g.gift_date);
+    setEditGiftItem(g.item_name || '');
+    setEditGiftValue(g.value || '');
+    setEditGiftRecipientId(g.recipient_contact_id || '');
+  };
+
+  const cancelEditGift = () => setEditingGiftId(null);
+
+  const saveEditGift = async (g: CRMGift) => {
+    if (!editGiftItem.trim()) return;
+    const missing = giftMissingFields(editGiftDate, editGiftItem, editGiftValue, editGiftRecipientId);
+    if (missing.length > 0 && !confirm(`Bạn chưa nhập: ${missing.join(', ')}. Vẫn lưu thay đổi này?`)) return;
+    setSavingGift(true);
+    const recipient = contacts.find(c => c.id === editGiftRecipientId);
+    const { data, error } = await supabase.from('crm_gifts').update({
+      item_name: editGiftItem.trim(),
+      value: editGiftValue.trim() || null,
+      gift_date: editGiftDate,
+      recipient_contact_id: recipient?.id || null,
+      recipient_name: recipient?.name || null,
+    }).eq('id', g.id).select().single();
+    setSavingGift(false);
+    if (!error) {
+      setEditingGiftId(null);
+      loadDetails();
+      toast('Đã cập nhật quà tặng');
+      await logActivity({
+        user, action: 'update', table: 'crm_gifts', recordId: g.id,
+        description: `Cập nhật quà tặng "${data.item_name}" cho "${entry.company_name}"${recipient ? ` — gửi ${recipient.name}` : ''}`,
+        oldData: g, newData: data,
       });
     } else toast('Lỗi: ' + error.message);
   };
@@ -255,6 +319,12 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   };
 
   const updateTaskStatus = async (id: string, status: PipelineTaskStatus) => {
+    if (status === 'done') {
+      const existing = pipelineTasks.find(t => t.id === id);
+      setReportTarget({ kind: 'pipeline_task', id, title: existing?.title || '' });
+      setReportNote('');
+      return;
+    }
     const existing = pipelineTasks.find(t => t.id === id);
     const updatedAt = new Date().toISOString();
     const { error } = await supabase.from('crm_pipeline_tasks').update({ status, updated_at: updatedAt }).eq('id', id);
@@ -267,6 +337,44 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
         oldData: existing, newData: { ...existing, status, updated_at: updatedAt },
       });
     }
+  };
+
+  const updateWorkTaskStatus = async (id: string, status: TaskStatus) => {
+    if (status === 'done') {
+      const existing = workTasks.find(t => t.id === id);
+      setReportTarget({ kind: 'work_task', id, title: existing?.title || '' });
+      setReportNote('');
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    const { error } = await supabase.from('work_tasks').update({ status, updated_at: updatedAt, completed_at: null }).eq('id', id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    setWorkTasks(prev => prev.map(t => t.id === id ? { ...t, status, completed_at: null } : t));
+  };
+
+  const confirmTaskDone = async () => {
+    if (!reportTarget || !reportNote.trim()) return;
+    const note = reportNote.trim();
+    const updatedAt = new Date().toISOString();
+    if (reportTarget.kind === 'pipeline_task') {
+      const existing = pipelineTasks.find(t => t.id === reportTarget.id);
+      const { error } = await supabase.from('crm_pipeline_tasks').update({ status: 'done', result_note: note, updated_at: updatedAt }).eq('id', reportTarget.id);
+      if (error) { toast('Lỗi: ' + error.message); return; }
+      setPipelineTasks(prev => prev.map(t => t.id === reportTarget.id ? { ...t, status: 'done', result_note: note } : t));
+      if (existing) {
+        await logActivity({
+          user, action: 'update', table: 'crm_pipeline_tasks', recordId: reportTarget.id,
+          description: `Hoàn thành việc "${existing.title}" — ${note}`,
+          oldData: existing, newData: { ...existing, status: 'done', result_note: note, updated_at: updatedAt },
+        });
+      }
+    } else {
+      const { error } = await supabase.from('work_tasks').update({ status: 'done', notes: note, completed_at: updatedAt, updated_at: updatedAt }).eq('id', reportTarget.id);
+      if (error) { toast('Lỗi: ' + error.message); return; }
+      setWorkTasks(prev => prev.map(t => t.id === reportTarget.id ? { ...t, status: 'done', notes: note, completed_at: updatedAt } : t));
+    }
+    setReportTarget(null);
+    setReportNote('');
   };
 
   const deleteTask = async (id: string) => {
@@ -317,13 +425,155 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   const showActivateButton = !isLinkedToClient && ['dam-phan', 'hop-tac', 'quan-tam'].includes(entry.stage);
 
   const SECTIONS: { id: Section; label: string; count?: number }[] = [
-    { id: 'info',         label: 'Thông tin'                                    },
-    { id: 'tasks',        label: 'Việc cần xử lý', count: pipelineTasks.filter(t => t.status !== 'done').length },
-    { id: 'worklog',      label: 'Công việc (Workspace)', count: workTasks.length },
-    { id: 'interactions', label: 'Trao đổi',        count: interactions.length  },
-    { id: 'gifts',        label: 'Quà tặng',        count: gifts.length         },
-    { id: 'preferences',  label: 'Sở thích'                                     },
+    { id: 'info',        label: 'Thông tin'                                    },
+    ...(isLinkedToClient ? [{ id: 'contacts' as Section, label: 'Người liên hệ' }] : []),
+    { id: 'history',     label: 'Lịch sử chăm sóc', count: pipelineTasks.filter(t => t.status !== 'done').length + workTasks.length + interactions.length },
+    { id: 'gifts',       label: 'Quà tặng',         count: gifts.length         },
+    { id: 'preferences', label: 'Sở thích'                                     },
   ];
+
+  type HistoryEntry =
+    | { kind: 'interaction'; date: string; data: CRMInteraction }
+    | { kind: 'pipeline_task'; date: string; data: CRMPipelineTask }
+    | { kind: 'work_task'; date: string; data: WorkTask };
+
+  const historyEntries: HistoryEntry[] = [
+    ...interactions.map(i => ({ kind: 'interaction' as const, date: i.created_at, data: i })),
+    ...pipelineTasks.map(t => ({ kind: 'pipeline_task' as const, date: t.created_at, data: t })),
+    ...workTasks.map(t => ({ kind: 'work_task' as const, date: t.created_at, data: t })),
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const isPendingTask = (e: HistoryEntry) => (e.kind === 'pipeline_task' || e.kind === 'work_task') && e.data.status !== 'done';
+  const pendingHistoryTasks = historyEntries.filter(isPendingTask);
+  const historyLog = historyEntries.filter(e => !isPendingTask(e));
+
+  const renderHistoryEntry = (entry: HistoryEntry) => {
+    if (entry.kind === 'interaction') {
+      const i = entry.data;
+      const t = INTERACTION_TYPES.find(x => x.id === i.interaction_type);
+      return (
+        <div key={`int_${i.id}`} className="flex items-start gap-3 p-3 bg-white border border-[#E8E7E2] rounded-lg">
+          <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${t?.color || 'bg-gray-100 text-gray-600'}`}>
+            {t?.icon}
+            <span>{t?.label}</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[12.5px] text-[#222] leading-snug">{i.content}</div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0 text-[11px] text-[#aaa]">
+            <CalendarDays size={10} />
+            {i.interaction_date}
+          </div>
+        </div>
+      );
+    }
+    if (entry.kind === 'pipeline_task') {
+      const task = entry.data;
+      const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done';
+      return (
+        <div key={`pt_${task.id}`} className={`p-3 bg-white border rounded-lg ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-[#E8E7E2]'}`}>
+          <div className="flex items-start gap-2">
+            <button
+              onClick={() => updateTaskStatus(task.id, task.status === 'done' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'done')}
+              className="mt-0.5 shrink-0"
+              title="Chuyển trạng thái"
+            >
+              {task.status === 'done'
+                ? <CheckCircle2 size={15} className="text-emerald-500" />
+                : task.status === 'in_progress'
+                ? <Clock size={15} className="text-amber-500" />
+                : <Circle size={15} className="text-gray-300" />}
+            </button>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-orange-100 text-orange-700 shrink-0">
+                  <ClipboardList size={9} /> BD
+                </span>
+                <div className={`text-[12.5px] font-medium leading-snug ${task.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
+                  {task.title}
+                </div>
+              </div>
+              {task.description && (
+                <div className="text-[11.5px] text-gray-500 mt-0.5">{task.description}</div>
+              )}
+              {task.due_date && (
+                <div className={`flex items-center gap-1 mt-1 text-[11px] ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                  <CalendarDays size={10} />
+                  {isOverdue ? 'Quá hạn: ' : 'Hạn: '}{task.due_date}
+                </div>
+              )}
+              {task.status === 'done' && task.result_note && (
+                <div className="text-[11.5px] text-gray-600 bg-[#F9F9F7] border border-[#F0EFEB] rounded-md px-2.5 py-1.5 mt-1.5">
+                  <span className="font-medium text-[#555]">Báo cáo: </span>{task.result_note}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <select
+                value={task.status}
+                onChange={e => updateTaskStatus(task.id, e.target.value as PipelineTaskStatus)}
+                className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full border-0 focus:outline-none cursor-pointer ${
+                  task.status === 'done' ? 'bg-emerald-100 text-emerald-700' :
+                  task.status === 'in_progress' ? 'bg-amber-100 text-amber-700' :
+                  'bg-gray-100 text-gray-600'
+                }`}
+              >
+                <option value="pending">Chưa xử lý</option>
+                <option value="in_progress">Đang xử lý</option>
+                <option value="done">Đã xong</option>
+              </select>
+              <button onClick={() => deleteTask(task.id)} className="p-0.5 text-gray-300 hover:text-red-400 transition">
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    // work_task — đồng bộ từ Workspace (Morning Priority)
+    const t = entry.data;
+    const isOverdue = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done';
+    return (
+      <div key={`wt_${t.id}`} className={`p-3 bg-white border rounded-lg space-y-1.5 ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-[#E8E7E2]'}`}>
+        <div className="flex items-start gap-2">
+          <button
+            onClick={() => updateWorkTaskStatus(t.id, t.status === 'done' ? 'pending' : t.status === 'pending' ? 'in_progress' : 'done')}
+            className="mt-0.5 shrink-0"
+            title="Chuyển trạng thái"
+          >
+            {t.status === 'done'
+              ? <CheckCircle2 size={15} className="text-emerald-500" />
+              : t.status === 'in_progress'
+              ? <Clock size={15} className="text-amber-500" />
+              : <Circle size={15} className="text-gray-300" />}
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700 shrink-0">
+                <ClipboardList size={9} /> WS
+              </span>
+              <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
+                {t.title}
+              </div>
+            </div>
+            <div className={`flex items-center gap-1 mt-1 text-[11px] ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+              <CalendarDays size={10} />
+              {isOverdue ? 'Quá hạn: ' : 'Hạn: '}{formatDate(t.due_date)}
+              {t.kcn ? ` · ${t.kcn}` : ''}
+            </div>
+            {t.status === 'done' && t.notes && (
+              <div className="text-[11.5px] text-gray-600 bg-[#F9F9F7] border border-[#F0EFEB] rounded-md px-2.5 py-1.5 mt-1.5">
+                <span className="font-medium text-[#555]">Báo cáo: </span>{t.notes}
+              </div>
+            )}
+          </div>
+          <span className={`text-[10.5px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${TASK_PRIORITY_COLORS[t.priority]}`}>
+            {TASK_PRIORITY_LABELS[t.priority]}
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   const content = (
     <div className={variant === 'modal' ? 'bg-white w-full max-w-lg h-full flex flex-col shadow-2xl' : 'bg-white border border-[#E8E7E2] rounded-[10px] flex flex-col'} onClick={e => e.stopPropagation()}>
@@ -427,6 +677,18 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
                   {entry.last_contact || '—'}
                 </div>
               </div>
+              {onDealOwnerChange ? (
+                <InlineEdit
+                  label="Người phụ trách"
+                  value={dealOwner || ''}
+                  onSave={v => onDealOwnerChange(v)}
+                />
+              ) : dealOwner !== undefined && (
+                <div>
+                  <div className="text-[11px] text-[#888] font-medium mb-0.5">Người phụ trách</div>
+                  <div className="text-[12.5px] font-medium text-[#111]">{dealOwner || '—'}</div>
+                </div>
+              )}
               <div>
                 <div className="text-[11px] text-[#888] font-medium mb-0.5">Người liên hệ (CSKH)</div>
                 <select
@@ -563,73 +825,167 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
           </div>
         )}
 
-        {/* ── Lịch sử trao đổi ── */}
-        {activeSection === 'interactions' && (
+        {/* ── Người liên hệ (đầu mối làm việc của công ty) ── */}
+        {activeSection === 'contacts' && entry.client_id && (
+          <div className="p-5">
+            <ContactsTab clientId={entry.client_id} toast={toast} />
+          </div>
+        )}
+
+        {/* ── Lịch sử chăm sóc (Trao đổi + Việc cần xử lý + Workspace) ── */}
+        {activeSection === 'history' && (
           <div className="p-5 space-y-4">
-            {/* Add form */}
-            <div className="bg-[#F9F9F7] rounded-lg p-4 space-y-3">
-              <div className="text-[12px] font-semibold text-[#333]">Thêm log mới</div>
-              <div className="flex gap-1.5 flex-wrap">
-                {INTERACTION_TYPES.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => setIntType(t.id)}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border transition ${
-                      intType === t.id
-                        ? 'bg-blue-100 border-blue-400 text-blue-700'
-                        : 'bg-white border-gray-300 text-gray-500 hover:border-blue-300'
-                    }`}
-                  >
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <input
-                  type="date"
-                  value={intDate}
-                  onChange={e => setIntDate(e.target.value)}
-                  className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                />
-                <input
-                  value={intContent}
-                  onChange={e => setIntContent(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addInteraction()}
-                  placeholder="Nội dung..."
-                  className="col-span-2 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                />
-              </div>
+            {/* Toggle add forms */}
+            <div className="flex gap-2">
               <button
-                onClick={addInteraction}
-                disabled={addingInt || !intContent.trim()}
-                className="w-full py-1.5 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700 disabled:opacity-50 transition"
+                onClick={() => setHistoryForm(historyForm === 'interaction' ? null : 'interaction')}
+                className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium border transition ${
+                  historyForm === 'interaction' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-300'
+                }`}
               >
-                {addingInt ? 'Đang lưu...' : 'Lưu log'}
+                + Trao đổi
+              </button>
+              <button
+                onClick={() => setHistoryForm(historyForm === 'task' ? null : 'task')}
+                className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium border transition ${
+                  historyForm === 'task' ? 'bg-orange-100 border-orange-400 text-orange-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-300'
+                }`}
+              >
+                + Việc cần làm
               </button>
             </div>
 
-            {/* Log list */}
+            {/* Add interaction form */}
+            {historyForm === 'interaction' && (
+              <div className="bg-[#F9F9F7] rounded-lg p-4 space-y-3">
+                <div className="text-[12px] font-semibold text-[#333]">Thêm log mới</div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {INTERACTION_TYPES.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setIntType(t.id)}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border transition ${
+                        intType === t.id
+                          ? 'bg-blue-100 border-blue-400 text-blue-700'
+                          : 'bg-white border-gray-300 text-gray-500 hover:border-blue-300'
+                      }`}
+                    >
+                      {t.icon} {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    type="date"
+                    value={intDate}
+                    onChange={e => setIntDate(e.target.value)}
+                    className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  />
+                  <input
+                    value={intContent}
+                    onChange={e => setIntContent(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addInteraction()}
+                    placeholder="Nội dung..."
+                    className="col-span-2 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  />
+                </div>
+                <button
+                  onClick={async () => { await addInteraction(); setHistoryForm(null); }}
+                  disabled={addingInt || !intContent.trim()}
+                  className="w-full py-1.5 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700 disabled:opacity-50 transition"
+                >
+                  {addingInt ? 'Đang lưu...' : 'Lưu log'}
+                </button>
+              </div>
+            )}
+
+            {/* Add pipeline task form */}
+            {historyForm === 'task' && (
+              <div className="bg-[#F9F9F7] rounded-lg p-4 space-y-3">
+                <div className="text-[12px] font-semibold text-[#333]">Thêm việc mới</div>
+                <input
+                  value={taskTitle}
+                  onChange={e => setTaskTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addTask()}
+                  placeholder="Tên việc cần làm..."
+                  className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={taskDesc}
+                    onChange={e => setTaskDesc(e.target.value)}
+                    placeholder="Mô tả chi tiết..."
+                    className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  />
+                  <input
+                    type="date"
+                    value={taskDue}
+                    onChange={e => setTaskDue(e.target.value)}
+                    className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  />
+                </div>
+                <button
+                  onClick={async () => { await addTask(); setHistoryForm(null); }}
+                  disabled={addingTask || !taskTitle.trim()}
+                  className="w-full py-1.5 bg-orange-500 text-white rounded-lg text-[12px] font-medium hover:bg-orange-600 disabled:opacity-50 transition"
+                >
+                  {addingTask ? 'Đang lưu...' : 'Thêm việc'}
+                </button>
+              </div>
+            )}
+
+            {/* Report prompt — yêu cầu nhập nội dung kết quả trước khi đánh dấu hoàn thành */}
+            {reportTarget && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+                <div className="text-[12px] font-semibold text-[#333]">
+                  Hoàn thành: <span className="font-normal">{reportTarget.title}</span>
+                </div>
+                <textarea
+                  value={reportNote}
+                  onChange={e => setReportNote(e.target.value)}
+                  placeholder="Anh chị vui lòng nhập kết quả công việc tại đây, để team cùng nắm thông tin , thanks."
+                  rows={3}
+                  autoFocus
+                  className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setReportTarget(null); setReportNote(''); }}
+                    className="flex-1 py-1.5 border border-gray-300 text-gray-500 rounded-lg text-[12px] font-medium hover:bg-gray-50 transition"
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    onClick={confirmTaskDone}
+                    disabled={!reportNote.trim()}
+                    className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-[12px] font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
+                  >
+                    Xác nhận hoàn thành
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Việc cần làm (chưa hoàn thành) */}
+            {pendingHistoryTasks.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[11px] font-semibold text-[#999] uppercase tracking-wide px-0.5">
+                  Việc cần làm ({pendingHistoryTasks.length})
+                </div>
+                {pendingHistoryTasks.map(renderHistoryEntry)}
+              </div>
+            )}
+
+            {/* Lịch sử trao đổi & công việc đã hoàn thành */}
             <div className="space-y-2">
-              {interactions.length === 0 ? (
-                <div className="text-center text-[12px] text-gray-400 py-6">Chưa có lịch sử trao đổi</div>
-              ) : interactions.map(i => {
-                const t = INTERACTION_TYPES.find(x => x.id === i.interaction_type);
-                return (
-                  <div key={i.id} className="flex items-start gap-3 p-3 bg-white border border-[#E8E7E2] rounded-lg">
-                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${t?.color || 'bg-gray-100 text-gray-600'}`}>
-                      {t?.icon}
-                      <span>{t?.label}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12.5px] text-[#222] leading-snug">{i.content}</div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0 text-[11px] text-[#aaa]">
-                      <CalendarDays size={10} />
-                      {i.interaction_date}
-                    </div>
-                  </div>
-                );
-              })}
+              {pendingHistoryTasks.length > 0 && (
+                <div className="text-[11px] font-semibold text-[#999] uppercase tracking-wide px-0.5">
+                  Lịch sử chăm sóc
+                </div>
+              )}
+              {historyLog.length === 0 ? (
+                <div className="text-center text-[12px] text-gray-400 py-6">Chưa có lịch sử chăm sóc</div>
+              ) : historyLog.map(renderHistoryEntry)}
             </div>
           </div>
         )}
@@ -660,6 +1016,16 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
                   className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
                 />
               </div>
+              <select
+                value={giftRecipientId}
+                onChange={e => setGiftRecipientId(e.target.value)}
+                className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+              >
+                <option value="">Gửi cho ai? (chọn người liên hệ)</option>
+                {contacts.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}{c.role ? ` — ${c.role}` : ''}{!c.is_active ? ' (đã nghỉ)' : ''}</option>
+                ))}
+              </select>
               <button
                 onClick={addGift}
                 disabled={addingGift || !giftItem.trim()}
@@ -673,11 +1039,53 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
             <div className="space-y-2">
               {gifts.length === 0 ? (
                 <div className="text-center text-[12px] text-gray-400 py-6">Chưa có quà tặng</div>
-              ) : gifts.map(g => (
+              ) : gifts.map(g => editingGiftId === g.id ? (
+                <div key={g.id} className="bg-[#F9F9F7] rounded-lg p-3 space-y-2 border border-blue-200">
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      type="date"
+                      value={editGiftDate}
+                      onChange={e => setEditGiftDate(e.target.value)}
+                      className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                    />
+                    <input
+                      value={editGiftItem}
+                      onChange={e => setEditGiftItem(e.target.value)}
+                      placeholder="Tên quà..."
+                      className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                    />
+                    <input
+                      value={editGiftValue}
+                      onChange={e => setEditGiftValue(e.target.value)}
+                      placeholder="Giá trị (VD: 500k)"
+                      className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <select
+                    value={editGiftRecipientId}
+                    onChange={e => setEditGiftRecipientId(e.target.value)}
+                    className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  >
+                    <option value="">Gửi cho ai? (chọn người liên hệ)</option>
+                    {contacts.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}{c.role ? ` — ${c.role}` : ''}{!c.is_active ? ' (đã nghỉ)' : ''}</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <button onClick={cancelEditGift} className="flex-1 py-1.5 border border-gray-300 text-gray-500 rounded-lg text-[12px] font-medium hover:bg-gray-50 transition">Huỷ</button>
+                    <button onClick={() => saveEditGift(g)} disabled={savingGift} className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-[12px] font-medium hover:bg-emerald-700 disabled:opacity-50 transition">
+                      {savingGift ? 'Đang lưu...' : 'Lưu thay đổi'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
                 <div key={g.id} className="flex items-center gap-3 p-3 bg-white border border-[#E8E7E2] rounded-lg">
                   <Gift size={14} className="text-amber-500 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[12.5px] font-medium text-[#222]">{g.item_name}</div>
+                    {g.recipient_name && (
+                      <div className="text-[11px] text-[#888]">Gửi: {g.recipient_name}</div>
+                    )}
                   </div>
                   {g.value && (
                     <span className="text-[12px] font-semibold text-emerald-600 shrink-0">{g.value}</span>
@@ -686,145 +1094,12 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
                     <CalendarDays size={10} />
                     {g.gift_date}
                   </div>
+                  <button onClick={() => startEditGift(g)} className="shrink-0 p-1 text-gray-400 hover:text-blue-600 transition">
+                    <Pencil size={12} />
+                  </button>
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* ── Việc cần xử lý ── */}
-        {activeSection === 'tasks' && (
-          <div className="p-5 space-y-4">
-            {/* Add form */}
-            <div className="bg-[#F9F9F7] rounded-lg p-4 space-y-3">
-              <div className="text-[12px] font-semibold text-[#333]">Thêm việc mới</div>
-              <input
-                value={taskTitle}
-                onChange={e => setTaskTitle(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addTask()}
-                placeholder="Tên việc cần làm..."
-                className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  value={taskDesc}
-                  onChange={e => setTaskDesc(e.target.value)}
-                  placeholder="Mô tả chi tiết..."
-                  className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                />
-                <input
-                  type="date"
-                  value={taskDue}
-                  onChange={e => setTaskDue(e.target.value)}
-                  className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                />
-              </div>
-              <button
-                onClick={addTask}
-                disabled={addingTask || !taskTitle.trim()}
-                className="w-full py-1.5 bg-orange-500 text-white rounded-lg text-[12px] font-medium hover:bg-orange-600 disabled:opacity-50 transition"
-              >
-                {addingTask ? 'Đang lưu...' : 'Thêm việc'}
-              </button>
-            </div>
-
-            {/* Tasks list */}
-            <div className="space-y-2">
-              {pipelineTasks.length === 0 ? (
-                <div className="text-center text-[12px] text-gray-400 py-6">Chưa có việc cần xử lý</div>
-              ) : pipelineTasks.map(task => {
-                const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done';
-                return (
-                  <div key={task.id} className={`p-3 bg-white border rounded-lg ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-[#E8E7E2]'}`}>
-                    <div className="flex items-start gap-2">
-                      <button
-                        onClick={() => updateTaskStatus(task.id, task.status === 'done' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'done')}
-                        className="mt-0.5 shrink-0"
-                        title="Chuyển trạng thái"
-                      >
-                        {task.status === 'done'
-                          ? <CheckCircle2 size={15} className="text-emerald-500" />
-                          : task.status === 'in_progress'
-                          ? <Clock size={15} className="text-amber-500" />
-                          : <Circle size={15} className="text-gray-300" />}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[12.5px] font-medium leading-snug ${task.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
-                          {task.title}
-                        </div>
-                        {task.description && (
-                          <div className="text-[11.5px] text-gray-500 mt-0.5">{task.description}</div>
-                        )}
-                        {task.due_date && (
-                          <div className={`flex items-center gap-1 mt-1 text-[11px] ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                            <CalendarDays size={10} />
-                            {isOverdue ? 'Quá hạn: ' : 'Hạn: '}{task.due_date}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <select
-                          value={task.status}
-                          onChange={e => updateTaskStatus(task.id, e.target.value as PipelineTaskStatus)}
-                          className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full border-0 focus:outline-none cursor-pointer ${
-                            task.status === 'done' ? 'bg-emerald-100 text-emerald-700' :
-                            task.status === 'in_progress' ? 'bg-amber-100 text-amber-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}
-                        >
-                          <option value="pending">Chưa xử lý</option>
-                          <option value="in_progress">Đang xử lý</option>
-                          <option value="done">Đã xong</option>
-                        </select>
-                        <button onClick={() => deleteTask(task.id)} className="p-0.5 text-gray-300 hover:text-red-400 transition">
-                          <X size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-          </div>
-        )}
-
-        {/* ── Công việc (Workspace) — chỉ đọc, đồng bộ từ Morning Priority ── */}
-        {activeSection === 'worklog' && (
-          <div className="p-5 space-y-2">
-            {workTasks.length === 0 ? (
-              <div className="text-center text-[12px] text-gray-400 py-6">Chưa có công việc nào liên quan đến công ty này</div>
-            ) : workTasks.map(t => (
-              <div key={t.id} className="p-3 bg-white border border-[#E8E7E2] rounded-lg space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
-                      {t.title}
-                    </div>
-                    <div className="flex items-center gap-1 mt-1 text-[11px] text-gray-400">
-                      <CalendarDays size={10} />
-                      {formatDate(t.due_date)}
-                      {t.kcn ? ` · ${t.kcn}` : ''}
-                    </div>
-                  </div>
-                  <span className={`text-[10.5px] px-2 py-0.5 rounded-full border whitespace-nowrap ${TASK_PRIORITY_COLORS[t.priority]}`}>
-                    {TASK_PRIORITY_LABELS[t.priority]}
-                  </span>
-                  <span className={`text-[10.5px] px-2 py-0.5 rounded-full border whitespace-nowrap ${
-                    t.status === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
-                    t.status === 'in_progress' ? 'bg-amber-100 text-amber-700 border-amber-200' :
-                    'bg-gray-100 text-gray-600 border-gray-200'
-                  }`}>
-                    {t.status === 'done' ? 'Hoàn thành' : t.status === 'in_progress' ? 'Đang làm' : 'Cần làm'}
-                  </span>
-                </div>
-                {t.status === 'done' && t.notes && (
-                  <div className="text-[11.5px] text-gray-600 bg-[#F9F9F7] border border-[#F0EFEB] rounded-md px-2.5 py-1.5">
-                    <span className="font-medium text-[#555]">Báo cáo: </span>{t.notes}
-                  </div>
-                )}
-              </div>
-            ))}
           </div>
         )}
 
@@ -890,19 +1165,19 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
           Tạo: {new Date(entry.created_at).toLocaleDateString('vi-VN')}
         </span>
         <button
-          onClick={() => { setActiveSection('interactions'); setIntType('call'); }}
+          onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('call'); }}
           className="flex items-center gap-1 px-2.5 py-1.5 bg-green-100 text-green-700 rounded-lg text-[11.5px] font-medium hover:bg-green-200 transition"
         >
           <Phone size={11} /> Log cuộc gọi
         </button>
         <button
-          onClick={() => { setActiveSection('interactions'); setIntType('meeting'); }}
+          onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('meeting'); }}
           className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-[11.5px] font-medium hover:bg-blue-200 transition"
         >
           <Users size={11} /> Log gặp mặt
         </button>
         <button
-          onClick={() => setActiveSection('tasks')}
+          onClick={() => { setActiveSection('history'); setHistoryForm('task'); }}
           className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-[11.5px] font-medium hover:bg-orange-200 transition"
         >
           <ClipboardList size={11} /> Thêm việc

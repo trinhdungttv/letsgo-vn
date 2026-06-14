@@ -1,38 +1,49 @@
 // src/components/workspace/MorningPrioritySection.tsx
 import { useState, useEffect } from 'react'
-import { Sun, FileWarning, Phone, Laptop, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
+import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, ChevronRight, Undo2, Settings, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { useRegions } from '../../hooks/useRegions'
-import type { Client, WorkTask, TaskStatus } from '../../lib/types'
+import { useBranchData } from '../../hooks/useBranchData'
+import { usePersistedState } from '../../hooks/usePersistedState'
+import type { Client, WorkTask, TaskStatus, Branch } from '../../lib/types'
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
 import { WorkTasksCard } from './WorkTasksCard'
+import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
 
 interface Props {
   clients: Client[]
+  onClientUpdate: (client: Client) => void
 }
 
 function todayStr() {
   return new Date().toISOString().split('T')[0]
 }
 
-interface ContractSuggest { client: Client; daysLeft: number; isOffice: boolean; kcn: string }
+interface ContractSuggest { client: Client; daysLeft: number; kcn: string }
 interface VisitSuggest { branchName: string; daysSince: number | null }
 
-export function MorningPrioritySection({ clients }: Props) {
+export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const { user } = useAuth()
   const { regions } = useRegions()
+  const { branches, updateBranch } = useBranchData()
   const [saving, setSaving] = useState(false)
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({})
 
   const [selectedContractIds, setSelectedContractIds] = useState<Set<string>>(new Set())
-  const [selectedVisit, setSelectedVisit] = useState<number | null>(null)
+  const [visitThreshold, setVisitThreshold] = usePersistedState('lgvn_visit_threshold_days', 7)
+  const [showThresholdSettings, setShowThresholdSettings] = useState(false)
+  const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null)
+  const [panelForm, setPanelForm] = useState<Partial<Branch>>({})
+  const [panelRecordDate, setPanelRecordDate] = useState(todayStr())
+  const [panelSaving, setPanelSaving] = useState(false)
   const [pendingTasks, setPendingTasks] = useState<WorkTask[]>([])
   const [doneTasks, setDoneTasks] = useState<WorkTask[]>([])
   const [showDoneHistory, setShowDoneHistory] = useState(false)
   const [reportTaskId, setReportTaskId] = useState<string | null>(null)
   const [reportText, setReportText] = useState('')
+  const [newContractEnd, setNewContractEnd] = useState('')
 
   useEffect(() => { loadPendingTasks(); loadDoneTasks() }, [user])
 
@@ -66,8 +77,15 @@ export function MorningPrioritySection({ clients }: Props) {
 
   function handleStatusChange(id: string, status: TaskStatus) {
     if (status === 'done') {
+      const task = pendingTasks.find(t => t.id === id)
       setReportTaskId(id)
       setReportText('')
+      if (task?.task_type === 'Tái ký HĐ') {
+        const client = task.client_id ? clients.find(c => c.id === task.client_id) : null
+        setNewContractEnd(client?.contract_end || '')
+      } else {
+        setNewContractEnd('')
+      }
       return
     }
     updateTaskStatus(id, status)
@@ -75,27 +93,40 @@ export function MorningPrioritySection({ clients }: Props) {
 
   function submitReport() {
     if (!reportTaskId) return
-    updateTaskStatus(reportTaskId, 'done', reportText)
+    const task = pendingTasks.find(t => t.id === reportTaskId)
+    if (task?.task_type === 'Tái ký HĐ' && !newContractEnd) {
+      alert('Vui lòng nhập hạn hợp đồng mới')
+      return
+    }
+    updateTaskStatus(reportTaskId, 'done', reportText, task?.task_type === 'Tái ký HĐ' ? newContractEnd : undefined)
     setReportTaskId(null)
     setReportText('')
+    setNewContractEnd('')
   }
 
-  async function updateTaskStatus(id: string, status: WorkTask['status'], note?: string) {
+  async function updateTaskStatus(id: string, status: WorkTask['status'], note?: string, newContractEndDate?: string) {
     const patch: Partial<WorkTask> = { status, updated_at: new Date().toISOString() }
     if (status === 'done') {
       patch.completed_at = new Date().toISOString()
       if (note?.trim()) patch.notes = note.trim()
     }
+    const task = pendingTasks.find(t => t.id === id)
     if (status === 'done') {
       setPendingTasks(prev => {
-        const task = prev.find(t => t.id === id)
-        if (task) setDoneTasks(d => [{ ...task, ...patch } as WorkTask, ...d])
-        return prev.filter(t => t.id !== id)
+        const t = prev.find(x => x.id === id)
+        if (t) setDoneTasks(d => [{ ...t, ...patch } as WorkTask, ...d])
+        return prev.filter(x => x.id !== id)
       })
     } else {
       setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } as WorkTask : t))
     }
     await supabase.from('work_tasks').update(patch).eq('id', id)
+
+    if (status === 'done' && newContractEndDate && task?.client_id) {
+      await supabase.from('clients').update({ contract_end: newContractEndDate }).eq('id', task.client_id)
+      const client = clients.find(c => c.id === task.client_id)
+      if (client) onClientUpdate({ ...client, contract_end: newContractEndDate })
+    }
   }
 
   async function undoTask(id: string) {
@@ -137,7 +168,7 @@ export function MorningPrioritySection({ clients }: Props) {
     .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
     .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= 17)
     .sort((a, b) => a.daysLeft - b.daysLeft)
-    .map(x => ({ ...x, isOffice: x.daysLeft <= 0, kcn: x.client.industrial_zones?.[0] || '' }))
+    .map(x => ({ ...x, kcn: x.client.industrial_zones?.[0] || '' }))
 
   // --- Auto-suggest: Chi nhánh cần hỏi thăm (cột phải) ---
   const visitSuggests: VisitSuggest[] = regions
@@ -147,7 +178,6 @@ export function MorningPrioritySection({ clients }: Props) {
       return { branchName: r.name, daysSince }
     })
     .sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999))
-    .slice(0, 4)
 
   function urgColor(daysLeft: number) {
     if (daysLeft <= 7) return 'bg-red-50 text-red-700 border-red-200'
@@ -155,10 +185,15 @@ export function MorningPrioritySection({ clients }: Props) {
   }
 
   function visitColor(daysSince: number | null) {
-    if (daysSince === null) return 'bg-gray-100 text-gray-500 border-gray-200'
-    if (daysSince >= 21) return 'bg-red-50 text-red-700 border-red-200'
-    if (daysSince >= 10) return 'bg-amber-50 text-amber-700 border-amber-200'
+    if (daysSince === null || daysSince > 2 * visitThreshold) return 'bg-red-50 text-red-700 border-red-200'
+    if (daysSince > visitThreshold) return 'bg-amber-50 text-amber-700 border-amber-200'
     return 'bg-green-50 text-green-700 border-green-200'
+  }
+
+  function visitDotColor(daysSince: number | null) {
+    if (daysSince === null || daysSince > 2 * visitThreshold) return 'bg-red-500'
+    if (daysSince > visitThreshold) return 'bg-amber-400'
+    return 'bg-green-500'
   }
 
   function toggleContractSelect(clientId: string) {
@@ -170,8 +205,33 @@ export function MorningPrioritySection({ clients }: Props) {
     })
   }
 
-  function toggleVisitSelect(index: number) {
-    setSelectedVisit(prev => prev === index ? null : index)
+  function openBranchProfile(branchName: string) {
+    const branch = branches.find(b => b.region === branchName)
+    if (!branch) {
+      alert(`Chi nhánh "${branchName}" chưa có hồ sơ — vào trang Chi nhánh để tạo`)
+      return
+    }
+    setOpenBranchPanel(branch)
+    setPanelForm(branch)
+    setPanelRecordDate(todayStr())
+  }
+
+  async function savePanelBranch() {
+    if (!openBranchPanel || !user) return
+    setPanelSaving(true)
+    const fields = {
+      status_note: panelForm.status_note ?? null,
+      difficulties: panelForm.difficulties ?? null,
+      opportunities: panelForm.opportunities ?? null,
+    }
+    await updateBranch(openBranchPanel.id, fields)
+    if (openBranchPanel.region) {
+      await recordBranchUpdateSession(user.id, openBranchPanel.region, fields, panelRecordDate)
+      setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${openBranchPanel.region}`]: panelRecordDate }))
+    }
+    setPanelSaving(false)
+    setOpenBranchPanel(null)
+    setPanelRecordDate(todayStr())
   }
 
   async function saveSelectedTasks() {
@@ -195,31 +255,16 @@ export function MorningPrioritySection({ clients }: Props) {
       })
     }
 
-    if (selectedVisit !== null) {
-      const s = visitSuggests[selectedVisit]
-      toInsert.push({
-        user_id: user.id,
-        client_id: null,
-        title: `Hỏi thăm CN — Chi nhánh ${s.branchName}`,
-        task_type: 'Hỏi thăm CN',
-        due_date: today_,
-        priority: s.daysSince === null || s.daysSince >= 21 ? 'high' : s.daysSince >= 10 ? 'medium' : 'low',
-        kcn: null,
-        status: 'pending',
-      })
-    }
-
     if (toInsert.length > 0) {
       const { data: inserted } = await supabase.from('work_tasks').insert(toInsert).select()
       if (inserted) setPendingTasks(prev => [...(inserted as WorkTask[]), ...prev])
     }
 
     setSelectedContractIds(new Set())
-    setSelectedVisit(null)
     setSaving(false)
   }
 
-  const selectedCount = selectedContractIds.size + (selectedVisit !== null ? 1 : 0)
+  const selectedCount = selectedContractIds.size
 
   return (
     <div className="flex flex-col gap-0">
@@ -242,7 +287,6 @@ export function MorningPrioritySection({ clients }: Props) {
                 <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
                   <FileWarning size={12} />
                   HĐ cần xử lý
-                  <span className="text-[9px] text-[#bbb] font-normal normal-case ml-0.5">— làm tại văn phòng</span>
                 </div>
                 <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
                   {contractSuggests.map(s => {
@@ -263,10 +307,12 @@ export function MorningPrioritySection({ clients }: Props) {
                         <span className={`w-2 h-2 rounded-full shrink-0 ${s.daysLeft <= 0 ? 'bg-red-500' : s.daysLeft <= 7 ? 'bg-red-400' : 'bg-amber-400'}`} />
                         <div className="min-w-0 flex-1">
                           <div className="text-[11.5px] font-medium text-[#111] truncate">{s.client.name}</div>
-                          <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
-                            {s.isOffice ? <Laptop size={10} /> : <MapPin size={10} />}
-                            {s.isOffice ? 'Xử lý tại văn phòng' : (s.kcn || 'Đi gặp khách')}
-                          </div>
+                          {(s.client.region || s.kcn) && (
+                            <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
+                              <MapPin size={10} />
+                              {s.client.region ? `CN ${s.client.region}` : s.kcn}
+                            </div>
+                          )}
                         </div>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${urgColor(s.daysLeft)}`}>
                           {s.daysLeft <= 0 ? 'HĐ đã hết hạn' : `Còn ${s.daysLeft} ngày`}
@@ -313,6 +359,17 @@ export function MorningPrioritySection({ clients }: Props) {
                         </div>
                         {reportTaskId === t.id && (
                           <div className="flex flex-col gap-1.5 pl-1">
+                            {t.task_type === 'Tái ký HĐ' && (
+                              <div>
+                                <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Hạn hợp đồng mới</label>
+                                <input
+                                  type="date"
+                                  value={newContractEnd}
+                                  onChange={e => setNewContractEnd(e.target.value)}
+                                  className="text-[11.5px] border border-[#E8E7E2] rounded-md px-2 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400 w-full"
+                                />
+                              </div>
+                            )}
                             <textarea
                               rows={2}
                               autoFocus
@@ -322,7 +379,7 @@ export function MorningPrioritySection({ clients }: Props) {
                               onChange={e => setReportText(e.target.value)}
                             />
                             <div className="flex justify-end gap-1.5">
-                              <button onClick={() => setReportTaskId(null)} className="text-[11px] px-2.5 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-[#f4f4f1]">Huỷ</button>
+                              <button onClick={() => { setReportTaskId(null); setNewContractEnd('') }} className="text-[11px] px-2.5 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-[#f4f4f1]">Huỷ</button>
                               <button onClick={submitReport} className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700">Lưu</button>
                             </div>
                           </div>
@@ -341,31 +398,53 @@ export function MorningPrioritySection({ clients }: Props) {
                   <Phone size={12} />
                   Cập nhật thông tin CN
                   <span className="text-[9px] text-[#bbb] font-normal normal-case ml-0.5">— gọi điện / cập nhật tình hình</span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  {visitSuggests.map((s, i) => {
-                    const isSel = selectedVisit === i
-                    return (
-                      <div
-                        key={s.branchName}
-                        onClick={() => toggleVisitSelect(i)}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 border rounded-lg cursor-pointer transition-colors ${isSel ? 'border-blue-300 bg-blue-50' : 'border-[#E8E7E2] bg-[#fafafa] hover:border-blue-200 hover:bg-blue-50'}`}
-                      >
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${s.daysSince === null ? 'bg-blue-400' : s.daysSince >= 21 ? 'bg-red-500' : s.daysSince >= 10 ? 'bg-amber-400' : 'bg-green-500'}`} />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[11.5px] font-medium text-[#111] truncate">Chi nhánh {s.branchName}</div>
-                          <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
-                            <Phone size={10} />
-                            Gọi điện / nhắn tin hỏi thăm
-                          </div>
+                  <div className="relative ml-auto">
+                    <button
+                      onClick={() => setShowThresholdSettings(v => !v)}
+                      title="Cài đặt ngưỡng cảnh báo"
+                      className="text-[#bbb] hover:text-blue-600 transition-colors"
+                    >
+                      <Settings size={12} />
+                    </button>
+                    {showThresholdSettings && (
+                      <div className="absolute right-0 top-full mt-1 z-10 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2.5 w-52 normal-case">
+                        <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Ngưỡng (số ngày)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={visitThreshold}
+                          onChange={e => setVisitThreshold(Math.max(1, Number(e.target.value) || 1))}
+                          className="text-[11.5px] border border-[#E8E7E2] rounded-md px-2 py-1 bg-white text-[#333] focus:outline-none focus:border-blue-400 w-full"
+                        />
+                        <div className="text-[10px] text-[#aaa] mt-1.5 leading-relaxed">
+                          ≤ {visitThreshold} ngày: xanh · {visitThreshold}-{2 * visitThreshold} ngày: cam · &gt;{2 * visitThreshold} ngày: đỏ
                         </div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${visitColor(s.daysSince)}`}>
-                          {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày chưa LH`}
-                        </span>
-                        {isSel ? <Check size={13} className="text-blue-500 shrink-0" /> : <ArrowRight size={13} className="text-[#bbb] shrink-0" />}
+                        <button onClick={() => setShowThresholdSettings(false)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 w-full">Đóng</button>
                       </div>
-                    )
-                  })}
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
+                  {visitSuggests.map(s => (
+                    <div
+                      key={s.branchName}
+                      onClick={() => openBranchProfile(s.branchName)}
+                      className="flex items-center gap-2 px-2.5 py-1.5 border border-[#E8E7E2] bg-[#fafafa] rounded-lg cursor-pointer transition-colors hover:border-blue-200 hover:bg-blue-50"
+                    >
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${visitDotColor(s.daysSince)}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11.5px] font-medium text-[#111] truncate">Chi nhánh {s.branchName}</div>
+                        <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
+                          <Phone size={10} />
+                          Gọi điện / nhắn tin hỏi thăm
+                        </div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${visitColor(s.daysSince)}`}>
+                        {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày chưa LH`}
+                      </span>
+                      <ChevronRight size={13} className="text-[#bbb] shrink-0" />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -445,6 +524,36 @@ export function MorningPrioritySection({ clients }: Props) {
           </div>
         )}
       </div>
+
+      {/* Panel cập nhật hồ sơ chi nhánh */}
+      {openBranchPanel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-end z-50" onClick={() => setOpenBranchPanel(null)}>
+          <div className="bg-white h-full w-full max-w-md shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white border-b border-[#E8E7E2] px-4 py-3 flex items-center gap-2 z-10">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-[#111] truncate">Chi nhánh {openBranchPanel.region || openBranchPanel.name}</div>
+                <div className="text-[11px] text-[#888] mt-0.5">
+                  {openBranchPanel.manager_name && `Quản lý: ${openBranchPanel.manager_name}`}
+                  {openBranchPanel.phone && ` · ${openBranchPanel.phone}`}
+                </div>
+              </div>
+              <button onClick={() => setOpenBranchPanel(null)} className="text-[#999] hover:text-[#333] transition-colors shrink-0">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4">
+              <BranchHistoryFields branch={panelForm as Branch} onChange={fields => setPanelForm(prev => ({ ...prev, ...fields }))} recordDate={panelRecordDate} onRecordDateChange={setPanelRecordDate} />
+              <button
+                onClick={savePanelBranch}
+                disabled={panelSaving}
+                className="mt-3 w-full text-[12px] px-3 py-2 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40 hover:bg-blue-700 transition-colors"
+              >
+                {panelSaving ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -17,6 +17,7 @@ interface WorkspaceProps {
   finance: FinanceRecord[];
   pipeline: CRMPipelineEntry[];
   onNavigate: (page: Page) => void;
+  onClientUpdate: (client: Client) => void;
   toast: (msg: string) => void;
 }
 
@@ -63,7 +64,7 @@ const FONT_MIN = 0.8;
 const FONT_MAX = 1.3;
 const FONT_STEP = 0.05;
 
-export default function Workspace({ clients, pipeline, onNavigate, toast }: WorkspaceProps) {
+export default function Workspace({ clients, pipeline, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user } = useAuth();
   const [branchRegion, setBranchRegion] = useState<string | null>(null);
 
@@ -195,7 +196,7 @@ export default function Workspace({ clients, pipeline, onNavigate, toast }: Work
   const renderSection = (key: SectionKey): React.ReactNode => {
     switch (key) {
       case 'morning':
-        return <WorkspaceModulesTabs clients={clients} />;
+        return <WorkspaceModulesTabs clients={clients} onClientUpdate={onClientUpdate} toast={toast} />;
 
       case 'alerts':
         return renderRoleCard();
