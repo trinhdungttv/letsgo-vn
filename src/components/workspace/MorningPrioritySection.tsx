@@ -9,7 +9,6 @@ import { usePersistedState } from '../../hooks/usePersistedState'
 import type { Client, WorkTask, TaskStatus, Branch } from '../../lib/types'
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
-import { todayStr } from './BranchHistoryFields'
 import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
 
