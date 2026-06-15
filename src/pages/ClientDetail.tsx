@@ -14,6 +14,8 @@ import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
+import { HealthScoreRing } from '../components/clients/HealthScoreRing';
+import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -949,6 +951,54 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           </div>
         ) : (
           <>
+        {/* Health Score Card */}
+        {(() => {
+          const wHistory = hist.slice(-6).map(h => h.count);
+          const hs = calcHealthScore({
+            currentWorkers: client.current_workers || 0,
+            minWorkers: client.min_workers || 0,
+            paidThisMonth: client.paid_this_month || false,
+            progCutoff: client.prog_cutoff || false,
+            contractEnd: client.contract_end || '',
+            lastContactDate: '',
+            workerHistory: wHistory,
+          });
+          const rows = [
+            { label: 'Ổn định lao động',    score: hs.stability, max: 30, weight: '30%' },
+            { label: 'Thanh toán đúng hạn', score: hs.payment,   max: 25, weight: '25%' },
+            { label: 'Tần suất liên hệ',    score: hs.contact,   max: 20, weight: '20%' },
+            { label: 'HĐ còn lại',          score: hs.contract,  max: 15, weight: '15%' },
+            { label: 'Tăng trưởng LĐ',      score: hs.growth,    max: 10, weight: '10%' },
+          ];
+          return (
+            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-[12.5px] font-semibold text-[#111]">Account Health Score</div>
+                  <div className="text-[11px] mt-0.5" style={{ color: hsColor(hs.total) }}>{hsLabel(hs.total)} — {hs.total}/100 điểm</div>
+                </div>
+                <HealthScoreRing score={hs.total} size="md" />
+              </div>
+              <div className="space-y-2">
+                {rows.map(r => {
+                  const pct = Math.round(r.score / r.max * 100);
+                  const color = pct >= 70 ? '#059669' : pct >= 40 ? '#D97706' : '#DC2626';
+                  return (
+                    <div key={r.label} className="flex items-center gap-2">
+                      <div className="text-[11px] text-[#374151] shrink-0" style={{ width: 160 }}>{r.label}</div>
+                      <div className="flex-1 h-[5px] bg-[#E5E7EB] rounded-full overflow-hidden">
+                        <div style={{ width: `${pct}%`, background: color, height: '100%', borderRadius: 9999, transition: 'width .4s' }} />
+                      </div>
+                      <div className="text-[10.5px] font-bold shrink-0" style={{ color, width: 20, textAlign: 'right' }}>{r.score}</div>
+                      <div className="text-[9.5px] text-[#9CA3AF] shrink-0" style={{ width: 28, textAlign: 'right' }}>{r.weight}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Info & Contract */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <button onClick={() => setOpenInfo(!openInfo)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
