@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
-  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History,
+  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
 import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
@@ -548,19 +548,30 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
                   </Field>
                   <Field label="Ảnh đại diện Trưởng CN" full>
-                    <div className="flex items-center gap-3">
-                      {renderAvatar(form, 48)}
-                      <input
-                        type="file" accept="image/*" id="manager-avatar-input" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
-                      />
-                      <label htmlFor="manager-avatar-input" className={`px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition cursor-pointer ${uploadingAvatar ? 'opacity-50 pointer-events-none' : ''}`}>
-                        {uploadingAvatar ? 'Đang tải lên...' : 'Tải ảnh lên'}
-                      </label>
+                    <input
+                      type="file" accept="image/*" id="manager-avatar-input" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
+                    />
+                    <label
+                      htmlFor="manager-avatar-input"
+                      className={`group relative inline-flex rounded-full cursor-pointer ${uploadingAvatar ? 'opacity-50 pointer-events-none' : ''}`}
+                      style={{ width: 56, height: 56 }}
+                    >
+                      {renderAvatar(form, 56)}
+                      <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 flex items-center justify-center transition-colors">
+                        <Pencil size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                       {form.manager_avatar_url && (
-                        <button onClick={handleRemoveAvatar} className="text-[12px] text-red-600 hover:underline">Xóa ảnh</button>
+                        <button
+                          type="button"
+                          onClick={e => { e.preventDefault(); e.stopPropagation(); handleRemoveAvatar(); }}
+                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                          title="Xóa ảnh"
+                        >
+                          <X size={11} />
+                        </button>
                       )}
-                    </div>
+                    </label>
                   </Field>
                   <Field label="Khu vực phụ trách (liên kết KH)">
                     <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Tên khu vực phụ trách của chi nhánh" />
