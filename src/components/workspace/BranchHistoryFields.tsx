@@ -23,6 +23,25 @@ const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 const inputCls = "w-full text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-2 bg-[#FAFAF8] text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors resize-y min-h-[64px]"
 
+const FIELD_META: Record<string, { icon: typeof Activity; color: string }> = {
+  'Tình trạng': { icon: Activity, color: 'text-blue-500' },
+  'Khó khăn': { icon: AlertTriangle, color: 'text-amber-500' },
+  'Cơ hội': { icon: TrendingUp, color: 'text-emerald-500' },
+}
+
+// Tách goal_note dạng "Tình trạng: ... Khó khăn: ... Cơ hội: ..." (nối bằng \n)
+// thành từng mục riêng để hiển thị mỗi mục 1 dòng.
+function parseGoalNote(note: string): { label: string; text: string }[] | null {
+  const re = /(Tình trạng|Khó khăn|Cơ hội): /g
+  const matches = [...note.matchAll(re)]
+  if (!matches.length) return null
+  return matches.map((m, i) => {
+    const start = m.index! + m[0].length
+    const end = i + 1 < matches.length ? matches[i + 1].index! : note.length
+    return { label: m[1], text: note.slice(start, end).trim() }
+  })
+}
+
 export function todayStr(): string {
   return new Date().toISOString().split('T')[0]
 }
@@ -131,12 +150,32 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
           </div>
         </div>
         {isExpanded && (
-          <div className="px-2.5 pb-1.5">
-            <div className="text-[11px] text-[#666]">
-              {h.goal_note || (h.goal_type ? GOAL_TYPE_LABELS[h.goal_type] : '—')}
-            </div>
+          <div className="px-2.5 pb-2 flex flex-col gap-1.5">
+            {(() => {
+              const fields = h.goal_note ? parseGoalNote(h.goal_note) : null
+              if (fields) {
+                return fields.filter(f => f.text).map(f => {
+                  const meta = FIELD_META[f.label]
+                  const Icon = meta?.icon
+                  return (
+                    <div key={f.label} className="flex items-start gap-1.5 bg-white border border-[#F0EFEB] rounded-md px-2 py-1.5">
+                      {Icon && <Icon size={12} className={`${meta.color} mt-[1px] shrink-0`} />}
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-semibold text-[#999] uppercase tracking-wide">{f.label}</div>
+                        <div className="text-[11px] text-[#444] mt-0.5 whitespace-pre-line break-words">{f.text}</div>
+                      </div>
+                    </div>
+                  )
+                })
+              }
+              return (
+                <div className="text-[11px] text-[#666]">
+                  {h.goal_note || (h.goal_type ? GOAL_TYPE_LABELS[h.goal_type] : '—')}
+                </div>
+              )
+            })()}
             {h.outcome_note && (
-              <div className="text-[11px] text-[#888] mt-1 bg-white border border-[#F0EFEB] rounded-md px-2 py-1">
+              <div className="text-[11px] text-[#888] bg-white border border-[#F0EFEB] rounded-md px-2 py-1">
                 {h.outcome_note}
               </div>
             )}
