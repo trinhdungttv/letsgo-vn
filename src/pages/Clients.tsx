@@ -88,6 +88,34 @@ export default function Clients({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [showExport, setShowExport] = useState(false);
+  const [quickNote, setQuickNote] = useState<{ client: Client; x: number; y: number } | null>(null);
+  const [quickNoteText, setQuickNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+
+  const saveQuickNote = async () => {
+    if (!quickNote || !quickNoteText.trim()) { setQuickNote(null); return; }
+    setSavingNote(true);
+    try {
+      const newNotes = quickNote.client.notes
+        ? quickNote.client.notes + '\n' + quickNoteText.trim()
+        : quickNoteText.trim();
+      const { error } = await supabase.from('clients').update({ notes: newNotes, updated_at: new Date().toISOString() }).eq('id', quickNote.client.id);
+      if (error) throw error;
+      onClientUpdate({ ...quickNote.client, notes: newNotes });
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: quickNote.client.id,
+        description: `Ghi chú nhanh cho "${quickNote.client.name}": ${quickNoteText.trim()}`,
+        oldData: quickNote.client, newData: { ...quickNote.client, notes: newNotes },
+      });
+      toast('Đã lưu ghi chú ✓');
+      setQuickNote(null);
+      setQuickNoteText('');
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setSavingNote(false);
+    }
+  };
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -885,7 +913,7 @@ export default function Clients({
                   return (
                     <tr key={c.id}
                       onClick={() => onSelectClient(c.id)}
-                      className={`cursor-pointer border-b border-[#F0EEE9] last:border-0 transition-colors ${underMin ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-[#F9F9F7]'}`}>
+                      className={`group cursor-pointer border-b border-[#F0EEE9] last:border-0 transition-colors ${underMin ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-[#F9F9F7]'}`}>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
                           {underMin && <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />}
@@ -893,6 +921,17 @@ export default function Clients({
                             <div className="font-semibold text-[13px] flex items-center gap-1.5">
                               {c.name}
                               <ChurnBadge level={churnLevel} />
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setQuickNote({ client: c, x: e.clientX, y: e.clientY });
+                                  setQuickNoteText('');
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"
+                                title="Ghi chú nhanh"
+                              >
+                                📝
+                              </button>
                             </div>
                             {c.notes && <div className="text-[11px] text-[#aaa] font-normal truncate max-w-[160px]">{c.notes}</div>}
                           </div>
@@ -1468,6 +1507,38 @@ export default function Clients({
               <button onClick={handleAddZone} disabled={savingZone || !newZoneName.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50">
                 <Plus className="w-3.5 h-3.5" /> {savingZone ? 'Đang lưu...' : 'Thêm & gán'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Note Popup */}
+      {quickNote && (
+        <div
+          className="fixed z-[200] bg-white border border-[#E8E7E2] rounded-xl shadow-xl p-3 w-[260px]"
+          style={{ top: Math.min(quickNote.y, window.innerHeight - 200), left: Math.min(quickNote.x, window.innerWidth - 280) }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11.5px] font-semibold text-[#111] truncate max-w-[180px]">{quickNote.client.name}</span>
+            <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Quick Note</span>
+          </div>
+          <textarea
+            autoFocus
+            value={quickNoteText}
+            onChange={e => setQuickNoteText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveQuickNote(); }
+              if (e.key === 'Escape') { setQuickNote(null); setQuickNoteText(''); }
+            }}
+            placeholder="Ghi chú nhanh... (Enter để lưu, Shift+Enter xuống dòng)"
+            className="w-full text-[11.5px] border border-gray-200 rounded-lg p-2 outline-none focus:border-blue-400 resize-none h-[70px]"
+          />
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-[9.5px] text-gray-400">Shift+Enter xuống dòng</span>
+            <div className="flex gap-1.5">
+              <button onClick={() => { setQuickNote(null); setQuickNoteText(''); }} className="px-2 py-1 text-[11px] rounded border border-gray-200 text-gray-500 hover:bg-gray-50">Hủy</button>
+              <button onClick={saveQuickNote} disabled={savingNote || !quickNoteText.trim()} className="px-2 py-1 text-[11px] rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{savingNote ? '...' : 'Lưu'}</button>
             </div>
           </div>
         </div>
