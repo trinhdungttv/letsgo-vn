@@ -52,6 +52,7 @@ export default function Clients({
   onSelectClient, onAddClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
+  const [quickFilter, setQuickFilter] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [columns, setColumns] = useState(loadColumnSettings);
   const { user } = useAuth();
@@ -98,7 +99,20 @@ export default function Clients({
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
-    return matchRegion && matchManager && matchZones && matchSearch;
+    if (!matchRegion || !matchManager || !matchZones || !matchSearch) return false;
+    if (quickFilter === 'expiring') {
+      const d = Math.round((new Date(c.contract_end || '').getTime() - Date.now()) / 86400000);
+      return d >= 0 && d <= 30;
+    }
+    if (quickFilter === 'unpaid') return (c.prog_cutoff || false) && !(c.paid_this_month || false);
+    if (quickFilter === 'shortage') return (c.min_workers || 0) > 0 && (c.current_workers || 0) < (c.min_workers || 0);
+    if (quickFilter === 'churn') {
+      const hist = (laborHistory[c.id] || [])
+        .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
+        .slice(-6).map(h => h.count);
+      return detectChurnRisk(hist) !== null;
+    }
+    return true;
   });
 
   const bulkClients = useMemo(() => {
@@ -693,6 +707,31 @@ export default function Clients({
           <FilterDropdown label="Khu công nghiệp" options={zoneNames} selected={activeZones} onChange={setActiveZones} />
           <FilterDropdown label="Chi nhánh" options={regionNames} selected={activeRegion} onChange={onRegionChange} />
           <FilterDropdown label="Quản lý" options={managerNames} selected={activeManagers} onChange={setActiveManagers} />
+          <div className="flex gap-1.5 ml-auto flex-wrap">
+            {[
+              { key: 'expiring', label: '⏰ Sắp hết HĐ', count: expiringCount },
+              { key: 'unpaid',   label: '💸 Chưa TT',    count: unpaidCount },
+              { key: 'shortage', label: '👷 Thiếu LĐ',   count: activeClients.filter(c => (c.min_workers||0) > 0 && (c.current_workers||0) < (c.min_workers||0)).length },
+              { key: 'churn',    label: '🚨 Churn Risk',  count: churnClients.length },
+            ].map(f => (
+              <button
+                key={f.key}
+                onClick={() => setQuickFilter(quickFilter === f.key ? null : f.key)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border transition ${
+                  quickFilter === f.key
+                    ? 'bg-[#1D4ED8] text-white border-[#1D4ED8]'
+                    : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:border-blue-300 hover:text-blue-600'
+                }`}
+              >
+                {f.label}
+                {f.count > 0 && (
+                  <span className={`text-[10px] font-bold px-1 rounded-full ${quickFilter === f.key ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                    {f.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
