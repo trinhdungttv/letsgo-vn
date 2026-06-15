@@ -9,6 +9,7 @@ import { usePersistedState } from '../../hooks/usePersistedState'
 import type { Client, WorkTask, TaskStatus, Branch } from '../../lib/types'
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
+import { todayStr } from './BranchHistoryFields'
 import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
 
@@ -154,9 +155,11 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       .order('priority_date', { ascending: false })
       .then(({ data }) => {
         if (!data) return
+        const today = todayStr()
         const map: Record<string, string> = {}
         for (const row of data) {
-          if (row.target_name && !map[row.target_name]) map[row.target_name] = row.priority_date
+          if (!row.target_name || row.priority_date > today) continue
+          if (!map[row.target_name] || row.priority_date > map[row.target_name]) map[row.target_name] = row.priority_date
         }
         setBranchActivity(map)
       })
