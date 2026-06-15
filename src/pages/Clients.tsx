@@ -174,6 +174,28 @@ export default function Clients({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const filtered = clients.filter(c => {
+    if (c.archived_at) return false;
+    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
+    const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
+    const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
+    const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
+    if (!matchRegion || !matchManager || !matchZones || !matchSearch) return false;
+    if (quickFilter === 'expiring') {
+      const d = Math.round((new Date(c.contract_end || '').getTime() - Date.now()) / 86400000);
+      return d >= 0 && d <= 30;
+    }
+    if (quickFilter === 'unpaid') return (c.prog_cutoff || false) && !(c.paid_this_month || false);
+    if (quickFilter === 'shortage') return (c.min_workers || 0) > 0 && (c.current_workers || 0) < (c.min_workers || 0);
+    if (quickFilter === 'churn') {
+      const hist = (laborHistory[c.id] || [])
+        .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
+        .slice(-6).map(h => h.count);
+      return detectChurnRisk(hist) !== null;
+    }
+    return true;
+  });
+
   const exportToCSV = useCallback(() => {
     const headers = ['Tên công ty','Chi nhánh','Quản lý','KCN','LĐ hiện tại','LĐ tối thiểu','Trạng thái','Hết HĐ'];
     const rows = filtered.map(c => [
@@ -223,28 +245,6 @@ export default function Clients({
   const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
   const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
-
-  const filtered = clients.filter(c => {
-    if (c.archived_at) return false;
-    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
-    const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
-    const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
-    const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
-    if (!matchRegion || !matchManager || !matchZones || !matchSearch) return false;
-    if (quickFilter === 'expiring') {
-      const d = Math.round((new Date(c.contract_end || '').getTime() - Date.now()) / 86400000);
-      return d >= 0 && d <= 30;
-    }
-    if (quickFilter === 'unpaid') return (c.prog_cutoff || false) && !(c.paid_this_month || false);
-    if (quickFilter === 'shortage') return (c.min_workers || 0) > 0 && (c.current_workers || 0) < (c.min_workers || 0);
-    if (quickFilter === 'churn') {
-      const hist = (laborHistory[c.id] || [])
-        .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
-        .slice(-6).map(h => h.count);
-      return detectChurnRisk(hist) !== null;
-    }
-    return true;
-  });
 
   const bulkClients = useMemo(() => {
     return clients
