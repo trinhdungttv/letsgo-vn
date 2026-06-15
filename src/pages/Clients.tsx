@@ -666,7 +666,7 @@ export default function Clients({
                   const hs = calcHealthScore({
                     currentWorkers: c.current_workers || 0,
                     minWorkers: c.min_workers || 0,
-                    paidThisMonth: false,
+                    paidThisMonth: c.paid_this_month || false,
                     progCutoff: c.prog_cutoff || false,
                     contractEnd: c.contract_end || '',
                     lastContactDate: '',
@@ -863,7 +863,7 @@ export default function Clients({
                               progCutoff={c.prog_cutoff || false}
                               progCalc={c.prog_calc || false}
                               progPaid={c.prog_paid || false}
-                              paidThisMonth={false}
+                              paidThisMonth={c.paid_this_month || false}
                             />
                           </div>
                         </td>
