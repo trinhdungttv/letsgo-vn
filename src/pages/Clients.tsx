@@ -113,6 +113,36 @@ export default function Clients({
     return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)];
   }, [bulkExtraWeeks]);
 
+  const activeClients = clients.filter(c => !c.archived_at);
+  const totalWorkers = activeClients.reduce((s, c) => s + (c.current_workers || 0), 0);
+  const expiringCount = activeClients.filter(c => {
+    if (!c.contract_end) return false;
+    const d = Math.round((new Date(c.contract_end).getTime() - Date.now()) / 86400000);
+    return d >= 0 && d <= 30;
+  }).length;
+  const churnClients = activeClients.filter(c => {
+    const hist = (laborHistory[c.id] || [])
+      .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
+      .slice(-6).map(h => h.count);
+    return detectChurnRisk(hist) !== null;
+  });
+  const unpaidCount = activeClients.filter(c => c.prog_cutoff && !c.paid_this_month).length;
+  const allScores = activeClients.map(c => {
+    const hist = (laborHistory[c.id] || [])
+      .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
+      .slice(-6).map(h => h.count);
+    return calcHealthScore({
+      currentWorkers: c.current_workers || 0,
+      minWorkers: c.min_workers || 0,
+      paidThisMonth: c.paid_this_month || false,
+      progCutoff: c.prog_cutoff || false,
+      contractEnd: c.contract_end || '',
+      lastContactDate: '',
+      workerHistory: hist,
+    }).total;
+  });
+  const avgHealth = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
+
   const openBulkLabor = () => {
     setBulkWeek(getCurrentWeekLabel());
     setBulkExtraWeeks(0);
@@ -613,7 +643,51 @@ export default function Clients({
           </div>
         }
       />
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto">
+        {/* Churn Banner */}
+        {churnClients.length > 0 && (
+          <div className="flex items-center gap-2 px-5 py-2 bg-red-50 border-b border-red-200 text-[11.5px]">
+            <span className="text-red-600 font-semibold">⚠ Churn Risk:</span>
+            <span className="text-red-700 font-medium">{churnClients.slice(0, 3).map(c => c.name).join(', ')}{churnClients.length > 3 ? ` +${churnClients.length - 3} khác` : ''}</span>
+            <span className="text-gray-500">— lao động giảm liên tiếp. Cần xử lý ngay.</span>
+          </div>
+        )}
+
+        {/* KPI Cards */}
+        <div className="flex gap-2 px-5 py-3 border-b border-[#E8E7E2] bg-white overflow-x-auto">
+          <div className="flex-1 min-w-[120px] bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Tổng KH Active</div>
+            <div className="text-[20px] font-bold text-[#0c2340] leading-tight mt-1">{activeClients.length}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">công ty</div>
+          </div>
+          <div className="flex-1 min-w-[120px] bg-[#EFF6FF] border border-[#BFDBFE] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Tổng Lao Động</div>
+            <div className="text-[20px] font-bold text-[#1D4ED8] leading-tight mt-1">{totalWorkers.toLocaleString()}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">lao động</div>
+          </div>
+          <div className="flex-1 min-w-[120px] bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Health Score TB</div>
+            <div className="text-[20px] font-bold leading-tight mt-1" style={{ color: avgHealth >= 75 ? '#059669' : avgHealth >= 50 ? '#D97706' : '#DC2626' }}>{avgHealth}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">trên 100 điểm</div>
+          </div>
+          <div className="flex-1 min-w-[120px] bg-[#FFFBEB] border border-[#FDE68A] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">HĐ Sắp Hết Hạn</div>
+            <div className="text-[20px] font-bold text-[#D97706] leading-tight mt-1">{expiringCount}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">trong 30 ngày</div>
+          </div>
+          <div className="flex-1 min-w-[120px] bg-[#FFF5F5] border border-[#FECACA] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Churn Risk</div>
+            <div className="text-[20px] font-bold text-[#DC2626] leading-tight mt-1">{churnClients.length}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">cần xử lý</div>
+          </div>
+          <div className="flex-1 min-w-[120px] bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2">
+            <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Chưa Thanh Toán</div>
+            <div className="text-[20px] font-bold text-[#DC2626] leading-tight mt-1">{unpaidCount}</div>
+            <div className="text-[10px] text-[#9CA3AF] mt-0.5">tháng này</div>
+          </div>
+        </div>
+
+        <div className="p-5">
         {/* Filters: Khu công nghiệp - Chi nhánh - Quản lý */}
         <div className="flex flex-wrap gap-2 mb-3 items-center">
           <FilterDropdown label="Khu công nghiệp" options={zoneNames} selected={activeZones} onChange={setActiveZones} />
@@ -908,6 +982,7 @@ export default function Clients({
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       </div>
 
