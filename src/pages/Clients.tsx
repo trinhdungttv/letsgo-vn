@@ -649,6 +649,15 @@ export default function Clients({
     }
   };
 
+  const branchColor: Record<string, string> = {
+    'Bình Dương': '#1D4ED8',
+    'Đồng Nai':   '#D97706',
+    'HCMC':       '#7C3AED',
+    'Bàu Bàng':   '#059669',
+    'HCM':        '#7C3AED',
+    'TP.HCM':     '#7C3AED',
+  };
+  const getBranchColor = (region: string | null) => branchColor[region || ''] || '#6B7280';
   const col = (key: ColumnKey) => columns[key] !== false;
 
   return (
@@ -883,9 +892,17 @@ export default function Clients({
                                 const m = managers.find(mg => mg.name === c.manager);
                                 setSelectedManager(m || { id: c.manager as string, name: c.manager as string, phone: null, email: null, region: null, created_at: '' });
                               }}
-                              className="text-blue-600 hover:underline"
+                              className="flex items-center gap-1.5 hover:opacity-80 transition"
                             >
-                              {c.manager}
+                              <div style={{
+                                width: 22, height: 22, borderRadius: '50%',
+                                background: getBranchColor(c.region || null),
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#fff', fontSize: 9, fontWeight: 700, flexShrink: 0,
+                              }}>
+                                {(c.manager || '').split(' ').pop()?.[0] || '?'}
+                              </div>
+                              <span className="text-blue-600 text-[12px]">{c.manager}</span>
                             </button>
                           ) : '—'}
                         </td>
