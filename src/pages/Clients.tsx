@@ -798,6 +798,7 @@ export default function Clients({
                   {col('contract_end') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Hết HĐ</th>}
                   {col('progress') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Tiến độ</th>}
                   {col('status') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">TT</th>}
+                  <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Margin</th>
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Health</th>
                   {isAdmin && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap"></th>}
                 </tr>
@@ -1051,6 +1052,18 @@ export default function Clients({
                           )}
                         </td>
                       )}
+                      <td className="px-3 py-2">
+                        {(() => {
+                          const margin = (c as any).margin;
+                          if (margin == null) return <span className="text-[11px] text-gray-300">—</span>;
+                          const color = margin >= 15 ? '#059669' : margin >= 10 ? '#D97706' : '#DC2626';
+                          return (
+                            <span style={{ color, fontWeight: 700, fontSize: 12 }}>
+                              {margin}%
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td className="px-3 py-2">
                         <HealthScoreRing score={hs.total} />
                       </td>
