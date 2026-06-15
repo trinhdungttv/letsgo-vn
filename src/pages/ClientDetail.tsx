@@ -15,6 +15,7 @@ import { useManagers } from '../hooks/useManagers';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
+import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
@@ -1194,6 +1195,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             </div>
           )}
         </div>
+
+        <PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} />
 
         {/* Documents */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">

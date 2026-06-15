@@ -4,6 +4,7 @@ import PageHeader from '../components/PageHeader';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
 import OverheadTab from '../components/finance/OverheadTab';
 import PerformanceTab from '../components/finance/PerformanceTab';
+import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -15,7 +16,7 @@ import { useFinanceData } from '../hooks/useFinanceData';
 import { usePersistedState } from '../hooks/usePersistedState';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 
-type WorkspaceTab = 'clients' | 'pnl' | 'overhead' | 'performance';
+type WorkspaceTab = 'clients' | 'pnl' | 'overhead' | 'performance' | 'payment';
 
 const todayFull = new Date();
 const todayStr = todayFull.toISOString().split('T')[0];
@@ -253,6 +254,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'performance' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
               >
                 Hiệu suất CN
+              </button>
+              <button
+                onClick={() => setActiveTab('payment')}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'payment' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+              >
+                💰 Lịch Thu Tiền
               </button>
             </div>
           </div>
@@ -597,6 +604,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             overhead={finData.overhead}
             clients={clients}
             onLoadCosts={finData.loadPnlCosts}
+          />
+        )}
+
+        {activeTab === 'payment' && (
+          <PaymentCalendarTab
+            clients={clients}
+            onUpdateClient={onClientUpdate}
+            toast={toast}
           />
         )}
       </div>

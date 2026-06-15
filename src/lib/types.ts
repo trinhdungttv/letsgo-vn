@@ -59,6 +59,18 @@ export interface Client {
   email: string | null;
   prospect_status: 'lead' | 'prospect' | 'customer' | 'churned' | null;
   archived_at: string | null;
+  payment_group?: number;
+  payment_days?: number;
+  payment_wday?: boolean;
+  payment_holiday?: string;
+  payment_fixed_day?: number;
+  payment_cutoff?: number;
+  payment_weekday?: string;
+  payment_ca_from?: number;
+  payment_ca_to?: number;
+  payment_cb_from?: number;
+  payment_cb_to?: number;
+  invoice_date?: string;
 }
 
 export interface AiChatMessage {
