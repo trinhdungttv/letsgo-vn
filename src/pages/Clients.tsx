@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
@@ -86,6 +86,37 @@ export default function Clients({
   const [bulkSaving, setBulkSaving] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const [showExport, setShowExport] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setShowExport(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const exportToCSV = useCallback(() => {
+    const headers = ['Tên công ty','Chi nhánh','Quản lý','KCN','LĐ hiện tại','LĐ tối thiểu','Trạng thái','Hết HĐ'];
+    const rows = filtered.map(c => [
+      c.name, c.region || '', c.manager || '',
+      (c.industrial_zones || []).join(', '),
+      c.current_workers || 0, c.min_workers || 0,
+      c.status || '', c.contract_end || '',
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `khach-hang-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    setShowExport(false);
+    toast('Đã xuất file CSV ✓');
+  }, [filtered, toast]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -683,6 +714,27 @@ export default function Clients({
             <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50" title="Import danh sách khách hàng từ Excel">
               <FileUp size={13} /> {isImporting ? 'Đang nhập...' : 'Import Excel'}
             </button>
+            <div ref={exportRef} className="relative">
+              <button
+                onClick={() => setShowExport(v => !v)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition"
+              >
+                <FileDown size={13} /> Xuất ▾
+              </button>
+              {showExport && (
+                <div className="absolute right-0 top-full mt-1 bg-white border border-[#E8E7E2] rounded-lg shadow-lg w-[180px] z-50 overflow-hidden">
+                  <button onClick={exportToCSV} className="flex items-center gap-2 w-full px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50 transition">
+                    📊 CSV — Danh sách KH
+                  </button>
+                  <button onClick={() => { toast('Tính năng xuất Excel đang phát triển'); setShowExport(false); }} className="flex items-center gap-2 w-full px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50 transition">
+                    📁 Excel — Đầy đủ dữ liệu
+                  </button>
+                  <button onClick={() => { toast('Tính năng xuất PDF đang phát triển'); setShowExport(false); }} className="flex items-center gap-2 w-full px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50 transition">
+                    📄 PDF — Báo cáo tháng
+                  </button>
+                </div>
+              )}
+            </div>
             <button onClick={openBulkLabor} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh số lao động cho nhiều công ty">
               <ClipboardList size={13} /> Nhập nhanh LĐ
             </button>
