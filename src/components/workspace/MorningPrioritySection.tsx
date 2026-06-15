@@ -149,14 +149,14 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
     if (!regions.length) return
     supabase
       .from('morning_priorities')
-      .select('target_client, priority_date')
-      .in('target_client', regions.map(r => `Chi nhánh ${r.name}`))
+      .select('target_name, priority_date')
+      .in('target_name', regions.map(r => `Chi nhánh ${r.name}`))
       .order('priority_date', { ascending: false })
       .then(({ data }) => {
         if (!data) return
         const map: Record<string, string> = {}
         for (const row of data) {
-          if (row.target_client && !map[row.target_client]) map[row.target_client] = row.priority_date
+          if (row.target_name && !map[row.target_name]) map[row.target_name] = row.priority_date
         }
         setBranchActivity(map)
       })
@@ -224,14 +224,19 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       difficulties: panelForm.difficulties ?? null,
       opportunities: panelForm.opportunities ?? null,
     }
-    await updateBranch(openBranchPanel.id, fields)
-    if (openBranchPanel.region) {
-      await recordBranchUpdateSession(user.id, openBranchPanel.region, fields, panelRecordDate)
-      setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${openBranchPanel.region}`]: panelRecordDate }))
+    try {
+      await updateBranch(openBranchPanel.id, fields)
+      if (openBranchPanel.region) {
+        await recordBranchUpdateSession(user.id, openBranchPanel.region, fields, panelRecordDate)
+        setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${openBranchPanel.region}`]: panelRecordDate }))
+      }
+      setOpenBranchPanel(null)
+      setPanelRecordDate(todayStr())
+    } catch (e) {
+      alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setPanelSaving(false)
     }
-    setPanelSaving(false)
-    setOpenBranchPanel(null)
-    setPanelRecordDate(todayStr())
   }
 
   async function saveSelectedTasks() {

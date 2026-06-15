@@ -9,6 +9,27 @@ import { formatDate } from '../../lib/format';
 import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
 
+function normalizeZoneName(s: string): string {
+  return s
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
   total_companies: '', total_workers: '', occupancy_pct: '', labor_availability: 'Trung bình', characteristics: '',
@@ -64,11 +85,28 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddZone = async () => {
-    if (!addForm.name.trim()) { toast('Nhập tên khu vực'); return; }
+    const name = addForm.name.trim();
+    if (!name) { toast('Nhập tên khu vực'); return; }
+
+    const normalizedNew = normalizeZoneName(name);
+    const exactDup = marketZones.find(z => normalizeZoneName(z.name) === normalizedNew);
+    if (exactDup) {
+      toast(`Tên "${name}" đã tồn tại (trùng với "${exactDup.name}") — vui lòng đặt tên khác`);
+      return;
+    }
+    const similar = marketZones.find(z => {
+      const n = normalizeZoneName(z.name);
+      return levenshtein(n, normalizedNew) <= 2;
+    });
+    if (similar) {
+      const proceed = confirm(`Tên "${name}" gần giống với khu vực đã có "${similar.name}". Bạn có chắc đây không phải trùng lặp và muốn tạo khu vực mới?`);
+      if (!proceed) return;
+    }
+
     setSaving(true);
     try {
       const { data, error } = await supabase.from('market_zones').insert({
-        name: addForm.name.trim(),
+        name,
         full_name: addForm.full_name || null,
         location: addForm.location || null,
         operator: addForm.operator || null,
@@ -83,14 +121,20 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
       if (error) throw error;
       await logActivity({
         user, action: 'insert', table: 'market_zones', recordId: data.id,
-        description: `Thêm hồ sơ khu vực "${addForm.name.trim()}"`,
+        description: `Thêm hồ sơ khu vực "${name}"`,
         newData: data,
       });
       await onRefresh();
       setShowAdd(false);
       setAddForm(emptyAddForm);
       toast('Đã tạo hồ sơ khu vực!');
-    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    } catch (e: any) {
+      if (e.message?.includes('duplicate key value violates unique constraint')) {
+        toast(`Tên "${name}" đã tồn tại — vui lòng đặt tên khác`);
+      } else {
+        toast('Lỗi: ' + e.message);
+      }
+    }
     setSaving(false);
   };
 

@@ -535,7 +535,7 @@ export interface MorningPriority {
   id: string
   user_id: string
   priority_date: string          // 'YYYY-MM-DD'
-  target_client: string | null
+  target_name: string | null
   target_kcn: string | null
   goal_type: GoalType | null
   goal_note: string | null

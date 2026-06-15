@@ -44,26 +44,29 @@ export async function recordBranchUpdateSession(
   if (fields.opportunities?.trim()) parts.push(`Cơ hội: ${fields.opportunities.trim()}`)
   const goal_note = parts.join('\n') || 'Cập nhật thông tin chi nhánh'
 
-  const { data: existing } = await supabase
+  const { data: existing, error: selectError } = await supabase
     .from('morning_priorities')
     .select('id')
-    .eq('target_client', target)
+    .eq('target_name', target)
     .eq('priority_date', priority_date)
     .maybeSingle()
+  if (selectError) throw selectError
 
   if (existing) {
-    await supabase.from('morning_priorities').update({ goal_note, goal_type: 'cap_nhat', updated_at: new Date().toISOString() }).eq('id', existing.id)
+    const { error } = await supabase.from('morning_priorities').update({ goal_note, goal_type: 'cap_nhat', updated_at: new Date().toISOString() }).eq('id', existing.id)
+    if (error) throw error
   } else {
-    await supabase.from('morning_priorities').insert({
+    const { error } = await supabase.from('morning_priorities').insert({
       user_id: userId,
       priority_date,
-      target_client: target,
+      target_name: target,
       target_kcn: null,
       goal_type: 'cap_nhat',
       goal_note,
       outcome_note: null,
       outcome_status: null,
     })
+    if (error) throw error
   }
 }
 
@@ -97,7 +100,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
     supabase
       .from('morning_priorities')
       .select('*')
-      .eq('target_client', `Chi nhánh ${branch.region}`)
+      .eq('target_name', `Chi nhánh ${branch.region}`)
       .order('priority_date', { ascending: false })
       .limit(20)
       .then(({ data }) => setHistory((data || []) as MorningPriority[]))
