@@ -147,21 +147,22 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
-          <History size={12} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      {/* Cột trái: Lịch sử trao đổi */}
+      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa] flex flex-col">
+        <div className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
+          <History size={12} className="text-[#888]" />
           Lịch sử trao đổi công việc
         </div>
 
         {history.length === 0 ? (
-          <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg">
+          <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
             Chưa có lịch sử trao đổi
           </div>
         ) : (
           <>
             {/* Lịch tháng hiện tại — ngày có phiên trao đổi tô xanh, hôm nay viền đỏ */}
-            <div className="border border-[#E8E7E2] rounded-lg p-2 mb-2">
+            <div className="border border-[#E8E7E2] rounded-lg p-2 mb-2 bg-white">
               <div className="grid grid-cols-7 gap-1 mb-1">
                 {WEEKDAY_LABELS.map(d => (
                   <div key={d} className="text-[9px] text-center text-[#bbb] font-medium">{d}</div>
@@ -205,57 +206,62 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
         )}
       </div>
 
-      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
-        <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-          <CalendarDays size={12} className="text-[#888]" />
-          Ngày ghi nhận phiên cập nhật này
-        </label>
-        <input
-          type="date"
-          value={recordDate}
-          onChange={e => onRecordDateChange(e.target.value)}
-          className="text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400"
-        />
-        <div className="text-[10px] text-[#aaa] mt-1">
-          Hệ thống tự chọn ngày hôm nay — đổi lại nếu bạn đang ghi nhận cho 1 ngày khác. Khi bấm Lưu, nội dung 3 ô dưới sẽ thành 1 dòng lịch sử cho ngày này.
+      {/* Cột phải: Ghi nhận phiên hôm nay */}
+      <div className="border border-[#E8E7E2] rounded-lg bg-white flex flex-col divide-y divide-[#F0EFEB]">
+        <div className="p-2.5">
+          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
+            <CalendarDays size={12} className="text-[#888]" />
+            Ngày ghi nhận phiên này
+          </label>
+          <input
+            type="date"
+            value={recordDate}
+            onChange={e => onRecordDateChange(e.target.value)}
+            className="text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-1.5 bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white"
+          />
+          <div className="text-[10px] text-[#aaa] mt-1">
+            Nội dung 3 ô dưới sẽ thành 1 dòng lịch sử cho ngày này khi bấm Lưu.
+          </div>
         </div>
-      </div>
 
-      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-white">
-        <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-          <Activity size={12} className="text-blue-500" />
-          Tình trạng hiện tại
-        </label>
-        <textarea
-          value={branch.status_note || ''}
-          onChange={e => onChange({ status_note: e.target.value })}
-          placeholder="Tình trạng hoạt động hiện tại của chi nhánh..."
-          className={inputCls}
-        />
-      </div>
-      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-white">
-        <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-          <AlertTriangle size={12} className="text-amber-500" />
-          Khó khăn
-        </label>
-        <textarea
-          value={branch.difficulties || ''}
-          onChange={e => onChange({ difficulties: e.target.value })}
-          placeholder="Những khó khăn chi nhánh đang gặp phải..."
-          className={inputCls}
-        />
-      </div>
-      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-white">
-        <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-          <TrendingUp size={12} className="text-emerald-500" />
-          Cơ hội
-        </label>
-        <textarea
-          value={branch.opportunities || ''}
-          onChange={e => onChange({ opportunities: e.target.value })}
-          placeholder="Cơ hội phát triển / mở rộng tại chi nhánh..."
-          className={inputCls}
-        />
+        <div className="p-2.5">
+          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
+            <Activity size={12} className="text-blue-500" />
+            Tình trạng hiện tại
+          </label>
+          <textarea
+            value={branch.status_note || ''}
+            onChange={e => onChange({ status_note: e.target.value })}
+            placeholder="Tình trạng hoạt động hiện tại của chi nhánh..."
+            className={inputCls}
+          />
+        </div>
+
+        <div className="p-2.5">
+          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
+            <AlertTriangle size={12} className="text-amber-500" />
+            Khó khăn
+          </label>
+          <textarea
+            value={branch.difficulties || ''}
+            onChange={e => onChange({ difficulties: e.target.value })}
+            placeholder="Những khó khăn chi nhánh đang gặp phải..."
+            className={inputCls}
+          />
+        </div>
+
+        <div className="p-2.5">
+          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
+            <TrendingUp size={12} className="text-emerald-500" />
+            Cơ hội
+          </label>
+          <textarea
+            value={branch.opportunities || ''}
+            onChange={e => onChange({ opportunities: e.target.value })}
+            placeholder="Cơ hội phát triển / mở rộng tại chi nhánh..."
+            className={inputCls}
+          />
+        </div>
       </div>
     </div>
   )
