@@ -88,6 +88,52 @@ export default function Clients({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [showExport, setShowExport] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkReassign, setShowBulkReassign] = useState(false);
+  const [bulkNewManager, setBulkNewManager] = useState('');
+  const [savingBulk, setSavingBulk] = useState(false);
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (checked: boolean) => {
+    setSelectedIds(checked ? new Set(filtered.map(c => c.id)) : new Set());
+  };
+
+  const saveBulkReassign = async () => {
+    if (!bulkNewManager) { toast('Chọn quản lý mới'); return; }
+    setSavingBulk(true);
+    try {
+      const ids = [...selectedIds];
+      const { error } = await supabase.from('clients')
+        .update({ manager: bulkNewManager, updated_at: new Date().toISOString() })
+        .in('id', ids);
+      if (error) throw error;
+      ids.forEach(id => {
+        const c = clients.find(x => x.id === id);
+        if (c) onClientUpdate({ ...c, manager: bulkNewManager });
+      });
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: ids[0],
+        description: `Chuyển ${ids.length} KH sang quản lý "${bulkNewManager}"`,
+      });
+      toast(`Đã chuyển ${ids.length} KH sang "${bulkNewManager}" ✓`);
+      setSelectedIds(new Set());
+      setShowBulkReassign(false);
+      setBulkNewManager('');
+    } catch (err: any) {
+      toast('Lỗi: ' + err.message);
+    } finally {
+      setSavingBulk(false);
+    }
+  };
+
   const [quickNote, setQuickNote] = useState<{ client: Client; x: number; y: number } | null>(null);
   const [quickNoteText, setQuickNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
@@ -773,6 +819,32 @@ export default function Clients({
         }
       />
       <div className="flex-1 overflow-y-auto">
+        {/* Bulk Action Bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 px-5 py-2 bg-blue-50 border-b border-blue-200 text-[11.5px]">
+            <span className="font-semibold text-blue-700">{selectedIds.size} KH được chọn</span>
+            <div className="w-px h-4 bg-blue-200" />
+            <button
+              onClick={() => { setShowBulkReassign(true); setBulkNewManager(''); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-50 transition"
+            >
+              👤 Chuyển Quản Lý
+            </button>
+            <button
+              onClick={exportToCSV}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-50 transition"
+            >
+              📊 Xuất CSV
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="ml-auto text-blue-400 hover:text-blue-600 transition"
+            >
+              ✕ Bỏ chọn
+            </button>
+          </div>
+        )}
+
         {/* Churn Banner */}
         {churnClients.length > 0 && (
           <div className="flex items-center gap-2 px-5 py-2 bg-red-50 border-b border-red-200 text-[11.5px]">
@@ -866,6 +938,13 @@ export default function Clients({
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-[#E8E7E2]">
+                  <th className="px-3 py-2 bg-[#F9F9F7] w-8">
+                    <input type="checkbox"
+                      checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                      onChange={e => toggleAll(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Công ty</th>
                   {col('region') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Chi Nhánh</th>}
                   {col('manager') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Quản lý</th>}
@@ -914,6 +993,13 @@ export default function Clients({
                     <tr key={c.id}
                       onClick={() => onSelectClient(c.id)}
                       className={`group cursor-pointer border-b border-[#F0EEE9] last:border-0 transition-colors ${underMin ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-[#F9F9F7]'}`}>
+                      <td className="px-3 py-2 w-8" onClick={e => toggleSelect(c.id, e)}>
+                        <input type="checkbox"
+                          checked={selectedIds.has(c.id)}
+                          onChange={() => {}}
+                          className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                        />
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
                           {underMin && <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />}
@@ -1539,6 +1625,38 @@ export default function Clients({
             <div className="flex gap-1.5">
               <button onClick={() => { setQuickNote(null); setQuickNoteText(''); }} className="px-2 py-1 text-[11px] rounded border border-gray-200 text-gray-500 hover:bg-gray-50">Hủy</button>
               <button onClick={saveQuickNote} disabled={savingNote || !quickNoteText.trim()} className="px-2 py-1 text-[11px] rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{savingNote ? '...' : 'Lưu'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Reassign Modal */}
+      {showBulkReassign && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-[14px] font-semibold">Chuyển Quản Lý</h2>
+                <p className="text-[11.5px] text-gray-500 mt-0.5">{selectedIds.size} khách hàng được chọn</p>
+              </div>
+              <button onClick={() => setShowBulkReassign(false)} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+            </div>
+            <div className="p-5">
+              <label className="text-[12px] font-medium text-gray-700 block mb-2">Quản lý mới</label>
+              <select
+                value={bulkNewManager}
+                onChange={e => setBulkNewManager(e.target.value)}
+                className="w-full text-[13px] px-3 py-2 border border-gray-300 rounded-lg outline-none focus:border-blue-400 bg-white"
+              >
+                <option value="">— Chọn quản lý —</option>
+                {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+              </select>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => setShowBulkReassign(false)} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+              <button onClick={saveBulkReassign} disabled={savingBulk || !bulkNewManager} className="flex-1 py-2 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+                {savingBulk ? 'Đang lưu...' : 'Xác nhận chuyển'}
+              </button>
             </div>
           </div>
         </div>
