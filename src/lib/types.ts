@@ -243,6 +243,28 @@ export interface Competitor {
   trend: string;
   notes: string | null;
   created_at: string;
+  total_workers?: number;
+  strengths?: string;
+  weaknesses?: string;
+  recruitment_source?: string;
+}
+
+export interface CompetitorClient {
+  id: string;
+  competitor_id: string;
+  client_name: string;
+  kcn?: string;
+  worker_count?: number;
+  relationship?: string;
+  created_at?: string;
+}
+
+export interface CompetitorLog {
+  id: string;
+  competitor_id: string;
+  note: string;
+  source?: string;
+  created_at?: string;
 }
 
 export interface MarketZone {

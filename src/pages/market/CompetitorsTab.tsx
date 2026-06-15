@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, X, Eye } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, Map, List } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
+import type { Competitor } from '../../lib/types';
+import CompetitorDetail from './CompetitorDetail';
+import KCNMap from './KCNMap';
 
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
@@ -21,6 +24,8 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
+  const [activeView, setActiveView] = useState<'list' | 'map'>('list');
 
   const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
 
@@ -68,12 +73,30 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
     setSaving(false);
   };
 
+  if (selectedCompetitor) {
+    return <CompetitorDetail competitor={selectedCompetitor} onBack={() => setSelectedCompetitor(null)} toast={toast} />;
+  }
+
   return (
     <div className="space-y-3">
       <div className="text-[11.5px] text-[#888] px-3 py-2 bg-[#F9F9F7] rounded-lg flex items-center gap-1.5">
         <Eye size={12} /> Lương trả LĐ: so với mặt bằng thị trường khu vực · Phí/công = chi phí bên họ trả mỗi ca lao động
       </div>
 
+      <div className="flex gap-1.5">
+        <button onClick={() => setActiveView('list')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${activeView === 'list' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+          <List size={13} /> Danh sách
+        </button>
+        <button onClick={() => setActiveView('map')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${activeView === 'map' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+          <Map size={13} /> Bản đồ KCN
+        </button>
+      </div>
+
+      {activeView === 'map' ? (
+        <KCNMap competitors={competitors} toast={toast} />
+      ) : (
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Nhà cung ứng đối thủ</div>
@@ -84,7 +107,7 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
-              {['Nhà cung ứng', 'Khu vực', 'Lương trả LĐ PT', 'Phí DV PT (₫)', 'Phí DV TN (₫)', 'Phí DV KTV (₫)', 'Phí/công (₫)', 'Xu hướng', 'Đang cung cấp cho'].map(h => (
+              {['Nhà cung ứng', 'Khu vực', 'Tổng LĐ', 'Lương trả LĐ PT', 'Phí DV PT (₫)', 'Phí DV TN (₫)', 'Phí DV KTV (₫)', 'Phí/công (₫)', 'Xu hướng', 'Đang cung cấp cho'].map(h => (
                 <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
               ))}
             </tr></thead>
@@ -98,10 +121,11 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
                 return (
                   <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
                     <td className="px-3 py-2">
-                      <div className="font-semibold">{c.company_name}</div>
+                      <button onClick={() => setSelectedCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
                       {c.notes && <div className={`text-[10.5px] ${c.notes.includes('⚠') ? 'text-red-500' : 'text-[#aaa]'}`}>{c.notes}</div>}
                     </td>
                     <td className="px-3 py-2 text-[11.5px]">{c.zone_name}</td>
+                    <td className="px-3 py-2">{(c.total_workers ?? 0).toLocaleString('vi-VN')}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{fmtTr(c.wage_paid)}</div>
                       {wn && <div className={`text-[10.5px] px-1.5 py-0.5 rounded inline-block mt-0.5 font-medium ${wn.cls}`}>{wn.txt}</div>}
@@ -120,12 +144,13 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
                 );
               })}
               {list.length === 0 && (
-                <tr><td colSpan={9} className="text-center py-6 text-[#aaa]">Chưa có dữ liệu đối thủ</td></tr>
+                <tr><td colSpan={10} className="text-center py-6 text-[#aaa]">Chưa có dữ liệu đối thủ</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+      )}
 
       {showAdd && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
