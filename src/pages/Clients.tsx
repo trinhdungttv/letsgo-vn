@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
@@ -84,6 +84,32 @@ export default function Clients({
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION]);
   const [bulkSaving, setBulkSaving] = useState(false);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (['INPUT','TEXTAREA','SELECT'].includes(tag)) {
+        if (e.key === 'Escape') (e.target as HTMLElement).blur();
+        return;
+      }
+      if (e.key === '/') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        onAddClient();
+      }
+      if (e.key === 'Escape') {
+        setQuickFilter(null);
+        setSearch('');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onAddClient]);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
@@ -701,6 +727,13 @@ export default function Clients({
           </div>
         </div>
 
+        {/* Keyboard shortcut hint */}
+        <div className="flex items-center gap-4 px-5 py-1.5 bg-[#F9F9F7] border-b border-[#E8E7E2] text-[10px] text-[#9CA3AF]">
+          <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">/</kbd> Tìm kiếm</span>
+          <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">N</kbd> Thêm KH</span>
+          <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">Esc</kbd> Xóa filter</span>
+        </div>
+
         <div className="p-5">
         {/* Filters: Khu công nghiệp - Chi nhánh - Quản lý */}
         <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -737,8 +770,8 @@ export default function Clients({
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2]">
             <span className="text-[12.5px] font-semibold text-[#111]">Danh sách ({filtered.length})</span>
-            <input type="text" placeholder="Tìm kiếm..." value={search} onChange={e => setSearch(e.target.value)}
-              className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-[200px] outline-none focus:border-blue-500" />
+            <input ref={searchInputRef} type="text" placeholder="Tìm kiếm... (/ để focus)" value={search} onChange={e => setSearch(e.target.value)}
+              className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-[220px] outline-none focus:border-blue-500" />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
