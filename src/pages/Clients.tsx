@@ -13,6 +13,10 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { HealthScoreRing } from '../components/clients/HealthScoreRing';
+import { ChurnBadge } from '../components/clients/ChurnBadge';
+import { CycleTrack } from '../components/clients/CycleTrack';
+import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
 
 interface ClientsProps {
   clients: Client[];
@@ -639,6 +643,7 @@ export default function Clients({
                   {col('contract_end') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Hết HĐ</th>}
                   {col('progress') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Tiến độ</th>}
                   {col('status') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">TT</th>}
+                  <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Health</th>
                   {isAdmin && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap"></th>}
                 </tr>
               </thead>
@@ -653,6 +658,21 @@ export default function Clients({
                   const curW = c.current_workers || 0;
                   const underMin = minW > 0 && curW < minW;
                   const isWarn = c.status === 'warn' || c.status === 'danger';
+                  const wHistory = (laborHistory[c.id] || [])
+                    .slice()
+                    .sort((a, b) => a.week_label < b.week_label ? -1 : 1)
+                    .slice(-6)
+                    .map(h => h.count);
+                  const hs = calcHealthScore({
+                    currentWorkers: c.current_workers || 0,
+                    minWorkers: c.min_workers || 0,
+                    paidThisMonth: false,
+                    progCutoff: c.prog_cutoff || false,
+                    contractEnd: c.contract_end || '',
+                    lastContactDate: '',
+                    workerHistory: wHistory,
+                  });
+                  const churnLevel = detectChurnRisk(wHistory);
 
                   return (
                     <tr key={c.id}
@@ -662,7 +682,10 @@ export default function Clients({
                         <div className="flex items-center gap-1.5">
                           {underMin && <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />}
                           <div>
-                            <div className="font-semibold text-[13px]">{c.name}</div>
+                            <div className="font-semibold text-[13px] flex items-center gap-1.5">
+                              {c.name}
+                              <ChurnBadge level={churnLevel} />
+                            </div>
                             {c.notes && <div className="text-[11px] text-[#aaa] font-normal truncate max-w-[160px]">{c.notes}</div>}
                           </div>
                         </div>
@@ -836,9 +859,12 @@ export default function Clients({
                       {col('progress') && (
                         <td className="px-3 py-2">
                           <div className="flex gap-0.5">
-                            {[{ l: 'C', v: c.prog_cutoff }, { l: 'T', v: c.prog_calc }, { l: '₫', v: c.prog_paid }].map(p => (
-                              <div key={p.l} className={`w-[20px] h-[20px] rounded-full text-[10px] flex items-center justify-center font-medium ${p.v ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>{p.l}</div>
-                            ))}
+                            <CycleTrack
+                              progCutoff={c.prog_cutoff || false}
+                              progCalc={c.prog_calc || false}
+                              progPaid={c.prog_paid || false}
+                              paidThisMonth={false}
+                            />
                           </div>
                         </td>
                       )}
@@ -862,6 +888,9 @@ export default function Clients({
                           )}
                         </td>
                       )}
+                      <td className="px-3 py-2">
+                        <HealthScoreRing score={hs.total} />
+                      </td>
                       {isAdmin && (
                         <td className="px-3 py-2">
                           <button
