@@ -493,7 +493,30 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden self-start">
             <div className="px-4 py-4 border-b border-[#E8E7E2] text-center">
               <div className="flex justify-center mb-2">
-                {renderAvatar(selected, 48)}
+                <input
+                  type="file" accept="image/*" id="manager-avatar-input" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
+                />
+                <label
+                  htmlFor="manager-avatar-input"
+                  className={`group relative inline-flex rounded-full cursor-pointer ${uploadingAvatar ? 'opacity-50 pointer-events-none' : ''}`}
+                  style={{ width: 48, height: 48 }}
+                >
+                  {renderAvatar(form, 48)}
+                  <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 flex items-center justify-center transition-colors">
+                    <Pencil size={14} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                  {form.manager_avatar_url && (
+                    <button
+                      type="button"
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); handleRemoveAvatar(); }}
+                      className="absolute -top-1 -right-1 w-[18px] h-[18px] rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                      title="Xóa ảnh"
+                    >
+                      <X size={10} />
+                    </button>
+                  )}
+                </label>
               </div>
               <div className="text-[14px] font-semibold text-[#111]">{selected.name}</div>
               <div className="text-[11.5px] text-[#666] flex items-center justify-center gap-1 mt-0.5">
@@ -546,32 +569,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </Field>
                   <Field label="Quản lý phụ trách">
                     <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
-                  </Field>
-                  <Field label="Ảnh đại diện Trưởng CN" full>
-                    <input
-                      type="file" accept="image/*" id="manager-avatar-input" className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
-                    />
-                    <label
-                      htmlFor="manager-avatar-input"
-                      className={`group relative inline-flex rounded-full cursor-pointer ${uploadingAvatar ? 'opacity-50 pointer-events-none' : ''}`}
-                      style={{ width: 56, height: 56 }}
-                    >
-                      {renderAvatar(form, 56)}
-                      <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 flex items-center justify-center transition-colors">
-                        <Pencil size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                      {form.manager_avatar_url && (
-                        <button
-                          type="button"
-                          onClick={e => { e.preventDefault(); e.stopPropagation(); handleRemoveAvatar(); }}
-                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                          title="Xóa ảnh"
-                        >
-                          <X size={11} />
-                        </button>
-                      )}
-                    </label>
                   </Field>
                   <Field label="Khu vực phụ trách (liên kết KH)">
                     <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Tên khu vực phụ trách của chi nhánh" />
