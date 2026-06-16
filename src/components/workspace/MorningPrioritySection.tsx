@@ -6,7 +6,7 @@ import { useAuth } from '../../lib/auth'
 import { useRegions } from '../../hooks/useRegions'
 import { useBranchData } from '../../hooks/useBranchData'
 import { usePersistedState } from '../../hooks/usePersistedState'
-import type { Client, WorkTask, TaskStatus, Branch } from '../../lib/types'
+import type { Client, WorkTask, TaskStatus, Branch, WorkTaskComment } from '../../lib/types'
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
 import { WorkTasksCard } from './WorkTasksCard'
@@ -44,6 +44,9 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const [reportTaskId, setReportTaskId] = useState<string | null>(null)
   const [reportText, setReportText] = useState('')
   const [newContractEnd, setNewContractEnd] = useState('')
+  const [taskComments, setTaskComments] = useState<Record<string, WorkTaskComment[]>>({})
+  const [commentInput, setCommentInput] = useState<Record<string, string>>({})
+  const [submittingComment, setSubmittingComment] = useState<string | null>(null)
 
   useEffect(() => { loadPendingTasks(); loadDoneTasks() }, [user])
 
@@ -55,7 +58,22 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       .eq('user_id', user.id)
       .neq('status', 'done')
       .order('due_date', { ascending: true })
-    if (data) setPendingTasks(data as WorkTask[])
+    if (data) {
+      setPendingTasks(data as WorkTask[])
+      // load comments for all pending tasks
+      const ids = (data as WorkTask[]).map(t => t.id)
+      if (ids.length) {
+        supabase.from('work_task_comments').select('*').in('task_id', ids).order('created_at', { ascending: true }).then(({ data: cData }) => {
+          if (!cData) return
+          const map: Record<string, WorkTaskComment[]> = {}
+          for (const c of cData as WorkTaskComment[]) {
+            if (!map[c.task_id]) map[c.task_id] = []
+            map[c.task_id].push(c)
+          }
+          setTaskComments(map)
+        })
+      }
+    }
   }
 
   async function loadDoneTasks() {
@@ -73,6 +91,7 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
 
   function handleTaskCreated(task: WorkTask) {
     setPendingTasks(prev => [task, ...prev])
+    setTaskComments(prev => ({ ...prev, [task.id]: [] }))
   }
 
   function handleStatusChange(id: string, status: TaskStatus) {
@@ -144,9 +163,17 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
     await supabase.from('work_tasks').delete().eq('id', id)
   }
 
-  async function updateContractNote(id: string, note: string) {
-    setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, contract_status_note: note } : t))
-    await supabase.from('work_tasks').update({ contract_status_note: note, updated_at: new Date().toISOString() }).eq('id', id)
+  async function submitComment(taskId: string) {
+    const content = (commentInput[taskId] ?? '').trim()
+    if (!content || !user) return
+    setSubmittingComment(taskId)
+    const userName = (user as any).name || (user as any).email || 'Người dùng'
+    const { data, error } = await supabase.from('work_task_comments').insert({ task_id: taskId, user_id: user.id, user_name: userName, content }).select().single()
+    if (!error && data) {
+      setTaskComments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), data as WorkTaskComment] }))
+      setCommentInput(prev => ({ ...prev, [taskId]: '' }))
+    }
+    setSubmittingComment(null)
   }
 
   // Lấy lần hỏi thăm gần nhất của từng chi nhánh (toàn công ty, không chỉ user hiện tại)
@@ -369,14 +396,37 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                             ))}
                           </select>
                         </div>
-                        <textarea
-                          rows={2}
-                          value={t.contract_status_note ?? ''}
-                          onChange={e => setPendingTasks(prev => prev.map(x => x.id === t.id ? { ...x, contract_status_note: e.target.value } : x))}
-                          onBlur={e => updateContractNote(t.id, e.target.value)}
-                          placeholder="Tình trạng hợp đồng..."
-                          className="text-[11px] border border-[#E8E7E2] rounded-md px-2 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 resize-none"
-                        />
+                        {/* Comment thread */}
+                        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+                          {(taskComments[t.id] ?? []).length > 0 && (
+                            <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                              {(taskComments[t.id] ?? []).map(cm => (
+                                <div key={cm.id} className="px-2.5 py-1.5">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
+                                    <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</span>
+                                  </div>
+                                  <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                            <input
+                              type="text"
+                              value={commentInput[t.id] ?? ''}
+                              onChange={e => setCommentInput(prev => ({ ...prev, [t.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment(t.id) } }}
+                              placeholder="Bình luận tình trạng HĐ..."
+                              className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-[#fafafa] placeholder:text-[#ccc]"
+                            />
+                            <button
+                              onClick={() => submitComment(t.id)}
+                              disabled={submittingComment === t.id || !(commentInput[t.id] ?? '').trim()}
+                              className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                            >Gửi</button>
+                          </div>
+                        </div>
                         {reportTaskId === t.id && (
                           <div className="flex flex-col gap-1.5 pl-1">
                             {t.task_type === 'Tái ký HĐ' && (

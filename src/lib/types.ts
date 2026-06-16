@@ -715,6 +715,15 @@ export interface WorkTask {
   contract_status_note?: string | null
 }
 
+export interface WorkTaskComment {
+  id: string
+  task_id: string
+  user_id: string
+  user_name: string
+  content: string
+  created_at: string
+}
+
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = { high: 'Cao', medium: 'TB', low: 'Thấp' }
 export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
   high:   'bg-red-50 text-red-700 border-red-200',
