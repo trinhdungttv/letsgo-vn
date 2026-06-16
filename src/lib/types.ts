@@ -731,4 +731,9 @@ export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
   low:    'bg-green-50 text-green-700 border-green-200',
 }
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = { pending: 'Cần làm', in_progress: 'Đang làm', done: 'Hoàn thành' }
+export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
+  pending:     'bg-slate-100 text-slate-600 border-slate-300',
+  in_progress: 'bg-blue-50 text-blue-700 border-blue-300',
+  done:        'bg-green-50 text-green-700 border-green-300',
+}
 export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác']

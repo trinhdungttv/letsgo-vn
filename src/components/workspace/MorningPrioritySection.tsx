@@ -7,7 +7,7 @@ import { useRegions } from '../../hooks/useRegions'
 import { useBranchData } from '../../hooks/useBranchData'
 import { usePersistedState } from '../../hooks/usePersistedState'
 import type { Client, WorkTask, TaskStatus, Branch, WorkTaskComment } from '../../lib/types'
-import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS } from '../../lib/types'
+import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS, TASK_STATUS_COLORS } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
 import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
@@ -389,7 +389,7 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                           <select
                             value={t.status}
                             onChange={e => handleStatusChange(t.id, e.target.value as TaskStatus)}
-                            className="text-[10px] border border-[#E8E7E2] rounded-md px-1.5 py-1 bg-white text-[#555] focus:outline-none focus:border-blue-400 shrink-0"
+                            className={`text-[10px] border rounded-md px-1.5 py-1 focus:outline-none shrink-0 font-medium ${TASK_STATUS_COLORS[t.status]}`}
                           >
                             {(['pending', 'in_progress', 'done'] as TaskStatus[]).map(s => (
                               <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
