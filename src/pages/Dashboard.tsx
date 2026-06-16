@@ -362,7 +362,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
           {/* Alerts + Tasks */}
           <div className="col-span-3">
             <AlertsTasksPanel
-              clients={filteredClients}
+              clients={clients}
               regionFilter={scopeMode === 'region' ? selectedScope : null}
               onSelectClient={setSelectedClient}
               onOpenClient={onOpenClient}
