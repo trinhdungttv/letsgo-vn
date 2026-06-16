@@ -47,6 +47,9 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const [taskComments, setTaskComments] = useState<Record<string, WorkTaskComment[]>>({})
   const [commentInput, setCommentInput] = useState<Record<string, string>>({})
   const [submittingComment, setSubmittingComment] = useState<string | null>(null)
+  const [suspendRequestTask, setSuspendRequestTask] = useState<WorkTask | null>(null)
+  const [suspendRequestReason, setSuspendRequestReason] = useState('')
+  const [submittingSuspend, setSubmittingSuspend] = useState(false)
 
   useEffect(() => { loadPendingTasks(); loadDoneTasks() }, [user])
 
@@ -174,6 +177,37 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       setCommentInput(prev => ({ ...prev, [taskId]: '' }))
     }
     setSubmittingComment(null)
+  }
+
+  const isAdmin = (user as any)?.role === 'admin'
+
+  async function handleSuspendRequest() {
+    if (!suspendRequestTask || !suspendRequestReason.trim() || !user) return
+    setSubmittingSuspend(true)
+    const userName = (user as any).full_name || (user as any).name || (user as any).username || 'Người dùng'
+    const client = clients.find(c => c.id === suspendRequestTask.client_id)
+    if (!client) { setSubmittingSuspend(false); return }
+
+    if (isAdmin) {
+      // Admin: ngưng thẳng
+      const now = new Date().toISOString()
+      await supabase.from('clients').update({ cooperation_status: 'suspended', suspension_reason: suspendRequestReason.trim(), suspended_at: now, updated_at: now }).eq('id', client.id)
+      onClientUpdate({ ...client, cooperation_status: 'suspended', suspension_reason: suspendRequestReason.trim(), suspended_at: now })
+    } else {
+      // User thường: tạo yêu cầu chờ duyệt
+      await supabase.from('cooperation_suspension_requests').insert({
+        client_id: client.id,
+        task_id: suspendRequestTask.id,
+        requester_id: user.id,
+        requester_name: userName,
+        reason: suspendRequestReason.trim(),
+        status: 'pending',
+      })
+    }
+    setSuspendRequestTask(null)
+    setSuspendRequestReason('')
+    setSubmittingSuspend(false)
+    alert(isAdmin ? `Đã ngưng hợp tác với "${client.name}"` : `Đã gửi yêu cầu ngưng HĐ với "${client.name}" — chờ Quản trị viên duyệt`)
   }
 
   // Lấy lần hỏi thăm gần nhất của từng chi nhánh (toàn công ty, không chỉ user hiện tại)
@@ -306,6 +340,7 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const selectedCount = selectedContractIds.size
 
   return (
+    <>
     <div className="flex flex-col gap-0">
 
       {/* Sáng – gợi ý */}
@@ -383,6 +418,13 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                             <div className="text-[11.5px] font-medium text-[#111] truncate">{t.title}</div>
                             <div className={`text-[10px] mt-0.5 ${overdue ? 'text-red-500' : 'text-[#888]'}`}>{formatDate(t.due_date)}{t.kcn ? ` · ${t.kcn}` : ''}</div>
                           </div>
+                          {t.task_type === 'Tái ký HĐ' && t.client_id && (
+                            <button
+                              onClick={() => { setSuspendRequestTask(t); setSuspendRequestReason('') }}
+                              className="text-[10px] px-2 py-0.5 rounded-md border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 whitespace-nowrap shrink-0"
+                              title="Yêu cầu ngưng hợp tác"
+                            >🚫 Ngưng HĐ</button>
+                          )}
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${TASK_PRIORITY_COLORS[t.priority]}`}>
                             {TASK_PRIORITY_LABELS[t.priority]}
                           </span>
@@ -625,5 +667,53 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
         </div>
       )}
     </div>
+    {/* Modal yêu cầu ngưng HĐ */}
+
+    {suspendRequestTask && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSuspendRequestTask(null)}>
+        <div className="bg-white rounded-xl shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">
+                {isAdmin ? 'Ngưng hợp tác' : 'Yêu cầu ngưng hợp tác'}
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {clients.find(c => c.id === suspendRequestTask.client_id)?.name ?? suspendRequestTask.title}
+              </p>
+            </div>
+            <button onClick={() => setSuspendRequestTask(null)} className="p-1 hover:bg-gray-100 rounded-md text-gray-500 text-lg leading-none">×</button>
+          </div>
+          <div className="p-5 space-y-3">
+            {!isAdmin && (
+              <p className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Yêu cầu sẽ được gửi đến <strong>Quản trị viên</strong> để xét duyệt trước khi có hiệu lực.
+              </p>
+            )}
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1">Lý do ngưng <span className="text-red-500">*</span></label>
+              <textarea
+                rows={3}
+                value={suspendRequestReason}
+                onChange={e => setSuspendRequestReason(e.target.value)}
+                autoFocus
+                placeholder="Nhập lý do ngưng hợp tác..."
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+              />
+            </div>
+          </div>
+          <div className="px-5 pb-5 flex gap-2">
+            <button onClick={() => setSuspendRequestTask(null)} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+            <button
+              onClick={handleSuspendRequest}
+              disabled={submittingSuspend || !suspendRequestReason.trim()}
+              className="flex-1 px-3 py-2 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded-lg transition"
+            >
+              {submittingSuspend ? 'Đang gửi...' : isAdmin ? 'Xác nhận ngưng' : 'Gửi yêu cầu'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }

@@ -13,6 +13,7 @@ import {
 import type { Client, ProjectPnl } from '../lib/types';
 import { statusPill, formatCurrency, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler, Legend);
 
@@ -48,6 +49,7 @@ interface DashboardProps {
   onOpenBranch?: (region: string) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
+  onClientUpdate?: (client: Client) => void;
 }
 
 type ScopeMode = 'all' | 'region' | 'manager';
@@ -67,7 +69,9 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenPipelineEntry }: DashboardProps) {
+export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenPipelineEntry, onClientUpdate }: DashboardProps) {
+  const { user } = useAuth();
+  const isAdmin = (user as any)?.role === 'admin';
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
   const [selectedScope, setSelectedScope] = useState<string>('');
   const [groupMode, setGroupMode] = useState<GroupMode>('region');
@@ -363,6 +367,8 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
               onSelectClient={setSelectedClient}
               onOpenClient={onOpenClient}
               onOpenPipelineEntry={onOpenPipelineEntry}
+              isAdmin={isAdmin}
+              onClientUpdate={onClientUpdate}
             />
           </div>
         </div>

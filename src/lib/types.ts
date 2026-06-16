@@ -715,6 +715,19 @@ export interface WorkTask {
   contract_status_note?: string | null
 }
 
+export interface CooperationSuspensionRequest {
+  id: string
+  client_id: string
+  task_id: string | null
+  requester_id: string
+  requester_name: string
+  reason: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
 export interface WorkTaskComment {
   id: string
   task_id: string

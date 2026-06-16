@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { AlertCircle, RefreshCw, ClipboardList, CheckCircle2, Clock, Circle } from 'lucide-react';
-import type { Client } from '../lib/types';
+import type { Client, CooperationSuspensionRequest } from '../lib/types';
 import { daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 
@@ -27,23 +27,22 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactN
 };
 
 interface Props {
-  // Clients used to derive contract alerts/expiring contracts and to resolve a task's related client.
   clients: Client[];
-  // Extra filter applied to the task list (e.g. region scope).
   regionFilter?: string | null;
-  // When provided, client names become clickable links (quick preview).
   onSelectClient?: (client: Client) => void;
-  // When provided, opens the full client detail page for management.
   onOpenClient?: (id: string) => void;
-  // When provided, opens the CRM Pipeline company profile for management.
   onOpenPipelineEntry?: (crmId: string) => void;
+  isAdmin?: boolean;
+  onClientUpdate?: (client: Client) => void;
 }
 
-export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry }: Props) {
+export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate }: Props) {
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [reportTarget, setReportTarget] = useState<{ id: string; title: string } | null>(null);
   const [reportNote, setReportNote] = useState('');
+  const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -133,6 +132,27 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
   }, [loadTasks]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    supabase.from('cooperation_suspension_requests').select('*').eq('status', 'pending').order('created_at', { ascending: true }).then(({ data }) => {
+      if (data) setSuspendRequests(data as CooperationSuspensionRequest[]);
+    });
+  }, [isAdmin]);
+
+  async function reviewSuspendRequest(req: CooperationSuspensionRequest, approve: boolean) {
+    setReviewingId(req.id);
+    const now = new Date().toISOString();
+    const newStatus = approve ? 'approved' : 'rejected';
+    await supabase.from('cooperation_suspension_requests').update({ status: newStatus, reviewed_at: now }).eq('id', req.id);
+    if (approve) {
+      await supabase.from('clients').update({ cooperation_status: 'suspended', suspension_reason: req.reason, suspended_at: now, updated_at: now }).eq('id', req.client_id);
+      const client = clients.find(c => c.id === req.client_id);
+      if (client && onClientUpdate) onClientUpdate({ ...client, cooperation_status: 'suspended', suspension_reason: req.reason, suspended_at: now });
+    }
+    setSuspendRequests(prev => prev.filter(r => r.id !== req.id));
+    setReviewingId(null);
+  }
 
   const expiringClients = useMemo(() => clients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; }), [clients]);
 
@@ -269,6 +289,41 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           <RefreshCw size={13} className={tasksLoading ? 'animate-spin' : ''} />
         </button>
       </div>
+      {isAdmin && suspendRequests.length > 0 && (
+        <div className="border-b border-[#F0EEE9]">
+          <div className="px-3 py-1.5 text-[10.5px] font-semibold text-orange-700 uppercase tracking-wide bg-orange-50 border-b border-orange-100 flex items-center gap-1.5">
+            🚫 Yêu cầu ngưng hợp tác chờ duyệt
+            <span className="ml-auto bg-orange-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{suspendRequests.length}</span>
+          </div>
+          <div className="divide-y divide-[#F0EEE9]">
+            {suspendRequests.map(req => {
+              const client = clients.find(c => c.id === req.client_id);
+              return (
+                <div key={req.id} className="px-3 py-2.5 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12px] font-semibold text-[#111]">{client?.name ?? req.client_id}</div>
+                    <div className="text-[11px] text-[#888] mt-0.5">Người yêu cầu: <span className="text-[#555] font-medium">{req.requester_name}</span></div>
+                    <div className="text-[11px] text-[#555] mt-0.5 italic">"{req.reason}"</div>
+                    <div className="text-[10.5px] text-[#bbb] mt-0.5">{new Date(req.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0 mt-0.5">
+                    <button
+                      disabled={reviewingId === req.id}
+                      onClick={() => reviewSuspendRequest(req, true)}
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-orange-500 text-white font-medium hover:bg-orange-600 disabled:opacity-50 transition"
+                    >Duyệt</button>
+                    <button
+                      disabled={reviewingId === req.id}
+                      onClick={() => reviewSuspendRequest(req, false)}
+                      className="text-[11px] px-2.5 py-1 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+                    >Từ chối</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 divide-x divide-[#F0EEE9]">
         <div>
           <div className="px-3 py-1.5 text-[10.5px] font-semibold text-[#888] uppercase tracking-wide bg-[#FAFAFA] border-b border-[#F0EEE9]">

@@ -239,7 +239,7 @@ function AppInner() {
     <div className="flex h-screen overflow-hidden bg-[#F1F0EA]">
       <Sidebar currentPage={page} onNavigate={navigate} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF]">
-        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} />}
+        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
             clients={clients}
