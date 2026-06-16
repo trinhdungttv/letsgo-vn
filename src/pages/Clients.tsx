@@ -74,6 +74,9 @@ export default function Clients({
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [suspendTarget, setSuspendTarget] = useState<Client | null>(null);
+  const [suspendReason, setSuspendReason] = useState('');
+  const [isSuspending, setIsSuspending] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
@@ -176,6 +179,8 @@ export default function Clients({
 
   const filtered = clients.filter(c => {
     if (c.archived_at) return false;
+    if (quickFilter === 'suspended') return c.cooperation_status === 'suspended';
+    if (c.cooperation_status === 'suspended') return false;
     const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
@@ -258,7 +263,8 @@ export default function Clients({
     return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)];
   }, [bulkExtraWeeks]);
 
-  const activeClients = clients.filter(c => !c.archived_at);
+  const activeClients = clients.filter(c => !c.archived_at && c.cooperation_status !== 'suspended');
+  const suspendedClients = clients.filter(c => !c.archived_at && c.cooperation_status === 'suspended');
   const totalWorkers = activeClients.reduce((s, c) => s + (c.current_workers || 0), 0);
   const expiringCount = activeClients.filter(c => {
     if (!c.contract_end) return false;
@@ -543,6 +549,27 @@ export default function Clients({
       setIsDeleting(false);
     }
   };
+
+  async function suspendClient(c: Client) {
+    if (!suspendReason.trim()) { toast('Vui lòng nhập lý do ngưng hợp tác'); return; }
+    setIsSuspending(true);
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('clients').update({ cooperation_status: 'suspended', suspension_reason: suspendReason.trim(), suspended_at: now, updated_at: now }).eq('id', c.id);
+    if (error) { toast('Lỗi: ' + error.message); setIsSuspending(false); return; }
+    onClientUpdate({ ...c, cooperation_status: 'suspended', suspension_reason: suspendReason.trim(), suspended_at: now });
+    toast(`Đã ngưng hợp tác với "${c.name}"`);
+    setSuspendTarget(null);
+    setSuspendReason('');
+    setIsSuspending(false);
+  }
+
+  async function reactivateClient(c: Client) {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('clients').update({ cooperation_status: 'active', suspension_reason: null, suspended_at: null, updated_at: now }).eq('id', c.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    onClientUpdate({ ...c, cooperation_status: 'active', suspension_reason: null, suspended_at: null });
+    toast(`Đã tái kích hoạt hợp tác với "${c.name}"`);
+  }
 
   const QUICK_EDIT_LABELS: Record<string, string> = {
     region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái',
@@ -903,10 +930,11 @@ export default function Clients({
           <FilterDropdown label="Quản lý" options={managerNames} selected={activeManagers} onChange={setActiveManagers} />
           <div className="flex gap-1.5 ml-auto flex-wrap">
             {[
-              { key: 'expiring', label: '⏰ Sắp hết HĐ', count: expiringCount },
-              { key: 'unpaid',   label: '💸 Chưa TT',    count: unpaidCount },
-              { key: 'shortage', label: '👷 Thiếu LĐ',   count: activeClients.filter(c => (c.min_workers||0) > 0 && (c.current_workers||0) < (c.min_workers||0)).length },
-              { key: 'churn',    label: '🚨 Churn Risk',  count: churnClients.length },
+              { key: 'expiring',   label: '⏰ Sắp hết HĐ', count: expiringCount },
+              { key: 'unpaid',     label: '💸 Chưa TT',    count: unpaidCount },
+              { key: 'shortage',   label: '👷 Thiếu LĐ',   count: activeClients.filter(c => (c.min_workers||0) > 0 && (c.current_workers||0) < (c.min_workers||0)).length },
+              { key: 'churn',      label: '🚨 Churn Risk',  count: churnClients.length },
+              { key: 'suspended',  label: '🚫 Ngưng HT',   count: suspendedClients.length },
             ].map(f => (
               <button
                 key={f.key}
@@ -1006,6 +1034,9 @@ export default function Clients({
                           <div>
                             <div className="font-semibold text-[13px] flex items-center gap-1.5">
                               {c.name}
+                              {c.cooperation_status === 'suspended' && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium">Ngưng</span>
+                              )}
                               <ChurnBadge level={churnLevel} />
                               <button
                                 onClick={e => {
@@ -1246,13 +1277,28 @@ export default function Clients({
                       </td>
                       {isAdmin && (
                         <td className="px-3 py-2">
-                          <button
-                            onClick={e => { e.stopPropagation(); setDeleteTarget(c); setDeletePassword(''); }}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
-                            title="Xóa công ty"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {c.cooperation_status === 'suspended' ? (
+                              <button
+                                onClick={e => { e.stopPropagation(); reactivateClient(c); }}
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition"
+                                title="Tái kích hoạt"
+                              >✓</button>
+                            ) : (
+                              <button
+                                onClick={e => { e.stopPropagation(); setSuspendTarget(c); setSuspendReason(''); }}
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition text-[12px]"
+                                title="Ngưng hợp tác"
+                              >🚫</button>
+                            )}
+                            <button
+                              onClick={e => { e.stopPropagation(); setDeleteTarget(c); setDeletePassword(''); }}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                              title="Xóa công ty"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -1326,6 +1372,46 @@ export default function Clients({
                 className="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition flex items-center justify-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5" />
                 {isRenewing ? 'Đang lưu...' : 'Xác nhận gia hạn'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Suspend Client Modal */}
+      {suspendTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Ngưng hợp tác</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{suspendTarget.name}</p>
+              </div>
+              <button onClick={() => { setSuspendTarget(null); setSuspendReason(''); }} className="p-1 hover:bg-gray-100 rounded-md">
+                <span className="text-gray-500 text-lg leading-none">×</span>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-[12.5px] text-gray-600">
+                Khách hàng sẽ được đánh dấu <strong>Ngưng hợp tác</strong> và ẩn khỏi các danh sách thông thường. Có thể tái kích hoạt sau này.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Lý do ngưng <span className="text-red-500">*</span></label>
+                <textarea
+                  rows={3}
+                  value={suspendReason}
+                  onChange={e => setSuspendReason(e.target.value)}
+                  autoFocus
+                  placeholder="Nhập lý do ngưng hợp tác..."
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+                />
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => { setSuspendTarget(null); setSuspendReason(''); }} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+              <button onClick={() => suspendClient(suspendTarget)} disabled={isSuspending || !suspendReason.trim()}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded-lg transition">
+                {isSuspending ? 'Đang lưu...' : 'Xác nhận ngưng'}
               </button>
             </div>
           </div>

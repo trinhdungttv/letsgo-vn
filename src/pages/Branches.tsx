@@ -428,7 +428,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     }> = {};
     for (const b of branches) {
       const branchClients = b.region ? clients.filter(c => c.region === b.region) : [];
-      const workers = branchClients.reduce((s, c) => s + (c.current_workers || 0), 0);
+      const workers = branchClients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
       const projects = b.region ? projectsPnl.filter(p => p.branch_manager === b.region) : [];
       const revenue = projects.reduce((s, p) => s + (p.revenue || 0), 0);
       const lnCn = projects.reduce((s, p) => {
@@ -448,8 +448,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   }, [branches, clients, projectsPnl, overhead]);
 
   // ── KPI strip ─────────────────────────────────────────────────
-  const totalWorkers = clients.reduce((s, c) => s + (c.current_workers || 0), 0);
-  const totalActiveClients = clients.filter(c => c.client_type === 'active').length;
+  const totalWorkers = clients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
+  const totalActiveClients = clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended').length;
   const totalLnRong = Object.values(branchStats).reduce((s, v) => s + v.lnRong, 0);
   const needsAttention = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0).length;
 
@@ -655,7 +655,12 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         return (
                           <tr key={c.id} className="border-t border-[#F0EEE9]">
                             <td className="px-3.5 py-2">
-                              <div className="font-medium text-[#111]">{c.name}</div>
+                              <div className="font-medium text-[#111] flex items-center gap-1.5">
+                                {c.name}
+                                {c.cooperation_status === 'suspended' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium">Ngưng</span>
+                                )}
+                              </div>
                               <div className="text-[10.5px] text-[#999]">{c.industrial_zones?.[0] || '—'}</div>
                             </td>
                             <td className="px-3 py-2 text-right font-semibold">{(c.current_workers || 0).toLocaleString()}</td>

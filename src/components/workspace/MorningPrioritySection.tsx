@@ -144,6 +144,11 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
     await supabase.from('work_tasks').delete().eq('id', id)
   }
 
+  async function updateContractNote(id: string, note: string) {
+    setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, contract_status_note: note } : t))
+    await supabase.from('work_tasks').update({ contract_status_note: note, updated_at: new Date().toISOString() }).eq('id', id)
+  }
+
   // Lấy lần hỏi thăm gần nhất của từng chi nhánh (toàn công ty, không chỉ user hiện tại)
   useEffect(() => {
     if (!regions.length) return
@@ -166,7 +171,7 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
 
   // --- Auto-suggest: HĐ cần xử lý (cột trái) ---
   const contractSuggests: ContractSuggest[] = clients
-    .filter(c => c.client_type === 'active')
+    .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
     .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
     .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= 17)
     .sort((a, b) => a.daysLeft - b.daysLeft)
@@ -364,6 +369,14 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                             ))}
                           </select>
                         </div>
+                        <textarea
+                          rows={2}
+                          value={t.contract_status_note ?? ''}
+                          onChange={e => setPendingTasks(prev => prev.map(x => x.id === t.id ? { ...x, contract_status_note: e.target.value } : x))}
+                          onBlur={e => updateContractNote(t.id, e.target.value)}
+                          placeholder="Tình trạng hợp đồng..."
+                          className="text-[11px] border border-[#E8E7E2] rounded-md px-2 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 resize-none"
+                        />
                         {reportTaskId === t.id && (
                           <div className="flex flex-col gap-1.5 pl-1">
                             {t.task_type === 'Tái ký HĐ' && (

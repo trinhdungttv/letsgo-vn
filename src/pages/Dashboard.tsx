@@ -79,11 +79,12 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
   const regions = useMemo(() => [...new Set(clients.map(c => c.region).filter(Boolean) as string[])].sort(), [clients]);
   const managers = useMemo(() => [...new Set(clients.map(c => c.manager).filter(Boolean) as string[])].sort(), [clients]);
 
-  // Filtered clients based on global scope
+  // Filtered clients based on global scope (exclude suspended)
   const filteredClients = useMemo(() => {
-    if (scopeMode === 'all' || !selectedScope) return clients;
-    if (scopeMode === 'region') return clients.filter(c => c.region === selectedScope);
-    return clients.filter(c => c.manager === selectedScope);
+    const base = clients.filter(c => c.cooperation_status !== 'suspended');
+    if (scopeMode === 'all' || !selectedScope) return base;
+    if (scopeMode === 'region') return base.filter(c => c.region === selectedScope);
+    return base.filter(c => c.manager === selectedScope);
   }, [clients, scopeMode, selectedScope]);
 
   // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu/lợi nhuận trên Dashboard

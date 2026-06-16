@@ -59,6 +59,9 @@ export interface Client {
   email: string | null;
   prospect_status: 'lead' | 'prospect' | 'customer' | 'churned' | null;
   archived_at: string | null;
+  cooperation_status?: 'active' | 'suspended';
+  suspension_reason?: string | null;
+  suspended_at?: string | null;
   payment_group?: number;
   payment_days?: number;
   payment_wday?: boolean;
@@ -709,6 +712,7 @@ export interface WorkTask {
   completed_at: string | null
   created_at: string
   updated_at: string
+  contract_status_note?: string | null
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = { high: 'Cao', medium: 'TB', low: 'Thấp' }
