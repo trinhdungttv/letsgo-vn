@@ -154,12 +154,13 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     setReviewingId(null);
   }
 
-  const expiringClients = useMemo(() => clients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; }), [clients]);
+  const expiringClients = useMemo(() => clients.filter(c => c.cooperation_status !== 'suspended' && (() => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; })()), [clients]);
 
-  // Clients needing attention: hard alerts (danger/warn) + contracts expiring within 30 days
+  // Clients needing attention: hard alerts (danger/warn) + contracts expiring within 30 days (exclude suspended)
   const alertAndExpiringClients = useMemo(() => {
     const map = new Map<string, Client>();
     for (const c of clients) {
+      if (c.cooperation_status === 'suspended') continue;
       if (c.status === 'danger' || c.status === 'warn') map.set(c.id, c);
     }
     for (const c of expiringClients) map.set(c.id, c);
@@ -212,10 +213,13 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     return clients.find(c => c.name === task.client_name) || null;
   }, [clients]);
 
+  const suspendedClientIds = useMemo(() => new Set(clients.filter(c => c.cooperation_status === 'suspended').map(c => c.id)), [clients]);
+
   const visibleTasks = useMemo(() => {
-    if (!regionFilter) return tasks;
-    return tasks.filter(t => t.client_region === regionFilter);
-  }, [tasks, regionFilter]);
+    let list = tasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id));
+    if (regionFilter) list = list.filter(t => t.client_region === regionFilter);
+    return list;
+  }, [tasks, regionFilter, suspendedClientIds]);
 
   const contractTasks = useMemo(() => visibleTasks.filter(t => t.source_type === 'contract'), [visibleTasks]);
   const workTasks = useMemo(() => visibleTasks.filter(t => t.source_type !== 'contract'), [visibleTasks]);
