@@ -696,7 +696,7 @@ export const DEAL_TYPE_LABELS: Record<DealType, string> = {
 }
 
 export type TaskPriority = 'high' | 'medium' | 'low'
-export type TaskStatus = 'pending' | 'in_progress' | 'done'
+export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'ngung_hd'
 
 export interface WorkTask {
   id: string
@@ -713,6 +713,7 @@ export interface WorkTask {
   created_at: string
   updated_at: string
   contract_status_note?: string | null
+  doc_status?: string | null
 }
 
 export interface CooperationSuspensionRequest {
@@ -743,10 +744,21 @@ export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
   medium: 'bg-amber-50 text-amber-700 border-amber-200',
   low:    'bg-green-50 text-green-700 border-green-200',
 }
-export const TASK_STATUS_LABELS: Record<TaskStatus, string> = { pending: 'Cần làm', in_progress: 'Đang làm', done: 'Hoàn thành' }
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = { pending: 'Cần làm', in_progress: 'Đang làm', done: 'Hoàn thành', ngung_hd: 'Ngưng HĐ' }
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   pending:     'bg-slate-100 text-slate-600 border-slate-300',
   in_progress: 'bg-blue-50 text-blue-700 border-blue-300',
   done:        'bg-green-50 text-green-700 border-green-300',
+  ngung_hd:    'bg-red-50 text-red-700 border-red-300',
 }
+
+export type DocStatus = 'chua_soan' | 'dang_soan' | 'cho_duyet' | 'cho_kh_ky' | 'hoan_tat' | 'ngung_hd'
+export const DOC_STATUS_STEPS: { key: DocStatus; label: string; danger?: boolean }[] = [
+  { key: 'chua_soan',  label: 'Chưa soạn' },
+  { key: 'dang_soan',  label: 'Đang soạn' },
+  { key: 'cho_duyet',  label: 'Chờ duyệt' },
+  { key: 'cho_kh_ky', label: 'Chờ KH ký' },
+  { key: 'hoan_tat',  label: 'Hoàn tất' },
+  { key: 'ngung_hd',  label: 'Ngưng HĐ', danger: true },
+]
 export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác']

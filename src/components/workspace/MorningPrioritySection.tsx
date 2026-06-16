@@ -1,5 +1,5 @@
 // src/components/workspace/MorningPrioritySection.tsx
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, ChevronRight, Undo2, Settings, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
@@ -7,10 +7,76 @@ import { useRegions } from '../../hooks/useRegions'
 import { useBranchData } from '../../hooks/useBranchData'
 import { usePersistedState } from '../../hooks/usePersistedState'
 import type { Client, WorkTask, TaskStatus, Branch, WorkTaskComment } from '../../lib/types'
-import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS, TASK_STATUS_COLORS } from '../../lib/types'
+import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS, type DocStatus } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
 import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
+
+// --- DocStatusDropdown: 1 nút, click sổ danh sách chọn trạng thái ---
+function DocStatusDropdown({
+  taskId,
+  docStatus,
+  onSelect,
+}: {
+  taskId: string
+  docStatus: DocStatus | null
+  onSelect: (taskId: string, step: typeof DOC_STATUS_STEPS[number]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const current = DOC_STATUS_STEPS.find(s => s.key === docStatus)
+  const label = current?.label ?? 'Chọn trạng thái'
+  const isDanger = current?.danger
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={[
+          'flex items-center gap-1 text-[10.5px] px-2.5 py-1 rounded-md border font-medium transition-colors',
+          isDanger
+            ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+            : docStatus
+              ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+              : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300',
+        ].join(' ')}
+      >
+        {label}
+        <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#E8E7E2] rounded-lg shadow-lg overflow-hidden flex flex-row">
+            {DOC_STATUS_STEPS.map((step, i) => (
+              <button
+                key={step.key}
+                onClick={() => { onSelect(taskId, step); setOpen(false) }}
+                className={[
+                  'px-3 py-2 text-[11px] flex flex-col items-center gap-1 transition-colors whitespace-nowrap border-r last:border-r-0 border-[#F0EFEB]',
+                  step.danger
+                    ? 'text-red-600 hover:bg-red-50'
+                    : docStatus === step.key
+                      ? 'bg-blue-50 text-blue-700 font-semibold'
+                      : 'text-[#333] hover:bg-[#F5F4F0]',
+                ].join(' ')}
+              >
+                {!step.danger ? (
+                  <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-bold ${docStatus === step.key ? 'bg-blue-600 border-blue-600 text-white' : 'border-[#ccc] text-[#999]'}`}>
+                    {i + 1}
+                  </span>
+                ) : (
+                  <span className="text-[13px]">🚫</span>
+                )}
+                {step.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 interface Props {
   clients: Client[]
@@ -95,6 +161,31 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   function handleTaskCreated(task: WorkTask) {
     setPendingTasks(prev => [task, ...prev])
     setTaskComments(prev => ({ ...prev, [task.id]: [] }))
+  }
+
+  async function handleDocStatusChange(id: string, docStatus: DocStatus) {
+    if (docStatus === 'hoan_tat') {
+      setReportTaskId(id)
+      setReportText('')
+      const task = pendingTasks.find(t => t.id === id)
+      if (task?.task_type === 'Tái ký HĐ') {
+        const client = task.client_id ? clients.find(c => c.id === task.client_id) : null
+        setNewContractEnd(client?.contract_end || '')
+      }
+      const { error } = await supabase.from('work_tasks').update({ doc_status: docStatus }).eq('id', id)
+      if (error) { console.error('doc_status update error:', error); return }
+      setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, doc_status: docStatus } : t))
+      return
+    }
+    if (docStatus === 'ngung_hd') {
+      const { error } = await supabase.from('work_tasks').update({ doc_status: docStatus, status: 'ngung_hd' as TaskStatus }).eq('id', id)
+      if (error) { console.error('doc_status update error:', error); return }
+      setPendingTasks(prev => prev.filter(t => t.id !== id))
+      return
+    }
+    const { error } = await supabase.from('work_tasks').update({ doc_status: docStatus, status: 'in_progress' }).eq('id', id)
+    if (error) { console.error('doc_status update error:', error); return }
+    setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, doc_status: docStatus, status: 'in_progress' } : t))
   }
 
   function handleStatusChange(id: string, status: TaskStatus) {
@@ -230,9 +321,20 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       })
   }, [regions])
 
+  // Tasks for suspended clients hidden from "Công việc chưa hoàn thành"
+  const suspendedClientIds = useMemo(
+    () => new Set(clients.filter(c => c.cooperation_status === 'suspended').map(c => c.id)),
+    [clients]
+  )
+  const visiblePendingTasks = useMemo(
+    () => pendingTasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id)),
+    [pendingTasks, suspendedClientIds]
+  )
+
   // --- Auto-suggest: HĐ cần xử lý (cột trái) ---
   const contractSuggests: ContractSuggest[] = clients
     .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
+    .filter(c => !pendingTasks.some(t => t.client_id === c.id && t.task_type === 'Tái ký HĐ'))
     .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
     .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= 17)
     .sort((a, b) => a.daysLeft - b.daysLeft)
@@ -324,7 +426,8 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
         due_date: today_,
         priority: s.daysLeft <= 0 ? 'high' : 'medium',
         kcn: s.kcn || null,
-        status: 'pending',
+        status: 'in_progress',
+        doc_status: 'dang_soan',
       })
     }
 
@@ -405,11 +508,11 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                 <ListTodo size={12} />
                 Công việc chưa hoàn thành
               </div>
-              {pendingTasks.length === 0 ? (
+              {visiblePendingTasks.length === 0 ? (
                 <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg">Không có việc nào</div>
               ) : (
                 <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
-                  {pendingTasks.map(t => {
+                  {visiblePendingTasks.map(t => {
                     const overdue = daysUntil(t.due_date) !== null && (daysUntil(t.due_date) as number) < 0
                     return (
                       <div key={t.id} className="flex flex-col gap-1.5 px-2.5 py-1.5 border border-[#E8E7E2] bg-[#fafafa] rounded-lg">
@@ -418,26 +521,36 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                             <div className="text-[11.5px] font-medium text-[#111] truncate">{t.title}</div>
                             <div className={`text-[10px] mt-0.5 ${overdue ? 'text-red-500' : 'text-[#888]'}`}>{formatDate(t.due_date)}{t.kcn ? ` · ${t.kcn}` : ''}</div>
                           </div>
-                          {t.task_type === 'Tái ký HĐ' && t.client_id && (
-                            <button
-                              onClick={() => { setSuspendRequestTask(t); setSuspendRequestReason('') }}
-                              className="text-[10px] px-2 py-0.5 rounded-md border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 whitespace-nowrap shrink-0"
-                              title="Yêu cầu ngưng hợp tác"
-                            >🚫 Ngưng HĐ</button>
-                          )}
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${TASK_PRIORITY_COLORS[t.priority]}`}>
                             {TASK_PRIORITY_LABELS[t.priority]}
                           </span>
-                          <select
-                            value={t.status}
-                            onChange={e => handleStatusChange(t.id, e.target.value as TaskStatus)}
-                            className={`text-[10px] border rounded-md px-1.5 py-1 focus:outline-none shrink-0 font-medium ${TASK_STATUS_COLORS[t.status]}`}
-                          >
-                            {(['pending', 'in_progress', 'done'] as TaskStatus[]).map(s => (
-                              <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
-                            ))}
-                          </select>
+                          {t.task_type !== 'Tái ký HĐ' && (
+                            <select
+                              value={t.status}
+                              onChange={e => handleStatusChange(t.id, e.target.value as TaskStatus)}
+                              className={`text-[10px] border rounded-md px-1.5 py-1 focus:outline-none shrink-0 font-medium ${TASK_STATUS_COLORS[t.status] ?? 'bg-slate-100 text-slate-600 border-slate-300'}`}
+                            >
+                              {(['pending', 'in_progress', 'done', 'ngung_hd'] as TaskStatus[]).map(s => (
+                                <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
+                        {/* Doc status dropdown for Tái ký HĐ */}
+                        {t.task_type === 'Tái ký HĐ' && (
+                          <DocStatusDropdown
+                            taskId={t.id}
+                            docStatus={(t.doc_status as DocStatus | null) ?? null}
+                            onSelect={(taskId, step) => {
+                              if (step.key === 'ngung_hd') {
+                                setSuspendRequestTask(t)
+                                setSuspendRequestReason('')
+                              } else {
+                                handleDocStatusChange(taskId, step.key)
+                              }
+                            }}
+                          />
+                        )}
                         {/* Comment thread */}
                         <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
                           {(taskComments[t.id] ?? []).length > 0 && (

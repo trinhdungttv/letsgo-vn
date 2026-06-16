@@ -8,6 +8,9 @@ import {
 import PageHeader from '../components/PageHeader';
 import { WorkspaceModulesTabs } from '../components/workspace/WorkspaceModulesTabs';
 import { WorkTasksCard } from '../components/workspace/WorkTasksCard';
+import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
+import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
+import { QuoteModal } from '../components/workspace/QuoteModal';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import type { Client, FinanceRecord, CRMPipelineEntry, Page, WorkTask, TaskStatus, WorkTaskComment } from '../lib/types';
@@ -98,6 +101,11 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   // Merge in any new section keys and drop ones that no longer exist
   const order = [...layout.order.filter(k => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter(k => !layout.order.includes(k))];
 
+  // Quick action modals
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [showGiaoViec, setShowGiaoViec] = useState(false);
+  const [showBulkLabor, setShowBulkLabor] = useState(false);
+
   // Dismissible banners (session-scoped)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
@@ -105,6 +113,12 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   const [wsTasks, setWsTasks] = useState<WorkspaceTask[]>([]);
   const [wsLoading, setWsLoading] = useState(true);
   const [taskTab, setTaskTab] = useState<'all' | 'doc' | 'task'>('all');
+  const [showAddWsTask, setShowAddWsTask] = useState(false);
+  const [addWsTitle, setAddWsTitle] = useState('');
+  const [addWsType, setAddWsType] = useState<'task' | 'doc'>('task');
+  const [addWsDeadline, setAddWsDeadline] = useState('');
+  const [addWsAssignee, setAddWsAssignee] = useState('');
+  const [addingWsTask, setAddingWsTask] = useState(false);
 
   // Standalone WorkTasksCard state (bottom-right)
   const [myTasks, setMyTasks] = useState<WorkTask[]>([]);
@@ -318,6 +332,30 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     await supabase.from('workspace_tasks').update({ status: 'done' }).eq('id', id);
   }
 
+  // --- Việc đang treo: thêm mới ---
+  async function handleAddWsTask() {
+    if (!addWsTitle.trim()) return;
+    setAddingWsTask(true);
+    const newTask = {
+      title: addWsTitle.trim(),
+      type: addWsType,
+      status: 'not_started' as const,
+      assignee: addWsAssignee.trim() || null,
+      deadline: addWsDeadline || null,
+    };
+    const { data, error } = await supabase.from('workspace_tasks').insert(newTask).select().single();
+    setAddingWsTask(false);
+    if (!error && data) {
+      setWsTasks(prev => [data as WorkspaceTask, ...prev]);
+      setAddWsTitle('');
+      setAddWsType('task');
+      setAddWsDeadline('');
+      setAddWsAssignee('');
+      setShowAddWsTask(false);
+      toast('Đã thêm việc đang treo');
+    }
+  }
+
   // --- WorkTasksCard (standalone) handlers ---
   function handleTaskCreated(task: WorkTask) {
     setMyTasks(prev => [task, ...prev]);
@@ -457,10 +495,10 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
 
   // --- Quick actions ---
   const quickActions: { label: string; icon: React.ReactNode; onClick: () => void }[] = [
-    { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => onNavigate('market') },
-    { label: 'Thêm HĐ', icon: <FilePlus size={14} />, onClick: () => onNavigate('clients') },
-    { label: 'Giao việc', icon: <Send size={14} />, onClick: () => toast('Tính năng sắp ra mắt') },
-    { label: 'Ghi nhận LĐ', icon: <ClipboardList size={14} />, onClick: () => onNavigate('clients') },
+    { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
+    { label: 'Thêm HĐ', icon: <FilePlus size={14} />, onClick: () => toast('Tính năng sắp ra mắt') },
+    { label: 'Giao việc', icon: <Send size={14} />, onClick: () => setShowGiaoViec(true) },
+    { label: 'Ghi nhận LĐ', icon: <ClipboardList size={14} />, onClick: () => setShowBulkLabor(true) },
   ];
 
   return (
@@ -571,9 +609,65 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
                     </button>
                   ))}
                 </div>
+                <button
+                  onClick={() => setShowAddWsTask(v => !v)}
+                  className="flex items-center gap-1 text-[10.5px] px-2 py-0.5 rounded-md border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
+                >
+                  + Thêm
+                </button>
               </div>
             }
           >
+            {showAddWsTask && (
+              <div className="mb-3 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
+                <input
+                  autoFocus
+                  placeholder="Tên công việc..."
+                  value={addWsTitle}
+                  onChange={e => setAddWsTitle(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddWsTask(); if (e.key === 'Escape') setShowAddWsTask(false); }}
+                  className="text-[12.5px] px-2.5 py-1.5 rounded-md border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400 w-full"
+                />
+                <div className="flex gap-2 flex-wrap">
+                  <select
+                    value={addWsType}
+                    onChange={e => setAddWsType(e.target.value as 'task' | 'doc')}
+                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none"
+                  >
+                    <option value="task">Task nội bộ</option>
+                    <option value="doc">Hồ sơ·HĐ</option>
+                  </select>
+                  <input
+                    type="date"
+                    value={addWsDeadline}
+                    onChange={e => setAddWsDeadline(e.target.value)}
+                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none"
+                    placeholder="Hạn chót"
+                  />
+                  <input
+                    placeholder="Người phụ trách"
+                    value={addWsAssignee}
+                    onChange={e => setAddWsAssignee(e.target.value)}
+                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none flex-1 min-w-[100px]"
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setShowAddWsTask(false)}
+                    className="text-[11.5px] px-3 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-white transition"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    onClick={handleAddWsTask}
+                    disabled={!addWsTitle.trim() || addingWsTask}
+                    className="text-[11.5px] px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition"
+                  >
+                    {addingWsTask ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                </div>
+              </div>
+            )}
             {wsLoading ? (
               <div className="text-[12.5px] text-[#999] py-4 text-center">Đang tải...</div>
             ) : visibleWsTasks.length === 0 ? (
@@ -677,21 +771,33 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
             ) : (
               <div className="flex flex-col gap-1.5 max-h-80 overflow-y-auto pr-0.5">
                 {filteredDoneTasks.map(t => (
-                  <div key={t.id} className="flex items-start gap-2.5 px-3 py-2 border border-[#F0EFEB] bg-[#fafafa] rounded-lg">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[12.5px] font-medium text-[#111] truncate">{t.title}</div>
-                      <div className="text-[11px] text-[#888] mt-0.5">
-                        Hoàn thành {t.completed_at ? formatDate(t.completed_at.split('T')[0]) : ''}
-                        {t.kcn ? ` · ${t.kcn}` : ''}
-                        {t.completed_at ? ` · ${getWeekLabel(t.completed_at)}` : ''}
+                  <div key={t.id} className="px-3 py-2.5 border border-[#F0EFEB] bg-[#fafafa] rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                          {t.task_type && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{t.task_type}</span>
+                          )}
+                          <span className="text-[12.5px] font-medium text-[#111] truncate">{t.title}</span>
+                        </div>
+                        <div className="text-[11px] text-[#888] mt-0.5">
+                          ✓ Hoàn thành {t.completed_at ? formatDate(t.completed_at.split('T')[0]) : ''}
+                          {t.kcn ? ` · ${t.kcn}` : ''}
+                          {t.completed_at ? ` · ${getWeekLabel(t.completed_at)}` : ''}
+                        </div>
                       </div>
-                      {t.notes && (
-                        <div className="text-[11.5px] text-[#555] mt-1 bg-white border border-[#F0EFEB] rounded-md px-2 py-1">{t.notes}</div>
-                      )}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 mt-0.5 ${t.priority === 'high' ? 'bg-red-50 text-red-700 border-red-200' : t.priority === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                        {t.priority === 'high' ? 'Cao' : t.priority === 'medium' ? 'TB' : 'Thấp'}
+                      </span>
                     </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${t.priority === 'high' ? 'bg-red-50 text-red-700 border-red-200' : t.priority === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
-                      {t.priority === 'high' ? 'Cao' : t.priority === 'medium' ? 'TB' : 'Thấp'}
-                    </span>
+                    {t.notes ? (
+                      <div className="mt-1.5 flex items-start gap-1.5 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1.5">
+                        <span className="text-[10px] text-emerald-600 font-semibold shrink-0 mt-0.5">Kết quả:</span>
+                        <span className="text-[11.5px] text-emerald-800">{t.notes}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 text-[11px] text-[#bbb] italic">Chưa có ghi chú kết quả</div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -699,6 +805,17 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
           </div>
         </div>
       </div>
+      {/* Quick action modals */}
+      {showQuoteModal && <QuoteModal toast={toast} onClose={() => setShowQuoteModal(false)} />}
+      {showGiaoViec && (
+        <GiaoViecModal
+          clients={clients}
+          toast={toast}
+          onClose={() => setShowGiaoViec(false)}
+          onCreated={handleTaskCreated}
+        />
+      )}
+      {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}
     </>
   );
 }
