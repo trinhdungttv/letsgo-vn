@@ -17,10 +17,16 @@ interface Props {
   clients: Client[]
   onClientUpdate: (client: Client) => void
   toast: (msg: string) => void
+  onTabChange?: (tab: ModuleKey) => void
 }
 
-export function WorkspaceModulesTabs({ clients, onClientUpdate, toast }: Props) {
+export function WorkspaceModulesTabs({ clients, onClientUpdate, toast, onTabChange }: Props) {
   const [activeTab, setActiveTab] = useState<ModuleKey>('morning')
+
+  function handleTabChange(key: ModuleKey) {
+    setActiveTab(key)
+    onTabChange?.(key)
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -28,7 +34,7 @@ export function WorkspaceModulesTabs({ clients, onClientUpdate, toast }: Props) 
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
-            onClick={() => setActiveTab(key)}
+            onClick={() => handleTabChange(key)}
             className={[
               'flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg border',
               'text-[12.5px] font-medium transition-colors',

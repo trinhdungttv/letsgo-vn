@@ -578,65 +578,6 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
         )}
       </div>
 
-      {/* Công việc sắp tới */}
-      <div className="p-3 border-b border-[#E8E7E2]">
-        <WorkTasksCard clients={clients} tasks={pendingTasks} onTaskCreated={handleTaskCreated} onStatusChange={handleStatusChange} onDelete={deleteTask} />
-      </div>
-
-      {/* Lịch sử công việc đã hoàn thành (1 tháng gần đây) */}
-      <div className="p-3">
-        <button
-          onClick={() => setShowDoneHistory(v => !v)}
-          className="w-full flex items-center justify-between text-[11.5px] font-medium text-[#333] hover:text-blue-600 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
-            <ListTodo size={13} className="text-[#888]" />
-            Lịch sử công việc hoàn thành (1 tháng gần đây)
-            {doneTasks.length > 0 && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                {doneTasks.length}
-              </span>
-            )}
-          </span>
-          {showDoneHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-
-        {showDoneHistory && (
-          <div className="mt-2 flex flex-col gap-1.5">
-            {doneTasks.length === 0 ? (
-              <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg">Chưa có công việc nào hoàn thành</div>
-            ) : (
-              doneTasks.map(t => (
-                <div key={t.id} className="flex items-start gap-2 px-2.5 py-2 border border-[#E8E7E2] bg-[#fafafa] rounded-lg">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11.5px] font-medium text-[#111] truncate">{t.title}</div>
-                    <div className="text-[10px] text-[#888] mt-0.5">
-                      Hoàn thành {t.completed_at ? formatDate(t.completed_at.split('T')[0]) : ''}
-                      {t.kcn ? ` · ${t.kcn}` : ''}
-                    </div>
-                    {t.notes && (
-                      <div className="text-[11px] text-[#666] mt-1 bg-white border border-[#F0EFEB] rounded-md px-2 py-1">
-                        {t.notes}
-                      </div>
-                    )}
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${TASK_PRIORITY_COLORS[t.priority]}`}>
-                    {TASK_PRIORITY_LABELS[t.priority]}
-                  </span>
-                  <button
-                    onClick={() => undoTask(t.id)}
-                    title="Hoàn tác"
-                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-white hover:text-blue-600 hover:border-blue-300 transition-colors shrink-0"
-                  >
-                    <Undo2 size={11} /> Hoàn tác
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Panel cập nhật hồ sơ chi nhánh */}
       {openBranchPanel && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-end z-50" onClick={() => setOpenBranchPanel(null)}>
