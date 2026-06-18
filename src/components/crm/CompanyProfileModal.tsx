@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
-  ClipboardList, Circle, Clock, CheckCircle2,
+  ClipboardList, Circle, Clock, CheckCircle2, StickyNote, Send,
+  ChevronDown, ChevronUp, GitCompare,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/format';
-import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus } from '../../lib/types';
+import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus, PipelineAppendix } from '../../lib/types';
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -31,6 +32,7 @@ export const INTERACTION_TYPES = [
   { id: 'meeting', label: 'Gặp mặt', icon: <Users size={12} />,        color: 'bg-blue-100 text-blue-700'    },
   { id: 'email',   label: 'Email',    icon: <Mail size={12} />,         color: 'bg-violet-100 text-violet-700'},
   { id: 'zalo',    label: 'Zalo',     icon: <MessageSquare size={12} />, color: 'bg-teal-100 text-teal-700'   },
+  { id: 'note',    label: 'Ghi chú',  icon: <StickyNote size={12} />,   color: 'bg-yellow-100 text-yellow-700'},
 ];
 
 export type Section = 'info' | 'contacts' | 'history' | 'gifts' | 'preferences';
@@ -148,15 +150,29 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   // Activating
   const [activating, setActivating] = useState(false);
 
+  // Internal note thread
+  const [noteInput, setNoteInput] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+
+  // Phụ lục versioning
+  const [appendices, setAppendices] = useState<PipelineAppendix[]>([]);
+  const [showNewPL, setShowNewPL] = useState(false);
+  const [newPLContent, setNewPLContent] = useState('');
+  const [addingPL, setAddingPL] = useState(false);
+  const [expandedPL, setExpandedPL] = useState<string | null>(null);
+  const [diffPL, setDiffPL] = useState<string | null>(null);
+
   const loadDetails = useCallback(async () => {
-    const [ir, gr, tr] = await Promise.all([
+    const [ir, gr, tr, ar] = await Promise.all([
       supabase.from('crm_interactions').select('*').eq('crm_id', entry.id).order('interaction_date', { ascending: false }),
       supabase.from('crm_gifts').select('*').eq('crm_id', entry.id).order('gift_date', { ascending: false }),
       supabase.from('crm_pipeline_tasks').select('*').eq('crm_id', entry.id).order('created_at', { ascending: false }),
+      supabase.from('pipeline_appendices').select('*').eq('crm_id', entry.id).order('created_at', { ascending: true }),
     ]);
     if (!ir.error) setInteractions(ir.data as CRMInteraction[]);
     if (!gr.error) setGifts(gr.data as CRMGift[]);
     if (!tr.error) setPipelineTasks(tr.data as CRMPipelineTask[]);
+    if (!ar.error) setAppendices(ar.data as PipelineAppendix[]);
 
     if (entry.client_id) {
       const { data, error } = await supabase
@@ -220,6 +236,40 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
         newData: data,
       });
     } else toast('Lỗi: ' + error.message);
+  };
+
+  const addNote = async () => {
+    if (!noteInput.trim()) return;
+    setAddingNote(true);
+    const today = new Date().toISOString().split('T')[0];
+    const { error } = await supabase.from('crm_interactions').insert({
+      crm_id: entry.id, interaction_type: 'note',
+      content: noteInput.trim(), interaction_date: today,
+    });
+    setAddingNote(false);
+    if (!error) { setNoteInput(''); loadDetails(); }
+    else toast('Lỗi: ' + error.message);
+  };
+
+  const addAppendix = async () => {
+    if (!newPLContent.trim()) return;
+    setAddingPL(true);
+    const nextNum = appendices.length + 1;
+    const label = `PL - Lần ${nextNum}`;
+    const { data, error } = await supabase.from('pipeline_appendices').insert({
+      crm_id: entry.id,
+      version_label: label,
+      content: newPLContent.trim(),
+      created_by: (user as any)?.full_name || (user as any)?.email || null,
+    }).select().single();
+    setAddingPL(false);
+    if (!error && data) {
+      setAppendices(prev => [...prev, data as PipelineAppendix]);
+      setNewPLContent('');
+      setShowNewPL(false);
+      setExpandedPL((data as PipelineAppendix).id);
+      toast('Đã tạo ' + label);
+    } else toast('Lỗi: ' + (error?.message || 'unknown'));
   };
 
   const addGift = async () => {
@@ -438,7 +488,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
     | { kind: 'work_task'; date: string; data: WorkTask };
 
   const historyEntries: HistoryEntry[] = [
-    ...interactions.map(i => ({ kind: 'interaction' as const, date: i.created_at, data: i })),
+    ...interactions.filter(i => i.interaction_type !== 'note').map(i => ({ kind: 'interaction' as const, date: i.created_at, data: i })),
     ...pipelineTasks.map(t => ({ kind: 'pipeline_task' as const, date: t.created_at, data: t })),
     ...workTasks.map(t => ({ kind: 'work_task' as const, date: t.created_at, data: t })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -790,16 +840,144 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
               </div>
             )}
 
-            {/* Ghi chú */}
+            {/* Ghi chú nội bộ — comment thread */}
             <div>
-              <div className="text-[12px] font-semibold text-[#333] mb-1.5">Ghi chú nội bộ</div>
-              <textarea
-                defaultValue={entry.notes || ''}
-                onBlur={e => patchEntry({ notes: e.target.value || null }, `Cập nhật ghi chú nội bộ cho "${entry.company_name}"`)}
-                rows={3}
-                placeholder="Ghi chú về công ty..."
-                className="w-full text-[12.5px] px-3 py-2 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
-              />
+              <div className="text-[12px] font-semibold text-[#333] mb-2">Ghi chú nội bộ</div>
+              {/* Comment list */}
+              {interactions.filter(i => i.interaction_type === 'note').length > 0 ? (
+                <div className="space-y-2 mb-3 max-h-48 overflow-y-auto pr-0.5">
+                  {interactions
+                    .filter(i => i.interaction_type === 'note')
+                    .slice()
+                    .reverse()
+                    .map(i => (
+                      <div key={i.id} className="flex gap-2 items-start">
+                        <div className="w-6 h-6 rounded-full bg-yellow-100 flex items-center justify-center shrink-0 mt-0.5">
+                          <StickyNote size={11} className="text-yellow-600" />
+                        </div>
+                        <div className="flex-1 bg-[#FAFAF8] border border-[#E8E7E2] rounded-lg px-3 py-2">
+                          <div className="text-[12.5px] text-[#222] leading-relaxed whitespace-pre-wrap">{i.content}</div>
+                          <div className="text-[10.5px] text-[#aaa] mt-1">{formatDate(i.interaction_date)}</div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="text-[12px] text-[#aaa] italic mb-3">Chưa có ghi chú nào.</div>
+              )}
+              {/* Input row */}
+              <div className="flex gap-2 items-end">
+                <textarea
+                  value={noteInput}
+                  onChange={e => setNoteInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } }}
+                  rows={2}
+                  placeholder="Viết ghi chú... (Enter để gửi, Shift+Enter xuống dòng)"
+                  className="flex-1 text-[12.5px] px-3 py-2 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
+                />
+                <button
+                  onClick={addNote}
+                  disabled={addingNote || !noteInput.trim()}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-[12px] font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 transition shrink-0"
+                >
+                  <Send size={13} />
+                  Gửi
+                </button>
+              </div>
+            </div>
+
+            {/* Phụ lục versioning */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[12px] font-semibold text-[#333]">Phụ lục hợp đồng</div>
+                <button
+                  onClick={() => { setShowNewPL(v => !v); setNewPLContent(''); }}
+                  className="text-[11.5px] font-medium text-blue-600 hover:text-blue-800 transition"
+                >
+                  {showNewPL ? 'Đóng' : '+ Tạo PL mới'}
+                </button>
+              </div>
+
+              {/* New PL form */}
+              {showNewPL && (
+                <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                  <div className="text-[11.5px] font-semibold text-blue-700">
+                    {appendices.length === 0 ? 'PL - Lần 1' : `PL - Lần ${appendices.length + 1}`}
+                  </div>
+                  <textarea
+                    autoFocus
+                    value={newPLContent}
+                    onChange={e => setNewPLContent(e.target.value)}
+                    rows={4}
+                    placeholder="Nội dung phụ lục..."
+                    className="w-full text-[12.5px] px-3 py-2 border border-blue-300 rounded-lg outline-none focus:border-blue-500 resize-none bg-white"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => { setShowNewPL(false); setNewPLContent(''); }} className="flex-1 py-1.5 text-[12px] font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition">Hủy</button>
+                    <button onClick={addAppendix} disabled={addingPL || !newPLContent.trim()} className="flex-1 py-1.5 text-[12px] font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 transition">
+                      {addingPL ? 'Đang lưu...' : 'Lưu phụ lục'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* PL list */}
+              {appendices.length === 0 && !showNewPL ? (
+                <div className="text-[12px] text-[#aaa] italic">Chưa có phụ lục nào.</div>
+              ) : (
+                <div className="space-y-2">
+                  {[...appendices].reverse().map((pl, revIdx) => {
+                    const origIdx = appendices.length - 1 - revIdx;
+                    const prevPL = origIdx > 0 ? appendices[origIdx - 1] : null;
+                    const isExpanded = expandedPL === pl.id;
+                    const isDiff = diffPL === pl.id;
+                    return (
+                      <div key={pl.id} className="border border-[#E8E7E2] rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => setExpandedPL(isExpanded ? null : pl.id)}
+                          className="w-full flex items-center justify-between px-3 py-2 bg-[#FAFAF8] hover:bg-gray-100 transition text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-semibold text-[#333]">{pl.version_label}</span>
+                            {pl.created_by && <span className="text-[11px] text-[#aaa]">— {pl.created_by}</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-[#bbb]">{formatDate(pl.created_at.split('T')[0])}</span>
+                            {isExpanded ? <ChevronUp size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+                          </div>
+                        </button>
+                        {isExpanded && (
+                          <div className="px-3 py-3 border-t border-[#E8E7E2]">
+                            {prevPL && (
+                              <button
+                                onClick={() => setDiffPL(isDiff ? null : pl.id)}
+                                className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-800 mb-2 transition"
+                              >
+                                <GitCompare size={12} />
+                                {isDiff ? 'Ẩn so sánh' : `So sánh với ${prevPL.version_label}`}
+                              </button>
+                            )}
+                            {isDiff && prevPL ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <div className="text-[10.5px] font-semibold text-gray-500 mb-1">{prevPL.version_label}</div>
+                                  <pre className="text-[11.5px] text-[#555] whitespace-pre-wrap font-sans leading-relaxed bg-red-50 border border-red-100 rounded p-2">{prevPL.content}</pre>
+                                </div>
+                                <div>
+                                  <div className="text-[10.5px] font-semibold text-gray-500 mb-1">{pl.version_label} (mới)</div>
+                                  <pre className="text-[11.5px] text-[#222] whitespace-pre-wrap font-sans leading-relaxed bg-green-50 border border-green-100 rounded p-2">{pl.content}</pre>
+                                </div>
+                              </div>
+                            ) : (
+                              <pre className="text-[12.5px] text-[#222] whitespace-pre-wrap font-sans leading-relaxed">{pl.content}</pre>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Activate button */}

@@ -1,6 +1,6 @@
 // src/components/workspace/MorningPrioritySection.tsx
 import { useState, useEffect, useMemo } from 'react'
-import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, ChevronRight, Undo2, Settings, X } from 'lucide-react'
+import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, ChevronRight, Undo2, Settings, X, Trash2, Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { useRegions } from '../../hooks/useRegions'
@@ -11,6 +11,24 @@ import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS, TASK_ST
 import { formatDate, daysUntil } from '../../lib/format'
 import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
+
+// Colors per doc status step
+const DOC_STATUS_BTN: Record<string, string> = {
+  chua_soan: 'bg-gray-100 text-gray-600 border-gray-300',
+  dang_soan: 'bg-blue-100 text-blue-700 border-blue-300',
+  cho_duyet: 'bg-amber-100 text-amber-700 border-amber-300',
+  cho_kh_ky: 'bg-violet-100 text-violet-700 border-violet-300',
+  hoan_tat:  'bg-green-100 text-green-700 border-green-300',
+  ngung_hd:  'bg-red-100 text-red-700 border-red-300',
+}
+const DOC_STATUS_STEP_DOT: Record<string, string> = {
+  chua_soan: 'bg-gray-400 border-gray-400 text-white',
+  dang_soan: 'bg-blue-500 border-blue-500 text-white',
+  cho_duyet: 'bg-amber-500 border-amber-500 text-white',
+  cho_kh_ky: 'bg-violet-500 border-violet-500 text-white',
+  hoan_tat:  'bg-green-500 border-green-500 text-white',
+  ngung_hd:  'bg-red-500 border-red-500 text-white',
+}
 
 // --- DocStatusDropdown: 1 nút, click sổ danh sách chọn trạng thái ---
 function DocStatusDropdown({
@@ -25,20 +43,13 @@ function DocStatusDropdown({
   const [open, setOpen] = useState(false)
   const current = DOC_STATUS_STEPS.find(s => s.key === docStatus)
   const label = current?.label ?? 'Chọn trạng thái'
-  const isDanger = current?.danger
+  const btnColor = docStatus ? (DOC_STATUS_BTN[docStatus] ?? 'bg-gray-100 text-gray-600 border-gray-300') : 'bg-white text-[#666] border-[#E8E7E2]'
 
   return (
     <div className="relative shrink-0">
       <button
         onClick={() => setOpen(v => !v)}
-        className={[
-          'flex items-center gap-1 text-[10.5px] px-2.5 py-1 rounded-md border font-medium transition-colors',
-          isDanger
-            ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
-            : docStatus
-              ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-              : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300',
-        ].join(' ')}
+        className={`flex items-center gap-1 text-[10.5px] px-2.5 py-1 rounded-md border font-medium transition-colors hover:opacity-80 ${btnColor}`}
       >
         {label}
         <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
@@ -48,29 +59,31 @@ function DocStatusDropdown({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#E8E7E2] rounded-lg shadow-lg overflow-hidden flex flex-row">
-            {DOC_STATUS_STEPS.map((step, i) => (
-              <button
-                key={step.key}
-                onClick={() => { onSelect(taskId, step); setOpen(false) }}
-                className={[
-                  'px-3 py-2 text-[11px] flex flex-col items-center gap-1 transition-colors whitespace-nowrap border-r last:border-r-0 border-[#F0EFEB]',
-                  step.danger
-                    ? 'text-red-600 hover:bg-red-50'
-                    : docStatus === step.key
-                      ? 'bg-blue-50 text-blue-700 font-semibold'
-                      : 'text-[#333] hover:bg-[#F5F4F0]',
-                ].join(' ')}
-              >
-                {!step.danger ? (
-                  <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-bold ${docStatus === step.key ? 'bg-blue-600 border-blue-600 text-white' : 'border-[#ccc] text-[#999]'}`}>
-                    {i + 1}
+            {DOC_STATUS_STEPS.map((step, i) => {
+              const isActive = docStatus === step.key
+              const dotCls = isActive ? (DOC_STATUS_STEP_DOT[step.key] ?? 'bg-gray-400 border-gray-400 text-white') : 'border-[#ccc] text-[#999]'
+              return (
+                <button
+                  key={step.key}
+                  onClick={() => { onSelect(taskId, step); setOpen(false) }}
+                  className={[
+                    'px-3 py-2 text-[11px] flex flex-col items-center gap-1 transition-colors whitespace-nowrap border-r last:border-r-0 border-[#F0EFEB]',
+                    isActive ? 'bg-gray-50 font-semibold' : 'hover:bg-[#F5F4F0]',
+                  ].join(' ')}
+                >
+                  {!step.danger ? (
+                    <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-bold ${dotCls}`}>
+                      {i + 1}
+                    </span>
+                  ) : (
+                    <span className="text-[13px]">🚫</span>
+                  )}
+                  <span className={step.danger ? 'text-red-600' : isActive ? (DOC_STATUS_BTN[step.key]?.split(' ')[1] ?? 'text-gray-700') : 'text-[#333]'}>
+                    {step.label}
                   </span>
-                ) : (
-                  <span className="text-[13px]">🚫</span>
-                )}
-                {step.label}
-              </button>
-            ))}
+                </button>
+              )
+            })}
           </div>
         </>
       )}
@@ -81,6 +94,7 @@ function DocStatusDropdown({
 interface Props {
   clients: Client[]
   onClientUpdate: (client: Client) => void
+  onTaskDone?: (taskId: string) => void
 }
 
 function todayStr() {
@@ -90,7 +104,7 @@ function todayStr() {
 interface ContractSuggest { client: Client; daysLeft: number; kcn: string }
 interface VisitSuggest { branchName: string; daysSince: number | null }
 
-export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
+export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: Props) {
   const { user } = useAuth()
   const { regions } = useRegions()
   const { branches, updateBranch } = useBranchData()
@@ -98,6 +112,9 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({})
 
   const [selectedContractIds, setSelectedContractIds] = useState<Set<string>>(new Set())
+  const [showManualAdd, setShowManualAdd] = useState(false)
+  const [manualSearch, setManualSearch] = useState('')
+  const [addingManual, setAddingManual] = useState(false)
   const [visitThreshold, setVisitThreshold] = usePersistedState('lgvn_visit_threshold_days', 7)
   const [showThresholdSettings, setShowThresholdSettings] = useState(false)
   const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null)
@@ -116,6 +133,8 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
   const [suspendRequestTask, setSuspendRequestTask] = useState<WorkTask | null>(null)
   const [suspendRequestReason, setSuspendRequestReason] = useState('')
   const [submittingSuspend, setSubmittingSuspend] = useState(false)
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
+  const [editingCommentContent, setEditingCommentContent] = useState('')
 
   useEffect(() => { loadPendingTasks(); loadDoneTasks() }, [user])
 
@@ -230,6 +249,7 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
         if (t) setDoneTasks(d => [{ ...t, ...patch } as WorkTask, ...d])
         return prev.filter(x => x.id !== id)
       })
+      onTaskDone?.(id)
     } else {
       setPendingTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } as WorkTask : t))
     }
@@ -268,6 +288,22 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
       setCommentInput(prev => ({ ...prev, [taskId]: '' }))
     }
     setSubmittingComment(null)
+  }
+
+  async function deleteComment(commentId: string, taskId: string) {
+    setTaskComments(prev => ({ ...prev, [taskId]: (prev[taskId] ?? []).filter(c => c.id !== commentId) }))
+    await supabase.from('work_task_comments').delete().eq('id', commentId)
+  }
+
+  async function saveCommentEdit(commentId: string, taskId: string) {
+    const newContent = editingCommentContent.trim()
+    if (!newContent) return
+    setTaskComments(prev => ({
+      ...prev,
+      [taskId]: (prev[taskId] ?? []).map(c => c.id === commentId ? { ...c, content: newContent } : c),
+    }))
+    setEditingCommentId(null)
+    await supabase.from('work_task_comments').update({ content: newContent }).eq('id', commentId)
   }
 
   const isAdmin = (user as any)?.role === 'admin'
@@ -442,6 +478,41 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
 
   const selectedCount = selectedContractIds.size
 
+  // Danh sách KH chưa có trong contractSuggests và chưa có task tái ký đang pending
+  const manualCandidates = clients.filter(c =>
+    c.client_type === 'active' &&
+    c.cooperation_status !== 'suspended' &&
+    !contractSuggests.some(s => s.client.id === c.id) &&
+    !pendingTasks.some(t => t.client_id === c.id && t.task_type === 'Tái ký HĐ')
+  )
+
+  const filteredManualCandidates = manualSearch.trim()
+    ? manualCandidates.filter(c => c.name.toLowerCase().includes(manualSearch.toLowerCase()))
+    : manualCandidates
+
+  async function addManualRenewalTask(client: Client) {
+    if (!user || addingManual) return
+    setAddingManual(true)
+    const today_ = todayStr()
+    const { data, error } = await supabase.from('work_tasks').insert({
+      user_id: user.id,
+      client_id: client.id,
+      title: `Tái ký HĐ — ${client.name}`,
+      task_type: 'Tái ký HĐ',
+      due_date: today_,
+      priority: 'medium',
+      kcn: client.industrial_zones?.[0] || null,
+      status: 'in_progress',
+      doc_status: 'dang_soan',
+    }).select().single()
+    setAddingManual(false)
+    if (!error && data) {
+      setPendingTasks(prev => [data as WorkTask, ...prev])
+      setShowManualAdd(false)
+      setManualSearch('')
+    }
+  }
+
   return (
     <>
     <div className="flex flex-col gap-0">
@@ -459,48 +530,95 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
         {(contractSuggests.length > 0 || visitSuggests.length > 0 || pendingTasks.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-1">
             {/* Cột trái: HĐ cần xử lý */}
-            {contractSuggests.length > 0 && (
-              <div>
-                <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide">
                   <FileWarning size={12} />
                   HĐ cần xử lý
                 </div>
-                <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
-                  {contractSuggests.map(s => {
-                    const isSel = selectedContractIds.has(s.client.id)
-                    return (
-                      <div
-                        key={s.client.id}
-                        onClick={() => toggleContractSelect(s.client.id)}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 border rounded-lg cursor-pointer transition-colors ${isSel ? 'border-blue-300 bg-blue-50' : 'border-[#E8E7E2] bg-[#fafafa] hover:border-blue-200 hover:bg-blue-50'}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSel}
-                          onClick={e => e.stopPropagation()}
-                          onChange={() => toggleContractSelect(s.client.id)}
-                          className="shrink-0 accent-blue-600"
-                        />
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${s.daysLeft <= 0 ? 'bg-red-500' : s.daysLeft <= 7 ? 'bg-red-400' : 'bg-amber-400'}`} />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[11.5px] font-medium text-[#111] truncate">{s.client.name}</div>
-                          {(s.client.region || s.kcn) && (
-                            <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
-                              <MapPin size={10} />
-                              {s.client.region ? `CN ${s.client.region}` : s.kcn}
-                            </div>
-                          )}
-                        </div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${urgColor(s.daysLeft)}`}>
-                          {s.daysLeft <= 0 ? 'HĐ đã hết hạn' : `Còn ${s.daysLeft} ngày`}
-                        </span>
-                        {isSel ? <Check size={13} className="text-blue-500 shrink-0" /> : <ArrowRight size={13} className="text-[#bbb] shrink-0" />}
-                      </div>
-                    )
-                  })}
-                </div>
+                <button
+                  onClick={() => { setShowManualAdd(v => !v); setManualSearch('') }}
+                  className="text-[10px] px-2 py-0.5 rounded-md border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
+                >
+                  + Thêm thủ công
+                </button>
               </div>
-            )}
+
+              {/* Inline search để thêm thủ công */}
+              {showManualAdd && (
+                <div className="mb-2 border border-blue-200 rounded-lg bg-blue-50 p-2">
+                  <input
+                    autoFocus
+                    placeholder="Tìm công ty..."
+                    value={manualSearch}
+                    onChange={e => setManualSearch(e.target.value)}
+                    className="w-full text-[11.5px] px-2.5 py-1.5 rounded-md border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400 mb-1.5"
+                  />
+                  <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+                    {filteredManualCandidates.length === 0 ? (
+                      <div className="text-[11px] text-[#bbb] text-center py-2">Không tìm thấy</div>
+                    ) : filteredManualCandidates.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => addManualRenewalTask(c)}
+                        disabled={addingManual}
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-white border border-[#E8E7E2] hover:border-blue-300 hover:bg-blue-50 transition text-left"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11.5px] font-medium text-[#111] truncate">{c.name}</div>
+                          {c.region && <div className="text-[10px] text-[#888]">CN {c.region}</div>}
+                        </div>
+                        {c.contract_end && (
+                          <span className="text-[10px] text-[#aaa] shrink-0">
+                            {Math.ceil((new Date(c.contract_end).getTime() - Date.now()) / 86400000)} ngày
+                          </span>
+                        )}
+                        <ArrowRight size={12} className="text-[#bbb] shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-0.5">
+                {contractSuggests.length === 0 && !showManualAdd && (
+                  <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg">Không có HĐ gần hết hạn</div>
+                )}
+                {contractSuggests.map(s => {
+                  const isSel = selectedContractIds.has(s.client.id)
+                  return (
+                    <div
+                      key={s.client.id}
+                      onClick={() => toggleContractSelect(s.client.id)}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 border rounded-lg cursor-pointer transition-colors ${isSel ? 'border-blue-300 bg-blue-50' : 'border-[#E8E7E2] bg-[#fafafa] hover:border-blue-200 hover:bg-blue-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSel}
+                        onClick={e => e.stopPropagation()}
+                        onChange={() => toggleContractSelect(s.client.id)}
+                        className="shrink-0 accent-blue-600"
+                      />
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${s.daysLeft <= 0 ? 'bg-red-500' : s.daysLeft <= 7 ? 'bg-red-400' : 'bg-amber-400'}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11.5px] font-medium text-[#111] truncate">{s.client.name}</div>
+                        {(s.client.region || s.kcn) && (
+                          <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1">
+                            <MapPin size={10} />
+                            {s.client.region ? `CN ${s.client.region}` : s.kcn}
+                          </div>
+                        )}
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${urgColor(s.daysLeft)}`}>
+                        {s.daysLeft <= 0 ? 'HĐ đã hết hạn' : `Còn ${s.daysLeft} ngày`}
+                      </span>
+                      {isSel ? <Check size={13} className="text-blue-500 shrink-0" /> : <ArrowRight size={13} className="text-[#bbb] shrink-0" />}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
 
             {/* Cột giữa: Công việc chưa hoàn thành */}
             <div>
@@ -535,6 +653,13 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                               ))}
                             </select>
                           )}
+                          <button
+                            onClick={() => { if (confirm('Xoá công việc này? Client sẽ hiện lại ở "HĐ cần xử lý".')) deleteTask(t.id) }}
+                            title="Xoá việc"
+                            className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition shrink-0"
+                          >
+                            <Trash2 size={12} />
+                          </button>
                         </div>
                         {/* Doc status dropdown for Tái ký HĐ */}
                         {t.task_type === 'Tái ký HĐ' && (
@@ -556,12 +681,36 @@ export function MorningPrioritySection({ clients, onClientUpdate }: Props) {
                           {(taskComments[t.id] ?? []).length > 0 && (
                             <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
                               {(taskComments[t.id] ?? []).map(cm => (
-                                <div key={cm.id} className="px-2.5 py-1.5">
+                                <div key={cm.id} className="px-2.5 py-1.5 group">
                                   <div className="flex items-center gap-1.5 mb-0.5">
                                     <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
                                     <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</span>
+                                    <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => { setEditingCommentId(cm.id); setEditingCommentContent(cm.content) }}
+                                        className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500 transition"
+                                      ><Pencil size={10} /></button>
+                                      <button
+                                        onClick={() => { if (confirm('Xoá bình luận này?')) deleteComment(cm.id, t.id); }}
+                                        className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
+                                      ><Trash2 size={10} /></button>
+                                    </div>
                                   </div>
-                                  <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                                  {editingCommentId === cm.id ? (
+                                    <div className="flex gap-1 mt-1">
+                                      <input
+                                        autoFocus
+                                        value={editingCommentContent}
+                                        onChange={e => setEditingCommentContent(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') saveCommentEdit(cm.id, t.id); if (e.key === 'Escape') setEditingCommentId(null) }}
+                                        className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none"
+                                      />
+                                      <button onClick={() => saveCommentEdit(cm.id, t.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700"><Check size={10} /></button>
+                                      <button onClick={() => setEditingCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666] hover:bg-gray-50"><X size={10} /></button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                                  )}
                                 </div>
                               ))}
                             </div>

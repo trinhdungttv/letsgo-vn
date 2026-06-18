@@ -33,6 +33,8 @@ export interface Client {
   cutoff_day_end: number | null;
   calc_day: number;
   calc_day_end: number | null;
+  invoice_day: number | null;
+  invoice_day_end: number | null;
   payment_start: number;
   payment_end: number;
   salary_day: number;
@@ -171,6 +173,15 @@ export interface CRMInteraction {
   interaction_date: string;
   interaction_type: string;
   content: string | null;
+  created_at: string;
+}
+
+export interface PipelineAppendix {
+  id: string;
+  crm_id: string;
+  version_label: string;
+  content: string;
+  created_by: string | null;
   created_at: string;
 }
 

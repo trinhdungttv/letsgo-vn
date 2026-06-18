@@ -83,6 +83,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const [editForm, setEditForm] = useState({
     cutoff_day: 1, cutoff_day_end: null as number | null,
     calc_day: 3, calc_day_end: null as number | null,
+    invoice_day: null as number | null, invoice_day_end: null as number | null,
     payment_start: 1, payment_end: 5,
     salary_day: 1, salary_day_end: null as number | null,
   });
@@ -115,6 +116,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     setEditForm({
       cutoff_day: c.cutoff_day, cutoff_day_end: c.cutoff_day_end,
       calc_day: c.calc_day, calc_day_end: c.calc_day_end,
+      invoice_day: c.invoice_day ?? null, invoice_day_end: c.invoice_day_end ?? null,
       payment_start: c.payment_start, payment_end: c.payment_end,
       salary_day: c.salary_day, salary_day_end: c.salary_day_end,
     });
@@ -327,6 +329,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> Tính lương
                   </span>
                   <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> Xuất HĐ
+                  </span>
+                  <span className="flex items-center gap-1.5">
                     <span className="inline-block w-8 h-3 rounded bg-emerald-400 opacity-80" /> Kỳ TT
                   </span>
                   <span className="flex items-center gap-1.5">
@@ -366,6 +371,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const showBar = !c.next_month_pay && c.payment_start > c.cutoff_day;
                   const payStartX = ((c.payment_start - 1) / daysInMonth) * 100;
                   const payEndX = (payEnd / daysInMonth) * 100;
+
+                  const invoiceDay = c.invoice_day ?? null;
+                  const invoiceEnd = c.invoice_day_end && invoiceDay && c.invoice_day_end > invoiceDay ? c.invoice_day_end : null;
+                  const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const invoiceEndX = invoiceEnd ? (Math.min(invoiceEnd, daysInMonth) / daysInMonth) * 100 : null;
 
                   const salaryEnd = c.salary_day_end && c.salary_day_end > c.salary_day ? c.salary_day_end : null;
                   const salaryX = ((Math.min(c.salary_day - 1, daysInMonth - 1)) / daysInMonth) * 100;
@@ -418,6 +428,30 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                               title={`Tính lương: ngày ${c.calc_day}–${calcEnd}`} />
                             <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
                               style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                          </>
+                        )}
+
+                        {/* Xuất HĐ */}
+                        {invoiceX !== null && invoiceDay !== null && (
+                          <>
+                            {invoiceEndX !== null && (
+                              <div className="absolute border-t border-dashed border-cyan-300"
+                                style={{ left: `${invoiceX}%`, width: `${invoiceEndX - invoiceX}%`, top: 10 }} />
+                            )}
+                            <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
+                              style={{ left: `calc(${invoiceX}% - 6px)`, top: 4 }}
+                              title={`Xuất HĐ: ngày ${invoiceDay}${invoiceEnd ? `–${invoiceEnd}` : ''}`} />
+                            <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
+                              style={{ left: `${invoiceX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceDay}</div>
+                            {invoiceEndX !== null && (
+                              <>
+                                <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
+                                  style={{ left: `calc(${invoiceEndX}% - 6px)`, top: 4 }}
+                                  title={`Xuất HĐ: ngày ${invoiceDay}–${invoiceEnd}`} />
+                                <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
+                                  style={{ left: `${invoiceEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceEnd}</div>
+                              </>
+                            )}
                           </>
                         )}
 
@@ -695,6 +729,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               {([
                 { label: 'Chốt công', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
                 { label: 'Tính lương', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
+                { label: 'Xuất HĐ', start: 'invoice_day', end: 'invoice_day_end', dot: 'bg-cyan-500' },
                 { label: 'Kỳ thanh toán', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
                 { label: 'Phát lương', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
               ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => (
