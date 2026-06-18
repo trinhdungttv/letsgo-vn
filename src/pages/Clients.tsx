@@ -78,7 +78,7 @@ export default function Clients({
   const [suspendTarget, setSuspendTarget] = useState<Client | null>(null);
   const [suspendReason, setSuspendReason] = useState('');
   const [isSuspending, setIsSuspending] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' | 'service_type' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
@@ -284,7 +284,18 @@ export default function Clients({
     const hist = (laborHistory[c.id] || [])
       .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
       .slice(-6).map(h => h.count);
+    // Phân nhánh theo loại hình dịch vụ.
+    if (c.service_type === 'recruitment') {
+      return calcHealthScore({
+        serviceType: 'recruitment',
+        overdueInvoiceCount: 0, // Dữ liệu invoice không tải ở đây — dùng 0 làm mặc định.
+        unpaidInvoiceCount: 0,
+        contractEnd: c.contract_end || '',
+        lastContactDate: '',
+      }).total;
+    }
     return calcHealthScore({
+      serviceType: 'leasing',
       currentWorkers: c.current_workers || 0,
       minWorkers: c.min_workers || 0,
       paidThisMonth: c.paid_this_month || false,
@@ -574,7 +585,7 @@ export default function Clients({
   }
 
   const QUICK_EDIT_LABELS: Record<string, string> = {
-    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái', payroll_staff: 'NS Tính lương',
+    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái', payroll_staff: 'NS Tính lương', service_type: 'Loai hinh dich vu',
   };
 
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
@@ -640,6 +651,16 @@ export default function Clients({
     setSavingCell(true);
     try {
       const updates: any = { [field]: newVal, updated_at: new Date().toISOString() };
+      if (field === 'service_type' && newVal === 'recruitment') {
+        updates.cutoff_day = null; updates.calc_day = null; updates.salary_day = null;
+        updates.payment_start = null; updates.payment_end = null;
+      }
+      if (field === 'service_type' && newVal === 'leasing') {
+        updates.cutoff_day = updates.cutoff_day ?? 25;
+        updates.payment_start = updates.payment_start ?? 1;
+        updates.payment_end = updates.payment_end ?? 10;
+        updates.salary_day = updates.salary_day ?? 5;
+      }
       const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
       if (error) throw error;
       onClientUpdate({ ...c, ...updates });
@@ -1009,16 +1030,26 @@ export default function Clients({
                     .sort((a, b) => a.week_label < b.week_label ? -1 : 1)
                     .slice(-6)
                     .map(h => h.count);
-                  const hs = calcHealthScore({
-                    currentWorkers: c.current_workers || 0,
-                    minWorkers: c.min_workers || 0,
-                    paidThisMonth: c.paid_this_month || false,
-                    progCutoff: c.prog_cutoff || false,
-                    contractEnd: c.contract_end || '',
-                    lastContactDate: '',
-                    workerHistory: wHistory,
-                  });
-                  const churnLevel = detectChurnRisk(wHistory);
+                  const hs = c.service_type === 'recruitment'
+                    ? calcHealthScore({
+                        serviceType: 'recruitment',
+                        overdueInvoiceCount: 0,
+                        unpaidInvoiceCount: 0,
+                        contractEnd: c.contract_end || '',
+                        lastContactDate: '',
+                      })
+                    : calcHealthScore({
+                        serviceType: 'leasing',
+                        currentWorkers: c.current_workers || 0,
+                        minWorkers: c.min_workers || 0,
+                        paidThisMonth: c.paid_this_month || false,
+                        progCutoff: c.prog_cutoff || false,
+                        contractEnd: c.contract_end || '',
+                        lastContactDate: '',
+                        workerHistory: wHistory,
+                      });
+                  // detectChurnRisk chỉ áp dụng cho leasing.
+                  const churnLevel = c.service_type === 'recruitment' ? null : detectChurnRisk(wHistory);
 
                   return (
                     <tr key={c.id}
@@ -1040,6 +1071,27 @@ export default function Clients({
                               {c.cooperation_status === 'suspended' && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium">Ngưng</span>
                               )}
+                              {editingCell?.id === c.id && editingCell.field === 'service_type' ? (
+                                <select
+                                  autoFocus value={editValue} disabled={savingCell}
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => setEditValue(e.target.value)}
+                                  onBlur={() => saveEdit(c)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                                  className="text-[11px] border border-blue-400 rounded px-1 py-0.5 bg-white font-normal"
+                                >
+                                  <option value="leasing">Cho thue lao dong</option>
+                                  <option value="recruitment">Gioi thieu lao dong</option>
+                                </select>
+                              ) : c.service_type === 'recruitment' ? (
+                                <span
+                                  onDoubleClick={e => startEdit(e, c, 'service_type')}
+                                  title="Gioi thieu lao dong — nhan doi de doi loai hinh"
+                                  className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium cursor-pointer select-none bg-purple-50 text-purple-600 border-purple-200"
+                                >
+                                  GT
+                                </span>
+                              ) : null}
                               <ChurnBadge level={churnLevel} />
                               <button
                                 onClick={e => {
@@ -1183,10 +1235,17 @@ export default function Clients({
                               onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
                               className="text-[12px] w-14 px-1.5 py-1 rounded border border-blue-400 outline-none"
                             />
-                          ) : `Ngày ${c.cutoff_day}`}
+                          ) : c.cutoff_day != null ? `Ngày ${c.cutoff_day}` : '—'}
                         </td>
                       )}
-                      {col('payment') && <td className="px-3 py-2 text-[12px] whitespace-nowrap">{c.next_month_pay ? 'T sau' : `${c.payment_start}–${c.payment_end}`}</td>}
+                      {col('payment') && (
+                        <td className="px-3 py-2 text-[12px] whitespace-nowrap">
+                          {c.service_type === 'recruitment'
+                            ? <span className="text-purple-600 text-[11px]">{c.payment_term_days}d cong no</span>
+                            : c.next_month_pay ? 'T sau' : (c.payment_start != null && c.payment_end != null ? `${c.payment_start}–${c.payment_end}` : '—')
+                          }
+                        </td>
+                      )}
                       {col('contract_start') && (
                         <td className="px-3 py-2" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'contract_start')}>
                           {editingCell?.id === c.id && editingCell.field === 'contract_start' ? (

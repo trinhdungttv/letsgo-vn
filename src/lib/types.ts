@@ -22,6 +22,11 @@ export interface Manager {
   created_at: string;
 }
 
+// Loại hình dịch vụ:
+//   'leasing'     - Cho thuê lao động: chu kỳ tháng cố định, các trường ngày bắt buộc.
+//   'recruitment' - Giới thiệu lao động: xuất HĐ theo sự kiện, thanh toán theo công nợ.
+export type ServiceType = 'leasing' | 'recruitment';
+
 export interface Client {
   id: string;
   name: string;
@@ -29,15 +34,16 @@ export interface Client {
   manager: string | null;
   industrial_zones: string[];
   min_workers: number;
-  cutoff_day: number;
+  // Các trường chu kỳ tháng — bắt buộc với 'leasing', NULL với 'recruitment'.
+  cutoff_day: number | null;
   cutoff_day_end: number | null;
-  calc_day: number;
+  calc_day: number | null;
   calc_day_end: number | null;
   invoice_day: number | null;
   invoice_day_end: number | null;
-  payment_start: number;
-  payment_end: number;
-  salary_day: number;
+  payment_start: number | null;
+  payment_end: number | null;
+  salary_day: number | null;
   salary_day_end: number | null;
   next_month_pay: boolean;
   contract_start: string | null;
@@ -51,6 +57,10 @@ export interface Client {
   created_at: string;
   updated_at: string;
   current_workers?: number;
+  // Loại hình dịch vụ — mặc định 'leasing' cho toàn bộ dữ liệu cũ.
+  service_type: ServiceType;
+  // Số ngày công nợ cho dịch vụ 'recruitment' (ví dụ: 15, 30).
+  payment_term_days: number;
   // Unified prospect/active fields
   client_type: 'prospect' | 'active';
   pipeline_stage: string | null;

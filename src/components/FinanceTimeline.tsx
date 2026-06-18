@@ -11,7 +11,7 @@ interface Props {
 
 function TimelinePill({
   day, label, highlight,
-}: { day: number; label: string; highlight: 'done' | 'active' | 'pending' }) {
+}: { day: number | null; label: string; highlight: 'done' | 'active' | 'pending' }) {
   const styles = {
     done: 'bg-emerald-100 text-emerald-700 border-emerald-300',
     active: 'bg-amber-100 text-amber-700 border-amber-300',
@@ -20,7 +20,7 @@ function TimelinePill({
   return (
     <div className="flex flex-col items-center gap-0.5 min-w-[52px]">
       <div className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${styles[highlight]}`}>
-        Ngày {day}
+        {day != null ? `Ngày ${day}` : '—'}
       </div>
       <div className="text-[9.5px] text-[#999] whitespace-nowrap">{label}</div>
     </div>
@@ -86,10 +86,12 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
                 <td colSpan={6} className="text-center py-10 text-[#aaa]">Không có khách hàng nào</td>
               </tr>
             ) : filtered.map((c, idx) => {
-              const cutoffHighlight = todayNum >= c.cutoff_day ? 'done' : todayNum === c.cutoff_day - 1 ? 'active' : 'pending';
-              const payStartHighlight = todayNum >= c.payment_start ? 'done' : todayNum === c.payment_start - 1 ? 'active' : 'pending';
-              const payEndHighlight = todayNum >= c.payment_end ? 'done' : todayNum >= c.payment_start ? 'active' : 'pending';
-              const salaryHighlight = todayNum >= c.salary_day ? 'done' : todayNum === c.salary_day - 1 ? 'active' : 'pending';
+              // Recruitment không có ngày chu kỳ cố định — hiển thị placeholder.
+              const isRecruitment = c.service_type === 'recruitment';
+              const cutoffHighlight: 'done' | 'active' | 'pending' = c.cutoff_day != null && todayNum >= c.cutoff_day ? 'done' : c.cutoff_day != null && todayNum === c.cutoff_day - 1 ? 'active' : 'pending';
+              const payStartHighlight: 'done' | 'active' | 'pending' = c.payment_start != null && todayNum >= c.payment_start ? 'done' : c.payment_start != null && todayNum === c.payment_start - 1 ? 'active' : 'pending';
+              const payEndHighlight: 'done' | 'active' | 'pending' = c.payment_end != null && todayNum >= c.payment_end ? 'done' : c.payment_start != null && todayNum >= c.payment_start ? 'active' : 'pending';
+              const salaryHighlight: 'done' | 'active' | 'pending' = c.salary_day != null && todayNum >= c.salary_day ? 'done' : c.salary_day != null && todayNum === c.salary_day - 1 ? 'active' : 'pending';
 
               return (
                 <tr key={c.id} className="hover:bg-[#FAFAF8] transition">
@@ -106,17 +108,30 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
                   <td className="px-4 py-3 text-[#555]">{c.region || '—'}</td>
                   <td className="px-4 py-3 text-[#555]">{c.manager || '—'}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-center gap-0">
-                      <TimelinePill day={c.cutoff_day} label="Chốt công" highlight={cutoffHighlight} />
-                      <Connector active={cutoffHighlight === 'done'} />
-                      <TimelinePill day={c.payment_start} label="Bắt đầu TT" highlight={payStartHighlight} />
-                      <Connector active={payEndHighlight !== 'pending'} />
-                      <TimelinePill day={c.payment_end} label="Hạn TT" highlight={payEndHighlight} />
-                    </div>
+                    {/* Recruitment không có chu kỳ cố định — hiển thị nhãn thay thế */}
+                    {isRecruitment ? (
+                      <div className="flex items-center justify-center">
+                        <span className="text-[11px] px-2.5 py-1 rounded-full bg-purple-50 border border-purple-200 text-purple-600 font-medium">
+                          Giai thieu — cong no {c.payment_term_days} ngay
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-0">
+                        <TimelinePill day={c.cutoff_day} label="Chot cong" highlight={cutoffHighlight} />
+                        <Connector active={cutoffHighlight === 'done'} />
+                        <TimelinePill day={c.payment_start} label="Bat dau TT" highlight={payStartHighlight} />
+                        <Connector active={payEndHighlight !== 'pending'} />
+                        <TimelinePill day={c.payment_end} label="Han TT" highlight={payEndHighlight} />
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center">
-                      <TimelinePill day={c.salary_day} label="Phát lương" highlight={salaryHighlight} />
+                      {isRecruitment ? (
+                        <span className="text-[11px] text-[#aaa]">—</span>
+                      ) : (
+                        <TimelinePill day={c.salary_day} label="Phat luong" highlight={salaryHighlight} />
+                      )}
                     </div>
                   </td>
                 </tr>

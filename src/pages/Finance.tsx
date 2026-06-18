@@ -81,11 +81,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   // ── Timeline edit modal (opened by clicking a company name) ──────
   const [editClient, setEditClient] = useState<Client | null>(null);
   const [editForm, setEditForm] = useState({
-    cutoff_day: 1, cutoff_day_end: null as number | null,
-    calc_day: 3, calc_day_end: null as number | null,
+    cutoff_day: null as number | null, cutoff_day_end: null as number | null,
+    calc_day: null as number | null, calc_day_end: null as number | null,
     invoice_day: null as number | null, invoice_day_end: null as number | null,
-    payment_start: 1, payment_end: 5,
-    salary_day: 1, salary_day_end: null as number | null,
+    payment_start: null as number | null, payment_end: null as number | null,
+    salary_day: null as number | null, salary_day_end: null as number | null,
   });
 
   // ── Date picker modal state ───────────────────────────────────────
@@ -359,27 +359,30 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     Không có khách hàng
                   </div>
                 ) : filteredClients.map(c => {
-                  const cutoffEnd = c.cutoff_day_end && c.cutoff_day_end > c.cutoff_day ? c.cutoff_day_end : null;
-                  const cutoffX = ((c.cutoff_day - 1) / daysInMonth) * 100;
-                  const cutoffEndX = cutoffEnd ? (Math.min(cutoffEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  // Recruitment không có ngày chu kỳ — chỉ hiển thị invoice_day (nếu có).
+                  const isRecruitment = c.service_type === 'recruitment';
 
-                  const calcEnd = c.calc_day_end && c.calc_day_end > c.calc_day ? c.calc_day_end : null;
-                  const calcX = ((Math.min(c.calc_day - 1, daysInMonth - 1)) / daysInMonth) * 100;
-                  const calcEndX = calcEnd ? (Math.min(calcEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const cutoffEnd = c.cutoff_day_end != null && c.cutoff_day != null && c.cutoff_day_end > c.cutoff_day ? c.cutoff_day_end : null;
+                  const cutoffX = c.cutoff_day != null ? ((c.cutoff_day - 1) / daysInMonth) * 100 : null;
+                  const cutoffEndX = cutoffEnd != null ? (Math.min(cutoffEnd, daysInMonth) / daysInMonth) * 100 : null;
 
-                  const payEnd = Math.min(c.payment_end, daysInMonth);
-                  const showBar = !c.next_month_pay && c.payment_start > c.cutoff_day;
-                  const payStartX = ((c.payment_start - 1) / daysInMonth) * 100;
-                  const payEndX = (payEnd / daysInMonth) * 100;
+                  const calcEnd = c.calc_day_end != null && c.calc_day != null && c.calc_day_end > c.calc_day ? c.calc_day_end : null;
+                  const calcX = c.calc_day != null ? ((Math.min(c.calc_day - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const calcEndX = calcEnd != null ? (Math.min(calcEnd, daysInMonth) / daysInMonth) * 100 : null;
+
+                  const payEnd = c.payment_end != null ? Math.min(c.payment_end, daysInMonth) : null;
+                  const showBar = !isRecruitment && !c.next_month_pay && c.payment_start != null && c.cutoff_day != null && c.payment_start > c.cutoff_day;
+                  const payStartX = c.payment_start != null ? ((c.payment_start - 1) / daysInMonth) * 100 : null;
+                  const payEndX = payEnd != null ? (payEnd / daysInMonth) * 100 : null;
 
                   const invoiceDay = c.invoice_day ?? null;
-                  const invoiceEnd = c.invoice_day_end && invoiceDay && c.invoice_day_end > invoiceDay ? c.invoice_day_end : null;
+                  const invoiceEnd = c.invoice_day_end != null && invoiceDay != null && c.invoice_day_end > invoiceDay ? c.invoice_day_end : null;
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const invoiceEndX = invoiceEnd ? (Math.min(invoiceEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const invoiceEndX = invoiceEnd != null ? (Math.min(invoiceEnd, daysInMonth) / daysInMonth) * 100 : null;
 
-                  const salaryEnd = c.salary_day_end && c.salary_day_end > c.salary_day ? c.salary_day_end : null;
-                  const salaryX = ((Math.min(c.salary_day - 1, daysInMonth - 1)) / daysInMonth) * 100;
-                  const salaryEndX = salaryEnd ? (Math.min(salaryEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const salaryEnd = c.salary_day_end != null && c.salary_day != null && c.salary_day_end > c.salary_day ? c.salary_day_end : null;
+                  const salaryX = c.salary_day != null ? ((Math.min(c.salary_day - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const salaryEndX = salaryEnd != null ? (Math.min(salaryEnd, daysInMonth) / daysInMonth) * 100 : null;
 
                   return (
                     <div key={c.id} className="flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
@@ -393,41 +396,50 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40"
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
-                        {/* Tất cả trên 1 dòng: Chốt công, Tính lương, Kỳ TT, Phát lương */}
-                        {cutoffEndX !== null && (
-                          <div className="absolute border-t border-dashed border-orange-300"
-                            style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 10 }} />
-                        )}
-                        <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                          style={{ left: `calc(${cutoffX}% - 6px)`, top: 4 }}
-                          title={`Chốt công: ngày ${c.cutoff_day}${cutoffEnd ? `–${cutoffEnd}` : ''}`} />
-                        <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                          style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
-                        {cutoffEndX !== null && (
+                        {/* Leasing: Chốt công, Tính lương, Kỳ TT, Phát lương */}
+                        {/* Recruitment: chỉ hiển thị Xuất HĐ (invoice) nếu có */}
+                        {!isRecruitment && cutoffX != null && (
                           <>
+                            {cutoffEndX != null && (
+                              <div className="absolute border-t border-dashed border-orange-300"
+                                style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 10 }} />
+                            )}
                             <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 4 }}
-                              title={`Chốt công: ngày ${c.cutoff_day}–${cutoffEnd}`} />
+                              style={{ left: `calc(${cutoffX}% - 6px)`, top: 4 }}
+                              title={`Chot cong: ngay ${c.cutoff_day}${cutoffEnd ? `–${cutoffEnd}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                              style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
+                              style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
+                            {cutoffEndX != null && (
+                              <>
+                                <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
+                                  style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 4 }}
+                                  title={`Chot cong: ngay ${c.cutoff_day}–${cutoffEnd}`} />
+                                <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
+                                  style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
+                              </>
+                            )}
                           </>
                         )}
-                        {calcEndX !== null && (
-                          <div className="absolute border-t border-dashed border-blue-300"
-                            style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 10 }} />
-                        )}
-                        <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                          style={{ left: `calc(${calcX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                          title={`Tính lương: ngày ${c.calc_day}${calcEnd ? `–${calcEnd}` : ''}`} />
-                        <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                          style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
-                        {calcEndX !== null && (
+                        {!isRecruitment && calcX != null && (
                           <>
+                            {calcEndX != null && (
+                              <div className="absolute border-t border-dashed border-blue-300"
+                                style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 10 }} />
+                            )}
                             <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                              style={{ left: `calc(${calcEndX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                              title={`Tính lương: ngày ${c.calc_day}–${calcEnd}`} />
+                              style={{ left: `calc(${calcX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                              title={`Tinh luong: ngay ${c.calc_day}${calcEnd ? `–${calcEnd}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                              style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                              style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
+                            {calcEndX != null && (
+                              <>
+                                <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
+                                  style={{ left: `calc(${calcEndX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                                  title={`Tinh luong: ngay ${c.calc_day}–${calcEnd}`} />
+                                <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
+                                  style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                              </>
+                            )}
                           </>
                         )}
 
@@ -455,34 +467,38 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           </>
                         )}
 
-                        {showBar && (
+                        {showBar && payStartX != null && payEndX != null && (
                           <div
                             className={`absolute rounded-sm flex items-center justify-center text-[9px] font-semibold whitespace-nowrap overflow-hidden ${c.paid_this_month ? 'bg-emerald-400 text-emerald-900' : 'bg-emerald-300 opacity-70 text-emerald-800'}`}
                             style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 4 }}
-                            title={`Kỳ TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Đã TT)' : ' (Chưa TT)'}`}
+                            title={`Ky TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`}
                           >
                             {c.payment_start}–{c.payment_end}
                           </div>
                         )}
-                        {c.next_month_pay && (
+                        {!isRecruitment && c.next_month_pay && (
                           <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT/T7</div>
                         )}
-                        {salaryEndX !== null && (
-                          <div className="absolute border-t border-dashed border-purple-300"
-                            style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 10 }} />
-                        )}
-                        <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                          style={{ left: `calc(${salaryX}% - 6px)`, top: 4 }}
-                          title={`Phát lương: ngày ${c.salary_day}${salaryEnd ? `–${salaryEnd}` : ''}`} />
-                        <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                          style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
-                        {salaryEndX !== null && (
+                        {!isRecruitment && salaryX != null && (
                           <>
+                            {salaryEndX != null && (
+                              <div className="absolute border-t border-dashed border-purple-300"
+                                style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 10 }} />
+                            )}
                             <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${salaryEndX}% - 6px)`, top: 4 }}
-                              title={`Phát lương: ngày ${c.salary_day}–${salaryEnd}`} />
+                              style={{ left: `calc(${salaryX}% - 6px)`, top: 4 }}
+                              title={`Phat luong: ngay ${c.salary_day}${salaryEnd ? `–${salaryEnd}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                              style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
+                              style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
+                            {salaryEndX != null && (
+                              <>
+                                <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
+                                  style={{ left: `calc(${salaryEndX}% - 6px)`, top: 4 }}
+                                  title={`Phat luong: ngay ${c.salary_day}–${salaryEnd}`} />
+                                <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
+                                  style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
+                              </>
+                            )}
                           </>
                         )}
                       </div>
@@ -512,8 +528,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const cost = (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0);
                   const profit = (r.revenue || 0) - cost;
 
+                  // Null-safe: recruitment clients có thể không có các ngày chu kỳ này.
                   const cutoffDay = clientData?.cutoff_day ?? 20;
-                  const calcDay = clientData?.calc_day ?? cutoffDay + 2;
+                  const calcDay = clientData?.calc_day ?? (cutoffDay + 2);
                   const payStartDay = clientData?.payment_start ?? 26;
                   const salaryDay = clientData?.salary_day ?? payStartDay;
 

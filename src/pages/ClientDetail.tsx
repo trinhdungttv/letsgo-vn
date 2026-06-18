@@ -109,6 +109,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     contract_start: client.contract_start || '',
     contract_end: client.contract_end || '',
     notes: client.notes || '',
+    service_type: client.service_type ?? 'leasing',
   });
   const [timelineForm, setTimelineForm] = useState({
     cutoff_day: client.cutoff_day, cutoff_day_end: client.cutoff_day_end,
@@ -448,7 +449,15 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const handleSave = async () => {
     if (!form.name.trim()) { toast('Tên công ty không được để trống'); return; }
     try {
-      const updates = { ...form, ...timelineForm, updated_at: new Date().toISOString() };
+      const baseUpdates = { ...form, ...timelineForm, updated_at: new Date().toISOString() };
+      if (form.service_type === 'recruitment') {
+        baseUpdates.cutoff_day = null as any;
+        baseUpdates.calc_day = null as any;
+        baseUpdates.salary_day = null as any;
+        baseUpdates.payment_start = null as any;
+        baseUpdates.payment_end = null as any;
+      }
+      const updates = baseUpdates;
       const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
       if (error) throw error;
       onClientUpdate({ ...client, ...updates });
@@ -566,9 +575,33 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             <div className="text-[11.5px] text-[#888]">{client.region || ''} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
           </div>
         </div>
-        <button onClick={() => setEditing(!editing)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition">
-          {editing ? <><X size={13} /> Hủy</> : <><Edit2 size={13} /> Sửa thông tin</>}
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={form.service_type}
+            onChange={async e => {
+              const newType = e.target.value as 'leasing' | 'recruitment';
+              setForm(f => ({ ...f, service_type: newType }));
+              const extra = newType === 'recruitment'
+                ? { cutoff_day: null, calc_day: null, salary_day: null, payment_start: null, payment_end: null }
+                : {};
+              try {
+                const updates = { service_type: newType, ...extra, updated_at: new Date().toISOString() };
+                const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                if (error) throw error;
+                onClientUpdate({ ...client, ...updates });
+                await logActivity({ user, action: 'update', table: 'clients', recordId: client.id, description: `Doi loai hinh dich vu cua "${client.name}" thanh ${newType}`, oldData: client, newData: { ...client, ...updates } });
+                toast('Da cap nhat loai hinh dich vu');
+              } catch (err: any) { toast('Loi: ' + err.message); }
+            }}
+            className="text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white"
+          >
+            <option value="leasing">Cho thue lao dong</option>
+            <option value="recruitment">Gioi thieu lao dong</option>
+          </select>
+          <button onClick={() => setEditing(!editing)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition">
+            {editing ? <><X size={13} /> Hủy</> : <><Edit2 size={13} /> Sửa thông tin</>}
+          </button>
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -1014,6 +1047,17 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     <div className="flex flex-col gap-1 col-span-2">
                       <label className="text-[12px] text-[#666] font-medium">Tên công ty</label>
                       <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                    </div>
+                    <div className="flex flex-col gap-1 col-span-2">
+                      <label className="text-[12px] text-[#666] font-medium">Loai hinh dich vu</label>
+                      <select
+                        value={form.service_type}
+                        onChange={e => setForm({ ...form, service_type: e.target.value as 'leasing' | 'recruitment' })}
+                        className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                      >
+                        <option value="leasing">Cho thue lao dong (mac dinh)</option>
+                        <option value="recruitment">Gioi thieu lao dong</option>
+                      </select>
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>
