@@ -5,6 +5,7 @@ import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
+import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
 import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../lib/format';
@@ -77,7 +78,7 @@ export default function Clients({
   const [suspendTarget, setSuspendTarget] = useState<Client | null>(null);
   const [suspendReason, setSuspendReason] = useState('');
   const [isSuspending, setIsSuspending] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
@@ -246,6 +247,7 @@ export default function Clients({
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
   const { branches, deleteBranch } = useBranchData();
+  const { payrollStaffs } = usePayrollStaffs();
 
   const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
@@ -572,7 +574,7 @@ export default function Clients({
   }
 
   const QUICK_EDIT_LABELS: Record<string, string> = {
-    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái',
+    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái', payroll_staff: 'NS Tính lương',
   };
 
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
@@ -985,6 +987,7 @@ export default function Clients({
                   {col('contract_end') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Hết HĐ</th>}
                   {col('progress') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Tiến độ</th>}
                   {col('status') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">TT</th>}
+                  {col('payroll_staff') && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">NS Tính lương</th>}
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Margin</th>
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">Health</th>
                   {isAdmin && <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap"></th>}
@@ -1258,6 +1261,23 @@ export default function Clients({
                           ) : (
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pill.cls}`}>{pill.label}</span>
                           )}
+                        </td>
+                      )}
+                      {col('payroll_staff') && (
+                        <td className="px-3 py-2 text-[12px] text-[#555]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'payroll_staff')}>
+                          {editingCell?.id === c.id && editingCell.field === 'payroll_staff' ? (
+                            <select
+                              autoFocus value={editValue} disabled={savingCell}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={() => saveEdit(c)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
+                              className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
+                            >
+                              <option value="">— Chưa chọn —</option>
+                              {payrollStaffs.map(ps => <option key={ps.id} value={ps.name}>{ps.name}</option>)}
+                            </select>
+                          ) : (c.payroll_staff || '—')}
                         </td>
                       )}
                       <td className="px-3 py-2">

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Plus, Pencil, Trash2, Check, AlertTriangle } from 'lucide-react';
-import type { Region, Manager, Client, Branch } from '../lib/types';
+import type { Region, Manager, Client, Branch, PayrollStaff } from '../lib/types';
+import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -11,7 +12,7 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-type Tab = 'regions' | 'managers' | 'columns';
+type Tab = 'regions' | 'managers' | 'payroll' | 'columns';
 
 const ALL_COLUMNS = [
   { key: 'region', label: 'Chi Nhánh' },
@@ -24,6 +25,7 @@ const ALL_COLUMNS = [
   { key: 'contract_end', label: 'Hết HĐ' },
   { key: 'progress', label: 'Tiến độ' },
   { key: 'status', label: 'TT' },
+  { key: 'payroll_staff', label: 'NS Tính lương' },
 ] as const;
 
 export type ColumnKey = typeof ALL_COLUMNS[number]['key'];
@@ -78,6 +80,11 @@ export default function AdminSettings({
   const [newMgr, setNewMgr] = useState<Omit<Manager, 'id' | 'created_at'>>({ name: '', phone: '', email: '', region: '' });
   const [editingMgr, setEditingMgr] = useState<Manager | null>(null);
   const [showAddMgr, setShowAddMgr] = useState(false);
+
+  // Payroll staffs state
+  const { payrollStaffs, add: addPayrollStaff, update: updatePayrollStaff, remove: removePayrollStaff } = usePayrollStaffs();
+  const [newPayrollName, setNewPayrollName] = useState('');
+  const [editingPayroll, setEditingPayroll] = useState<PayrollStaff | null>(null);
 
   // Columns state
   const [draftCols, setDraftCols] = useState<Record<ColumnKey, boolean>>({ ...columns });
@@ -169,6 +176,7 @@ export default function AdminSettings({
   const TABS: { key: Tab; label: string }[] = [
     { key: 'regions', label: 'Chi Nhánh' },
     { key: 'managers', label: 'Quản lý' },
+    { key: 'payroll', label: 'NS Tính lương' },
     { key: 'columns', label: 'Bộ lọc cột' },
   ];
 
@@ -321,7 +329,55 @@ export default function AdminSettings({
             </div>
           )}
 
-          {/* TAB 3 - COLUMNS */}
+          {/* TAB 3 - PAYROLL STAFFS */}
+          {tab === 'payroll' && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Tên nhân sự tính lương..."
+                  value={newPayrollName}
+                  onChange={e => setNewPayrollName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { if (!newPayrollName.trim()) return; wrap(async () => { await addPayrollStaff(newPayrollName.trim()); setNewPayrollName(''); }, 'Đã thêm'); } }}
+                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-blue-400"
+                />
+                <button
+                  onClick={() => { if (!newPayrollName.trim()) return; wrap(async () => { await addPayrollStaff(newPayrollName.trim()); setNewPayrollName(''); }, 'Đã thêm'); }}
+                  disabled={saving}
+                  className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                ><Plus className="w-4 h-4" /></button>
+              </div>
+              <div className="space-y-2">
+                {payrollStaffs.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Chưa có nhân sự tính lương</p>}
+                {payrollStaffs.map(ps => (
+                  <div key={ps.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                    {editingPayroll?.id === ps.id ? (
+                      <>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingPayroll.name}
+                          onChange={e => setEditingPayroll({ ...editingPayroll, name: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter') { if (!editingPayroll.name.trim()) return; wrap(async () => { await updatePayrollStaff(editingPayroll.id, editingPayroll.name.trim()); setEditingPayroll(null); }, 'Đã cập nhật'); } if (e.key === 'Escape') setEditingPayroll(null); }}
+                          className="flex-1 px-2 py-1 text-sm border border-blue-400 rounded outline-none bg-white"
+                        />
+                        <button onClick={() => { if (!editingPayroll.name.trim()) return; wrap(async () => { await updatePayrollStaff(editingPayroll.id, editingPayroll.name.trim()); setEditingPayroll(null); }, 'Đã cập nhật'); }} disabled={saving} className="p-1 text-green-600 hover:bg-green-50 rounded"><Check className="w-4 h-4" /></button>
+                        <button onClick={() => setEditingPayroll(null)} className="p-1 text-gray-400 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex-1 text-sm font-medium text-gray-800">{ps.name}</span>
+                        <button onClick={() => setEditingPayroll(ps)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => { if (!confirm(`Xoá "${ps.name}"?`)) return; wrap(async () => { await removePayrollStaff(ps.id); }, 'Đã xoá'); }} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4 - COLUMNS */}
           {tab === 'columns' && (
             <div className="space-y-3">
               <p className="text-xs text-gray-500">Chọn các cột hiển thị trong bảng khách hàng:</p>

@@ -76,6 +76,13 @@ export interface Client {
   payment_cb_from?: number;
   payment_cb_to?: number;
   invoice_date?: string;
+  payroll_staff?: string | null;
+}
+
+export interface PayrollStaff {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 export interface AiChatMessage {
