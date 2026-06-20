@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import { Plus, Trash2, ExternalLink, Coins, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
@@ -15,9 +15,33 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [provinceFilter, setProvinceFilter] = useState<string>('all');
 
   const zoneNames = [...new Set([...marketZones.map(z => z.name), ...marketSurveys.map(s => s.zone_name)])];
-  const zonesToShow = zoneFilter === 'all' ? zoneNames : zoneNames.filter(z => z === zoneFilter);
+
+  const zoneToProvince = useMemo(() => {
+    const map: Record<string, string> = {};
+    marketZones.forEach(z => { if (z.location) map[z.name] = z.location; });
+    return map;
+  }, [marketZones]);
+
+  const provinces = useMemo(() => {
+    const set = new Set(Object.values(zoneToProvince));
+    return [...set].sort();
+  }, [zoneToProvince]);
+
+  const filteredZoneNames = useMemo(() => {
+    let names = zoneNames;
+    if (provinceFilter !== 'all') {
+      names = names.filter(z => zoneToProvince[z] === provinceFilter);
+    }
+    if (zoneFilter !== 'all') {
+      names = names.filter(z => z === zoneFilter);
+    }
+    return names;
+  }, [zoneNames, provinceFilter, zoneFilter, zoneToProvince]);
+
+  const zonesToShow = filteredZoneNames;
 
   const openAdd = (zone?: string) => {
     setForm({ ...emptyForm, zone_name: zone || zoneNames[0] || '' });
@@ -82,12 +106,21 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
           </button>
         </div>
         <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap">
-          <span className="text-[12px] text-[#888]">Khu vực:</span>
-          <button onClick={() => setZoneFilter('all')} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>Tất cả</button>
-          {zoneNames.map(z => (
-            <button key={z} onClick={() => setZoneFilter(z)} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === z ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>{z}</button>
+          <span className="text-[12px] text-[#888] shrink-0">Tinh/TP:</span>
+          <button onClick={() => { setProvinceFilter('all'); setZoneFilter('all'); }} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${provinceFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>Tat ca</button>
+          {provinces.map(p => (
+            <button key={p} onClick={() => { setProvinceFilter(p); setZoneFilter('all'); }} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${provinceFilter === p ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>{p}</button>
           ))}
         </div>
+        {filteredZoneNames.length > 1 && (
+          <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap bg-[#FAFAF8]">
+            <span className="text-[12px] text-[#888] shrink-0">KCN:</span>
+            <button onClick={() => setZoneFilter('all')} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === 'all' ? 'bg-emerald-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>Tat ca ({filteredZoneNames.length})</button>
+            {filteredZoneNames.map(z => (
+              <button key={z} onClick={() => setZoneFilter(z)} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === z ? 'bg-emerald-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>{z}</button>
+            ))}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">

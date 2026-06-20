@@ -95,6 +95,16 @@ export interface PayrollStaff {
   created_at: string;
 }
 
+export interface BranchStaff {
+  id: string;
+  branch_id: string;
+  name: string;
+  role: string | null;
+  phone: string | null;
+  email: string | null;
+  created_at: string;
+}
+
 export interface AiChatMessage {
   id: string;
   user_id: string;

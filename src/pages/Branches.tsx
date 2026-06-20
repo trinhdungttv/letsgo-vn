@@ -4,6 +4,7 @@ import {
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
+import { useBranchStaffs } from '../hooks/useBranchStaffs';
 import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
 import { useManagers } from '../hooks/useManagers';
 import { useRegions } from '../hooks/useRegions';
@@ -82,6 +83,12 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [activeTab, setActiveTab] = useState<Tab>('profile');
 
+  const selected = branches.find(b => b.id === selectedId) || null;
+  const { staffs: branchStaffs, loading: staffLoading, add: addStaff, update: updateStaff, remove: removeStaff } = useBranchStaffs(selected?.id ?? null);
+  const [staffForm, setStaffForm] = useState<{ name: string; role: string; phone: string; email: string }>({ name: '', role: '', phone: '', email: '' });
+  const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
+  const [staffFormOpen, setStaffFormOpen] = useState(false);
+
   const [adding, setAdding] = useState(false);
   const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '' });
   const [regionTouched, setRegionTouched] = useState(false);
@@ -114,8 +121,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       setOverhead((oh || []) as BranchOverhead[]);
     })();
   }, [month]);
-
-  const selected = branches.find(b => b.id === selectedId) || null;
 
   // Fetch manager-transfer history + P&L for the performance report tab.
   useEffect(() => {
@@ -551,81 +556,119 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           {/* Main content */}
           <div className="space-y-3">
             {activeTab === 'profile' && (
-              <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
-                  <Building2 size={15} className="text-[#999]" />
-                  <div className="text-[12.5px] font-semibold text-[#111] flex-1">Thông tin chi nhánh</div>
-                  <button onClick={saveProfile} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
-                    <Save size={12} /> Lưu
-                  </button>
-                  <button onClick={() => handleDeleteBranch(selected)} className="text-red-600 hover:bg-red-50 rounded-md p-1.5 transition">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                <div className="p-3.5 grid grid-cols-2 gap-3">
-                  <Field label="Tên chi nhánh">
-                    <input value={form.name || ''} onChange={e => setF({ name: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Tên rút gọn">
-                    <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Quản lý phụ trách">
-                    <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
-                  </Field>
-                  <Field label="Khu vực phụ trách (liên kết KH)">
-                    <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Tên khu vực phụ trách của chi nhánh" />
-                  </Field>
-                  <Field label="Địa danh">
-                    <input value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input" list="location-options" placeholder="VD: Biên Hòa, Nhơn Trạch, Củ Chi, Quận 9" />
-                  </Field>
-                  <Field label="Link Google Maps" full>
-                    <div className="flex gap-2">
-                      <input value={form.map_link || ''} onChange={e => setF({ map_link: e.target.value })} className="field-input flex-1" placeholder="https://maps.app.goo.gl/..." />
-                      {form.map_link && (
-                        <a href={form.map_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0">
-                          <MapPin size={13} /> Xem
-                        </a>
-                      )}
-                    </div>
-                  </Field>
-                  <Field label="Số điện thoại">
-                    <input value={form.phone || ''} onChange={e => setF({ phone: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Email">
-                    <input value={form.email || ''} onChange={e => setF({ email: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Ngày thành lập">
-                    <input type="date" value={form.established_date || ''} onChange={e => setF({ established_date: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Trạng thái">
-                    <select value={form.status || 'active'} onChange={e => setF({ status: e.target.value as BranchStatus })} className="field-input">
-                      <option value="active">Hoạt động</option>
-                      <option value="paused">Tạm dừng</option>
-                    </select>
-                  </Field>
-                  <Field label="Địa chỉ văn phòng" full>
-                    <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="field-input" />
-                  </Field>
-                  <Field label="Ghi chú" full>
-                    <textarea value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="field-input min-h-[72px] resize-y" />
-                  </Field>
-                  <div className="col-span-2 -mx-3.5 -mb-3.5 border-t border-[#E8E7E2]">
-                    <button
-                      onClick={() => setShowHistory(v => !v)}
-                      className="w-full flex items-center justify-between px-3.5 py-2.5 text-[12.5px] font-medium text-[#333] hover:bg-[#F5F4EF] transition-colors"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <History size={13} className="text-[#888]" />
-                        Lịch sử trao đổi & ghi nhận tình trạng / khó khăn / cơ hội
-                      </span>
-                      {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              <div className="space-y-4">
+                {/* Action bar */}
+                <div className="flex items-center justify-between">
+                  <div className="text-[13px] font-semibold text-[#111]">Ho so chi nhanh</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={saveProfile} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
+                      <Save size={13} /> Luu thay doi
                     </button>
-                    {showHistory && (
-                      <div className="px-3.5 pb-3.5">
+                    <button onClick={() => handleDeleteBranch(selected)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium text-red-600 border border-red-200 hover:bg-red-50 transition">
+                      <Trash2 size={13} /> Xoa
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section 1: Thong tin co ban */}
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
+                      <Building2 size={14} className="text-[#0F6E56]" />
+                      Thong tin co ban
+                    </div>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
+                    <Field label="Ten chi nhanh">
+                      <input value={form.name || ''} onChange={e => setF({ name: e.target.value })} className="field-input" />
+                    </Field>
+                    <Field label="Ten rut gon">
+                      <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="field-input" />
+                    </Field>
+                    <Field label="Quan ly phu trach">
+                      <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Ten quan ly" />
+                    </Field>
+                    <Field label="Khu vuc phu trach (lien ket KH)">
+                      <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Ten khu vuc" />
+                    </Field>
+                    <Field label="Trang thai">
+                      <select value={form.status || 'active'} onChange={e => setF({ status: e.target.value as BranchStatus })} className="field-input">
+                        <option value="active">Hoat dong</option>
+                        <option value="paused">Tam dung</option>
+                      </select>
+                    </Field>
+                    <Field label="Ngay thanh lap">
+                      <input type="date" value={form.established_date || ''} onChange={e => setF({ established_date: e.target.value })} className="field-input" />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Section 2: Dia chi & lien he */}
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
+                      <MapPin size={14} className="text-[#2563EB]" />
+                      Dia chi & lien he
+                    </div>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
+                    <Field label="Dia danh">
+                      <input value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input" list="location-options" placeholder="VD: Bien Hoa, Nhon Trach, Cu Chi" />
+                    </Field>
+                    <Field label="Dia chi van phong">
+                      <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="field-input" />
+                    </Field>
+                    <Field label="So dien thoai">
+                      <input value={form.phone || ''} onChange={e => setF({ phone: e.target.value })} className="field-input" />
+                    </Field>
+                    <Field label="Email">
+                      <input value={form.email || ''} onChange={e => setF({ email: e.target.value })} className="field-input" />
+                    </Field>
+                    <Field label="Link Google Maps" full>
+                      <div className="flex gap-2">
+                        <input value={form.map_link || ''} onChange={e => setF({ map_link: e.target.value })} className="field-input flex-1" placeholder="https://maps.app.goo.gl/..." />
+                        {form.map_link && (
+                          <a href={form.map_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0">
+                            <MapPin size={13} /> Xem ban do
+                          </a>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Section 3: Ghi chu */}
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
+                      <Pencil size={14} className="text-[#D97706]" />
+                      Ghi chu
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <textarea value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="field-input min-h-[80px] resize-y w-full" placeholder="Ghi chu noi bo ve chi nhanh..." />
+                  </div>
+                </div>
+
+                {/* Section 4: Lich su trao doi */}
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setShowHistory(v => !v)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#FAFAF8] transition-colors"
+                  >
+                    <span className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
+                      <History size={14} className="text-[#7C3AED]" />
+                      Lich su trao doi & tinh trang / kho khan / co hoi
+                    </span>
+                    {showHistory ? <ChevronUp size={14} className="text-[#999]" /> : <ChevronDown size={14} className="text-[#999]" />}
+                  </button>
+                  {showHistory && (
+                    <div className="px-4 pb-4 border-t border-[#E8E7E2]">
+                      <div className="pt-4">
                         <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -757,16 +800,125 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             )}
 
             {activeTab === 'staff' && (
-              <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
-                  <Users size={15} className="text-[#999]" />
-                  <div className="text-[12.5px] font-semibold text-[#111] flex-1">Nhân sự văn phòng chi nhánh</div>
-                  <button onClick={() => toast('Tính năng quản lý nhân sự VP đang được phát triển')} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
-                    <Plus size={12} /> Thêm
-                  </button>
-                </div>
-                <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">
-                  Chưa có dữ liệu nhân sự văn phòng. Tính năng này sẽ sớm được bổ sung.
+              <div className="space-y-4">
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center gap-2">
+                    <Users size={15} className="text-[#2563EB]" />
+                    <div className="text-[12px] font-semibold text-[#444] uppercase tracking-wide flex-1">Nhan su van phong chi nhanh</div>
+                    <span className="text-[11px] text-[#999] mr-2">{branchStaffs.length} nguoi</span>
+                    <button
+                      onClick={() => { setStaffForm({ name: '', role: '', phone: '', email: '' }); setEditingStaffId(null); setStaffFormOpen(true); }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition"
+                    >
+                      <Plus size={12} /> Them
+                    </button>
+                  </div>
+
+                  {staffFormOpen && (
+                    <div className="px-4 py-3 border-b border-[#E8E7E2] bg-blue-50/30">
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Ho ten *</label>
+                          <input value={staffForm.name} onChange={e => setStaffForm(f => ({ ...f, name: e.target.value }))} className="field-input" placeholder="Nhap ho ten" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Chuc vu</label>
+                          <input value={staffForm.role} onChange={e => setStaffForm(f => ({ ...f, role: e.target.value }))} className="field-input" placeholder="VD: Nhan vien kinh doanh" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">So dien thoai</label>
+                          <input value={staffForm.phone} onChange={e => setStaffForm(f => ({ ...f, phone: e.target.value }))} className="field-input" placeholder="SDT" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Email</label>
+                          <input value={staffForm.email} onChange={e => setStaffForm(f => ({ ...f, email: e.target.value }))} className="field-input" placeholder="Email" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          disabled={!staffForm.name.trim()}
+                          onClick={async () => {
+                            try {
+                              if (editingStaffId) {
+                                await updateStaff(editingStaffId, { name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null });
+                                await logActivity({ user, action: 'update', table: 'branch_staffs', recordId: editingStaffId, description: `Cap nhat nhan su "${staffForm.name}" tai chi nhanh "${selected?.name}"` });
+                                toast('Da cap nhat');
+                              } else {
+                                const added = await addStaff({ name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null });
+                                await logActivity({ user, action: 'insert', table: 'branch_staffs', recordId: added.id, description: `Them nhan su "${staffForm.name}" vao chi nhanh "${selected?.name}"` });
+                                toast('Da them nhan su');
+                              }
+                              setStaffFormOpen(false);
+                              setEditingStaffId(null);
+                            } catch (err: unknown) { toast('Loi: ' + errMsg(err)); }
+                          }}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition disabled:opacity-50"
+                        >
+                          <Save size={12} /> {editingStaffId ? 'Cap nhat' : 'Luu'}
+                        </button>
+                        <button onClick={() => { setStaffFormOpen(false); setEditingStaffId(null); }} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-gray-50 transition">
+                          Huy
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {staffLoading ? (
+                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Dang tai...</div>
+                  ) : branchStaffs.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Chua co nhan su. Bam "Them" de bat dau.</div>
+                  ) : (
+                    <table className="w-full text-[12px]">
+                      <thead>
+                        <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
+                          <th className="text-left font-medium px-4 py-2">Ho ten</th>
+                          <th className="text-left font-medium px-3 py-2">Chuc vu</th>
+                          <th className="text-left font-medium px-3 py-2">SDT</th>
+                          <th className="text-left font-medium px-3 py-2">Email</th>
+                          <th className="text-center font-medium px-3 py-2 w-20"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {branchStaffs.map(s => (
+                          <tr key={s.id} className="border-t border-[#F0EEE9] hover:bg-[#FAFAF8]">
+                            <td className="px-4 py-2.5 font-medium text-[#111]">{s.name}</td>
+                            <td className="px-3 py-2.5 text-[#555]">{s.role || '—'}</td>
+                            <td className="px-3 py-2.5 text-[#555]">{s.phone || '—'}</td>
+                            <td className="px-3 py-2.5 text-[#555]">{s.email || '—'}</td>
+                            <td className="px-3 py-2.5 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    setStaffForm({ name: s.name, role: s.role || '', phone: s.phone || '', email: s.email || '' });
+                                    setEditingStaffId(s.id);
+                                    setStaffFormOpen(true);
+                                  }}
+                                  className="p-1 rounded hover:bg-blue-50 text-[#999] hover:text-blue-600 transition"
+                                  title="Sua"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm(`Xoa nhan su "${s.name}"?`)) return;
+                                    try {
+                                      await removeStaff(s.id);
+                                      await logActivity({ user, action: 'delete', table: 'branch_staffs', recordId: s.id, description: `Xoa nhan su "${s.name}" khoi chi nhanh "${selected?.name}"` });
+                                      toast('Da xoa');
+                                    } catch (err: unknown) { toast('Loi: ' + errMsg(err)); }
+                                  }}
+                                  className="p-1 rounded hover:bg-red-50 text-[#999] hover:text-red-600 transition"
+                                  title="Xoa"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
             )}

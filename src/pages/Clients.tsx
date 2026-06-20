@@ -7,6 +7,7 @@ import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
+import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
 import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -247,6 +248,7 @@ export default function Clients({
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
   const { branches, deleteBranch } = useBranchData();
+  const { staffs: allBranchStaffs } = useAllBranchStaffs();
   const { payrollStaffs } = usePayrollStaffs();
 
   const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
@@ -1146,8 +1148,21 @@ export default function Clients({
                               className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
                             >
                               <option value="">—</option>
-                              {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                              <option value="__new__">+ Thêm quản lý mới…</option>
+                              {(() => {
+                                const branch = branches.find(b => b.region === c.region);
+                                const bStaffs = branch ? allBranchStaffs.filter(s => s.branch_id === branch.id) : [];
+                                return bStaffs.length > 0 ? (
+                                  <>
+                                    <optgroup label={`Nhan su ${branch?.short_name || branch?.name || c.region}`}>
+                                      {bStaffs.map(s => <option key={s.id} value={s.name}>{s.name}{s.role ? ` (${s.role})` : ''}</option>)}
+                                    </optgroup>
+                                    <optgroup label="Tat ca quan ly">
+                                      {managers.filter(m => !bStaffs.some(s => s.name === m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                                    </optgroup>
+                                  </>
+                                ) : managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>);
+                              })()}
+                              <option value="__new__">+ Them quan ly moi...</option>
                             </select>
                           ) : c.manager ? (
                             <button
