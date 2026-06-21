@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings } from '../../lib/types';
+import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch } from '../../lib/types';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel } from '../../lib/format';
+import { supabase } from '../../lib/supabase';
 
 interface PnLProjectTabProps {
   clients: Client[];
@@ -17,6 +18,7 @@ interface PnLProjectTabProps {
   onDeleteCost: (id: string, pnlId: string) => Promise<void>;
   splitSettings: Record<string, PnlSplitSettings>;
   onSaveSplitSettings: (clientId: string, fields: Partial<Omit<PnlSplitSettings, 'id' | 'client_id' | 'updated_at'>>) => Promise<PnlSplitSettings>;
+  branches: Branch[];
   currentUser?: string | null;
   toast: (msg: string) => void;
 }
@@ -28,7 +30,7 @@ export default function PnLProjectTab({
   onAddProject, onUpdateProject, onDeleteProject,
   onLoadCosts, onAddCost, onUpdateCost, onDeleteCost,
   splitSettings, onSaveSplitSettings,
-  currentUser, toast,
+  branches = [], currentUser, toast,
 }: PnLProjectTabProps) {
   const monthProjects = useMemo(() => projectsPnl.filter(p => p.month === month), [projectsPnl, month]);
   const [selId, setSelId] = useState<string | null>(null);
@@ -41,6 +43,22 @@ export default function PnLProjectTab({
   const [lgInput, setLgInput] = useState('');
   const [cnInput, setCnInput] = useState('');
   const [pendingSplit, setPendingSplit] = useState<{ lg: number; cn: number } | null>(null);
+
+  type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null };
+  const [extraClients, setExtraClients] = useState<MinClient[]>([]);
+  useEffect(() => {
+    supabase.from('clients').select('id, name, region, archived_at, cooperation_status')
+      .order('name')
+      .then(({ data }) => {
+        if (data) setExtraClients(data as MinClient[]);
+      });
+  }, []);
+
+  const mergedClients = useMemo(() => {
+    const ids = new Set(clients.map(c => c.id));
+    const extras = extraClients.filter(c => !ids.has(c.id));
+    return [...clients.map(c => ({ id: c.id, name: c.name, region: c.region, archived_at: c.archived_at, cooperation_status: c.cooperation_status })), ...extras];
+  }, [clients, extraClients]);
 
   const branchOptions = useMemo(
     () => [...new Set(monthProjects.map(p => p.branch_manager || '—'))].sort(),
@@ -68,19 +86,9 @@ export default function PnLProjectTab({
     setPendingSplit(null);
   }, [selId]);
 
-  // Đồng bộ chi nhánh từ hồ sơ Khách hàng (trường "Chi nhánh") — nguồn dữ liệu chuẩn.
-  useEffect(() => {
-    monthProjects.forEach(p => {
-      const client = clients.find(c => c.id === p.client_id);
-      if (client?.region && p.branch_manager !== client.region) {
-        onUpdateProject(p.id, { branch_manager: client.region }).catch(() => {});
-      }
-    });
-  }, [monthProjects, clients, onUpdateProject]);
-
   const availableClients = useMemo(
-    () => clients.filter(c => !monthProjects.some(p => p.client_id === c.id)),
-    [clients, monthProjects]
+    () => mergedClients.filter(c => !monthProjects.some(p => p.client_id === c.id)),
+    [mergedClients, monthProjects]
   );
 
   const selected = monthProjects.find(p => p.id === selId) || null;
@@ -100,7 +108,7 @@ export default function PnLProjectTab({
     try {
       let lastId: string | null = null;
       for (const clientId of newClientIds) {
-        const client = clients.find(c => c.id === clientId);
+        const client = mergedClients.find(c => c.id === clientId);
         const settings = splitSettings[clientId];
         const defaultLg = settings?.lg_pct ?? 40;
         const defaultCn = settings?.cn_pct ?? 60;
@@ -129,6 +137,7 @@ export default function PnLProjectTab({
           lg_pct: lgPct,
           cn_pct: cnPct,
           revenue: 0,
+          total_man_days: 0,
           created_by: currentUser || null,
           split_temp_until: splitTempUntil,
           split_reverted: splitReverted,
@@ -264,6 +273,9 @@ export default function PnLProjectTab({
                     className="w-3.5 h-3.5"
                   />
                   {c.name}
+                  {(c.archived_at || c.cooperation_status === 'suspended') && (
+                    <span className="text-[10px] text-red-400 ml-1">(Da ngung)</span>
+                  )}
                 </label>
               ))}
             </div>
@@ -298,7 +310,7 @@ export default function PnLProjectTab({
                 onClick={() => setSelId(p.id)}
                 className={`px-3 py-2.5 border-b border-[#E8E7E2] border-l-2 cursor-pointer transition hover:bg-white ${p.id === selId ? 'bg-white border-l-[#0F6E56]' : 'border-l-transparent'}`}
               >
-                <div className="text-[12px] font-medium text-[#111] truncate">{p.clients?.name || clients.find(x => x.id === p.client_id)?.name || '—'}</div>
+                <div className="text-[12px] font-medium text-[#111] truncate">{p.clients?.name || mergedClients.find(x => x.id === p.client_id)?.name || '—'}</div>
                 <div className="text-[10px] text-[#999] mb-1">{p.branch_manager || '—'}</div>
                 <div className="flex items-center justify-between">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${p.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
@@ -306,6 +318,9 @@ export default function PnLProjectTab({
                   </span>
                   <span className={`text-[11px] font-medium ${rr.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>LN: {fmtTrieu(rr.profit)}</span>
                 </div>
+                {(p.total_man_days ?? 0) > 0 && (
+                  <div className="text-[10px] text-[#888] mt-0.5">{(p.total_man_days ?? 0).toLocaleString('vi-VN')} cong</div>
+                )}
               </div>
             );
           })}
@@ -334,20 +349,18 @@ export default function PnLProjectTab({
                 </button>
               </div>
               <div className="p-3.5 flex items-center gap-3 flex-wrap">
-                <span className="text-[12px] text-[#666]">Chi nhánh / quản lý:</span>
-                {clients.find(c => c.id === selected.client_id)?.region ? (
-                  <div className="flex-1 min-w-[140px] text-[12px] px-2.5 py-1.5 border border-gray-200 rounded-lg bg-[#F5F4EF] text-[#444] flex items-center gap-1.5">
-                    {selected.branch_manager}
-                    <span className="text-[10px] text-[#999]">(đồng bộ từ Khách hàng)</span>
-                  </div>
-                ) : (
-                  <input
-                    type="text"
-                    defaultValue={selected.branch_manager || ''}
-                    onBlur={e => updateField({ branch_manager: e.target.value || null })}
-                    className="flex-1 min-w-[140px] text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                  />
-                )}
+                <span className="text-[12px] text-[#666]">Truong chi nhanh:</span>
+                <select
+                  key={selected.id + '-branch'}
+                  value={selected.branch_manager || ''}
+                  onChange={e => updateField({ branch_manager: e.target.value || null })}
+                  className="flex-1 min-w-[160px] text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 bg-white"
+                >
+                  <option value="">-- Chon chi nhanh --</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.name}>{b.name}</option>
+                  ))}
+                </select>
                 <span className="text-[12px] text-[#666]">Doanh thu:</span>
                 <div className="relative w-[140px]">
                   <input
@@ -356,7 +369,17 @@ export default function PnLProjectTab({
                     onBlur={e => updateField({ revenue: +e.target.value || 0 })}
                     className="w-full text-[12px] px-2.5 py-1.5 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
                   />
-                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">tr.đ</span>
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">tr.d</span>
+                </div>
+                <span className="text-[12px] text-[#666]">Tong so cong:</span>
+                <div className="relative w-[120px]">
+                  <input
+                    type="number"
+                    defaultValue={selected.total_man_days || 0}
+                    onBlur={e => updateField({ total_man_days: +e.target.value || 0 })}
+                    className="w-full text-[12px] px-2.5 py-1.5 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">cong</span>
                 </div>
               </div>
             </div>
@@ -536,8 +559,11 @@ export default function PnLProjectTab({
                 <div className="text-[11px] text-[#666] bg-[#F5F4EF] rounded-lg px-2.5 py-2 mb-3">
                   DT <strong className="text-[#111]">{fmtTrieu(selected.revenue)}</strong>
                   {' − '}CP <strong className="text-red-600">{fmtTrieu(r.tc)}</strong>
-                  {' = '}LN <strong className={r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profit)}</strong> tr.đ
+                  {' = '}LN <strong className={r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profit)}</strong> tr.d
                   {selected.project_type === 'shared' ? ` → Chia ${selected.lg_pct}/${selected.cn_pct}` : " → 100% Let's Go VN"}
+                  {(selected.total_man_days ?? 0) > 0 && (
+                    <span className="ml-2">· <strong className="text-[#111]">{(selected.total_man_days ?? 0).toLocaleString('vi-VN')}</strong> cong</span>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg p-3 text-center bg-[#F5F4EF] border border-[#E8E7E2]">

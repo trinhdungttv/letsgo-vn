@@ -537,6 +537,7 @@ export interface ProjectPnl {
   lg_pct: number;
   cn_pct: number;
   revenue: number;
+  total_man_days: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;

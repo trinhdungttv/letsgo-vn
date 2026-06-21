@@ -13,6 +13,7 @@ import { logActivity } from '../lib/audit';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useFinanceData } from '../hooks/useFinanceData';
+import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
 
@@ -69,7 +70,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const workspaceMonths = useMemo(() => {
     const base = todayStr.slice(0, 7);
     const arr: string[] = [];
-    for (let i = -6; i <= 2; i++) arr.push(shiftMonth(base, i));
+    const startMonth = '2026-01';
+    let cursor = startMonth;
+    const endMonth = shiftMonth(base, 2);
+    while (cursor <= endMonth) { arr.push(cursor); cursor = shiftMonth(cursor, 1); }
     return arr;
   }, []);
   const finData = useFinanceData();
@@ -93,6 +97,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
+  const { branches: branchList } = useBranchData();
 
   useEffect(() => {
     if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
@@ -617,6 +622,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             onDeleteCost={finData.deletePnlCost}
             splitSettings={finData.splitSettings}
             onSaveSplitSettings={finData.saveSplitSettings}
+            branches={branchList}
             currentUser={user?.full_name}
             toast={toast}
           />

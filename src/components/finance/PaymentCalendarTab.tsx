@@ -8,7 +8,7 @@ interface Props {
   toast: (msg: string) => void;
 }
 
-type FilterMode = 'all' | 'overdue' | 'soon' | 'ok' | 'no_invoice';
+type FilterMode = 'all' | 'overdue' | 'soon' | 'ok' | 'no_invoice' | 'paid';
 
 function GroupBadge({ group }: { group: number }) {
   const labels: Record<number, { text: string; cls: string }> = {
@@ -37,11 +37,16 @@ export default function PaymentCalendarTab({ clients }: Props) {
     return clients
       .filter(c => !c.archived_at)
       .map(c => {
+        const paid = c.paid_this_month || false;
         const invDate = c.invoice_date ? new Date(c.invoice_date) : null;
-        const result = invDate ? calcExpectedDue(c, invDate) : null;
-        return { client: c, result };
+        const rawResult = invDate ? calcExpectedDue(c, invDate) : null;
+        const result = paid && rawResult
+          ? { ...rawResult, status: 'paid' as const, label: rawResult.label }
+          : rawResult;
+        return { client: c, result, paid };
       })
       .sort((a, b) => {
+        if (a.paid !== b.paid) return a.paid ? 1 : -1;
         if (!a.result && !b.result) return 0;
         if (!a.result) return 1;
         if (!b.result) return -1;
@@ -55,23 +60,25 @@ export default function PaymentCalendarTab({ clients }: Props) {
   }, [clients]);
 
   const kpi = useMemo(() => {
-    let overdue = 0, urgent = 0, soon = 0, ok = 0, noInvoice = 0;
-    enriched.forEach(({ result }) => {
+    let overdue = 0, urgent = 0, soon = 0, ok = 0, noInvoice = 0, paid = 0;
+    enriched.forEach(({ result, paid: isPaid }) => {
+      if (isPaid) { paid++; return; }
       if (!result) { noInvoice++; return; }
       if (result.status === 'overdue') overdue++;
       else if (result.status === 'urgent') urgent++;
       else if (result.status === 'soon') soon++;
       else ok++;
     });
-    return { overdue, urgent, soon, ok, noInvoice };
+    return { overdue, urgent, soon, ok, noInvoice, paid };
   }, [enriched]);
 
   const filtered = useMemo(() => {
     if (filter === 'all') return enriched;
-    if (filter === 'no_invoice') return enriched.filter(e => !e.result);
-    if (filter === 'overdue') return enriched.filter(e => e.result?.status === 'overdue');
-    if (filter === 'soon') return enriched.filter(e => e.result?.status === 'urgent' || e.result?.status === 'soon');
-    if (filter === 'ok') return enriched.filter(e => e.result?.status === 'ok' || e.result?.status === 'manual');
+    if (filter === 'paid') return enriched.filter(e => e.paid);
+    if (filter === 'no_invoice') return enriched.filter(e => !e.paid && !e.result);
+    if (filter === 'overdue') return enriched.filter(e => !e.paid && e.result?.status === 'overdue');
+    if (filter === 'soon') return enriched.filter(e => !e.paid && (e.result?.status === 'urgent' || e.result?.status === 'soon'));
+    if (filter === 'ok') return enriched.filter(e => !e.paid && (e.result?.status === 'ok' || e.result?.status === 'manual'));
     return enriched;
   }, [enriched, filter]);
 
@@ -80,16 +87,18 @@ export default function PaymentCalendarTab({ clients }: Props) {
     { key: 'overdue', label: '🔴 Quá hạn', count: kpi.overdue, cls: 'text-red-700 bg-red-50 border-red-200' },
     { key: 'soon', label: '🟡 Sắp hạn', count: kpi.urgent + kpi.soon, cls: 'text-amber-700 bg-amber-50 border-amber-200' },
     { key: 'ok', label: '🟢 Còn xa', count: kpi.ok, cls: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-    { key: 'no_invoice', label: '⬜ Chưa nhập HĐ', count: kpi.noInvoice, cls: 'text-gray-600 bg-gray-50 border-gray-200' },
+    { key: 'paid', label: 'Da thu', count: kpi.paid, cls: 'text-blue-700 bg-blue-50 border-blue-200' },
+    { key: 'no_invoice', label: 'Chua nhap HD', count: kpi.noInvoice, cls: 'text-gray-600 bg-gray-50 border-gray-200' },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-2.5">
-        <KpiCard label="Quá hạn" value={kpi.overdue} sub="cần đốc thúc ngay" color="text-red-600" />
-        <KpiCard label="Sắp đến hạn (≤7 ngày)" value={kpi.urgent + kpi.soon} sub="cần theo dõi" color="text-amber-600" />
-        <KpiCard label="Còn xa" value={kpi.ok} sub="bình thường" color="text-emerald-600" />
-        <KpiCard label="Chưa nhập ngày HĐ" value={kpi.noInvoice} sub="cần cập nhật" color="text-[#888]" />
+      <div className="grid grid-cols-5 gap-2.5">
+        <KpiCard label="Qua han" value={kpi.overdue} sub="can doc thuc ngay" color="text-red-600" />
+        <KpiCard label="Sap den han" value={kpi.urgent + kpi.soon} sub="can theo doi" color="text-amber-600" />
+        <KpiCard label="Binh thuong" value={kpi.ok} sub="con xa" color="text-emerald-600" />
+        <KpiCard label="Da thu tien" value={kpi.paid} sub="da thanh toan" color="text-blue-600" />
+        <KpiCard label="Chua nhap HD" value={kpi.noInvoice} sub="can cap nhat" color="text-[#888]" />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -116,10 +125,12 @@ export default function PaymentCalendarTab({ clients }: Props) {
             </div>
           </div>
           <div className="divide-y divide-[#F0EEE9]">
-            {filtered.map(({ client: c, result }) => {
-              const statusCfg = result ? getDueStatusConfig(result.status, result.daysRemaining) : null;
+            {filtered.map(({ client: c, result, paid }) => {
+              const statusCfg = paid
+                ? { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', label: 'Da thu tien', dot: 'bg-blue-400' }
+                : (result && result.status !== 'paid') ? getDueStatusConfig(result.status, result.daysRemaining) : null;
               return (
-                <div key={c.id} className={`px-4 py-3 grid grid-cols-12 items-center gap-2 hover:bg-[#FAFAF8] transition ${result?.status==='overdue' ? 'border-l-2 border-l-red-400' : result?.status==='urgent' ? 'border-l-2 border-l-amber-400' : 'border-l-2 border-l-transparent'}`}>
+                <div key={c.id} className={`px-4 py-3 grid grid-cols-12 items-center gap-2 hover:bg-[#FAFAF8] transition border-l-2 ${paid ? 'border-l-blue-400 opacity-60' : result?.status==='overdue' ? 'border-l-red-400' : result?.status==='urgent' ? 'border-l-amber-400' : 'border-l-transparent'}`}>
                   <div className="col-span-4 min-w-0">
                     <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
                     <div className="text-[11px] text-[#888]">{c.region}</div>
