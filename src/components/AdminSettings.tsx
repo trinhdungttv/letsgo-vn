@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { X, Plus, Pencil, Trash2, Check, AlertTriangle } from 'lucide-react';
 import type { Region, Manager, Client, Branch, PayrollStaff } from '../lib/types';
 import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
@@ -48,10 +48,10 @@ interface AdminSettingsProps {
   clients: Client[];
   branches: Branch[];
   onDeleteBranch: (id: string) => Promise<void>;
-  onAddRegion: (name: string) => Promise<void>;
+  onAddRegion: (name: string) => Promise<unknown>;
   onUpdateRegion: (id: string, name: string) => Promise<void>;
   onDeleteRegion: (id: string) => Promise<void>;
-  onAddManager: (fields: Omit<Manager, 'id' | 'created_at'>) => Promise<void>;
+  onAddManager: (fields: Omit<Manager, 'id' | 'created_at'>) => Promise<unknown>;
   onUpdateManager: (id: string, fields: Partial<Omit<Manager, 'id' | 'created_at'>>) => Promise<void>;
   onDeleteManager: (id: string) => Promise<void>;
   onColumnsChange: (cols: Record<ColumnKey, boolean>) => void;
@@ -118,14 +118,13 @@ export default function AdminSettings({
     if (!deletePassword) { toast('Vui lòng nhập mật khẩu'); return; }
     setIsDeletingRegion(true);
     try {
-      const { data: authCheck, error: authErr } = await supabase
-        .from('app_users')
-        .select('id')
-        .eq('id', user?.id || '')
-        .eq('password', deletePassword)
-        .maybeSingle();
+      if (!user?.id) { toast('Phiên đăng nhập không hợp lệ'); return; }
+      const { data: pwOk, error: authErr } = await supabase.rpc('verify_password', {
+        p_user_id: user.id,
+        p_password: deletePassword,
+      });
       if (authErr) throw authErr;
-      if (!authCheck) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
+      if (!pwOk) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
 
       if (linkedBranch) {
         await onDeleteBranch(linkedBranch.id);

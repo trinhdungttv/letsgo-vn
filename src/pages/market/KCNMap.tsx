@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Map } from 'lucide-react';
+import { Map as MapIcon } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Competitor, CompetitorClient } from '../../lib/types';
 
@@ -83,7 +83,7 @@ export default function KCNMap({ competitors, toast }: Props) {
     <div className="space-y-3">
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <Map size={14} className="text-[#1D4ED8]" />
+          <MapIcon size={14} className="text-[#1D4ED8]" />
           <span className="text-[12.5px] font-semibold text-[#111]">Bản đồ thị phần theo KCN</span>
         </div>
         <select value={selectedKCN} onChange={e => setSelectedKCN(e.target.value)}

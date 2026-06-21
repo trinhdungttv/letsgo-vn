@@ -27,8 +27,9 @@ import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
 import AdminPage from './pages/AdminPage';
 import Workspace from './pages/Workspace';
+import Loans from './pages/Loans';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace'];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans'];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -49,7 +50,7 @@ function AppInner() {
   } = useAppData(!!user);
 
   const {
-    leads, setLeads,
+    leads,
     products, setProducts,
     deals, setDeals,
     activities, setActivities,
@@ -316,6 +317,7 @@ function AppInner() {
         {page === 'users' && <UserManagement toast={toast} />}
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
         {page === 'admin-settings' && <AdminPage toast={toast} />}
+        {page === 'loans' && <Loans toast={toast} />}
         {page === 'workspace' && (
           <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}

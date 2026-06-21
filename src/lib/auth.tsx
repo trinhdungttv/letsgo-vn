@@ -4,6 +4,7 @@ import type { AppUser, RolePermission } from './types';
 
 interface AuthContextValue {
   user: AppUser | null;
+  token: string | null;
   login: (username: string, password: string) => Promise<string | null>;
   logout: () => void;
   loading: boolean;
@@ -13,6 +14,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
+  token: null,
   login: async () => 'Not initialized',
   logout: () => {},
   loading: true,
@@ -21,9 +23,11 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 const STORAGE_KEY = 'letsgo_user';
+const TOKEN_KEY = 'letsgo_token';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
 
@@ -37,31 +41,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (stored) {
       try { setUser(JSON.parse(stored)); } catch { localStorage.removeItem(STORAGE_KEY); }
     }
+    const storedToken = localStorage.getItem(TOKEN_KEY);
+    if (storedToken) setToken(storedToken);
     setLoading(false);
     refreshRolePermissions();
   }, [refreshRolePermissions]);
 
   const login = async (username: string, password: string): Promise<string | null> => {
-    const { data, error } = await supabase
-      .from('app_users')
-      .select('id, username, full_name, role')
-      .eq('username', username.trim())
-      .eq('password', password)
-      .single();
-    if (error || !data) return 'Sai tên đăng nhập hoặc mật khẩu';
-    const u = data as AppUser;
-    setUser(u);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
+    // Xac thuc qua RPC verify_login: so khop mat khau da hash, kiem tra is_active, cap session token.
+    const { data, error } = await supabase.rpc('verify_login', {
+      p_username: username.trim(),
+      p_password: password,
+    });
+    if (error) return 'Lỗi đăng nhập: ' + error.message;
+    const row = (Array.isArray(data) ? data[0] : data) as (AppUser & { token?: string }) | undefined;
+    if (!row) return 'Sai tên đăng nhập hoặc mật khẩu';
+    const { token: newToken, ...userFields } = row;
+    setUser(userFields);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(userFields));
+    if (newToken) {
+      setToken(newToken);
+      localStorage.setItem(TOKEN_KEY, newToken);
+    }
     return null;
   };
 
   const logout = () => {
+    // Huy token phia server (best-effort) truoc khi xoa local.
+    if (token) supabase.rpc('logout_session', { p_token: token }).then(() => {}, () => {});
     setUser(null);
+    setToken(null);
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, rolePermissions, refreshRolePermissions }}>
+    <AuthContext.Provider value={{ user, token, login, logout, loading, rolePermissions, refreshRolePermissions }}>
       {children}
     </AuthContext.Provider>
   );
@@ -90,11 +105,12 @@ export const PAGE_MODULE: Record<string, string> = {
   users: 'Quản lý Users',
   history: 'Lịch sử',
   'admin-settings': 'Admin',
+  loans: 'Khoan vay',
 };
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', ...crm],
+  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', ...crm],
   ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace'],
   kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', ...crm],
   bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', ...crm],

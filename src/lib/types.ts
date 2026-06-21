@@ -368,7 +368,7 @@ export interface Quote {
   created_at: string;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace';
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans';
 
 export type AuditAction = 'insert' | 'update' | 'delete';
 
@@ -800,3 +800,163 @@ export const DOC_STATUS_STEPS: { key: DocStatus; label: string; danger?: boolean
   { key: 'ngung_hd',  label: 'Ngưng HĐ', danger: true },
 ]
 export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác']
+
+// ─── Module: Quan ly Khoan Vay ─────────────────────────────────────
+
+export type LoanBorrowerType = 'bank' | 'proxy' | 'personal';
+export type LoanRateType = 'fixed' | 'floating';
+export type LoanRepaymentType = 'interest_only' | 'reducing' | 'emi';
+export type LoanStatus = 'active' | 'closed' | 'restructured';
+
+export interface Loan {
+  id: string;
+  label: string;
+  bank_name: string;
+  borrower_name: string;
+  borrower_type: LoanBorrowerType;
+  collateral: string | null;
+  principal: number;
+  interest_rate: number;
+  rate_type: LoanRateType;
+  base_rate: number | null;
+  margin: number | null;
+  repayment_type: LoanRepaymentType;
+  term_months: number | null;
+  payment_day: number | null;
+  disbursement_date: string | null;
+  maturity_date: string | null;
+  proxy_account: string | null;
+  status: LoanStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type LoanConfirmationStatus = 'pending' | 'confirmed' | 'paid' | 'overdue';
+
+export interface LoanMonthlyConfirmation {
+  id: string;
+  loan_id: string;
+  month: string;
+  estimated_interest: number | null;
+  confirmed_interest: number | null;
+  buffer_amount: number | null;
+  amount_to_pay: number | null;
+  status: LoanConfirmationStatus;
+  paid_date: string | null;
+  paid_amount: number | null;
+  cic_risk: boolean;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanRateHistory {
+  id: string;
+  loan_id: string;
+  effective_date: string;
+  interest_rate: number;
+  base_rate: number | null;
+  margin: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+export type LoanScheduleStatus = 'pending' | 'paid' | 'overdue' | 'skipped';
+
+export interface LoanSchedule {
+  id: string;
+  loan_id: string;
+  period: number;
+  due_date: string;
+  principal_due: number;
+  interest_due: number;
+  is_estimated: boolean;
+  status: LoanScheduleStatus;
+  created_at: string;
+}
+
+export interface LoanPaymentHistory {
+  id: string;
+  loan_id: string;
+  paid_date: string;
+  amount: number;
+  principal_paid: number;
+  interest_paid: number;
+  fee_paid: number;
+  note: string | null;
+  created_at: string;
+}
+
+export type LoanRenewalStatus = 'pending' | 'contacted' | 'approved' | 'completed' | 'rejected';
+
+export interface LoanRenewal {
+  id: string;
+  loan_id: string;
+  new_loan_id: string | null;
+  contacted_date: string | null;
+  approval_date: string | null;
+  renewal_date: string | null;
+  new_principal: number | null;
+  new_rate: number | null;
+  new_term_months: number | null;
+  status: LoanRenewalStatus;
+  checklist: { label: string; done: boolean }[];
+  worst_case_note: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProxyLedgerEntryType = 'deposit' | 'interest' | 'adjustment' | 'carry_forward';
+
+export interface ProxyLedgerEntry {
+  id: string;
+  loan_id: string | null;
+  entry_date: string;
+  entry_type: ProxyLedgerEntryType;
+  amount: number;
+  running_balance: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface LoanAuditLog {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  action: string;
+  table_name: string;
+  record_id: string | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  description: string | null;
+  created_at: string;
+}
+
+export const BORROWER_TYPE_LABELS: Record<LoanBorrowerType, string> = {
+  bank: 'Ngan hang',
+  proxy: 'Vay ho (Bac Kiem)',
+  personal: 'Ca nhan',
+};
+
+export const LOAN_STATUS_LABELS: Record<LoanStatus, string> = {
+  active: 'Dang vay',
+  closed: 'Da tat toan',
+  restructured: 'Tai co cau',
+};
+
+export const CONFIRMATION_STATUS_LABELS: Record<LoanConfirmationStatus, string> = {
+  pending: 'Chua xac nhan',
+  confirmed: 'Da xac nhan',
+  paid: 'Da dong',
+  overdue: 'Qua han',
+};
+
+export const RENEWAL_STATUS_LABELS: Record<LoanRenewalStatus, string> = {
+  pending: 'Chua lien he',
+  contacted: 'Da lien he NH',
+  approved: 'NH duyet',
+  completed: 'Hoan tat',
+  rejected: 'Tu choi',
+};

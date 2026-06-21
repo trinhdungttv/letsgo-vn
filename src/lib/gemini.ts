@@ -6,11 +6,32 @@ export interface ChatMessage {
   text: string;
 }
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 const MODEL = (import.meta.env.VITE_GEMINI_MODEL as string | undefined) || 'gemini-2.5-flash';
 
 export function geminiConfigured(): boolean {
-  return !!API_KEY;
+  // Dev: can VITE_GEMINI_API_KEY de goi thang. Prod: gia su Vercel function da co GEMINI_API_KEY.
+  return import.meta.env.DEV ? !!import.meta.env.VITE_GEMINI_API_KEY : true;
+}
+
+// Goi Gemini generateContent.
+//  - Prod: POST qua /api/gemini (key nam o server, KHONG lo ra client bundle).
+//  - Dev:  goi thang Google bang VITE_GEMINI_API_KEY. Reference key nam trong nhanh import.meta.env.DEV
+//          nen bi loai bo khoi prod build (key khong xuat hien trong bundle).
+async function generateContent(body: unknown): Promise<Response> {
+  if (import.meta.env.DEV) {
+    const devKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+    if (!devKey) throw new Error('Chưa cấu hình VITE_GEMINI_API_KEY (môi trường dev)');
+    return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${devKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+  return fetch('/api/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: MODEL, body }),
+  });
 }
 
 // Builds a compact text summary of company data to ground Gemini's answers.
@@ -114,26 +135,17 @@ async function fetchAsBase64(url: string): Promise<{ data: string; mimeType: str
 
 // Asks Gemini a question about a single PDF/document (sent inline, suitable for typical contract-sized files).
 export async function askGeminiAboutDocument(fileUrl: string, question: string): Promise<string> {
-  if (!API_KEY) throw new Error('Chưa cấu hình VITE_GEMINI_API_KEY');
-
   const { data, mimeType } = await fetchAsBase64(fileUrl);
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            { inline_data: { mime_type: mimeType, data } },
-            { text: question },
-          ],
-        }],
-      }),
-    }
-  );
+  const res = await generateContent({
+    contents: [{
+      role: 'user',
+      parts: [
+        { inline_data: { mime_type: mimeType, data } },
+        { text: question },
+      ],
+    }],
+  });
 
   if (!res.ok) {
     const errBody = await res.text();
@@ -147,8 +159,6 @@ export async function askGeminiAboutDocument(fileUrl: string, question: string):
 }
 
 export async function askGemini(context: string, history: ChatMessage[]): Promise<string> {
-  if (!API_KEY) throw new Error('Chưa cấu hình VITE_GEMINI_API_KEY');
-
   const systemInstruction = {
     parts: [{
       text: [
@@ -167,14 +177,7 @@ export async function askGemini(context: string, history: ChatMessage[]): Promis
 
   const contents = history.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemInstruction, contents }),
-    }
-  );
+  const res = await generateContent({ systemInstruction, contents });
 
   if (!res.ok) {
     const errBody = await res.text();

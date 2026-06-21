@@ -81,7 +81,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
   useEffect(() => {
     supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
-      .then(({ data }) => { if (data) setContacts(data as Contact[]); });
+      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
   }, []);
 
   const handleCreateDeal = async (e: React.FormEvent) => {

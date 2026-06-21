@@ -100,7 +100,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
 
   useEffect(() => {
     supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
-      .then(({ data }) => { if (data) setContacts(data as Contact[]); });
+      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
   }, []);
 
   useEffect(() => {

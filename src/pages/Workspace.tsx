@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  AlertTriangle, X, FileText, FilePlus, Send, ClipboardList,
-  CalendarClock, Building2, Phone, TrendingUp, Wallet, CheckCircle2,
+  AlertTriangle, FileText, FilePlus, Send, ClipboardList,
+  CalendarClock, TrendingUp, Wallet, CheckCircle2,
   Settings, GripVertical, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw,
   History, Search, Pencil, Trash2,
 } from 'lucide-react';
@@ -106,9 +106,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
 
-  // Dismissible banners (session-scoped)
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-
   // Việc đang treo
   const [wsTasks, setWsTasks] = useState<WorkspaceTask[]>([]);
   const [wsLoading, setWsLoading] = useState(true);
@@ -136,9 +133,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   const [historySearch, setHistorySearch] = useState('');
   const [historyWeek, setHistoryWeek] = useState<string>('all');
   const [historyCategory, setHistoryCategory] = useState<string>('all');
-  const [taskComments, setTaskComments] = useState<Record<string, WorkTaskComment[]>>({});
-  const [commentInput, setCommentInput] = useState<Record<string, string>>({});
-  const [submittingComment, setSubmittingComment] = useState<string | null>(null);
+  const [, setTaskComments] = useState<Record<string, WorkTaskComment[]>>({});
 
   useEffect(() => {
     if (!user || user.role !== 'bdh') return;
@@ -222,20 +217,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     setDragKey(null);
   };
 
-  const dismiss = (key: string) => setDismissed(prev => new Set(prev).add(key));
-
   // --- Derived data ---
-  const dangerClients = useMemo(() =>
-    clients.filter(c => c.client_type === 'active' && c.status === 'danger' && c.cooperation_status !== 'suspended'),
-  [clients]);
-
-  const expiring7 = useMemo(() =>
-    clients.filter(c => {
-      const d = daysUntil(c.contract_end);
-      return c.client_type === 'active' && c.cooperation_status !== 'suspended' && d !== null && d >= 0 && d <= 7;
-    }),
-  [clients]);
-
   const expiringList = useMemo(() =>
     clients
       .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
@@ -244,22 +226,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
       .sort((a, b) => a.d - b.d)
       .slice(0, 6),
   [clients]);
-
-  const branchGroups = useMemo(() => {
-    const map = new Map<string, { region: string; count: number; lastUpdate: string | null }>();
-    for (const c of clients) {
-      if (c.client_type !== 'active' || c.cooperation_status === 'suspended') continue;
-      const region = c.region || 'Chưa phân CN';
-      const g = map.get(region) || { region, count: 0, lastUpdate: null };
-      g.count++;
-      if (c.updated_at && (!g.lastUpdate || c.updated_at > g.lastUpdate)) g.lastUpdate = c.updated_at;
-      map.set(region, g);
-    }
-    return Array.from(map.values())
-      .map(g => ({ ...g, days: g.lastUpdate ? Math.floor((Date.now() - new Date(g.lastUpdate).getTime()) / 86400000) : null }))
-      .sort((a, b) => (b.days ?? 9999) - (a.days ?? 9999))
-      .slice(0, 6);
-  }, [clients]);
 
   const unpaidClients = useMemo(() => clients.filter(c => c.client_type === 'active' && !c.paid_this_month), [clients]);
   const alertClients = useMemo(() => clients.filter(c => c.client_type === 'active' && (c.status === 'warn' || c.status === 'danger')), [clients]);
@@ -358,18 +324,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     });
   }, [allDoneHistory, historyCategory, historyWeek, historySearch]);
 
-  // --- Badge color helpers ---
-  function expBadge(d: number) {
-    if (d <= 5) return 'bg-red-50 text-red-700 border-red-200';
-    if (d <= 15) return 'bg-amber-50 text-amber-700 border-amber-200';
-    return 'bg-slate-100 text-slate-600 border-slate-300';
-  }
-
-  function contactBadge(days: number | null): { cls: string; label: string } {
-    if (days === null || days > 7) return { cls: 'bg-red-50 text-red-700 border-red-200', label: days === null ? 'Chưa rõ' : `${days} ngày` };
-    if (days >= 3) return { cls: 'bg-amber-50 text-amber-700 border-amber-200', label: `${days} ngày` };
-    return { cls: 'bg-green-50 text-green-700 border-green-200', label: days <= 1 ? 'Mới' : `${days} ngày` };
-  }
 
   // --- Việc đang treo: đánh dấu xong + lưu lịch sử ---
   async function markWsTaskDone(id: string) {
@@ -440,20 +394,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     setTaskComments(prev => ({ ...prev, [task.id]: [] }));
   }
 
-  async function submitComment(taskId: string) {
-    const content = (commentInput[taskId] ?? '').trim();
-    if (!content || !user) return;
-    setSubmittingComment(taskId);
-    const userName = (user as any).full_name || (user as any).name || (user as any).email || 'Người dùng';
-    const { data, error } = await supabase.from('work_task_comments')
-      .insert({ task_id: taskId, user_id: user.id, user_name: userName, content })
-      .select().single();
-    if (!error && data) {
-      setTaskComments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), data as WorkTaskComment] }));
-      setCommentInput(prev => ({ ...prev, [taskId]: '' }));
-    }
-    setSubmittingComment(null);
-  }
   async function handleTaskStatus(id: string, status: TaskStatus) {
     setMyTasks(prev => status === 'done' ? prev.filter(t => t.id !== id) : prev.map(t => t.id === id ? { ...t, status } : t));
     await supabase.from('work_tasks').update({

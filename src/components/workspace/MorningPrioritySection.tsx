@@ -1,6 +1,6 @@
 // src/components/workspace/MorningPrioritySection.tsx
 import { useState, useEffect, useMemo } from 'react'
-import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronUp, ChevronRight, Undo2, Settings, X, Trash2, Pencil } from 'lucide-react'
+import { Sun, FileWarning, Phone, MapPin, ArrowRight, Check, ListTodo, ChevronDown, ChevronRight, Settings, X, Trash2, Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { useRegions } from '../../hooks/useRegions'
@@ -9,7 +9,6 @@ import { usePersistedState } from '../../hooks/usePersistedState'
 import type { Client, WorkTask, TaskStatus, Branch, WorkTaskComment } from '../../lib/types'
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS, type DocStatus } from '../../lib/types'
 import { formatDate, daysUntil } from '../../lib/format'
-import { WorkTasksCard } from './WorkTasksCard'
 import { BranchHistoryFields, recordBranchUpdateSession } from './BranchHistoryFields'
 
 // Colors per doc status step
@@ -122,8 +121,7 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
   const [panelRecordDate, setPanelRecordDate] = useState(todayStr())
   const [panelSaving, setPanelSaving] = useState(false)
   const [pendingTasks, setPendingTasks] = useState<WorkTask[]>([])
-  const [doneTasks, setDoneTasks] = useState<WorkTask[]>([])
-  const [showDoneHistory, setShowDoneHistory] = useState(false)
+  const [, setDoneTasks] = useState<WorkTask[]>([])
   const [reportTaskId, setReportTaskId] = useState<string | null>(null)
   const [reportText, setReportText] = useState('')
   const [newContractEnd, setNewContractEnd] = useState('')
@@ -175,11 +173,6 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
       .gte('completed_at', since)
       .order('completed_at', { ascending: false })
     if (data) setDoneTasks(data as WorkTask[])
-  }
-
-  function handleTaskCreated(task: WorkTask) {
-    setPendingTasks(prev => [task, ...prev])
-    setTaskComments(prev => ({ ...prev, [task.id]: [] }))
   }
 
   async function handleDocStatusChange(id: string, docStatus: DocStatus) {
@@ -260,16 +253,6 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
       const client = clients.find(c => c.id === task.client_id)
       if (client) onClientUpdate({ ...client, contract_end: newContractEndDate })
     }
-  }
-
-  async function undoTask(id: string) {
-    const patch: Partial<WorkTask> = { status: 'pending', completed_at: null, updated_at: new Date().toISOString() }
-    setDoneTasks(prev => {
-      const task = prev.find(t => t.id === id)
-      if (task) setPendingTasks(p => [{ ...task, ...patch } as WorkTask, ...p])
-      return prev.filter(t => t.id !== id)
-    })
-    await supabase.from('work_tasks').update(patch).eq('id', id)
   }
 
   async function deleteTask(id: string) {

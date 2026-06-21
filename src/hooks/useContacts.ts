@@ -27,7 +27,7 @@ export function useContacts(clientId: string) {
     }
   }, [clientId]);
 
-  const addContact = useCallback(async (payload: Omit<Contact, 'id' | 'created_at' | 'updated_at'>): Promise<Contact> => {
+  const addContact = useCallback(async (payload: Partial<Omit<Contact, 'id' | 'created_at' | 'updated_at'>>): Promise<Contact> => {
     const { data, error: err } = await supabase
       .from('contacts')
       .insert({ ...payload, updated_at: new Date().toISOString() })

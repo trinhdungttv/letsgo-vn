@@ -80,14 +80,8 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="mt-4 p-4 bg-white/60 border border-[#E8E7E2] rounded-xl text-[11.5px] text-[#888]">
-          <div className="font-medium text-[#555] mb-1.5">Tài khoản demo:</div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-            <span>admin / admin</span><span className="text-[#bbb]">Quản trị viên</span>
-            <span>ketoan / ketoan</span><span className="text-[#bbb]">Kế Toán</span>
-            <span>kinhdoanh / kd123</span><span className="text-[#bbb]">Kinh Doanh</span>
-            <span>bdh / bdh123</span><span className="text-[#bbb]">Ban Điều Hành</span>
-          </div>
+        <div className="mt-4 p-4 bg-white/60 border border-[#E8E7E2] rounded-xl text-[11.5px] text-[#888] text-center">
+          Letsgo VN — He thong quan ly noi bo
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings } from 'lucide-react';
+import { Home, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
@@ -17,6 +17,7 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'finance', label: 'Tài chính', icon: <DollarSign size={15} /> },
   { page: 'market', label: 'Thị trường', icon: <MapPin size={15} /> },
   { page: 'reports', label: 'Báo cáo', icon: <BarChart3 size={15} /> },
+  { page: 'loans', label: 'Khoan vay', icon: <Landmark size={15} /> },
   { page: 'history', label: 'Lịch sử', icon: <History size={15} /> },
 ];
 

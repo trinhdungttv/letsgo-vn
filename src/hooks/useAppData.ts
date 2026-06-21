@@ -2,10 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Client, LaborHistoryEntry, ClientManagerHistory, FinanceRecord, MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
 
-function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
+// Nhan PromiseLike de chap nhan ca PostgrestFilterBuilder cua Supabase (thenable, khong phai Promise that),
+// nho do TypeScript suy ra dung kieu { data, error } thay vi unknown.
+function withTimeout<T>(promise: PromiseLike<T>, ms = 10000): Promise<T> {
   return new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error(`Không thể kết nối Supabase (${ms / 1000}s)`)), ms);
-    promise.then(v => { clearTimeout(t); res(v); }).catch(e => { clearTimeout(t); rej(e); });
+    Promise.resolve(promise).then(
+      v => { clearTimeout(t); res(v); },
+      e => { clearTimeout(t); rej(e); },
+    );
   });
 }
 

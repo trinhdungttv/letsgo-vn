@@ -537,14 +537,13 @@ export default function Clients({
     if (!deletePassword) { toast('Vui lòng nhập mật khẩu'); return; }
     setIsDeleting(true);
     try {
-      const { data: authCheck, error: authErr } = await supabase
-        .from('app_users')
-        .select('id')
-        .eq('id', user?.id || '')
-        .eq('password', deletePassword)
-        .maybeSingle();
+      if (!user?.id) { toast('Phiên đăng nhập không hợp lệ'); return; }
+      const { data: pwOk, error: authErr } = await supabase.rpc('verify_password', {
+        p_user_id: user.id,
+        p_password: deletePassword,
+      });
       if (authErr) throw authErr;
-      if (!authCheck) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
+      if (!pwOk) { toast('Sai mật khẩu, vui lòng thử lại'); return; }
 
       const archivedAt = new Date().toISOString();
       const { error } = await supabase.from('clients').update({ archived_at: archivedAt, updated_at: archivedAt }).eq('id', deleteTarget.id);

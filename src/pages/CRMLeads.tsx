@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import { Edit2, Link2, X, Plus, Search } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
@@ -24,8 +25,9 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (v: stri
   const lastValue = useRef(value);
 
   useEffect(() => {
-    if (ref.current && lastValue.current !== value && ref.current.innerHTML !== value) {
-      ref.current.innerHTML = value;
+    const clean = DOMPurify.sanitize(value);
+    if (ref.current && lastValue.current !== value && ref.current.innerHTML !== clean) {
+      ref.current.innerHTML = clean;
       lastValue.current = value;
     }
   }, [value]);

@@ -40,7 +40,7 @@ const LOCKED_FOR_ADMIN = ['Admin', 'Quản lý Users'];
 const emptyForm = { username: '', full_name: '', email: '', password: '', role: 'kinhdoanh' as AppUser['role'] };
 
 export default function AdminPage({ toast }: AdminPageProps) {
-  const { user, rolePermissions, refreshRolePermissions } = useAuth();
+  const { user, token, rolePermissions, refreshRolePermissions } = useAuth();
   const [tab, setTab] = useState<Tab>('requests');
   const [savingCell, setSavingCell] = useState<string | null>(null);
 
@@ -52,10 +52,12 @@ export default function AdminPage({ toast }: AdminPageProps) {
     let next = LEVEL_CYCLE[current];
     if (role === 'admin' && LOCKED_FOR_ADMIN.includes(mod) && next === 'none') next = LEVEL_CYCLE[next];
     const key = `${role}-${mod}`;
+    if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
     setSavingCell(key);
     try {
-      const { error } = await supabase.from('role_permissions')
-        .upsert({ role, module: mod, level: next, updated_at: new Date().toISOString() }, { onConflict: 'role,module' });
+      const { error } = await supabase.rpc('admin_set_role_permission', {
+        p_token: token, p_role: role, p_module: mod, p_level: next,
+      });
       if (error) throw error;
       await refreshRolePermissions();
       await logActivity({
@@ -140,7 +142,9 @@ export default function AdminPage({ toast }: AdminPageProps) {
 
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
-    const { data, error } = await supabase.from('app_users').select('*').order('created_at');
+    const { data, error } = await supabase.from('app_users')
+      .select('id, username, full_name, email, role, is_active, created_at')
+      .order('created_at');
     if (error) toast('Lỗi tải users: ' + error.message);
     else setUsers((data || []) as AppUser[]);
     setLoadingUsers(false);
@@ -202,28 +206,31 @@ export default function AdminPage({ toast }: AdminPageProps) {
   const handleSave = async () => {
     if (!form.username || !form.full_name) { toast('Nhập username và họ tên'); return; }
     if (!editUser && !form.password) { toast('Nhập mật khẩu'); return; }
+    if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
     setSaving(true);
     try {
       if (editUser) {
-        const update: Record<string, string> = { username: form.username, full_name: form.full_name, email: form.email, role: form.role };
-        if (form.password) update.password = form.password;
-        const { error } = await supabase.from('app_users').update(update).eq('id', editUser.id);
+        const { error } = await supabase.rpc('admin_update_user', {
+          p_token: token, p_id: editUser.id, p_username: form.username, p_full_name: form.full_name,
+          p_email: form.email, p_password: form.password || '', p_role: form.role,
+        });
         if (error) throw error;
         await logActivity({
           user, action: 'update', table: 'app_users', recordId: editUser.id,
           description: `Cập nhật tài khoản "${form.username}"`,
-          oldData: editUser, newData: { ...editUser, ...update },
+          oldData: editUser, newData: { ...editUser, username: form.username, full_name: form.full_name, email: form.email, role: form.role },
         });
         toast('Đã cập nhật user');
       } else {
-        const { data, error } = await supabase.from('app_users').insert({
-          username: form.username, full_name: form.full_name, email: form.email || null, password: form.password, role: form.role,
-        }).select().single();
+        const { data: newId, error } = await supabase.rpc('admin_create_user', {
+          p_token: token, p_username: form.username, p_full_name: form.full_name,
+          p_email: form.email || '', p_password: form.password, p_role: form.role,
+        });
         if (error) throw error;
         await logActivity({
-          user, action: 'insert', table: 'app_users', recordId: data.id,
+          user, action: 'insert', table: 'app_users', recordId: (newId as string) || form.username,
           description: `Tạo tài khoản mới "${form.username}"`,
-          newData: data,
+          newData: { username: form.username, full_name: form.full_name, email: form.email || null, role: form.role },
         });
         toast('Đã tạo user mới');
       }
@@ -237,10 +244,11 @@ export default function AdminPage({ toast }: AdminPageProps) {
   };
 
   const handleToggleActive = async (u: AppUser) => {
+    if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
     setBusyId(u.id);
     try {
       const newVal = !(u.is_active ?? true);
-      const { error } = await supabase.from('app_users').update({ is_active: newVal }).eq('id', u.id);
+      const { error } = await supabase.rpc('admin_set_user_active', { p_token: token, p_id: u.id, p_active: newVal });
       if (error) throw error;
       setUsers(prev => prev.map(x => x.id === u.id ? { ...x, is_active: newVal } : x));
       await logActivity({
@@ -258,9 +266,10 @@ export default function AdminPage({ toast }: AdminPageProps) {
 
   const handleDelete = async (u: AppUser) => {
     if (!confirm(`Xóa user "${u.username}"?`)) return;
+    if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
     setBusyId(u.id);
     try {
-      const { error } = await supabase.from('app_users').delete().eq('id', u.id);
+      const { error } = await supabase.rpc('admin_delete_user', { p_token: token, p_id: u.id });
       if (error) throw error;
       setUsers(prev => prev.filter(x => x.id !== u.id));
       await logActivity({
