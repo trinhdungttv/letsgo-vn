@@ -309,13 +309,33 @@ export default function Clients({
   });
   const avgHealth = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
 
+  const loadBulkWeekData = async (week: string) => {
+    const { data } = await supabase.from('client_labor_history')
+      .select('client_id, count')
+      .eq('week_label', week);
+    const prefilled: Record<string, string> = {};
+    if (data) {
+      for (const row of data as { client_id: string; count: number }[]) {
+        prefilled[row.client_id] = String(row.count);
+      }
+    }
+    setBulkValues(prefilled);
+  };
+
   const openBulkLabor = () => {
-    setBulkWeek(getCurrentWeekLabel());
+    const week = getCurrentWeekLabel();
+    setBulkWeek(week);
     setBulkExtraWeeks(0);
     setBulkValues({});
     setBulkSearch('');
     setBulkRegions([ALL_OPTION]);
     setShowBulkLabor(true);
+    loadBulkWeekData(week);
+  };
+
+  const handleBulkWeekChange = (week: string) => {
+    setBulkWeek(week);
+    loadBulkWeekData(week);
   };
 
   const saveBulkLabor = async () => {
@@ -1562,7 +1582,7 @@ export default function Clients({
             <div className="px-5 py-3 border-b border-gray-200 space-y-2">
               <div className="flex items-center gap-2">
                 <label className="text-xs font-semibold text-gray-700">Tuần:</label>
-                <select value={bulkWeek} onChange={e => setBulkWeek(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                <select value={bulkWeek} onChange={e => handleBulkWeekChange(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
                   {bulkWeekGroups.map(g => (
                     <optgroup key={g.month} label={g.month}>
                       {g.labels.map(l => <option key={l} value={l}>{l}</option>)}
@@ -1572,7 +1592,7 @@ export default function Clients({
                 <button onClick={() => {
                   const next = nextWeekLabels(bulkExtraWeeks + 1)[0].labels[0];
                   setBulkExtraWeeks(n => n + 1);
-                  setBulkWeek(next);
+                  handleBulkWeekChange(next);
                 }} className="text-[12px] text-blue-600 hover:underline">+ Tuần tiếp theo</button>
               </div>
               <div className="flex items-center gap-2">
@@ -1582,18 +1602,21 @@ export default function Clients({
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-2 divide-y divide-gray-100">
-              {bulkClients.map(c => (
-                <div key={c.id} className="flex items-center justify-between py-1.5 gap-3">
-                  <span className="text-[12.5px] text-gray-800 truncate">{c.name}</span>
-                  <input
-                    type="number" min={0}
-                    placeholder={String(c.current_workers ?? 0)}
-                    value={bulkValues[c.id] ?? ''}
-                    onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
-                    className="w-20 text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
-                  />
-                </div>
-              ))}
+              {bulkClients.map(c => {
+                const hasData = bulkValues[c.id] !== undefined && bulkValues[c.id] !== '';
+                return (
+                  <div key={c.id} className="flex items-center justify-between py-1.5 gap-3">
+                    <span className="text-[12.5px] text-gray-800 truncate">{c.name}</span>
+                    <input
+                      type="number" min={0}
+                      placeholder="—"
+                      value={bulkValues[c.id] ?? ''}
+                      onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
+                      className={`w-20 text-[12px] px-2 py-1 border rounded-lg outline-none focus:border-blue-500 text-right ${hasData ? 'border-blue-300 bg-blue-50 font-semibold' : 'border-gray-300'}`}
+                    />
+                  </div>
+                );
+              })}
               {bulkClients.length === 0 && <div className="text-center py-6 text-[12px] text-gray-400">Không tìm thấy công ty</div>}
             </div>
             <div className="px-5 py-4 border-t border-gray-200 flex gap-2">

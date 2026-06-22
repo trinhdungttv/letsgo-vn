@@ -20,7 +20,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
   const [bulkSearch, setBulkSearch] = useState('')
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION])
   const [bulkSaving, setBulkSaving] = useState(false)
-  const [laborHistory, setLaborHistory] = useState<Record<string, { id: string; week_label: string; count: number }[]>>({})
+  const [, setWeekDataLoaded] = useState(false)
 
   const activeClients = useMemo(
     () => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'),
@@ -43,42 +43,58 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
     [activeClients, bulkRegions, bulkSearch]
   )
 
-  useEffect(() => {
-    const ids = activeClients.map(c => c.id)
-    if (!ids.length) return
-    supabase.from('client_labor_history').select('*').in('client_id', ids).then(({ data }) => {
-      if (!data) return
-      const map: Record<string, { id: string; week_label: string; count: number }[]> = {}
-      for (const row of data as { id: string; client_id: string; week_label: string; count: number }[]) {
-        if (!map[row.client_id]) map[row.client_id] = []
-        map[row.client_id].push(row)
+  async function loadWeekData(week: string) {
+    setWeekDataLoaded(false)
+    const { data } = await supabase.from('client_labor_history')
+      .select('client_id, count')
+      .eq('week_label', week)
+    const prefilled: Record<string, string> = {}
+    if (data) {
+      for (const row of data as { client_id: string; count: number }[]) {
+        prefilled[row.client_id] = String(row.count)
       }
-      setLaborHistory(map)
-    })
-  }, [activeClients])
+    }
+    setBulkValues(prefilled)
+    setWeekDataLoaded(true)
+  }
+
+  // Load data khi mo modal lan dau
+  useEffect(() => { loadWeekData(bulkWeek) }, [])
+
+  function handleWeekChange(week: string) {
+    setBulkWeek(week)
+    loadWeekData(week)
+  }
 
   async function save() {
     const entries = Object.entries(bulkValues).filter(([, v]) => v.trim() !== '')
-    if (!entries.length) { toast('Chưa nhập số liệu nào'); return }
+    if (!entries.length) { toast('Chua nhap so lieu nao'); return }
     setBulkSaving(true)
     let success = 0
     try {
       for (const [clientId, valStr] of entries) {
         const newCount = Math.max(0, parseInt(valStr) || 0)
-        const hist = laborHistory[clientId] || []
-        const existing = hist.find(h => h.week_label === bulkWeek)
+        // Kiem tra da co du lieu tuan nay chua
+        const { data: existing } = await supabase.from('client_labor_history')
+          .select('id, count')
+          .eq('client_id', clientId)
+          .eq('week_label', bulkWeek)
+          .maybeSingle()
         if (existing) {
           if (existing.count === newCount) continue
-          await supabase.from('client_labor_history').update({ count: newCount, updated_by: (user as any)?.full_name || null }).eq('id', existing.id)
+          await supabase.from('client_labor_history')
+            .update({ count: newCount, updated_by: (user as any)?.full_name || null })
+            .eq('id', existing.id)
         } else {
-          await supabase.from('client_labor_history').insert({ client_id: clientId, week_label: bulkWeek, count: newCount, updated_by: (user as any)?.full_name || null })
+          await supabase.from('client_labor_history')
+            .insert({ client_id: clientId, week_label: bulkWeek, count: newCount, updated_by: (user as any)?.full_name || null })
         }
         success++
       }
-      toast(`Đã lưu LĐ tuần ${bulkWeek} cho ${success} công ty`)
+      toast(`Da luu LD tuan ${bulkWeek} cho ${success} cong ty`)
       onClose()
     } catch {
-      toast('Có lỗi khi lưu, vui lòng thử lại')
+      toast('Co loi khi luu, vui long thu lai')
     } finally {
       setBulkSaving(false)
     }
@@ -97,7 +113,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
         <div className="px-5 py-3 border-b border-gray-200 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-[11.5px] font-semibold text-gray-700">Tuần:</label>
-            <select value={bulkWeek} onChange={e => setBulkWeek(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+            <select value={bulkWeek} onChange={e => handleWeekChange(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
               {bulkWeekGroups.map(g => (
                 <optgroup key={g.month} label={g.month}>
                   {g.labels.map(l => <option key={l} value={l}>{l}</option>)}
@@ -108,7 +124,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
               onClick={() => {
                 const next = nextWeekLabels(bulkExtraWeeks + 1)[0].labels[0]
                 setBulkExtraWeeks(n => n + 1)
-                setBulkWeek(next)
+                handleWeekChange(next)
               }}
               className="text-[12px] text-blue-600 hover:underline"
             >+ Tuần tiếp theo</button>
