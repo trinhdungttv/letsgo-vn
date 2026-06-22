@@ -1,4 +1,4 @@
-import type { ProjectPnlType, CostPayer, ClientManagerHistory } from './types';
+import type { ProjectPnlType, CostPayer, ClientManagerHistory, ClientBranchHistory } from './types';
 
 export function formatCurrency(value: number): string {
   if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + ' tỷ';
@@ -147,6 +147,12 @@ export function getManagerForMonth(history: ClientManagerHistory[], month: strin
   const applicable = history.filter(h => h.effective_from <= month);
   if (!applicable.length) return null;
   return applicable.reduce((a, b) => (a.effective_from > b.effective_from ? a : b)).manager_name;
+}
+
+export function getBranchForMonth(history: ClientBranchHistory[], month: string): string | null {
+  const applicable = history.filter(h => h.effective_from <= month);
+  if (!applicable.length) return null;
+  return applicable.reduce((a, b) => (a.effective_from > b.effective_from ? a : b)).branch_name;
 }
 
 export function fmtTrieu(value: number): string {

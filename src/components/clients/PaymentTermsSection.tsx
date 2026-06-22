@@ -20,6 +20,21 @@ const WEEKDAYS = [
 
 export default function PaymentTermsSection({ client, onUpdate, toast }: Props) {
   const [saving, setSaving] = useState(false);
+
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth();
+
+  const savedDay = client.invoice_date
+    ? new Date(client.invoice_date).getDate()
+    : (client.invoice_day ?? null);
+
+  const [invoiceDay, setInvoiceDay] = useState<number | null>(savedDay);
+
+  const autoInvoiceDate = invoiceDay
+    ? `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(Math.min(invoiceDay, new Date(curYear, curMonth + 1, 0).getDate())).padStart(2, '0')}`
+    : '';
+
   const [form, setForm] = useState({
     payment_group:     client.payment_group     ?? 1,
     payment_days:      client.payment_days      ?? 15,
@@ -32,7 +47,7 @@ export default function PaymentTermsSection({ client, onUpdate, toast }: Props) 
     payment_ca_to:     client.payment_ca_to     ?? 30,
     payment_cb_from:   client.payment_cb_from   ?? 10,
     payment_cb_to:     client.payment_cb_to     ?? 15,
-    invoice_date:      client.invoice_date      ?? '',
+    invoice_date:      autoInvoiceDate,
   });
 
   const invDate = form.invoice_date ? new Date(form.invoice_date) : null;
@@ -40,13 +55,26 @@ export default function PaymentTermsSection({ client, onUpdate, toast }: Props) 
   const statusConfig = dueResult ? getDueStatusConfig(dueResult.status, dueResult.daysRemaining) : null;
   const set = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }));
 
+  const handleInvoiceDayChange = (day: number | null) => {
+    setInvoiceDay(day);
+    if (day && day >= 1 && day <= 31) {
+      const maxDay = new Date(curYear, curMonth + 1, 0).getDate();
+      const d = Math.min(day, maxDay);
+      const dateStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      set('invoice_date', dateStr);
+    } else {
+      set('invoice_date', '');
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
-    const { error } = await supabase.from('clients').update({ ...form, updated_at: new Date().toISOString() }).eq('id', client.id);
+    const updates = { ...form, invoice_day: invoiceDay, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
     setSaving(false);
-    if (error) { toast('Lỗi: ' + error.message); return; }
-    onUpdate({ ...client, ...form });
-    toast('Đã lưu điều khoản thanh toán!');
+    if (error) { toast('Loi: ' + error.message); return; }
+    onUpdate({ ...client, ...updates });
+    toast('Da luu dieu khoan thanh toan!');
   };
 
   const groupLabels: Record<number, string> = {
@@ -184,10 +212,26 @@ export default function PaymentTermsSection({ client, onUpdate, toast }: Props) 
         )}
 
         <div>
-          <label className="text-[11px] text-[#888] font-medium block mb-1.5">NGÀY XUẤT HÓA ĐƠN THÁNG NÀY</label>
-          <input type="date" value={form.invoice_date} onChange={e => set('invoice_date', e.target.value)}
-            className="w-full text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-          <div className="text-[10.5px] text-[#aaa] mt-0.5">Cập nhật mỗi tháng 1 lần — app tự tính ngày thu</div>
+          <label className="text-[11px] text-[#888] font-medium block mb-1.5">NGAY XUAT HOA DON HANG THANG</label>
+          <div className="flex items-center gap-3">
+            <div className="relative w-[100px]">
+              <input
+                type="number" min={1} max={31}
+                value={invoiceDay ?? ''}
+                onChange={e => handleInvoiceDayChange(e.target.value ? +e.target.value : null)}
+                placeholder="Ngay"
+                className="w-full text-[13px] font-semibold text-center px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]"
+              />
+            </div>
+            <div className="text-[12px] text-[#555]">
+              {invoiceDay ? (
+                <>hang thang · Thang nay: <span className="font-semibold text-[#111]">{form.invoice_date ? new Date(form.invoice_date + 'T00:00').toLocaleDateString('vi-VN') : '—'}</span></>
+              ) : (
+                <span className="text-[#aaa]">Nhap ngay co dinh xuat HD (VD: 5, 20, 25...)</span>
+              )}
+            </div>
+          </div>
+          <div className="text-[10.5px] text-[#aaa] mt-1">He thong tu tinh ngay xuat HD cho thang hien tai. Sang thang moi se tu cap nhat.</div>
         </div>
 
         {dueResult && statusConfig ? (

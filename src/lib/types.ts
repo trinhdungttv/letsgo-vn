@@ -135,6 +135,16 @@ export interface ClientManagerHistory {
   created_at: string;
 }
 
+export interface ClientBranchHistory {
+  id: string;
+  client_id: string;
+  branch_name: string;
+  effective_from: string; // "YYYY-MM"
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface LaborHistoryEntry {
   id: string;
   client_id: string;

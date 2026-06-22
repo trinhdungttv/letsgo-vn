@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch } from '../../lib/types';
-import { fmtTrieu, calcPnl, shiftMonth, monthLabel } from '../../lib/format';
+import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
+import type { ClientBranchHistory } from '../../lib/types';
 
 interface PnLProjectTabProps {
   clients: Client[];
@@ -46,12 +47,13 @@ export default function PnLProjectTab({
 
   type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
+  const [allBranchHistory, setAllBranchHistory] = useState<ClientBranchHistory[]>([]);
   useEffect(() => {
     supabase.from('clients').select('id, name, region, archived_at, cooperation_status')
       .order('name')
-      .then(({ data }) => {
-        if (data) setExtraClients(data as MinClient[]);
-      });
+      .then(({ data }) => { if (data) setExtraClients(data as MinClient[]); });
+    supabase.from('client_branch_history').select('*').order('effective_from')
+      .then(({ data }) => { if (data) setAllBranchHistory(data as ClientBranchHistory[]); });
   }, []);
 
   const mergedClients = useMemo(() => {
@@ -132,7 +134,7 @@ export default function PnLProjectTab({
         const created = await onAddProject({
           client_id: clientId,
           month,
-          branch_manager: client?.region || null,
+          branch_manager: getBranchForMonth(allBranchHistory.filter(h => h.client_id === clientId), month) || client?.region || null,
           project_type: 'shared',
           lg_pct: lgPct,
           cn_pct: cnPct,

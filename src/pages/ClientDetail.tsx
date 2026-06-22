@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
 import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
@@ -12,6 +12,7 @@ import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
+import { useBranchData } from '../hooks/useBranchData';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
@@ -99,6 +100,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [askingDocId, setAskingDocId] = useState<string | null>(null);
   const [docAnswers, setDocAnswers] = useState<Record<string, string>>({});
   const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
+  const [branchTransferForm, setBranchTransferForm] = useState<{ branch_name: string; effective_from: string; notes: string } | null>(null);
+  const [branchHistory, setBranchHistory] = useState<ClientBranchHistory[]>([]);
+  const { branches } = useBranchData();
   const [newZoneOpen, setNewZoneOpen] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
   const [form, setForm] = useState({
@@ -118,6 +122,11 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     salary_day: client.salary_day, salary_day_end: client.salary_day_end,
   });
   const { contacts: primaryContacts } = useContacts(client.id);
+
+  useEffect(() => {
+    supabase.from('client_branch_history').select('*').eq('client_id', client.id).order('effective_from', { ascending: true })
+      .then(({ data }) => { if (data) setBranchHistory(data as ClientBranchHistory[]); });
+  }, [client.id]);
 
   useEffect(() => {
     if (activeTab !== 'profile' || profileEntry) return;
@@ -440,6 +449,21 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     };
   }, [hist, chartView]);
 
+  const chartYMin = useMemo(() => {
+    const vals = chartView === 'week'
+      ? hist.map(h => h.count)
+      : recentMonths(3).map(mo => getMonthLast(hist, mo.month)).filter((v): v is number => v !== null);
+    if (!vals.length) return 0;
+    // Bar chart: bat dau tu 0 (chieu cao cot phai phan anh dung ty le tuyet doi)
+    if (chartView === 'month') return 0;
+    // Line chart: padding 20% cua range phia duoi, toi thieu 10 don vi
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min;
+    const padding = Math.max(10, Math.round(range * 0.2));
+    return Math.max(0, min - padding);
+  }, [hist, chartView]);
+
   const monthRows = useMemo(() => {
     const months = recentMonths(3);
     const counts = months.map(mo => getMonthLast(hist, mo.month));
@@ -494,6 +518,36 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       toast('Đã ghi nhận chuyển đổi quản lý');
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
+    }
+  };
+
+  const handleBranchTransfer = async () => {
+    if (!branchTransferForm?.branch_name) { toast('Vui long chon chi nhanh moi'); return; }
+    try {
+      const { data, error } = await supabase.from('client_branch_history')
+        .insert({
+          client_id: client.id,
+          branch_name: branchTransferForm.branch_name,
+          effective_from: branchTransferForm.effective_from,
+          notes: branchTransferForm.notes || null,
+          created_by: user?.full_name || null,
+        })
+        .select().single();
+      if (error) throw error;
+      setBranchHistory(prev => [...prev, data as ClientBranchHistory].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
+      const updates = { region: branchTransferForm.branch_name, updated_at: new Date().toISOString() };
+      const { error: e2 } = await supabase.from('clients').update(updates).eq('id', client.id);
+      if (e2) throw e2;
+      onClientUpdate({ ...client, ...updates });
+      await logActivity({
+        user, action: 'insert', table: 'client_branch_history', recordId: data.id,
+        description: `Chuyen chi nhanh "${client.name}" sang "${branchTransferForm.branch_name}" tu ${monthLabel(branchTransferForm.effective_from)}`,
+        newData: data,
+      });
+      setBranchTransferForm(null);
+      toast('Da ghi nhan chuyen chi nhanh');
+    } catch (e: unknown) {
+      toast('Loi: ' + errMsg(e));
     }
   };
 
@@ -1163,15 +1217,61 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    ['Chi Nhánh', client.region],
-                    ['Ngày bắt đầu HĐ', formatDate(client.contract_start)],
-                    ['Ngày hết hạn HĐ', formatDate(client.contract_end)],
+                    ['Ngay bat dau HD', formatDate(client.contract_start)],
+                    ['Ngay het han HD', formatDate(client.contract_end)],
                   ].map(([label, val]) => (
                     <div key={label}>
                       <label className="text-[12px] text-[#666] font-medium">{label}</label>
                       <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
                     </div>
                   ))}
+                  <div className="col-span-2">
+                    <label className="text-[12px] text-[#666] font-medium">Chi Nhanh</label>
+                    <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
+                      <span className="text-[13px] text-[#111] font-medium">{client.region || '—'}</span>
+                      <button
+                        onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_name: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
+                      >
+                        <ArrowRightLeft size={11} /> Chuyen chi nhanh
+                      </button>
+                    </div>
+                    {branchTransferForm && (
+                      <div className="mt-2 p-3 rounded-lg border border-teal-200 bg-teal-50 flex flex-col gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-[#666] font-medium">Chi nhanh moi</label>
+                          <select value={branchTransferForm.branch_name} onChange={e => setBranchTransferForm({ ...branchTransferForm, branch_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500 bg-white">
+                            <option value="">-- Chon chi nhanh --</option>
+                            {branches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-[#666] font-medium">Co hieu luc tu thang</label>
+                          <input type="month" value={branchTransferForm.effective_from} onChange={e => setBranchTransferForm({ ...branchTransferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-[#666] font-medium">Ghi chu (ly do)</label>
+                          <input type="text" value={branchTransferForm.notes} onChange={e => setBranchTransferForm({ ...branchTransferForm, notes: e.target.value })} placeholder="VD: Chuyen nhuong cuoi thang 5" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={handleBranchTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-teal-600 text-white hover:bg-teal-700 transition"><Check size={13} /> Xac nhan</button>
+                          <button onClick={() => setBranchTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Huy</button>
+                        </div>
+                      </div>
+                    )}
+                    {branchHistory.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        <div className="text-[10.5px] text-[#888] font-medium uppercase tracking-wide">Lich su chuyen chi nhanh</div>
+                        {branchHistory.map(h => (
+                          <div key={h.id} className="flex items-center gap-2 text-[11.5px] py-1 border-b border-gray-100 last:border-0">
+                            <span className="text-[#999] w-16 shrink-0">{h.effective_from}</span>
+                            <span className="font-medium text-[#111]">{h.branch_name}</span>
+                            {h.notes && <span className="text-[#888]">— {h.notes}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div>
                     <label className="text-[12px] text-[#666] font-medium">Người quản lý</label>
                     <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
@@ -1346,9 +1446,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
 
               <div className="mb-4" style={{ height: 190 }}>
                 {chartView === 'week' ? (
-                  <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: false } } }} />
+                  <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { min: chartYMin } } }} />
                 ) : (
-                  <Bar data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: false } } }} />
+                  <Bar data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { min: chartYMin } } }} />
                 )}
               </div>
 
