@@ -373,7 +373,7 @@ export default function Clients({
         success++;
       }
       toast(`Đã lưu LĐ tuần ${bulkWeek} cho ${success} công ty`);
-      setShowBulkLabor(false);
+      await loadBulkWeekData(bulkWeek);
     } catch (err: any) {
       toast('Lỗi: ' + err.message);
     } finally {
