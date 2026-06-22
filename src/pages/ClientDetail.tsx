@@ -5,7 +5,7 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
 import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
-import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
+import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekDateRange, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -1425,7 +1425,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 <select value={laborWeek} onChange={e => selectWeek(e.target.value)} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
                   {weekGroups.map(g => (
                     <optgroup key={g.month} label={g.month}>
-                      {g.labels.map(l => <option key={l} value={l}>{l}{l === getCurrentWeekLabel() ? ' (tuần này)' : ''}</option>)}
+                      {g.labels.map(l => <option key={l} value={l}>{l} ({weekDateRange(l)}){l === getCurrentWeekLabel() ? ' *' : ''}</option>)}
                     </optgroup>
                   ))}
                 </select>

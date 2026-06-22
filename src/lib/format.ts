@@ -80,6 +80,18 @@ export function weekLabelsForMonth(year: number, month: number): string[] {
   return labels;
 }
 
+export function weekDateRange(label: string, year?: number): string {
+  const y = year ?? new Date().getFullYear();
+  const wIdx = label.indexOf('W');
+  if (wIdx < 0) return '';
+  const m = parseInt(label.slice(1, wIdx), 10);
+  const w = parseInt(label.slice(wIdx + 1), 10);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const from = (w - 1) * 7 + 1;
+  const to = Math.min(w * 7, daysInMonth);
+  return `${from}-${to}/${m}`;
+}
+
 // Returns week labels (TmWn) grouped by month for the past `monthsBack` months (incl. current),
 // newest first. Current month only includes weeks up to the current week (no future weeks).
 export function recentWeekLabels(monthsBack = 6): { month: string; labels: string[] }[] {

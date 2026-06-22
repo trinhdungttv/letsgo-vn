@@ -9,7 +9,7 @@ import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../lib/format';
+import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekDateRange, weekLabelsForMonth } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -86,6 +86,7 @@ export default function Clients({
   const [bulkWeek, setBulkWeek] = useState('');
   const [bulkExtraWeeks, setBulkExtraWeeks] = useState(0);
   const [bulkValues, setBulkValues] = useState<Record<string, string>>({});
+  const [bulkPrevValues, setBulkPrevValues] = useState<Record<string, number>>({});
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION]);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -309,17 +310,38 @@ export default function Clients({
   });
   const avgHealth = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
 
+  function getPrevWeekLabel(week: string): string | null {
+    const wIdx = week.indexOf('W');
+    if (wIdx < 0) return null;
+    const m = parseInt(week.slice(1, wIdx), 10);
+    const w = parseInt(week.slice(wIdx + 1), 10);
+    if (w > 1) return `T${m}W${w - 1}`;
+    const prevMonth = m > 1 ? m - 1 : 12;
+    const daysInPrev = new Date(new Date().getFullYear(), prevMonth, 0).getDate();
+    const maxWeek = Math.ceil(daysInPrev / 7);
+    return `T${prevMonth}W${maxWeek}`;
+  }
+
   const loadBulkWeekData = async (week: string) => {
-    const { data } = await supabase.from('client_labor_history')
-      .select('client_id, count')
-      .eq('week_label', week);
+    const prevWeek = getPrevWeekLabel(week);
+    const [{ data: curData }, { data: prevData }] = await Promise.all([
+      supabase.from('client_labor_history').select('client_id, count').eq('week_label', week),
+      prevWeek ? supabase.from('client_labor_history').select('client_id, count').eq('week_label', prevWeek) : Promise.resolve({ data: null }),
+    ]);
     const prefilled: Record<string, string> = {};
-    if (data) {
-      for (const row of data as { client_id: string; count: number }[]) {
+    if (curData) {
+      for (const row of curData as { client_id: string; count: number }[]) {
         prefilled[row.client_id] = String(row.count);
       }
     }
     setBulkValues(prefilled);
+    const prev: Record<string, number> = {};
+    if (prevData) {
+      for (const row of prevData as { client_id: string; count: number }[]) {
+        prev[row.client_id] = row.count;
+      }
+    }
+    setBulkPrevValues(prev);
   };
 
   const openBulkLabor = () => {
@@ -1585,15 +1607,19 @@ export default function Clients({
                 <select value={bulkWeek} onChange={e => handleBulkWeekChange(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
                   {bulkWeekGroups.map(g => (
                     <optgroup key={g.month} label={g.month}>
-                      {g.labels.map(l => <option key={l} value={l}>{l}</option>)}
+                      {g.labels.map(l => <option key={l} value={l}>{l} ({weekDateRange(l)})</option>)}
                     </optgroup>
                   ))}
                 </select>
                 <button onClick={() => {
-                  const next = nextWeekLabels(bulkExtraWeeks + 1)[0].labels[0];
-                  setBulkExtraWeeks(n => n + 1);
-                  handleBulkWeekChange(next);
-                }} className="text-[12px] text-blue-600 hover:underline">+ Tuần tiếp theo</button>
+                  const now = new Date();
+                  const nextM = new Date(now.getFullYear(), now.getMonth() + 1 + bulkExtraWeeks, 1);
+                  const m = nextM.getMonth() + 1;
+                  const y = nextM.getFullYear();
+                  const weeks = weekLabelsForMonth(y, m);
+                  setBulkExtraWeeks(n => n + weeks.length);
+                  handleBulkWeekChange(weeks[0]);
+                }} className="text-[12px] text-blue-600 hover:underline">+ Nhap thang moi</button>
               </div>
               <div className="flex items-center gap-2">
                 <FilterDropdown label="Chi nhánh" options={regionNames} selected={bulkRegions} onChange={setBulkRegions} />
@@ -1601,12 +1627,30 @@ export default function Clients({
                   className="flex-1 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
               </div>
             </div>
+            {(() => {
+              const totalCur = bulkClients.reduce((s, c) => s + (parseInt(bulkValues[c.id] || '0') || 0), 0);
+              const totalPrev = bulkClients.reduce((s, c) => s + (bulkPrevValues[c.id] ?? 0), 0);
+              const diff = totalCur - totalPrev;
+              const hasPrev = Object.keys(bulkPrevValues).length > 0;
+              return (
+                <div className="px-5 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                  <div className="text-[12px] text-gray-600">Tong: <span className="text-[15px] font-bold text-gray-900">{totalCur.toLocaleString('vi-VN')}</span> lao dong</div>
+                  {hasPrev && <div className={`text-[12px] font-semibold ${diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}`}>{diff > 0 ? `+${diff.toLocaleString('vi-VN')}` : diff.toLocaleString('vi-VN')} so voi tuan truoc</div>}
+                </div>
+              );
+            })()}
             <div className="flex-1 overflow-y-auto px-5 py-2 divide-y divide-gray-100">
               {bulkClients.map(c => {
                 const hasData = bulkValues[c.id] !== undefined && bulkValues[c.id] !== '';
+                const prevVal = bulkPrevValues[c.id];
+                const showPrevHint = prevVal !== undefined && !hasData;
                 return (
-                  <div key={c.id} className="flex items-center justify-between py-1.5 gap-3">
-                    <span className="text-[12.5px] text-gray-800 truncate">{c.name}</span>
+                  <div key={c.id} className="flex items-center justify-between py-1.5 gap-2">
+                    <span className="text-[12.5px] text-gray-800 truncate flex-1">{c.name}</span>
+                    {showPrevHint && (
+                      <button type="button" onClick={() => setBulkValues(prev => ({ ...prev, [c.id]: String(prevVal) }))}
+                        title={`Tuan truoc: ${prevVal}`} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition whitespace-nowrap">{prevVal}</button>
+                    )}
                     <input
                       type="number" min={0}
                       placeholder="—"
