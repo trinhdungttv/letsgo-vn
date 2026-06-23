@@ -7,6 +7,7 @@ import PerformanceTab from '../components/finance/PerformanceTab';
 import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
+import { calcExpectedDue } from '../lib/paymentDate';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -367,37 +368,40 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 ) : filteredClients.map(c => {
                   const isRecruitment = c.service_type === 'recruitment';
                   // -1 = cuoi thang: tu chuyen thanh ngay cuoi cua thang dang xem
-                  const rd = (v: number | null | undefined): number | null => {
+                  const rd = (v: number | null | undefined, isStart = false): number | null => {
                     if (v == null) return null;
-                    if (v === -1) return daysInMonth;
+                    if (v === -1) return isStart ? daysInMonth - 1 : daysInMonth;
                     return Math.min(v, daysInMonth);
                   };
 
-                  const cutoffDay = rd(c.cutoff_day);
+                  const cutoffDay = rd(c.cutoff_day, true);
                   const cutoffEnd = rd(c.cutoff_day_end);
                   const cutoffEndOk = cutoffEnd != null && cutoffDay != null && cutoffEnd > cutoffDay ? cutoffEnd : null;
                   const cutoffX = cutoffDay != null ? ((cutoffDay - 1) / daysInMonth) * 100 : null;
                   const cutoffEndX = cutoffEndOk != null ? (cutoffEndOk / daysInMonth) * 100 : null;
 
-                  const calcDay = rd(c.calc_day);
+                  const calcDay = rd(c.calc_day, true);
                   const calcEnd = rd(c.calc_day_end);
                   const calcEndOk = calcEnd != null && calcDay != null && calcEnd > calcDay ? calcEnd : null;
                   const calcX = calcDay != null ? ((Math.min(calcDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const calcEndX = calcEndOk != null ? (calcEndOk / daysInMonth) * 100 : null;
 
-                  const payStart = rd(c.payment_start);
-                  const payEnd = rd(c.payment_end);
-                  const showBar = !isRecruitment && !c.next_month_pay && payStart != null && cutoffDay != null && payStart > cutoffDay;
-                  const payStartX = payStart != null ? ((payStart - 1) / daysInMonth) * 100 : null;
-                  const payEndX = payEnd != null ? (payEnd / daysInMonth) * 100 : null;
-
-                  const invoiceDay = rd(c.invoice_day);
-                  const invoiceEnd = rd(c.invoice_day_end);
-                  const invoiceEndOk = invoiceEnd != null && invoiceDay != null && invoiceEnd > invoiceDay ? invoiceEnd : null;
+                  // Xuat HD: tu dong lay tu invoice_day (setup trong Dieu khoan thanh toan)
+                  const autoInvoiceDay = c.invoice_day ? Math.min(c.invoice_day === -1 ? daysInMonth : c.invoice_day, daysInMonth) : null;
+                  const invoiceDay = autoInvoiceDay;
+                  const invoiceEndOk: number | null = null;
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const invoiceEndX = invoiceEndOk != null ? (invoiceEndOk / daysInMonth) * 100 : null;
+                  const invoiceEndX: number | null = null;
 
-                  const salaryDay = rd(c.salary_day);
+                  // Ky TT: tu dong tinh tu calcExpectedDue (Dieu khoan thanh toan)
+                  const autoInvDate = autoInvoiceDay ? new Date(calYear, calMonthNum - 1, autoInvoiceDay) : null;
+                  const dueResult = autoInvDate ? calcExpectedDue(c, autoInvDate) : null;
+                  const dueDay = dueResult?.date ? dueResult.date.getDate() : null;
+                  const dueDayInMonth = dueDay != null && dueResult?.date?.getMonth() === calMonthNum - 1 ? dueDay : null;
+                  const payDueDay = dueDayInMonth;
+                  const payDueX = payDueDay != null ? ((payDueDay - 1) / daysInMonth) * 100 : null;
+
+                  const salaryDay = rd(c.salary_day, true);
                   const salaryEnd = rd(c.salary_day_end);
                   const salaryEndOk = salaryEnd != null && salaryDay != null && salaryEnd > salaryDay ? salaryEnd : null;
                   const salaryX = salaryDay != null ? ((Math.min(salaryDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
@@ -486,17 +490,17 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           </>
                         )}
 
-                        {showBar && payStartX != null && payEndX != null && (
-                          <div
-                            className={`absolute rounded-sm flex items-center justify-center text-[9px] font-semibold whitespace-nowrap overflow-hidden ${c.paid_this_month ? 'bg-emerald-400 text-emerald-900' : 'bg-emerald-300 opacity-70 text-emerald-800'}`}
-                            style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 4 }}
-                            title={`Ky TT: ${payStart}–${payEnd}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`}
-                          >
-                            {payStart}–{payEnd}
-                          </div>
+                        {payDueX != null && (
+                          <>
+                            <div className={`absolute w-3.5 h-3.5 rounded-sm ${c.paid_this_month ? 'bg-emerald-500' : 'bg-emerald-300'}`}
+                              style={{ left: `${payDueX}%`, top: 5, transform: 'translateX(-50%)' }}
+                              title={`Du kien thu tien: ngay ${payDueDay}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`} />
+                            <div className={`absolute text-[9px] font-semibold ${c.paid_this_month ? 'text-emerald-700' : 'text-emerald-500'}`}
+                              style={{ left: `${payDueX}%`, top: 20, transform: 'translateX(-50%)' }}>{payDueDay}</div>
+                          </>
                         )}
-                        {!isRecruitment && c.next_month_pay && (
-                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT/T7</div>
+                        {!payDueDay && !isRecruitment && c.next_month_pay && (
+                          <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT thang sau</div>
                         )}
                         {!isRecruitment && salaryX != null && (
                           <>
@@ -547,9 +551,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const cost = (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0);
                   const profit = (r.revenue || 0) - cost;
 
-                  const rdStep = (v: number | null | undefined, fallback: number): number => {
+                  const rdStep = (v: number | null | undefined, fallback: number, isStart = false): number => {
                     if (v == null) return fallback;
-                    return v === -1 ? daysInMonth : Math.min(v, daysInMonth);
+                    return v === -1 ? (isStart ? daysInMonth - 1 : daysInMonth) : Math.min(v, daysInMonth);
                   };
                   const cutoffDay = rdStep(clientData?.cutoff_day, 20);
                   const calcDay = rdStep(clientData?.calc_day, cutoffDay + 2);
@@ -769,8 +773,6 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               {([
                 { label: 'Chot cong', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
                 { label: 'Tinh luong', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
-                { label: 'Xuat HD', start: 'invoice_day', end: 'invoice_day_end', dot: 'bg-cyan-500' },
-                { label: 'Ky thanh toan', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
                 { label: 'Phat luong', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
               ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => {
                 const startVal = editForm[row.start];
@@ -787,7 +789,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay bat dau</label>
                       {isStartEOM ? (
                         <div className="flex items-center gap-1">
-                          <span className="text-[12px] text-blue-600 font-medium">Cuoi thang</span>
+                          <span className="text-[12px] text-blue-600 font-medium">Ap cuoi thang</span>
                           <button type="button" onClick={() => setEditForm({ ...editForm, [row.start]: 28 })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
                         </div>
                       ) : (
@@ -821,7 +823,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 );
               })}
             </div>
-            <div className="text-[11px] text-[#aaa] mt-2.5">Để trống "Ngày kết thúc" nếu mốc chỉ diễn ra trong 1 ngày.</div>
+            <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay.</div>
+            <div className="text-[11px] text-blue-500 mt-1">Xuat HD va Ky TT tu dong lay tu "Dieu khoan thanh toan" trong ho so khach hang.</div>
 
             <div className="flex gap-2 mt-4">
               <button onClick={handleSaveEdit} className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg text-[13px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
