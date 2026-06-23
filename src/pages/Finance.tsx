@@ -107,6 +107,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
 
   const filteredClients = useMemo(() => clients.filter(c => {
+    if (c.cooperation_status === 'suspended') return false;
     const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
     const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     return okR && okM;
@@ -364,38 +365,51 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     Không có khách hàng
                   </div>
                 ) : filteredClients.map(c => {
-                  // Recruitment không có ngày chu kỳ — chỉ hiển thị invoice_day (nếu có).
                   const isRecruitment = c.service_type === 'recruitment';
+                  // -1 = cuoi thang: tu chuyen thanh ngay cuoi cua thang dang xem
+                  const rd = (v: number | null | undefined): number | null => {
+                    if (v == null) return null;
+                    if (v === -1) return daysInMonth;
+                    return Math.min(v, daysInMonth);
+                  };
 
-                  const cutoffEnd = c.cutoff_day_end != null && c.cutoff_day != null && c.cutoff_day_end > c.cutoff_day ? c.cutoff_day_end : null;
-                  const cutoffX = c.cutoff_day != null ? ((c.cutoff_day - 1) / daysInMonth) * 100 : null;
-                  const cutoffEndX = cutoffEnd != null ? (Math.min(cutoffEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const cutoffDay = rd(c.cutoff_day);
+                  const cutoffEnd = rd(c.cutoff_day_end);
+                  const cutoffEndOk = cutoffEnd != null && cutoffDay != null && cutoffEnd > cutoffDay ? cutoffEnd : null;
+                  const cutoffX = cutoffDay != null ? ((cutoffDay - 1) / daysInMonth) * 100 : null;
+                  const cutoffEndX = cutoffEndOk != null ? (cutoffEndOk / daysInMonth) * 100 : null;
 
-                  const calcEnd = c.calc_day_end != null && c.calc_day != null && c.calc_day_end > c.calc_day ? c.calc_day_end : null;
-                  const calcX = c.calc_day != null ? ((Math.min(c.calc_day - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const calcEndX = calcEnd != null ? (Math.min(calcEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const calcDay = rd(c.calc_day);
+                  const calcEnd = rd(c.calc_day_end);
+                  const calcEndOk = calcEnd != null && calcDay != null && calcEnd > calcDay ? calcEnd : null;
+                  const calcX = calcDay != null ? ((Math.min(calcDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const calcEndX = calcEndOk != null ? (calcEndOk / daysInMonth) * 100 : null;
 
-                  const payEnd = c.payment_end != null ? Math.min(c.payment_end, daysInMonth) : null;
-                  const showBar = !isRecruitment && !c.next_month_pay && c.payment_start != null && c.cutoff_day != null && c.payment_start > c.cutoff_day;
-                  const payStartX = c.payment_start != null ? ((c.payment_start - 1) / daysInMonth) * 100 : null;
+                  const payStart = rd(c.payment_start);
+                  const payEnd = rd(c.payment_end);
+                  const showBar = !isRecruitment && !c.next_month_pay && payStart != null && cutoffDay != null && payStart > cutoffDay;
+                  const payStartX = payStart != null ? ((payStart - 1) / daysInMonth) * 100 : null;
                   const payEndX = payEnd != null ? (payEnd / daysInMonth) * 100 : null;
 
-                  const invoiceDay = c.invoice_day ?? null;
-                  const invoiceEnd = c.invoice_day_end != null && invoiceDay != null && c.invoice_day_end > invoiceDay ? c.invoice_day_end : null;
+                  const invoiceDay = rd(c.invoice_day);
+                  const invoiceEnd = rd(c.invoice_day_end);
+                  const invoiceEndOk = invoiceEnd != null && invoiceDay != null && invoiceEnd > invoiceDay ? invoiceEnd : null;
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const invoiceEndX = invoiceEnd != null ? (Math.min(invoiceEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const invoiceEndX = invoiceEndOk != null ? (invoiceEndOk / daysInMonth) * 100 : null;
 
-                  const salaryEnd = c.salary_day_end != null && c.salary_day != null && c.salary_day_end > c.salary_day ? c.salary_day_end : null;
-                  const salaryX = c.salary_day != null ? ((Math.min(c.salary_day - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const salaryEndX = salaryEnd != null ? (Math.min(salaryEnd, daysInMonth) / daysInMonth) * 100 : null;
+                  const salaryDay = rd(c.salary_day);
+                  const salaryEnd = rd(c.salary_day_end);
+                  const salaryEndOk = salaryEnd != null && salaryDay != null && salaryEnd > salaryDay ? salaryEnd : null;
+                  const salaryX = salaryDay != null ? ((Math.min(salaryDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const salaryEndX = salaryEndOk != null ? (salaryEndOk / daysInMonth) * 100 : null;
 
                   return (
                     <div key={c.id} className="flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
                       <div className="w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2]">
                         <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
-                          {c.name}
+                          {c.name}{c.status === 'danger' || c.status === 'warn' ? ' 🚩' : ''}
                         </button>
-                        <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LĐ</div>
+                        <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LD</div>
                       </div>
                       <div className="flex-1 relative" style={{ height: 45 }}>
                         <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40"
@@ -411,16 +425,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             )}
                             <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
                               style={{ left: `calc(${cutoffX}% - 6px)`, top: 4 }}
-                              title={`Chot cong: ngay ${c.cutoff_day}${cutoffEnd ? `–${cutoffEnd}` : ''}`} />
+                              title={`Chot cong: ngay ${cutoffDay}${cutoffEndOk ? `–${cutoffEndOk}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                              style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.cutoff_day}</div>
+                              style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffDay}</div>
                             {cutoffEndX != null && (
                               <>
                                 <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
                                   style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 4 }}
-                                  title={`Chot cong: ngay ${c.cutoff_day}–${cutoffEnd}`} />
+                                  title={`Chot cong: ngay ${cutoffDay}–${cutoffEndOk}`} />
                                 <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                                  style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEnd}</div>
+                                  style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEndOk}</div>
                               </>
                             )}
                           </>
@@ -433,16 +447,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             )}
                             <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
                               style={{ left: `calc(${calcX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                              title={`Tinh luong: ngay ${c.calc_day}${calcEnd ? `–${calcEnd}` : ''}`} />
+                              title={`Tinh luong: ngay ${calcDay}${calcEndOk ? `–${calcEndOk}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                              style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.calc_day}</div>
+                              style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcDay}</div>
                             {calcEndX != null && (
                               <>
                                 <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
                                   style={{ left: `calc(${calcEndX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                                  title={`Tinh luong: ngay ${c.calc_day}–${calcEnd}`} />
+                                  title={`Tinh luong: ngay ${calcDay}–${calcEndOk}`} />
                                 <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                                  style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEnd}</div>
+                                  style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEndOk}</div>
                               </>
                             )}
                           </>
@@ -457,16 +471,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             )}
                             <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
                               style={{ left: `calc(${invoiceX}% - 6px)`, top: 4 }}
-                              title={`Xuất HĐ: ngày ${invoiceDay}${invoiceEnd ? `–${invoiceEnd}` : ''}`} />
+                              title={`Xuất HĐ: ngày ${invoiceDay}${invoiceEndOk ? `–${invoiceEndOk}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
                               style={{ left: `${invoiceX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceDay}</div>
                             {invoiceEndX !== null && (
                               <>
                                 <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
                                   style={{ left: `calc(${invoiceEndX}% - 6px)`, top: 4 }}
-                                  title={`Xuất HĐ: ngày ${invoiceDay}–${invoiceEnd}`} />
+                                  title={`Xuất HĐ: ngày ${invoiceDay}–${invoiceEndOk}`} />
                                 <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
-                                  style={{ left: `${invoiceEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceEnd}</div>
+                                  style={{ left: `${invoiceEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceEndOk}</div>
                               </>
                             )}
                           </>
@@ -476,9 +490,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           <div
                             className={`absolute rounded-sm flex items-center justify-center text-[9px] font-semibold whitespace-nowrap overflow-hidden ${c.paid_this_month ? 'bg-emerald-400 text-emerald-900' : 'bg-emerald-300 opacity-70 text-emerald-800'}`}
                             style={{ left: `${payStartX}%`, width: `${Math.max(payEndX - payStartX, 0.5)}%`, height: 16, top: 4 }}
-                            title={`Ky TT: ${c.payment_start}–${c.payment_end}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`}
+                            title={`Ky TT: ${payStart}–${payEnd}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`}
                           >
-                            {c.payment_start}–{c.payment_end}
+                            {payStart}–{payEnd}
                           </div>
                         )}
                         {!isRecruitment && c.next_month_pay && (
@@ -492,16 +506,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             )}
                             <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
                               style={{ left: `calc(${salaryX}% - 6px)`, top: 4 }}
-                              title={`Phat luong: ngay ${c.salary_day}${salaryEnd ? `–${salaryEnd}` : ''}`} />
+                              title={`Phat luong: ngay ${salaryDay}${salaryEndOk ? `–${salaryEndOk}` : ''}`} />
                             <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                              style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{c.salary_day}</div>
+                              style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryDay}</div>
                             {salaryEndX != null && (
                               <>
                                 <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
                                   style={{ left: `calc(${salaryEndX}% - 6px)`, top: 4 }}
-                                  title={`Phat luong: ngay ${c.salary_day}–${salaryEnd}`} />
+                                  title={`Phat luong: ngay ${salaryDay}–${salaryEndOk}`} />
                                 <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                                  style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEnd}</div>
+                                  style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEndOk}</div>
                               </>
                             )}
                           </>
@@ -533,11 +547,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const cost = (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0);
                   const profit = (r.revenue || 0) - cost;
 
-                  // Null-safe: recruitment clients có thể không có các ngày chu kỳ này.
-                  const cutoffDay = clientData?.cutoff_day ?? 20;
-                  const calcDay = clientData?.calc_day ?? (cutoffDay + 2);
-                  const payStartDay = clientData?.payment_start ?? 26;
-                  const salaryDay = clientData?.salary_day ?? payStartDay;
+                  const rdStep = (v: number | null | undefined, fallback: number): number => {
+                    if (v == null) return fallback;
+                    return v === -1 ? daysInMonth : Math.min(v, daysInMonth);
+                  };
+                  const cutoffDay = rdStep(clientData?.cutoff_day, 20);
+                  const calcDay = rdStep(clientData?.calc_day, cutoffDay + 2);
+                  const payStartDay = rdStep(clientData?.payment_start, 26);
+                  const salaryDay = rdStep(clientData?.salary_day, payStartDay);
 
                   const cutoffDone = todayNum >= cutoffDay;
                   const calcDone = todayNum >= calcDay;
@@ -750,41 +767,59 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
             <div className="space-y-3.5">
               {([
-                { label: 'Chốt công', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
-                { label: 'Tính lương', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
-                { label: 'Xuất HĐ', start: 'invoice_day', end: 'invoice_day_end', dot: 'bg-cyan-500' },
-                { label: 'Kỳ thanh toán', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
-                { label: 'Phát lương', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
-              ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => (
-                <div key={row.start} className="flex items-center gap-3">
-                  <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
-                    <span className={`inline-block w-2 h-2 rounded-full ${row.dot}`} />
-                    {row.label}
+                { label: 'Chot cong', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
+                { label: 'Tinh luong', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
+                { label: 'Xuat HD', start: 'invoice_day', end: 'invoice_day_end', dot: 'bg-cyan-500' },
+                { label: 'Ky thanh toan', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
+                { label: 'Phat luong', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
+              ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => {
+                const startVal = editForm[row.start];
+                const endVal = editForm[row.end];
+                const isStartEOM = startVal === -1;
+                const isEndEOM = endVal === -1;
+                return (
+                  <div key={row.start} className="flex items-center gap-3">
+                    <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
+                      <span className={`inline-block w-2 h-2 rounded-full ${row.dot}`} />
+                      {row.label}
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay bat dau</label>
+                      {isStartEOM ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[12px] text-blue-600 font-medium">Cuoi thang</span>
+                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.start]: 28 })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <input type="number" min={1} max={31} value={startVal ?? 1}
+                            onChange={e => setEditForm({ ...editForm, [row.start]: Math.max(1, Math.min(31, +e.target.value)) })}
+                            className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.start]: -1 })}
+                            title="Cuoi thang" className="text-[9px] px-1 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 whitespace-nowrap">CT</button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay ket thuc</label>
+                      {isEndEOM ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[12px] text-blue-600 font-medium">Cuoi thang</span>
+                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.end]: null })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <input type="number" min={1} max={31} placeholder="—" value={endVal ?? ''}
+                            onChange={e => { const v = e.target.value; setEditForm({ ...editForm, [row.end]: v === '' ? null : Math.max(1, Math.min(31, +v)) }); }}
+                            className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.end]: -1 })}
+                            title="Cuoi thang" className="text-[9px] px-1 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 whitespace-nowrap">CT</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày bắt đầu</label>
-                    <input
-                      type="number" min={1} max={31}
-                      value={editForm[row.start] ?? 1}
-                      onChange={e => setEditForm({ ...editForm, [row.start]: Math.max(1, Math.min(31, +e.target.value)) })}
-                      className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày kết thúc</label>
-                    <input
-                      type="number" min={1} max={31}
-                      placeholder="—"
-                      value={editForm[row.end] ?? ''}
-                      onChange={e => {
-                        const v = e.target.value;
-                        setEditForm({ ...editForm, [row.end]: v === '' ? null : Math.max(1, Math.min(31, +v)) });
-                      }}
-                      className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="text-[11px] text-[#aaa] mt-2.5">Để trống "Ngày kết thúc" nếu mốc chỉ diễn ra trong 1 ngày.</div>
 
