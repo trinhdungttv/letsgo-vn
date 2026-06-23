@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
@@ -83,6 +83,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const [filterRegion, setFilterRegion] = usePersistedState<string[]>('lgvn_finance_filterRegion', [ALL_OPTION]);
   const [filterManager, setFilterManager] = usePersistedState<string[]>('lgvn_finance_filterManager', [ALL_OPTION]);
 
+  type TimelinePhase = 'cutoff' | 'calc' | 'invoice' | 'paydue' | 'salary';
+  const [timelinePhase, setTimelinePhase] = useState<TimelinePhase | null>(null);
+
   // ── Timeline edit modal (opened by clicking a company name) ──────
   const [editClient, setEditClient] = useState<Client | null>(null);
   const [editForm, setEditForm] = useState({
@@ -91,6 +94,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     invoice_day: null as number | null, invoice_day_end: null as number | null,
     payment_start: null as number | null, payment_end: null as number | null,
     salary_day: null as number | null, salary_day_end: null as number | null,
+    extra_salary_days: [] as { start: number; end: number | null }[],
   });
 
   // ── Date picker modal state ───────────────────────────────────────
@@ -118,6 +122,48 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const [calYear, calMonthNum] = month.split('-').map(Number);
   const daysInMonth = new Date(calYear, calMonthNum, 0).getDate();
 
+  const sortedTimelineClients = useMemo(() => {
+    if (!timelinePhase) return filteredClients;
+    const today = new Date();
+    const todayD = today.getDate();
+    const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() + 1 === calMonthNum;
+    const ref = isCurrentMonth ? todayD : 1;
+    const getRange = (c: Client): [number | null, number | null] => {
+      const rd2 = (v: number | null | undefined): number | null => {
+        if (v == null) return null;
+        if (v === -1) return daysInMonth;
+        return Math.min(v, daysInMonth);
+      };
+      switch (timelinePhase) {
+        case 'cutoff': return [rd2(c.cutoff_day), rd2(c.cutoff_day_end)];
+        case 'calc': return [rd2(c.calc_day), rd2(c.calc_day_end)];
+        case 'salary': return [rd2(c.salary_day), rd2(c.salary_day_end)];
+        case 'invoice': {
+          const d = c.invoice_day ? (c.invoice_day === -1 ? daysInMonth : Math.min(c.invoice_day, daysInMonth)) : null;
+          return [d, null];
+        }
+        case 'paydue': {
+          const autoInv = c.invoice_day ? (c.invoice_day === -1 ? daysInMonth : Math.min(c.invoice_day, daysInMonth)) : null;
+          const invDate = autoInv ? new Date(calYear, calMonthNum - 1, autoInv) : null;
+          const due = invDate ? calcExpectedDue(c, invDate) : null;
+          const dueDay = due?.date?.getMonth() === calMonthNum - 1 ? due.date.getDate() : null;
+          return [dueDay, null];
+        }
+        default: return [null, null];
+      }
+    };
+    const scored = filteredClients.map(c => {
+      const [start, end] = getRange(c);
+      if (start == null) return { c, score: 9999 };
+      const endD = end ?? start;
+      if (ref >= start && ref <= endD) return { c, score: -1 };
+      const dist = start >= ref ? start - ref : ref - endD;
+      return { c, score: dist };
+    });
+    scored.sort((a, b) => a.score - b.score);
+    return scored.map(s => s.c);
+  }, [filteredClients, timelinePhase, calYear, calMonthNum, daysInMonth]);
+
   const startEdit = (c: Client) => {
     setEditClient(c);
     setEditForm({
@@ -126,6 +172,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       invoice_day: c.invoice_day ?? null, invoice_day_end: c.invoice_day_end ?? null,
       payment_start: c.payment_start, payment_end: c.payment_end,
       salary_day: c.salary_day, salary_day_end: c.salary_day_end,
+      extra_salary_days: Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [],
     });
   };
 
@@ -328,22 +375,19 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
                 <span className="text-[12.5px] font-semibold text-[#111]">Timeline {monthTitle}</span>
-                <div className="flex items-center gap-4 text-[11px] text-[#888]">
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> Chốt công
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> Tính lương
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> Xuất HĐ
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-8 h-3 rounded bg-emerald-400 opacity-80" /> Kỳ TT
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> Phát lương
-                  </span>
+                <div className="flex items-center gap-1 text-[11px]">
+                  {([
+                    { key: 'cutoff' as TimelinePhase, label: 'Chốt công', dot: <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> },
+                    { key: 'calc' as TimelinePhase, label: 'Tính lương', dot: <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> },
+                    { key: 'invoice' as TimelinePhase, label: 'Xuất HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> },
+                    { key: 'paydue' as TimelinePhase, label: 'Kỳ TT', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
+                    { key: 'salary' as TimelinePhase, label: 'Phát lương', dot: <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> },
+                  ]).map(item => (
+                    <button key={item.key} onClick={() => setTimelinePhase(timelinePhase === item.key ? null : item.key)}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-full transition ${timelinePhase === item.key ? 'bg-gray-200 text-[#111] font-semibold' : 'text-[#888] hover:bg-gray-100'}`}>
+                      {item.dot} {item.label}
+                    </button>
+                  ))}
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -358,14 +402,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     ))}
                     <div className="absolute top-0 bottom-0 w-px bg-red-400 z-10"
                       style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
+                    <div className="absolute text-[9px] font-bold text-red-500 z-20"
+                      style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%`, top: -2, transform: 'translateX(-50%)' }}>{todayNum}</div>
                   </div>
                 </div>
                 <div className="overflow-y-auto" style={{ maxHeight: 640 }}>
-                {filteredClients.length === 0 ? (
+                {sortedTimelineClients.length === 0 ? (
                   <div className="text-center py-10 text-[#aaa] text-[13px]" style={{ minWidth: 900 }}>
                     Không có khách hàng
                   </div>
-                ) : filteredClients.map(c => {
+                ) : sortedTimelineClients.map(c => {
                   const isRecruitment = c.service_type === 'recruitment';
                   // -1 = cuoi thang: tu chuyen thanh ngay cuoi cua thang dang xem
                   const rd = (v: number | null | undefined, isStart = false): number | null => {
@@ -415,114 +461,117 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         </button>
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LD</div>
                       </div>
-                      <div className="flex-1 relative" style={{ height: 45 }}>
-                        <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40"
+                      <div className="flex-1 relative">
+                        <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40 z-0"
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
-                        {/* Leasing: Chốt công, Tính lương, Kỳ TT, Phát lương */}
-                        {/* Recruitment: chỉ hiển thị Xuất HĐ (invoice) nếu có */}
-                        {!isRecruitment && cutoffX != null && (
-                          <>
-                            {cutoffEndX != null && (
-                              <div className="absolute border-t border-dashed border-orange-300"
-                                style={{ left: `${cutoffX}%`, width: `${cutoffEndX - cutoffX}%`, top: 10 }} />
-                            )}
-                            <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${cutoffX}% - 6px)`, top: 4 }}
-                              title={`Chot cong: ngay ${cutoffDay}${cutoffEndOk ? `–${cutoffEndOk}` : ''}`} />
-                            <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                              style={{ left: `${cutoffX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffDay}</div>
-                            {cutoffEndX != null && (
-                              <>
-                                <div className="absolute w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow-sm z-10"
-                                  style={{ left: `calc(${cutoffEndX}% - 6px)`, top: 4 }}
-                                  title={`Chot cong: ngay ${cutoffDay}–${cutoffEndOk}`} />
-                                <div className="absolute text-[9px] leading-none text-orange-600 font-medium"
-                                  style={{ left: `${cutoffEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{cutoffEndOk}</div>
-                              </>
-                            )}
-                          </>
-                        )}
-                        {!isRecruitment && calcX != null && (
-                          <>
-                            {calcEndX != null && (
-                              <div className="absolute border-t border-dashed border-blue-300"
-                                style={{ left: `${calcX}%`, width: `${calcEndX - calcX}%`, top: 10 }} />
-                            )}
-                            <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                              style={{ left: `calc(${calcX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                              title={`Tinh luong: ngay ${calcDay}${calcEndOk ? `–${calcEndOk}` : ''}`} />
-                            <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                              style={{ left: `${calcX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcDay}</div>
-                            {calcEndX != null && (
-                              <>
-                                <div className="absolute w-3 h-3 bg-blue-400 border border-white z-10"
-                                  style={{ left: `calc(${calcEndX}% - 6px)`, top: 4, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
-                                  title={`Tinh luong: ngay ${calcDay}–${calcEndOk}`} />
-                                <div className="absolute text-[9px] leading-none text-blue-600 font-medium"
-                                  style={{ left: `${calcEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{calcEndOk}</div>
-                              </>
-                            )}
-                          </>
-                        )}
+                        {(() => {
+                          type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean };
+                          const markers: Mk[] = [];
+                          if (!isRecruitment && cutoffX != null && cutoffDay != null)
+                            markers.push({ x: cutoffX, day: cutoffDay, label: 'Chot cong', color: 'bg-orange-400', textCls: 'text-orange-600', shape: 'circle', endX: cutoffEndX ?? undefined, endDay: cutoffEndOk ?? undefined, dashCls: 'border-orange-300' });
+                          if (!isRecruitment && calcX != null && calcDay != null)
+                            markers.push({ x: calcX, day: calcDay, label: 'Tinh luong', color: 'bg-blue-400', textCls: 'text-blue-600', shape: 'diamond', endX: calcEndX ?? undefined, endDay: calcEndOk ?? undefined, dashCls: 'border-blue-300' });
+                          if (invoiceX != null && invoiceDay != null)
+                            markers.push({ x: invoiceX, day: invoiceDay, label: 'Xuat HD', color: 'bg-cyan-500', textCls: 'text-cyan-600', shape: 'square', endX: invoiceEndX ?? undefined, endDay: invoiceEndOk ?? undefined, dashCls: 'border-cyan-300', external: true });
+                          if (payDueX != null && payDueDay != null)
+                            markers.push({ x: payDueX, day: payDueDay, label: c.paid_this_month ? 'Da TT' : 'Ky TT', color: 'bg-emerald-500', textCls: c.paid_this_month ? 'text-emerald-700' : 'text-emerald-600', shape: 'square', external: true });
+                          if (!isRecruitment && salaryX != null && salaryDay != null)
+                            markers.push({ x: salaryX, day: salaryDay, label: 'Phat luong', color: 'bg-purple-500', textCls: 'text-purple-600', shape: 'circle', endX: salaryEndX ?? undefined, endDay: salaryEndOk ?? undefined, dashCls: 'border-purple-300' });
+                          if (!isRecruitment) {
+                            const extras: { start: number; end: number | null }[] = Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [];
+                            for (const ex of extras) {
+                              const exDay = rd(ex.start, true);
+                              const exEnd = rd(ex.end);
+                              const exEndOk = exEnd != null && exDay != null && exEnd > exDay ? exEnd : null;
+                              const exX = exDay != null ? ((Math.min(exDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                              const exEndX = exEndOk != null ? (exEndOk / daysInMonth) * 100 : null;
+                              if (exX != null && exDay != null)
+                                markers.push({ x: exX, day: exDay, label: 'Phat luong', color: 'bg-purple-400', textCls: 'text-purple-500', shape: 'circle', endX: exEndX ?? undefined, endDay: exEndOk ?? undefined, dashCls: 'border-purple-200' });
+                            }
+                          }
 
-                        {/* Xuất HĐ */}
-                        {invoiceX !== null && invoiceDay !== null && (
-                          <>
-                            {invoiceEndX !== null && (
-                              <div className="absolute border-t border-dashed border-cyan-300"
-                                style={{ left: `${invoiceX}%`, width: `${invoiceEndX - invoiceX}%`, top: 10 }} />
-                            )}
-                            <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${invoiceX}% - 6px)`, top: 4 }}
-                              title={`Xuất HĐ: ngày ${invoiceDay}${invoiceEndOk ? `–${invoiceEndOk}` : ''}`} />
-                            <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
-                              style={{ left: `${invoiceX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceDay}</div>
-                            {invoiceEndX !== null && (
-                              <>
-                                <div className="absolute w-3 h-3 rounded-sm bg-cyan-500 border-2 border-white shadow-sm z-10"
-                                  style={{ left: `calc(${invoiceEndX}% - 6px)`, top: 4 }}
-                                  title={`Xuất HĐ: ngày ${invoiceDay}–${invoiceEndOk}`} />
-                                <div className="absolute text-[9px] leading-none text-cyan-600 font-medium"
-                                  style={{ left: `${invoiceEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{invoiceEndOk}</div>
-                              </>
-                            )}
-                          </>
-                        )}
+                          markers.sort((a, b) => a.x - b.x);
 
-                        {payDueX != null && (
-                          <>
-                            <div className={`absolute w-3.5 h-3.5 rounded-sm ${c.paid_this_month ? 'bg-emerald-500' : 'bg-emerald-300'}`}
-                              style={{ left: `${payDueX}%`, top: 5, transform: 'translateX(-50%)' }}
-                              title={`Du kien thu tien: ngay ${payDueDay}${c.paid_this_month ? ' (Da TT)' : ' (Chua TT)'}`} />
-                            <div className={`absolute text-[9px] font-semibold ${c.paid_this_month ? 'text-emerald-700' : 'text-emerald-500'}`}
-                              style={{ left: `${payDueX}%`, top: 20, transform: 'translateX(-50%)' }}>{payDueDay}</div>
-                          </>
-                        )}
+                          const internalDays: number[] = [];
+                          for (const m of markers) {
+                            if (m.external) continue;
+                            internalDays.push(m.day);
+                            if (m.endDay != null) internalDays.push(m.endDay);
+                          }
+                          const isClash = (day: number) => internalDays.some(d => Math.abs(d - day) <= 1);
+
+                          const row1 = { dot: 4, line: 10, label: 19 };
+                          const row2 = { dot: 20, line: 26, label: 33 };
+                          let anyRow2 = false;
+
+                          const lineColors: Record<string, string> = {
+                            'bg-orange-400': '#fb923c', 'bg-blue-400': '#60a5fa', 'bg-cyan-500': '#06b6d4',
+                            'bg-emerald-500': '#10b981', 'bg-purple-500': '#a855f7', 'bg-purple-400': '#c084fc',
+                          };
+
+                          type Row = typeof row1;
+                          const dotItems: { x: number; day: number; color: string; sc: string; cs: React.CSSProperties; title: string; inlineColor?: string; row: Row }[] = [];
+                          const labelItems: { x: number; day: number; textCls: string; row: Row }[] = [];
+                          const lineItems: { x: number; endX: number; color: string; inlineColor?: string; row: Row }[] = [];
+
+                          for (const m of markers) {
+                            const sc = m.shape === 'circle' ? 'rounded-full' : m.shape === 'diamond' ? '' : 'rounded-sm';
+                            const cs: React.CSSProperties = m.shape === 'diamond' ? { clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' } : {};
+                            const r = (m.external && isClash(m.day)) ? row2 : row1;
+                            if (r === row2) anyRow2 = true;
+                            dotItems.push({ x: m.x, day: m.day, color: m.color, sc, cs, title: `${m.label}: ngay ${m.day}${m.endDay ? `–${m.endDay}` : ''}`, inlineColor: m.inlineColor, row: r });
+                            labelItems.push({ x: m.x, day: m.day, textCls: m.textCls, row: r });
+                            if (m.endX != null) {
+                              lineItems.push({ x: m.x, endX: m.endX, color: m.color, inlineColor: m.inlineColor, row: r });
+                              if (m.endDay != null) {
+                                dotItems.push({ x: m.endX, day: m.endDay, color: m.color, sc, cs, title: `${m.label}: ngay ${m.day}–${m.endDay}`, inlineColor: m.inlineColor, row: r });
+                                labelItems.push({ x: m.endX, day: m.endDay, textCls: m.textCls, row: r });
+                              }
+                            }
+                          }
+
+                          const allSorted = [...labelItems].sort((a, b) => a.row.dot - b.row.dot || a.x - b.x);
+                          const r1Labels = allSorted.filter(l => l.row === row1);
+                          const r2Labels = allSorted.filter(l => l.row === row2);
+                          const nudgeRow = (pts: typeof r1Labels) => {
+                            const minGap = 3.5;
+                            const out: number[] = [];
+                            for (let i = 0; i < pts.length; i++) {
+                              let nx = pts[i].x;
+                              if (i > 0 && nx - out[i - 1] < minGap) nx = out[i - 1] + minGap;
+                              out.push(nx);
+                            }
+                            return out;
+                          };
+                          const n1 = nudgeRow(r1Labels);
+                          const n2 = nudgeRow(r2Labels);
+                          const nudgeMap = new Map<string, number>();
+                          r1Labels.forEach((l, i) => nudgeMap.set(`${l.x}-${l.day}-${l.row.dot}`, n1[i]));
+                          r2Labels.forEach((l, i) => nudgeMap.set(`${l.x}-${l.day}-${l.row.dot}`, n2[i]));
+                          const getLabelX = (x: number, day: number, row: Row) => nudgeMap.get(`${x}-${day}-${row.dot}`) ?? x;
+
+                          return (
+                            <div style={{ position: 'relative', height: anyRow2 ? 46 : 34 }}>
+                              {lineItems.map((l, i) => {
+                                const bc = l.inlineColor ?? lineColors[l.color] ?? '#ccc';
+                                return <div key={`l${i}`} className="absolute z-0" style={{ left: `${l.x}%`, width: `${l.endX - l.x}%`, top: l.row.line, borderTop: `2px dashed ${bc}` }} />;
+                              })}
+                              {dotItems.map((d, i) => (
+                                <div key={`d${i}`} className={`absolute w-3 h-3 ${d.color} border-2 border-white shadow-sm z-10 ${d.sc}`}
+                                  style={{ left: `calc(${d.x}% - 6px)`, top: d.row.dot, ...d.cs, ...(d.inlineColor ? { backgroundColor: d.inlineColor } : {}) }}
+                                  title={d.title} />
+                              ))}
+                              {labelItems.map((lb, i) => {
+                                const lx = getLabelX(lb.x, lb.day, lb.row);
+                                return <div key={`t${i}`} className={`absolute text-[8.5px] leading-none ${lb.textCls} font-semibold whitespace-nowrap z-20`}
+                                  style={{ left: `${lx}%`, top: lb.row.label, transform: 'translateX(-50%)' }}>{lb.day}</div>;
+                              })}
+                            </div>
+                          );
+                        })()}
                         {!payDueDay && !isRecruitment && c.next_month_pay && (
                           <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT thang sau</div>
-                        )}
-                        {!isRecruitment && salaryX != null && (
-                          <>
-                            {salaryEndX != null && (
-                              <div className="absolute border-t border-dashed border-purple-300"
-                                style={{ left: `${salaryX}%`, width: `${salaryEndX - salaryX}%`, top: 10 }} />
-                            )}
-                            <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                              style={{ left: `calc(${salaryX}% - 6px)`, top: 4 }}
-                              title={`Phat luong: ngay ${salaryDay}${salaryEndOk ? `–${salaryEndOk}` : ''}`} />
-                            <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                              style={{ left: `${salaryX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryDay}</div>
-                            {salaryEndX != null && (
-                              <>
-                                <div className="absolute w-3 h-3 rounded-full bg-purple-500 border-2 border-white shadow-sm z-10"
-                                  style={{ left: `calc(${salaryEndX}% - 6px)`, top: 4 }}
-                                  title={`Phat luong: ngay ${salaryDay}–${salaryEndOk}`} />
-                                <div className="absolute text-[9px] leading-none text-purple-600 font-medium"
-                                  style={{ left: `${salaryEndX}%`, top: 17, transform: 'translateX(-50%)' }}>{salaryEndOk}</div>
-                              </>
-                            )}
-                          </>
                         )}
                       </div>
                     </div>
@@ -774,7 +823,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 { label: 'Chot cong', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
                 { label: 'Tinh luong', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
                 { label: 'Phat luong', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
-              ] as { label: string; start: keyof typeof editForm; end: keyof typeof editForm; dot: string }[]).map(row => {
+              ] as { label: string; start: 'cutoff_day' | 'calc_day' | 'salary_day'; end: 'cutoff_day_end' | 'calc_day_end' | 'salary_day_end'; dot: string }[]).map(row => {
                 const startVal = editForm[row.start];
                 const endVal = editForm[row.end];
                 const isStartEOM = startVal === -1;
@@ -823,6 +872,41 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 );
               })}
             </div>
+            {editForm.extra_salary_days.map((ex, idx) => (
+              <div key={`ex-${idx}`} className="flex items-center gap-3 mt-2">
+                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12px] text-[#666]">
+                  <span className="inline-block w-2 h-2 rounded-full bg-purple-400" />
+                  PL {idx + 2}
+                  <button type="button" onClick={() => {
+                    const arr = [...editForm.extra_salary_days];
+                    arr.splice(idx, 1);
+                    setEditForm({ ...editForm, extra_salary_days: arr });
+                  }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
+                </div>
+                <div className="flex-1">
+                  <input type="number" min={1} max={31} value={ex.start}
+                    onChange={e => {
+                      const arr = [...editForm.extra_salary_days];
+                      arr[idx] = { ...arr[idx], start: Math.max(1, Math.min(31, +e.target.value)) };
+                      setEditForm({ ...editForm, extra_salary_days: arr });
+                    }}
+                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex-1">
+                  <input type="number" min={1} max={31} placeholder="—" value={ex.end ?? ''}
+                    onChange={e => {
+                      const arr = [...editForm.extra_salary_days];
+                      const v = e.target.value;
+                      arr[idx] = { ...arr[idx], end: v === '' ? null : Math.max(1, Math.min(31, +v)) };
+                      setEditForm({ ...editForm, extra_salary_days: arr });
+                    }}
+                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={() => setEditForm({ ...editForm, extra_salary_days: [...editForm.extra_salary_days, { start: 15, end: null }] })}
+              className="text-[10.5px] text-purple-500 hover:text-purple-700 mt-1.5 hover:underline">+ Them dot phat luong</button>
+
             <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay.</div>
             <div className="text-[11px] text-blue-500 mt-1">Xuat HD va Ky TT tu dong lay tu "Dieu khoan thanh toan" trong ho so khach hang.</div>
 
