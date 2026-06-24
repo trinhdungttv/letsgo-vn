@@ -1,0 +1,1 @@
+ALTER TABLE cost_categories ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;

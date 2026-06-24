@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
-import OverheadTab from '../components/finance/OverheadTab';
+// OverheadTab removed — moved to Chi Nhánh > Tài chính
 import PerformanceTab from '../components/finance/PerformanceTab';
 import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
@@ -62,12 +62,12 @@ interface FinanceProps {
 export default function Finance({ finance, clients, onLoadFinance, onFinanceUpdate, onClientUpdate, toast }: FinanceProps) {
   const { user } = useAuth();
   const [month, setMonth] = useState('2026-06');
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('clients');
+  const [activeTab, setActiveTab] = usePersistedState<WorkspaceTab>('lgvn_finance_activeTab', 'clients');
 
   useEffect(() => { onLoadFinance(month); }, [month, onLoadFinance]);
 
   // ── Finance Workspace (P&L / Hiệu suất / Chi phí cố định) ─────────
-  const [selectedMonth, setSelectedMonth] = useState(month);
+  const [selectedMonth, setSelectedMonth] = usePersistedState('lgvn_finance_selectedMonth', month);
   const [overheadBranch, setOverheadBranch] = useState('');
   const workspaceMonths = useMemo(() => {
     const base = todayStr.slice(0, 7);
@@ -104,7 +104,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
   const { branches: branchList } = useBranchData();
-  const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat } = useCostCategories();
+  const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat, toggleDefault: toggleCostCatDefault } = useCostCategories();
 
   useEffect(() => {
     if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
@@ -201,8 +201,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     return finance.filter(r => activeIds.has(r.client_id)).sort((a, b) => Number(a.paid_status) - Number(b.paid_status));
   }, [finance, clients]);
 
-  const totalRev = sortedFinance.reduce((s, r) => s + (r.revenue || 0), 0);
-  const totalCost = sortedFinance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
+  const pnlMonth = finData.projectsPnl.filter(p => p.month === selectedMonth);
+  const pnlTotalRev = pnlMonth.reduce((s, p) => s + (p.revenue || 0), 0);
+  const pnlTotalCost = pnlMonth.reduce((s, p) => {
+    const cs = finData.pnlCosts[p.id] || [];
+    return s + cs.reduce((ss, c) => ss + (c.value || 0), 0);
+  }, 0);
+  const finRev = sortedFinance.reduce((s, r) => s + (r.revenue || 0), 0);
+  const finCost = sortedFinance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
+  const totalRev = pnlTotalRev || finRev;
+  const totalCost = pnlTotalCost || finCost;
   const totalProfit = totalRev - totalCost;
   const paidCount = sortedFinance.filter(r => r.paid_status).length;
   const monthTitle = month === '2026-06' ? 'Tháng 6/2026' : 'Tháng 5/2026';
@@ -300,12 +308,6 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'pnl' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
               >
                 P&L Dự án
-              </button>
-              <button
-                onClick={() => setActiveTab('overhead')}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'overhead' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
-              >
-                Chi phí cố định CN
               </button>
               <button
                 onClick={() => setActiveTab('performance')}
@@ -699,31 +701,13 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             onAddCategory={addCostCat}
             onRenameCategory={renameCostCat}
             onDeleteCategory={removeCostCat}
+            onToggleCategoryDefault={toggleCostCatDefault}
             currentUser={user?.full_name}
             toast={toast}
           />
         )}
 
-        {/* ══ MODE 4: Chi phí cố định CN ══ */}
-        {activeTab === 'overhead' && (
-          <OverheadTab
-            managers={managerList}
-            months={workspaceMonths}
-            branchManager={overheadBranch}
-            month={selectedMonth}
-            onBranchManagerChange={setOverheadBranch}
-            onMonthChange={setSelectedMonth}
-            overhead={finData.overhead}
-            projectsPnl={finData.projectsPnl}
-            pnlCosts={finData.pnlCosts}
-            onAdd={finData.addOverhead}
-            onUpdate={finData.updateOverhead}
-            onDelete={finData.deleteOverhead}
-            onCopyFromMonth={finData.copyOverheadFromMonth}
-            onLoadCosts={finData.loadPnlCosts}
-            toast={toast}
-          />
-        )}
+        {/* Chi phí cố định CN — đã chuyển vào Chi Nhánh > Tài chính */}
 
         {/* ══ MODE 5: Hiệu suất chi nhánh ══ */}
         {activeTab === 'performance' && (

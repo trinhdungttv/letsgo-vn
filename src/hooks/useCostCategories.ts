@@ -33,5 +33,11 @@ export function useCostCategories() {
     setCategories(prev => prev.filter(c => c.id !== id));
   };
 
-  return { categories, add, rename, remove, reload: load };
+  const toggleDefault = async (id: string, val: boolean) => {
+    const { error } = await supabase.from('cost_categories').update({ is_default: val }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, is_default: val } : c));
+  };
+
+  return { categories, add, rename, remove, toggleDefault, reload: load };
 }

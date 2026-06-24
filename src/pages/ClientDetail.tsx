@@ -55,6 +55,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editingProjectType, setEditingProjectType] = useState(false);
+  const [tempProjectType, setTempProjectType] = useState<string>('contracted');
+  const [tempLgPct, setTempLgPct] = useState(60);
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
   const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
   const [laborInput, setLaborInput] = useState(String(client.current_workers || 0));
@@ -1089,42 +1092,67 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         })()}
 
         {/* Project type & split */}
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
-          <div className="text-[12.5px] font-semibold text-[#111] mb-3">Loai du an & phan chia loi nhuan</div>
-          <div className="flex items-center gap-4">
-            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-              {(['contracted', 'managed'] as const).map(t => (
-                <button key={t} onClick={async () => {
-                  const updates: Partial<Client> = { project_type: t };
-                  if (t === 'managed') { updates.default_lg_pct = 100; updates.default_cn_pct = 0; }
-                  const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
-                  if (!error) { onClientUpdate({ ...client, ...updates }); toast('Da cap nhat loai du an'); }
-                }}
-                  className={`px-3 py-1.5 text-[12px] font-medium transition ${client.project_type === t ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#888] hover:bg-gray-50'}`}>
-                  {t === 'managed' ? 'Khong Khoan - Nhan Luong' : 'Da Nhan Khoan'}
-                </button>
-              ))}
-            </div>
-            {client.project_type !== 'managed' && (
-              <div className="flex items-center gap-2 text-[12px]">
-                <span className="text-[#666]">LGV:</span>
-                <input type="number" min={0} max={100} value={client.default_lg_pct ?? 60}
-                  onChange={e => {
-                    const lg = Math.max(0, Math.min(100, +e.target.value));
-                    onClientUpdate({ ...client, default_lg_pct: lg, default_cn_pct: 100 - lg });
-                    supabase.from('clients').update({ default_lg_pct: lg, default_cn_pct: 100 - lg }).eq('id', client.id);
-                  }}
-                  className="w-[50px] text-[12px] px-2 py-1 border border-gray-300 rounded-lg text-center" />
-                <span className="text-[#999]">%</span>
-                <span className="text-[#666] ml-2">CN:</span>
-                <span className="text-[12px] font-medium">{client.default_cn_pct ?? 40}%</span>
+        {(() => {
+          const [editPT, setEditPT] = [editingProjectType, setEditingProjectType];
+          const [tempLg, setTempLg] = [tempLgPct, setTempLgPct];
+          const [tempType, setTempType] = [tempProjectType, setTempProjectType];
+          return (
+            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[12.5px] font-semibold text-[#111]">Loai du an & phan chia loi nhuan</div>
+                {!editPT ? (
+                  <button onClick={() => { setEditPT(true); setTempType(client.project_type || 'contracted'); setTempLg(client.default_lg_pct ?? 60); }}
+                    className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
+                    <Edit2 size={12} />
+                  </button>
+                ) : (
+                  <div className="flex gap-1.5">
+                    <button onClick={async () => {
+                      const updates: Partial<Client> = { project_type: tempType as 'managed' | 'contracted', default_lg_pct: tempType === 'managed' ? 100 : tempLg, default_cn_pct: tempType === 'managed' ? 0 : 100 - tempLg };
+                      const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                      if (!error) { onClientUpdate({ ...client, ...updates }); toast('Da luu'); }
+                      setEditPT(false);
+                    }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Luu</button>
+                    <button onClick={() => setEditPT(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huy</button>
+                  </div>
+                )}
               </div>
-            )}
-            {client.project_type === 'managed' && (
-              <span className="text-[11px] text-[#888]">LGV tra toan bo chi phi & nhan 100% LN</span>
-            )}
-          </div>
-        </div>
+              {editPT ? (
+                <div className="flex items-center gap-4">
+                  <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                    {(['contracted', 'managed'] as const).map(t => (
+                      <button key={t} onClick={() => setTempType(t)}
+                        className={`px-3 py-1.5 text-[12px] font-medium transition ${tempType === t ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#888] hover:bg-gray-50'}`}>
+                        {t === 'managed' ? 'Khong Khoan' : 'Da Khoan'}
+                      </button>
+                    ))}
+                  </div>
+                  {tempType !== 'managed' && (
+                    <div className="flex items-center gap-2 text-[12px]">
+                      <span className="text-[#666]">LGV:</span>
+                      <input type="number" min={0} max={100} value={tempLg}
+                        onChange={e => setTempLg(Math.max(0, Math.min(100, +e.target.value)))}
+                        className="w-[50px] text-[12px] px-2 py-1 border border-gray-300 rounded-lg text-center" />
+                      <span className="text-[#999]">%  CN: {100 - tempLg}%</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 text-[12px]">
+                  <span className={`px-2.5 py-1 rounded-lg font-medium ${client.project_type === 'managed' ? 'bg-blue-50 text-blue-700' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
+                    {client.project_type === 'managed' ? 'Khong Khoan - Nhan Luong' : 'Da Nhan Khoan'}
+                  </span>
+                  {client.project_type !== 'managed' && (
+                    <span className="text-[#666]">LGV {client.default_lg_pct ?? 60}% · CN {client.default_cn_pct ?? 40}%</span>
+                  )}
+                  {client.project_type === 'managed' && (
+                    <span className="text-[#888]">LGV 100%</span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Info & Contract */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">

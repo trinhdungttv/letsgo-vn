@@ -540,6 +540,15 @@ export interface Contact {
   clients?: { name: string } | null;
 }
 
+export interface PnlRevenueLine {
+  id: string;
+  pnl_id: string;
+  label: string;
+  amount: number;
+  invoice_date: string | null;
+  sort_order: number;
+}
+
 export type ProjectPnlType = 'shared' | 'managed';
 export type CostPayer = 'lg' | 'cn' | 'ch';
 export type OverheadCostType = 'Cố định' | 'Biến đổi';
@@ -626,6 +635,7 @@ export interface CostCategory {
   id: string;
   label: string;
   sort_order: number;
+  is_default: boolean;
 }
 
 export type BranchType = 'contracted' | 'company';

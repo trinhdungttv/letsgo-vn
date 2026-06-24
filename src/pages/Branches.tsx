@@ -10,6 +10,7 @@ import { useManagers } from '../hooks/useManagers';
 import { useRegions } from '../hooks/useRegions';
 import { useOverheadCategories } from '../hooks/useOverheadCategories';
 import BranchZones from '../components/branches/BranchZones';
+import BranchFinance from '../components/branches/BranchFinance';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -101,7 +102,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const [month, setMonth] = useState(currentMonthStr());
+  const [month] = useState(currentMonthStr());
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
 
@@ -109,11 +110,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [perfHistory, setPerfHistory] = useState<(ClientManagerHistory & { clients?: { name: string } | null })[]>([]);
   const [perfPnl, setPerfPnl] = useState<ProjectPnl[]>([]);
   const [perfLoading, setPerfLoading] = useState(false);
-
-  const months = useMemo(() => {
-    const cur = currentMonthStr();
-    return [shiftMonth(cur, -2), shiftMonth(cur, -1), cur];
-  }, []);
 
   useEffect(() => {
     (async () => {
@@ -492,7 +488,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   // ════════════════════════════════════════════════════════════════
   if (selected) {
     const stats = branchStats[selected.id];
-    const branchOverheadRows = selected.region ? overhead.filter(o => o.branch_manager === selected.region) : [];
+    void overhead;
 
     return (
       <div className="space-y-3">
@@ -831,6 +827,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <thead>
                       <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
                         <th className="text-left font-medium px-3.5 py-2">Công ty</th>
+                        <th className="text-center font-medium px-3 py-2">Loai du an</th>
                         <th className="text-right font-medium px-3 py-2">Lao động</th>
                         <th className="text-right font-medium px-3 py-2">HĐ còn</th>
                         <th className="text-center font-medium px-3 py-2">Trạng thái</th>
@@ -849,6 +846,20 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                                 )}
                               </div>
                               <div className="text-[10.5px] text-[#999]">{c.industrial_zones?.[0] || '—'}</div>
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <select value={c.project_type || 'contracted'}
+                                onChange={async e => {
+                                  const pt = e.target.value as 'managed' | 'contracted';
+                                  const updates: Partial<Client> = { project_type: pt };
+                                  if (pt === 'managed') { updates.default_lg_pct = 100; updates.default_cn_pct = 0; }
+                                  await supabase.from('clients').update(updates).eq('id', c.id);
+                                  toast(`${c.name}: ${pt === 'managed' ? 'Khong khoan' : 'Da khoan'}`);
+                                }}
+                                className={`text-[10px] px-1.5 py-0.5 rounded font-medium border-0 outline-none cursor-pointer ${c.project_type === 'managed' ? 'bg-blue-50 text-blue-700' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
+                                <option value="contracted">Khoan {c.default_lg_pct ?? 60}/{c.default_cn_pct ?? 40}</option>
+                                <option value="managed">Khong khoan</option>
+                              </select>
                             </td>
                             <td className="px-3 py-2 text-right font-semibold">{(c.current_workers || 0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">
@@ -880,73 +891,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               </>
             )}
 
-            {activeTab === 'finance' && (
-              <>
-                <div className="flex gap-1.5 items-center">
-                  <span className="text-[11px] text-[#999]">Tháng:</span>
-                  {months.map(m => (
-                    <button
-                      key={m}
-                      onClick={() => setMonth(m)}
-                      className={`px-2.5 py-1 text-[11px] rounded-full border transition ${month === m ? 'bg-[#F5F4EF] border-[#ccc] text-[#111] font-medium' : 'border-gray-300 text-[#666] hover:bg-[#F5F4EF]'}`}
-                    >
-                      {monthLabel(m)}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div className="bg-[#F5F4EF] rounded-lg p-3 text-center">
-                    <div className="text-[10px] uppercase text-[#999] mb-1">Doanh thu</div>
-                    <div className="text-[19px] font-semibold text-[#0F6E56]">{fmtTrieu(stats?.revenue || 0)} tr</div>
-                  </div>
-                  <div className="bg-[#F5F4EF] rounded-lg p-3 text-center">
-                    <div className="text-[10px] uppercase text-[#999] mb-1">LN từ dự án (phần CN)</div>
-                    <div className="text-[19px] font-semibold text-[#185FA5]">{fmtTrieu(stats?.lnCn || 0)} tr</div>
-                  </div>
-                  <div className="bg-[#F5F4EF] rounded-lg p-3 text-center border border-gray-200">
-                    <div className="text-[10px] uppercase text-[#999] mb-1">LN ròng CN</div>
-                    <div className={`text-[19px] font-semibold ${(stats?.lnRong || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtTrieu(stats?.lnRong || 0)} tr</div>
-                  </div>
-                </div>
-
-                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
-                    <Building2 size={15} className="text-[#999]" />
-                    <div className="text-[12.5px] font-semibold text-[#111] flex-1">Chi phí cố định {monthLabel(month)}</div>
-                  </div>
-                  {branchOverheadRows.length === 0 ? (
-                    <div className="px-3.5 py-6 text-center text-[12px] text-[#999]">Chưa có chi phí cố định cho tháng này. Quản lý tại trang Tài chính.</div>
-                  ) : (
-                    <>
-                      <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
-                            <th className="text-left font-medium px-3.5 py-2">Khoản chi phí</th>
-                            <th className="text-left font-medium px-3 py-2">Loại</th>
-                            <th className="text-right font-medium px-3.5 py-2">Giá trị</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {branchOverheadRows.map(o => (
-                            <tr key={o.id} className="border-t border-[#F0EEE9]">
-                              <td className="px-3.5 py-2">{o.label}</td>
-                              <td className="px-3 py-2">
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${o.cost_type === 'Cố định' ? 'bg-[#E6F1FB] text-[#0C447C]' : 'bg-[#E1F5EE] text-[#085041]'}`}>{o.cost_type}</span>
-                              </td>
-                              <td className="px-3.5 py-2 text-right font-semibold">{fmtTrieu(o.value)} tr</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="px-3.5 py-2 bg-[#F5F4EF] border-t border-[#E8E7E2] flex items-center justify-between text-[12px] font-medium">
-                        <span>Tổng chi phí cố định</span>
-                        <span className="text-red-600">{fmtTrieu(stats?.overheadTotal || 0)} tr.đ</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </>
+            {activeTab === 'finance' && selected && (
+              <BranchFinance branch={selected} toast={toast} />
             )}
 
             {activeTab === 'staff' && (

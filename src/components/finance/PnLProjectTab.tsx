@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
-import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, BranchZone, BranchZoneCost, BranchStaff } from '../../lib/types';
+import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import type { ClientBranchHistory } from '../../lib/types';
@@ -24,6 +24,7 @@ interface PnLProjectTabProps {
   onAddCategory: (label: string) => Promise<CostCategory>;
   onRenameCategory: (id: string, label: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
+  onToggleCategoryDefault: (id: string, val: boolean) => Promise<void>;
   currentUser?: string | null;
   toast: (msg: string) => void;
 }
@@ -35,13 +36,14 @@ export default function PnLProjectTab({
   onAddProject, onUpdateProject, onDeleteProject,
   onLoadCosts, onAddCost, onUpdateCost, onDeleteCost,
   splitSettings, onSaveSplitSettings,
-  branches = [], costCategories, onAddCategory, onRenameCategory, onDeleteCategory,
+  branches = [], costCategories, onAddCategory, onRenameCategory, onDeleteCategory, onToggleCategoryDefault,
   currentUser, toast,
 }: PnLProjectTabProps) {
   const monthProjects = useMemo(() => projectsPnl.filter(p => p.month === month), [projectsPnl, month]);
   const [selId, setSelId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [newClientIds, setNewClientIds] = useState<string[]>([]);
+  const [addSearch, setAddSearch] = useState('');
   const [filterBranch, setFilterBranch] = useState('all');
   const [splitEditOpen, setSplitEditOpen] = useState(false);
   const [splitEditMode, setSplitEditMode] = useState<'permanent' | 'temporary'>('permanent');
@@ -106,14 +108,30 @@ export default function PnLProjectTab({
     [monthProjects, filterBranch]
   );
 
+  const [revLines, setRevLines] = useState<Record<string, PnlRevenueLine[]>>({});
+  const loadRevLines = useCallback(async (pnlId: string) => {
+    const { data } = await supabase.from('pnl_revenue_lines').select('*').eq('pnl_id', pnlId).order('sort_order');
+    if (data) setRevLines(prev => ({ ...prev, [pnlId]: data as PnlRevenueLine[] }));
+  }, []);
+
   useEffect(() => {
     if (selId && !monthProjects.find(p => p.id === selId)) setSelId(monthProjects[0]?.id || null);
     if (!selId && monthProjects.length) setSelId(monthProjects[0].id);
   }, [monthProjects, selId]);
 
   useEffect(() => {
+    if (selId && !revLines[selId]) loadRevLines(selId);
+  }, [selId, revLines, loadRevLines]);
+
+  useEffect(() => {
     if (selId && !pnlCosts[selId]) onLoadCosts(selId).catch(() => {});
   }, [selId, pnlCosts, onLoadCosts]);
+
+  useEffect(() => {
+    for (const p of monthProjects) {
+      if (!pnlCosts[p.id]) onLoadCosts(p.id).catch(() => {});
+    }
+  }, [monthProjects, pnlCosts, onLoadCosts]);
 
   useEffect(() => {
     setSplitEditOpen(false);
@@ -125,6 +143,10 @@ export default function PnLProjectTab({
   const availableClients = useMemo(
     () => mergedClients.filter(c => !monthProjects.some(p => p.client_id === c.id)),
     [mergedClients, monthProjects]
+  );
+  const filteredAddClients = useMemo(
+    () => addSearch ? availableClients.filter(c => c.name.toLowerCase().includes(addSearch.toLowerCase())) : availableClients,
+    [availableClients, addSearch]
   );
 
   const selected = monthProjects.find(p => p.id === selId) || null;
@@ -173,10 +195,15 @@ export default function PnLProjectTab({
           cnPct = ec?.default_cn_pct ?? cnPct;
         }
 
+        const prevEntry = projectsPnl
+          .filter(p => p.client_id === clientId && p.month < month)
+          .sort((a, b) => b.month.localeCompare(a.month))[0] || null;
+        const prevCosts = prevEntry ? (pnlCosts[prevEntry.id] || []) : [];
+
         const created = await onAddProject({
           client_id: clientId,
           month,
-          branch_manager: getBranchForMonth(allBranchHistory.filter(h => h.client_id === clientId), month) || client?.region || null,
+          branch_manager: prevEntry?.branch_manager || getBranchForMonth(allBranchHistory.filter(h => h.client_id === clientId), month) || client?.region || null,
           project_type: clientProjectType,
           lg_pct: lgPct,
           cn_pct: cnPct,
@@ -186,11 +213,20 @@ export default function PnLProjectTab({
           split_temp_until: splitTempUntil,
           split_reverted: splitReverted,
         });
-        await onAddCost({ pnl_id: created.id, label: 'Lương cơ bản NLĐ', value: 0, payer: 'lg', sort_order: 0 });
-        await onAddCost({ pnl_id: created.id, label: 'Chi phí quản lý', value: 0, payer: 'cn', sort_order: 1 });
-        const vpInfo = getZoneVpCost(clientId);
-        const vpPayer: CostPayer = clientProjectType === 'managed' ? 'lg' : 'cn';
-        await onAddCost({ pnl_id: created.id, label: 'Chi Phí Văn Phòng', value: vpInfo?.amount ?? 0, payer: vpPayer, sort_order: 2 });
+
+        if (prevCosts.length > 0) {
+          for (let i = 0; i < prevCosts.length; i++) {
+            await onAddCost({ pnl_id: created.id, label: prevCosts[i].label, value: 0, payer: prevCosts[i].payer, sort_order: i });
+          }
+        } else {
+          const defaults = costCategories.filter(c => c.is_default);
+          for (let i = 0; i < defaults.length; i++) {
+            await onAddCost({ pnl_id: created.id, label: defaults[i].label, value: 0, payer: 'ch', sort_order: i });
+          }
+          if (!defaults.length) {
+            await onAddCost({ pnl_id: created.id, label: 'Chi phi moi', value: 0, payer: 'ch', sort_order: 0 });
+          }
+        }
         lastId = created.id;
       }
       if (lastId) setSelId(lastId);
@@ -344,17 +380,24 @@ export default function PnLProjectTab({
         </div>
         {adding && (
           <div className="p-2.5 border-b border-[#E8E7E2] space-y-2">
+            <input
+              type="text"
+              placeholder="Tim ten cong ty..."
+              value={addSearch}
+              onChange={e => setAddSearch(e.target.value)}
+              className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+            />
             <div className="max-h-[260px] overflow-y-auto border border-gray-300 rounded-lg bg-white">
               <label className="flex items-center gap-2 px-2 py-1.5 text-[12px] font-medium border-b border-gray-200 cursor-pointer hover:bg-[#F5F4EF]">
                 <input
                   type="checkbox"
-                  checked={availableClients.length > 0 && newClientIds.length === availableClients.length}
-                  onChange={e => setNewClientIds(e.target.checked ? availableClients.map(c => c.id) : [])}
+                  checked={filteredAddClients.length > 0 && filteredAddClients.every(c => newClientIds.includes(c.id))}
+                  onChange={e => setNewClientIds(e.target.checked ? [...new Set([...newClientIds, ...filteredAddClients.map(c => c.id)])] : newClientIds.filter(id => !filteredAddClients.some(c => c.id === id)))}
                   className="w-3.5 h-3.5"
                 />
-                Chọn tất cả ({availableClients.length})
+                Chon tat ca ({filteredAddClients.length})
               </label>
-              {availableClients.map(c => (
+              {filteredAddClients.map(c => (
                 <label key={c.id} className="flex items-center gap-2 px-2 py-1.5 text-[12px] cursor-pointer hover:bg-[#F5F4EF]">
                   <input
                     type="checkbox"
@@ -453,18 +496,28 @@ export default function PnLProjectTab({
                 </select>
                 <span className="text-[12px] text-[#666]">Doanh thu:</span>
                 <div className="relative w-[180px]">
-                  <input
-                    type="text"
-                    defaultValue={selected.revenue ? selected.revenue.toLocaleString('vi-VN') : '0'}
-                    onFocus={e => { e.target.value = String(selected.revenue || 0); }}
-                    onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateField({ revenue: v }); e.target.value = v.toLocaleString('vi-VN'); }}
-                    className="w-full text-[12px] px-2.5 py-1.5 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
-                  />
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
+                  {(revLines[selected.id]?.length ?? 0) > 0 ? (
+                    <div className="text-[12px] px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-right font-medium text-[#111]">
+                      {selected.revenue.toLocaleString('vi-VN')} <span className="text-[10px] text-[#999]">đ</span>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        key={`rev-${selected.id}`}
+                        type="text"
+                        defaultValue={selected.revenue ? selected.revenue.toLocaleString('vi-VN') : '0'}
+                        onFocus={e => { e.target.value = String(selected.revenue || 0); }}
+                        onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateField({ revenue: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                        className="w-full text-[12px] px-2.5 py-1.5 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
+                    </>
+                  )}
                 </div>
                 <span className="text-[12px] text-[#666]">Tong so cong:</span>
                 <div className="relative w-[120px]">
                   <input
+                    key={`md-${selected.id}`}
                     type="number"
                     defaultValue={selected.total_man_days || 0}
                     onBlur={e => updateField({ total_man_days: +e.target.value || 0 })}
@@ -474,6 +527,86 @@ export default function PnLProjectTab({
                 </div>
               </div>
             </div>
+
+            {/* Revenue lines */}
+            {(() => {
+              const lines = revLines[selected.id] || [];
+              const addLine = async () => {
+                const { data, error } = await supabase.from('pnl_revenue_lines')
+                  .insert({ pnl_id: selected.id, label: 'Hoa don', amount: 0, sort_order: lines.length })
+                  .select().single();
+                if (error) { toast('Loi: ' + error.message); return; }
+                setRevLines(prev => ({ ...prev, [selected.id]: [...(prev[selected.id] || []), data as PnlRevenueLine] }));
+              };
+              const updateLine = async (lineId: string, fields: Partial<PnlRevenueLine>) => {
+                await supabase.from('pnl_revenue_lines').update(fields).eq('id', lineId);
+                setRevLines(prev => ({ ...prev, [selected.id]: (prev[selected.id] || []).map(l => l.id === lineId ? { ...l, ...fields } : l) }));
+                if ('amount' in fields) {
+                  const updated = (revLines[selected.id] || []).map(l => l.id === lineId ? { ...l, ...fields } : l);
+                  const total = updated.reduce((s, l) => s + (l.amount || 0), 0);
+                  updateField({ revenue: total });
+                }
+              };
+              const deleteLine = async (lineId: string) => {
+                await supabase.from('pnl_revenue_lines').delete().eq('id', lineId);
+                const updated = (revLines[selected.id] || []).filter(l => l.id !== lineId);
+                setRevLines(prev => ({ ...prev, [selected.id]: updated }));
+                if (updated.length > 0) updateField({ revenue: updated.reduce((s, l) => s + (l.amount || 0), 0) });
+              };
+              return (
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-3.5 py-2 border-b border-[#E8E7E2] flex items-center justify-between">
+                    <div className="text-[12px] font-medium text-[#111]">Doanh thu chi tiet</div>
+                    <div className="flex items-center gap-2">
+                      {lines.length > 0 && <span className="text-[11px] text-[#888]">{lines.length} hoa don · Tong: {selected.revenue.toLocaleString('vi-VN')} d</span>}
+                      <button onClick={addLine} className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium">
+                        <Plus size={12} /> Them HD
+                      </button>
+                    </div>
+                  </div>
+                  {lines.length > 0 && (
+                    <div className="p-3.5">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-[10px] text-[#999] uppercase">
+                            <th className="text-left font-medium pb-1.5">Ten hoa don</th>
+                            <th className="text-right font-medium pb-1.5 w-[160px]">So tien</th>
+                            <th className="text-center font-medium pb-1.5 w-[120px]">Ngay XHD</th>
+                            <th className="w-[28px]"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lines.map(l => (
+                            <tr key={l.id} className="border-t border-[#F0EEE9]">
+                              <td className="py-1.5 pr-2">
+                                <input key={`rl-${l.id}`} defaultValue={l.label} onBlur={e => updateLine(l.id, { label: e.target.value })}
+                                  className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent" />
+                              </td>
+                              <td className="py-1.5">
+                                <div className="relative">
+                                  <input key={`ra-${l.id}`} type="text" defaultValue={l.amount ? l.amount.toLocaleString('vi-VN') : '0'}
+                                    onFocus={e => { e.target.value = String(l.amount || 0); }}
+                                    onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateLine(l.id, { amount: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                                    className="w-full text-[12px] px-2 py-1 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right" />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">d</span>
+                                </div>
+                              </td>
+                              <td className="py-1.5 text-center">
+                                <input key={`rd-${l.id}`} type="date" defaultValue={l.invoice_date || ''} onChange={e => updateLine(l.id, { invoice_date: e.target.value || null })}
+                                  className="text-[11px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                              </td>
+                              <td className="py-1.5 text-center">
+                                <button onClick={() => deleteLine(l.id)} className="text-[#bbb] hover:text-red-600 transition"><Trash2 size={13} /></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Row 2: Type + split */}
             <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
@@ -667,22 +800,6 @@ export default function PnLProjectTab({
                       <span className="flex-1 text-[10px] text-[#bbb]">Da them tat ca hang muc</span>
                     );
                   })()}
-                  <button onClick={async () => {
-                    if (!selected) return;
-                    const vpInfo = getZoneVpCost(selected.client_id);
-                    if (!vpInfo) { toast('Khong tim thay zone phu hop cho KH nay. Hay gan KH vao zone trong Chi Nhanh > Van hanh truoc.'); return; }
-                    const vpPayer: CostPayer = selected.project_type === 'managed' ? 'lg' : 'cn';
-                    const existing = costs.find(c => c.label === 'Chi Phí Văn Phòng');
-                    if (existing) {
-                      await onUpdateCost(existing.id, { value: vpInfo.amount, payer: vpPayer });
-                    } else {
-                      await onAddCost({ pnl_id: selected.id, label: 'Chi Phí Văn Phòng', value: vpInfo.amount, payer: vpPayer, sort_order: costs.length });
-                    }
-                    toast(`CP VP: ${vpInfo.amount.toLocaleString('vi-VN')} d = ${vpInfo.zoneName} (${vpInfo.totalCost.toLocaleString('vi-VN')} d / ${vpInfo.projectCount} du an)`);
-                  }} title="Tinh lai CP Van Phong tu zone"
-                    className="px-2 py-1.5 rounded-lg border border-gray-200 text-[10.5px] text-[#999] hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition whitespace-nowrap">
-                    Tinh lai CP VP
-                  </button>
                   <button onClick={() => setCostSettingsOpen(true)} title="Quan ly hang muc chi phi"
                     className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
                     <Settings size={12} />
@@ -748,6 +865,7 @@ export default function PnLProjectTab({
               <div className="text-[13px] font-semibold text-[#111]">Quan ly hang muc chi phi</div>
               <button onClick={() => setCostSettingsOpen(false)} className="text-[#aaa] hover:text-[#666]"><XIcon size={15} /></button>
             </div>
+            <div className="text-[10.5px] text-[#888] mb-3">Bat "Mac dinh" de hang muc tu dong hien khi tao PL du an moi</div>
             <div className="space-y-1.5 mb-4 max-h-[300px] overflow-y-auto">
               {costCategories.map(cat => (
                 <div key={cat.id} className="flex items-center gap-2 group">
@@ -761,7 +879,11 @@ export default function PnLProjectTab({
                     </>
                   ) : (
                     <>
-                      <span className="flex-1 text-[12px] text-[#333] px-2 py-1.5">{cat.label}</span>
+                      <button onClick={() => onToggleCategoryDefault(cat.id, !cat.is_default)}
+                        className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition ${cat.is_default ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 hover:border-blue-400'}`}>
+                        {cat.is_default && <Check size={10} />}
+                      </button>
+                      <span className="flex-1 text-[12px] text-[#333] py-1.5">{cat.label}</span>
                       <button onClick={() => { setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition"><Pencil size={12} /></button>
                       <button onClick={() => handleDeleteCategory(cat.id)}
