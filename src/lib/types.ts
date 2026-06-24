@@ -72,6 +72,9 @@ export interface Client {
   email: string | null;
   prospect_status: 'lead' | 'prospect' | 'customer' | 'churned' | null;
   archived_at: string | null;
+  project_type: 'managed' | 'contracted';
+  default_lg_pct: number;
+  default_cn_pct: number;
   cooperation_status?: 'active' | 'suspended';
   suspension_reason?: string | null;
   suspended_at?: string | null;
@@ -99,10 +102,12 @@ export interface PayrollStaff {
 export interface BranchStaff {
   id: string;
   branch_id: string;
+  zone_id: string | null;
   name: string;
   role: string | null;
   phone: string | null;
   email: string | null;
+  salary: number;
   created_at: string;
 }
 
@@ -590,6 +595,54 @@ export interface BranchOverhead {
 
 export type BranchStatus = 'active' | 'paused';
 
+export interface BranchZone {
+  id: string;
+  branch_id: string;
+  name: string;
+  location: string | null;
+  manager_name: string | null;
+  manager_salary: number;
+  image_url: string | null;
+  image_fit: string;
+  image_position: string;
+  client_ids: string[];
+}
+
+export interface OverheadCategory {
+  id: string;
+  label: string;
+  sort_order: number;
+}
+
+export interface BranchZoneCost {
+  id: string;
+  zone_id: string;
+  label: string;
+  amount: number;
+  sort_order: number;
+}
+
+export interface CostCategory {
+  id: string;
+  label: string;
+  sort_order: number;
+}
+
+export type BranchType = 'contracted' | 'company';
+
+export interface BranchTypeHistory {
+  id: string;
+  branch_id: string;
+  branch_type: BranchType;
+  effective_from: string;
+  manager_name: string | null;
+  lg_pct: number;
+  cn_pct: number;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface Branch {
   id: string;
   name: string;
@@ -605,6 +658,7 @@ export interface Branch {
   map_link: string | null;
   established_date: string | null;
   status: BranchStatus;
+  branch_type: BranchType;
   notes: string | null;
   status_note: string | null;
   difficulties: string | null;

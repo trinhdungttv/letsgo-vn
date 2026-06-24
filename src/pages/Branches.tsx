@@ -8,10 +8,12 @@ import { useBranchStaffs } from '../hooks/useBranchStaffs';
 import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
 import { useManagers } from '../hooks/useManagers';
 import { useRegions } from '../hooks/useRegions';
+import { useOverheadCategories } from '../hooks/useOverheadCategories';
+import BranchZones from '../components/branches/BranchZones';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import type { Client, Branch, BranchStatus, ProjectPnl, BranchOverhead, ClientManagerHistory } from '../lib/types';
+import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, BranchOverhead, ClientManagerHistory } from '../lib/types';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth } from '../lib/format';
 
 interface BranchesProps {
@@ -47,6 +49,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const { user } = useAuth();
   const { branches, addBranch, updateBranch, deleteBranch } = useBranchData();
   const { managers, add: addManager } = useManagers();
+  const { categories: overheadCats, add: addOverheadCat, rename: renameOverheadCat, remove: removeOverheadCat } = useOverheadCategories();
   const { regions, add: addRegion, remove: removeRegion } = useRegions();
   const regionNames = regions.map(r => r.name).filter(n => n !== 'Tất cả');
   const managerNames = managers.map(m => m.name);
@@ -90,8 +93,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [staffFormOpen, setStaffFormOpen] = useState(false);
 
   const [adding, setAdding] = useState(false);
-  const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '' });
+  const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '', branch_type: 'contracted' as 'contracted' | 'company' });
   const [regionTouched, setRegionTouched] = useState(false);
+  const [filterType, setFilterType] = useState<'all' | 'contracted' | 'company'>('all');
 
   const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
@@ -195,9 +199,17 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const setF = (fields: Partial<Branch>) => setForm(prev => ({ ...prev, ...fields }));
 
   const [showHistory, setShowHistory] = useState(false);
+  const [branchTypeHistory, setBranchTypeHistory] = useState<BranchTypeHistory[]>([]);
+  const [showTypeHistory, setShowTypeHistory] = useState(false);
+  const [newTypeEntry, setNewTypeEntry] = useState({ branch_type: 'company' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, notes: '' });
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [recordDate, setRecordDate] = useState(todayStr());
-  useEffect(() => { setShowHistory(false); setRecordDate(todayStr()); }, [selectedId]);
+  useEffect(() => { setShowHistory(false); setShowTypeHistory(false); setRecordDate(todayStr()); }, [selectedId]);
+  useEffect(() => {
+    if (!selectedId) { setBranchTypeHistory([]); return; }
+    supabase.from('branch_type_history').select('*').eq('branch_id', selectedId).order('effective_from', { ascending: false })
+      .then(({ data }) => setBranchTypeHistory((data ?? []) as BranchTypeHistory[]));
+  }, [selectedId]);
 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
@@ -297,15 +309,16 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         email: null,
         established_date: null,
         status: 'active',
+        branch_type: newBranch.branch_type,
         notes: null,
         status_note: null,
         difficulties: null,
         opportunities: null,
       });
       if (region) await ensureRegion(region);
-      toast('Đã thêm chi nhánh');
+      toast('Da them chi nhanh');
       setAdding(false);
-      setNewBranch({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '' });
+      setNewBranch({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '', branch_type: 'contracted' });
       setRegionTouched(false);
       setSelectedId(created.id);
     } catch (e) {
@@ -344,6 +357,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           email: null,
           established_date: null,
           status: 'active',
+          branch_type: 'contracted',
           notes: null,
           status_note: null,
           difficulties: null,
@@ -458,6 +472,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const totalActiveClients = clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended').length;
   const totalLnRong = Object.values(branchStats).reduce((s, v) => s + v.lnRong, 0);
   const needsAttention = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0).length;
+  const displayBranches = useMemo(() => filterType === 'all' ? branches : branches.filter(b => (b.branch_type || 'contracted') === filterType), [branches, filterType]);
 
   // Avatar of the branch's "Trưởng Chi Nhánh" — falls back to the branch initials circle.
   const renderAvatar = (b: { manager_avatar_url?: string | null; name?: string; short_name?: string | null }, size: number) => {
@@ -602,7 +617,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </div>
                 </div>
 
-                {/* Section 2: Dia chi & lien he */}
+                {/* Section 2: Dia chi & lien he (an cho LGV Cong ty vi da co trong Van hanh) */}
+                {selected.short_name !== 'LGV' && (
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
                     <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
@@ -635,6 +651,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     </Field>
                   </div>
                 </div>
+                )}
 
                 {/* Section 3: Ghi chu */}
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
@@ -647,6 +664,131 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   <div className="p-4">
                     <textarea value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="field-input min-h-[80px] resize-y w-full" placeholder="Ghi chu noi bo ve chi nhanh..." />
                   </div>
+                </div>
+
+                {/* Section: Lich su hinh thuc khoan */}
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <button onClick={() => setShowTypeHistory(v => !v)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#FAFAF8] transition-colors">
+                    <span className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
+                      <ClipboardList size={14} className="text-[#1D4ED8]" />
+                      Hinh thuc khoan & phan chia loi nhuan
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {branchTypeHistory.length > 0 && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${branchTypeHistory[0].branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {branchTypeHistory[0].branch_type === 'company' ? 'Du An CT' : `Da Khoan ${branchTypeHistory[0].lg_pct}/${branchTypeHistory[0].cn_pct}`}
+                        </span>
+                      )}
+                      {showTypeHistory ? <ChevronUp size={14} className="text-[#999]" /> : <ChevronDown size={14} className="text-[#999]" />}
+                    </div>
+                  </button>
+                  {showTypeHistory && (
+                    <div className="px-4 pb-4 border-t border-[#E8E7E2] pt-3 space-y-3">
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                        <div className="text-[10.5px] text-[#999] uppercase font-medium">Them moc thoi gian</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-[#999] block mb-0.5">Ap dung tu thang</label>
+                            <input type="month" value={newTypeEntry.effective_from} onChange={e => setNewTypeEntry(v => ({ ...v, effective_from: e.target.value }))}
+                              className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#999] block mb-0.5">Hinh thuc</label>
+                            <select value={newTypeEntry.branch_type} onChange={e => {
+                              const t = e.target.value as 'contracted' | 'company';
+                              setNewTypeEntry(v => ({ ...v, branch_type: t, lg_pct: t === 'company' ? 100 : 60, cn_pct: t === 'company' ? 0 : 40 }));
+                            }} className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                              <option value="company">Du An Cong Ty (LGV 100%)</option>
+                              <option value="contracted">Da Khoan (chia %)</option>
+                            </select>
+                          </div>
+                          {newTypeEntry.branch_type === 'contracted' && (
+                            <>
+                              <div>
+                                <label className="text-[10px] text-[#999] block mb-0.5">Nguoi nhan khoan</label>
+                                <select value={newTypeEntry.manager_name} onChange={e => setNewTypeEntry(v => ({ ...v, manager_name: e.target.value }))}
+                                  className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                                  <option value="">-- Chon --</option>
+                                  {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                                </select>
+                              </div>
+                              <div className="flex items-end gap-2">
+                                <div className="flex-1">
+                                  <label className="text-[10px] text-[#999] block mb-0.5">LGV %</label>
+                                  <input type="number" min={0} max={100} value={newTypeEntry.lg_pct}
+                                    onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); setNewTypeEntry(prev => ({ ...prev, lg_pct: v, cn_pct: 100 - v })); }}
+                                    className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-center" />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-[10px] text-[#999] block mb-0.5">CN %</label>
+                                  <div className="text-[12px] px-2 py-1.5 bg-gray-100 rounded-lg text-center">{newTypeEntry.cn_pct}</div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                          <div className="col-span-2">
+                            <label className="text-[10px] text-[#999] block mb-0.5">Ghi chu</label>
+                            <input value={newTypeEntry.notes} onChange={e => setNewTypeEntry(v => ({ ...v, notes: e.target.value }))}
+                              placeholder="VD: Mr Hung nhan khoan tu T6/2026"
+                              className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                          </div>
+                        </div>
+                        <button onClick={async () => {
+                          if (!selected || !newTypeEntry.effective_from) { toast('Chon thang ap dung'); return; }
+                          const { data, error } = await supabase.from('branch_type_history').insert({
+                            branch_id: selected.id,
+                            branch_type: newTypeEntry.branch_type,
+                            effective_from: newTypeEntry.effective_from,
+                            manager_name: newTypeEntry.branch_type === 'contracted' ? newTypeEntry.manager_name || null : null,
+                            lg_pct: newTypeEntry.lg_pct,
+                            cn_pct: newTypeEntry.cn_pct,
+                            notes: newTypeEntry.notes || null,
+                            created_by: user?.full_name || null,
+                          }).select().single();
+                          if (error) { toast('Loi: ' + error.message); return; }
+                          setBranchTypeHistory(prev => [data as BranchTypeHistory, ...prev].sort((a, b) => b.effective_from.localeCompare(a.effective_from)));
+                          const newType = newTypeEntry.branch_type;
+                          if (selected.branch_type !== newType) await updateBranch(selected.id, { branch_type: newType });
+                          setNewTypeEntry({ branch_type: 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, notes: '' });
+                          toast('Da them moc thoi gian');
+                        }} disabled={!newTypeEntry.effective_from}
+                          className="w-full py-1.5 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-40 transition">
+                          Luu
+                        </button>
+                      </div>
+
+                      {branchTypeHistory.length === 0 ? (
+                        <div className="text-[12px] text-[#999] text-center py-3">Chua co lich su. Them moc dau tien phia tren.</div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {branchTypeHistory.map(h => (
+                            <div key={h.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 group">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[12px] font-medium text-[#111]">
+                                    T{Number(h.effective_from.split('-')[1])}/{h.effective_from.split('-')[0]}
+                                  </span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${h.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    {h.branch_type === 'company' ? 'Du An CT' : `Khoan ${h.lg_pct}/${h.cn_pct}`}
+                                  </span>
+                                  {h.manager_name && <span className="text-[11px] text-[#666]">{h.manager_name}</span>}
+                                </div>
+                                {h.notes && <div className="text-[10.5px] text-[#888] mt-0.5">{h.notes}</div>}
+                              </div>
+                              <button onClick={async () => {
+                                await supabase.from('branch_type_history').delete().eq('id', h.id);
+                                setBranchTypeHistory(prev => prev.filter(x => x.id !== h.id));
+                                toast('Da xoa');
+                              }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Section 4: Lich su trao doi */}
@@ -673,6 +815,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             )}
 
             {activeTab === 'operations' && (
+              <>
               <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                 <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
                   <Building2 size={15} className="text-[#999]" />
@@ -727,6 +870,14 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </table>
                 )}
               </div>
+              {selected && (
+                <div className="mt-4">
+                  <BranchZones branchId={selected.id} branchClients={stats?.branchClients || []} allClients={clients} managers={managers}
+                    staffs={branchStaffs} onAddStaff={addStaff} onUpdateStaff={updateStaff} onDeleteStaff={removeStaff}
+                    overheadCategories={overheadCats} onAddCategory={addOverheadCat} onRenameCategory={renameOverheadCat} onDeleteCategory={removeOverheadCat} toast={toast} />
+                </div>
+              )}
+              </>
             )}
 
             {activeTab === 'finance' && (
@@ -1002,6 +1153,14 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               <List size={13} /> Danh sách
             </button>
           </div>
+          <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+            {([['all', 'Tat ca'], ['contracted', 'Da Khoan'], ['company', 'Du An CT']] as const).map(([val, label]) => (
+              <button key={val} onClick={() => setFilterType(val)}
+                className={`px-2.5 py-1.5 text-[11px] font-medium transition ${filterType === val ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'} ${val !== 'all' ? 'border-l border-gray-300' : ''}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           {missingRegions.length > 0 && (
             <button onClick={handleSyncFromRegions} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">
               <RefreshCw size={13} /> Đồng bộ từ Khu vực ({missingRegions.length})
@@ -1015,6 +1174,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
       {adding && (
         <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5 grid grid-cols-4 gap-2.5 items-end">
+          <Field label="Loai chi nhanh" full>
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              <button type="button" onClick={() => setNewBranch(v => ({ ...v, branch_type: 'contracted' }))}
+                className={`flex-1 px-3 py-1.5 text-[12px] font-medium transition ${newBranch.branch_type === 'contracted' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999]'}`}>
+                Da Khoan
+              </button>
+              <button type="button" onClick={() => setNewBranch(v => ({ ...v, branch_type: 'company' }))}
+                className={`flex-1 px-3 py-1.5 text-[12px] font-medium border-l border-gray-300 transition ${newBranch.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'text-[#999]'}`}>
+                Du An Cong Ty
+              </button>
+            </div>
+          </Field>
           <Field label="Tên chi nhánh">
             <input
               value={newBranch.name}
@@ -1061,13 +1232,13 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         <Kpi label="Cần xử lý" value={String(needsAttention)} sub="CN có vấn đề" accent="#BA7517" valueColor="text-amber-600" icon={<AlertTriangle size={14} />} />
       </div>
 
-      {branches.length === 0 ? (
+      {displayBranches.length === 0 ? (
         <div className="bg-white border border-[#E8E7E2] rounded-xl px-3.5 py-10 text-center text-[12px] text-[#999]">
           Chưa có chi nhánh nào. Bấm "Thêm CN" để tạo mới.
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-3">
-          {branches.map(b => {
+          {displayBranches.map(b => {
             const stats = branchStats[b.id];
             return (
               <div key={b.id} onClick={() => setSelectedId(b.id)} className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden cursor-pointer hover:border-gray-300 hover:-translate-y-0.5 transition">
@@ -1083,12 +1254,15 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         </a>
                       ) : (b.location || 'Chưa có địa danh')}
                     </div>
-                    <div className="mt-1">
+                    <div className="mt-1 flex items-center gap-1.5">
                       {stats?.alerts.length ? (
                         <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#FAEEDA] text-[#633806]">Cần xử lý</span>
                       ) : (
                         <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#E1F5EE] text-[#085041]">Hoạt động tốt</span>
                       )}
+                      <span className={`inline-flex text-[9px] px-1.5 py-0.5 rounded-full font-medium ${(b.branch_type || 'contracted') === 'company' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
+                        {(b.branch_type || 'contracted') === 'company' ? 'Du An CT' : 'Da Khoan'}
+                      </span>
                     </div>
                   </div>
                   <ChevronRight size={16} className="text-[#ccc] shrink-0 mt-1" />
@@ -1136,7 +1310,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               </tr>
             </thead>
             <tbody>
-              {branches.map(b => {
+              {displayBranches.map(b => {
                 const stats = branchStats[b.id];
                 return (
                   <tr key={b.id} onClick={() => setSelectedId(b.id)} className="border-t border-[#F0EEE9] cursor-pointer hover:bg-[#FAFAF8]">

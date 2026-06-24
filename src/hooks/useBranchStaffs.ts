@@ -20,7 +20,7 @@ export function useBranchStaffs(branchId: string | null) {
 
   useEffect(() => { load(); }, [load]);
 
-  const add = useCallback(async (fields: { name: string; role?: string | null; phone?: string | null; email?: string | null }) => {
+  const add = useCallback(async (fields: { name: string; role?: string | null; phone?: string | null; email?: string | null; zone_id?: string | null; salary?: number }) => {
     if (!branchId) throw new Error('No branch selected');
     const { data, error } = await supabase
       .from('branch_staffs')
@@ -32,7 +32,7 @@ export function useBranchStaffs(branchId: string | null) {
     return added;
   }, [branchId]);
 
-  const update = useCallback(async (id: string, fields: Partial<Pick<BranchStaff, 'name' | 'role' | 'phone' | 'email'>>) => {
+  const update = useCallback(async (id: string, fields: Partial<Pick<BranchStaff, 'name' | 'role' | 'phone' | 'email' | 'salary' | 'zone_id'>>) => {
     const { data, error } = await supabase
       .from('branch_staffs')
       .update(fields)

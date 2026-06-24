@@ -13,6 +13,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
+import { useCostCategories } from '../hooks/useCostCategories';
 import { useFinanceData } from '../hooks/useFinanceData';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -103,6 +104,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
   const { branches: branchList } = useBranchData();
+  const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat } = useCostCategories();
 
   useEffect(() => {
     if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
@@ -693,6 +695,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             splitSettings={finData.splitSettings}
             onSaveSplitSettings={finData.saveSplitSettings}
             branches={branchList}
+            costCategories={costCategories}
+            onAddCategory={addCostCat}
+            onRenameCategory={renameCostCat}
+            onDeleteCategory={removeCostCat}
             currentUser={user?.full_name}
             toast={toast}
           />

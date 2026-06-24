@@ -8,6 +8,7 @@ interface Props {
   client: Client;
   onUpdate: (c: Client) => void;
   toast: (msg: string) => void;
+  embedded?: boolean;
 }
 
 const WEEKDAYS = [
@@ -18,7 +19,7 @@ const WEEKDAYS = [
   { value: 'friday', label: 'Thứ 6' },
 ];
 
-export default function PaymentTermsSection({ client, onUpdate, toast }: Props) {
+export default function PaymentTermsSection({ client, onUpdate, toast, embedded }: Props) {
   const [saving, setSaving] = useState(false);
 
   const now = new Date();
@@ -84,14 +85,14 @@ export default function PaymentTermsSection({ client, onUpdate, toast }: Props) 
   };
 
   return (
-    <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#E8E7E2] flex items-center justify-between">
+    <div className={embedded ? '' : 'bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden'}>
+      <div className={`px-4 py-3 ${embedded ? '' : 'border-b border-[#E8E7E2]'} flex items-center justify-between`}>
         <div className="flex items-center gap-2">
           <FileText size={14} className="text-[#1D4ED8]" />
-          <span className="text-[13px] font-semibold text-[#111]">Điều khoản thanh toán</span>
+          <span className="text-[12px] font-semibold text-[#111]">Dieu khoan thanh toan</span>
         </div>
-        <button onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-50 transition">
-          <Save size={12} />{saving ? 'Đang lưu...' : 'Lưu'}
+        <button onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-50 transition">
+          <Save size={11} />{saving ? '...' : 'Luu'}
         </button>
       </div>
 

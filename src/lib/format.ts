@@ -1,4 +1,4 @@
-import type { ProjectPnlType, CostPayer, ClientManagerHistory, ClientBranchHistory } from './types';
+import type { ProjectPnlType, CostPayer, ClientManagerHistory, ClientBranchHistory, BranchTypeHistory, BranchType } from './types';
 
 export function formatCurrency(value: number): string {
   if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + ' tỷ';
@@ -169,6 +169,13 @@ export function getBranchForMonth(history: ClientBranchHistory[], month: string)
 
 export function fmtTrieu(value: number): string {
   return Math.round(value).toLocaleString('vi-VN');
+}
+
+export function getBranchTypeForMonth(history: BranchTypeHistory[], month: string): { type: BranchType; manager: string | null; lgPct: number; cnPct: number } | null {
+  const applicable = history.filter(h => h.effective_from <= month);
+  if (!applicable.length) return null;
+  const latest = applicable.reduce((a, b) => (a.effective_from > b.effective_from ? a : b));
+  return { type: latest.branch_type as BranchType, manager: latest.manager_name, lgPct: latest.lg_pct, cnPct: latest.cn_pct };
 }
 
 // P&L calculation shared by the Finance Workspace project tabs.

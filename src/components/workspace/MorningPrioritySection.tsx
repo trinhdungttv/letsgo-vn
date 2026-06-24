@@ -109,6 +109,7 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
   const { branches, updateBranch } = useBranchData()
   const [saving, setSaving] = useState(false)
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({})
+  const [lgvZones, setLgvZones] = useState<{ name: string }[]>([])
 
   const [selectedContractIds, setSelectedContractIds] = useState<Set<string>>(new Set())
   const [showManualAdd, setShowManualAdd] = useState(false)
@@ -322,11 +323,16 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
 
   // Lấy lần hỏi thăm gần nhất của từng chi nhánh (toàn công ty, không chỉ user hiện tại)
   useEffect(() => {
-    if (!regions.length) return
+    if (!regions.length && !lgvZones.length) return
+    const names = [
+      ...regions.map(r => `Chi nhánh ${r.name}`),
+      ...lgvZones.map(z => `Chi nhánh ${z.name}`),
+    ];
+    if (!names.length) return;
     supabase
       .from('morning_priorities')
       .select('target_name, priority_date')
-      .in('target_name', regions.map(r => `Chi nhánh ${r.name}`))
+      .in('target_name', names)
       .order('priority_date', { ascending: false })
       .then(({ data }) => {
         if (!data) return
@@ -338,7 +344,14 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
         }
         setBranchActivity(map)
       })
-  }, [regions])
+  }, [regions, lgvZones])
+
+  useEffect(() => {
+    const lgv = branches.find(b => b.short_name === 'LGV');
+    if (!lgv) return;
+    supabase.from('branch_zones').select('name').eq('branch_id', lgv.id).order('created_at')
+      .then(({ data }) => { if (data) setLgvZones(data); });
+  }, [branches]);
 
   // Tasks for suspended clients hidden from "Công việc chưa hoàn thành"
   const suspendedClientIds = useMemo(
@@ -360,13 +373,18 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
     .map(x => ({ ...x, kcn: x.client.industrial_zones?.[0] || '' }))
 
   // --- Auto-suggest: Chi nhánh cần hỏi thăm (cột phải) ---
-  const visitSuggests: VisitSuggest[] = regions
-    .map(r => {
+  const visitSuggests: VisitSuggest[] = [
+    ...regions.map(r => {
       const last = branchActivity[`Chi nhánh ${r.name}`]
       const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null
       return { branchName: r.name, daysSince }
-    })
-    .sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999))
+    }),
+    ...lgvZones.map(z => {
+      const last = branchActivity[`Chi nhánh ${z.name}`]
+      const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null
+      return { branchName: z.name, daysSince }
+    }),
+  ].sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999))
 
   function urgColor(daysLeft: number) {
     if (daysLeft <= 7) return 'bg-red-50 text-red-700 border-red-200'

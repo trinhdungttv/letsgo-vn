@@ -18,6 +18,7 @@ import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
+import PaymentHistory from '../components/clients/PaymentHistory';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -1087,6 +1088,44 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           );
         })()}
 
+        {/* Project type & split */}
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-3">Loai du an & phan chia loi nhuan</div>
+          <div className="flex items-center gap-4">
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              {(['contracted', 'managed'] as const).map(t => (
+                <button key={t} onClick={async () => {
+                  const updates: Partial<Client> = { project_type: t };
+                  if (t === 'managed') { updates.default_lg_pct = 100; updates.default_cn_pct = 0; }
+                  const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                  if (!error) { onClientUpdate({ ...client, ...updates }); toast('Da cap nhat loai du an'); }
+                }}
+                  className={`px-3 py-1.5 text-[12px] font-medium transition ${client.project_type === t ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#888] hover:bg-gray-50'}`}>
+                  {t === 'managed' ? 'Khong Khoan - Nhan Luong' : 'Da Nhan Khoan'}
+                </button>
+              ))}
+            </div>
+            {client.project_type !== 'managed' && (
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-[#666]">LGV:</span>
+                <input type="number" min={0} max={100} value={client.default_lg_pct ?? 60}
+                  onChange={e => {
+                    const lg = Math.max(0, Math.min(100, +e.target.value));
+                    onClientUpdate({ ...client, default_lg_pct: lg, default_cn_pct: 100 - lg });
+                    supabase.from('clients').update({ default_lg_pct: lg, default_cn_pct: 100 - lg }).eq('id', client.id);
+                  }}
+                  className="w-[50px] text-[12px] px-2 py-1 border border-gray-300 rounded-lg text-center" />
+                <span className="text-[#999]">%</span>
+                <span className="text-[#666] ml-2">CN:</span>
+                <span className="text-[12px] font-medium">{client.default_cn_pct ?? 40}%</span>
+              </div>
+            )}
+            {client.project_type === 'managed' && (
+              <span className="text-[11px] text-[#888]">LGV tra toan bo chi phi & nhan 100% LN</span>
+            )}
+          </div>
+        </div>
+
         {/* Info & Contract */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <button onClick={() => setOpenInfo(!openInfo)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
@@ -1340,7 +1379,19 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           )}
         </div>
 
-        <PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} />
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2]">
+            <span className="text-[12.5px] font-semibold text-[#111]">Thanh toan</span>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-[#E8E7E2]">
+            <div className="p-0">
+              <PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} embedded />
+            </div>
+            <div className="p-0">
+              <PaymentHistory client={client} embedded />
+            </div>
+          </div>
+        </div>
 
         {/* Documents */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
