@@ -10,7 +10,7 @@ import {
   AlertCircle, TrendingUp, Users, BarChart2, Target,
   ChevronDown, X, Phone, Mail,
 } from 'lucide-react';
-import type { Client, ProjectPnl } from '../lib/types';
+import type { Client, ProjectPnl, FinanceRecord } from '../lib/types';
 import { statusPill, formatCurrency, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -91,13 +91,20 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
     return base.filter(c => c.manager === selectedScope);
   }, [clients, scopeMode, selectedScope]);
 
+  const curMonth = currentMonthStr();
+  const curMonthNum = parseInt(curMonth.split('-')[1], 10);
+
   // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu/lợi nhuận trên Dashboard
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
+  const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
   useEffect(() => {
-    supabase.from('projects_pnl').select('*').eq('month', currentMonthStr()).then(({ data }) => {
+    supabase.from('projects_pnl').select('*').eq('month', curMonth).then(({ data }) => {
       setProjectsPnl((data || []) as ProjectPnl[]);
     });
-  }, []);
+    supabase.from('finance_records').select('*').eq('month', curMonth).then(({ data }) => {
+      setFinanceRecords((data || []) as FinanceRecord[]);
+    });
+  }, [curMonth]);
 
   const pnlByClient = useMemo(() => {
     const map: Record<string, ProjectPnl[]> = {};
@@ -110,7 +117,16 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
 
   const totalWorkers = filteredClients.reduce((s, c) => s + (c.current_workers || 0), 0);
   const totalRevenue = filteredClients.reduce((s, c) => s + (pnlByClient[c.id] || []).reduce((t, p) => t + (p.revenue || 0), 0), 0);
-  const paid = filteredClients.filter(c => c.paid_this_month).length;
+
+  const financeByClient = useMemo(() => {
+    const map: Record<string, FinanceRecord> = {};
+    for (const f of financeRecords) map[f.client_id] = f;
+    return map;
+  }, [financeRecords]);
+  const financeRevenue = useMemo(() => filteredClients.reduce((s, c) => s + (financeByClient[c.id]?.revenue || 0), 0), [filteredClients, financeByClient]);
+  const financePaid = useMemo(() => filteredClients.filter(c => financeByClient[c.id]?.paid_status).length, [filteredClients, financeByClient]);
+  const displayRevenue = financeRevenue > 0 ? financeRevenue : totalRevenue;
+  const paid = financePaid > 0 ? financePaid : filteredClients.filter(c => c.paid_this_month).length;
   const danger = filteredClients.filter(c => c.status === 'danger').length;
   const warn = filteredClients.filter(c => c.status === 'warn').length;
 
@@ -288,11 +304,13 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">
-              <div className="text-[11.5px] text-[#888]">Doanh thu ước T6</div>
+              <div className="text-[11.5px] text-[#888]">Doanh thu ước T{curMonthNum}</div>
               <BarChart2 size={14} className="text-[#ccc]" />
             </div>
-            <div className="text-[22px] font-bold text-[#111]">{formatCurrency(totalRevenue)}</div>
-            <div className="text-[11px] text-[#aaa] mt-0.5">Đã TT: {paid}/{filteredClients.length} KH</div>
+            <div className="text-[22px] font-bold text-[#111]">{formatCurrency(displayRevenue)}</div>
+            <div className="text-[11px] mt-0.5">
+              <span className={paid > 0 ? 'text-emerald-600' : 'text-[#aaa]'}>Đã TT: {paid}/{filteredClients.length} KH</span>
+            </div>
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">

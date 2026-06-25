@@ -75,6 +75,9 @@ export interface Client {
   project_type: 'managed' | 'contracted';
   default_lg_pct: number;
   default_cn_pct: number;
+  khoan_type?: 'pct' | 'fixed' | 'tiered';
+  khoan_fixed_fee?: number;
+  khoan_tiers?: { min_workers: number; lg_pct: number; cn_pct: number }[];
   cooperation_status?: 'active' | 'suspended';
   suspension_reason?: string | null;
   suspended_at?: string | null;
@@ -673,6 +676,9 @@ export interface Branch {
   status_note: string | null;
   difficulties: string | null;
   opportunities: string | null;
+  khoan_type?: 'pct' | 'fixed' | 'tiered';
+  khoan_fixed_fee?: number;
+  khoan_tiers?: { min_workers: number; lg_pct: number; cn_pct: number }[];
   created_at: string;
   updated_at: string;
 }

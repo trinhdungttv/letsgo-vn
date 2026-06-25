@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
-  Filter, Check,
+  Filter, Check, Settings2,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
 import { useBranchStaffs } from '../hooks/useBranchStaffs';
@@ -15,8 +15,16 @@ import BranchFinance from '../components/branches/BranchFinance';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, BranchOverhead, ClientManagerHistory } from '../lib/types';
+import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth } from '../lib/format';
+
+type KhoanTierDef = { min_workers: number; lg_pct: number; cn_pct: number };
+
+function resolveActiveTier(tiers: KhoanTierDef[], peakWorkers: number): KhoanTierDef | null {
+  if (!tiers.length) return null;
+  const sorted = [...tiers].sort((a, b) => b.min_workers - a.min_workers);
+  return sorted.find(t => peakWorkers >= t.min_workers) || sorted[sorted.length - 1];
+}
 
 interface BranchesProps {
   clients: Client[];
@@ -105,6 +113,12 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [regionTouched, setRegionTouched] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'contracted' | 'company'>('all');
 
+  const [editPctMode, setEditPctMode] = useState(false);
+  const [editingPctId, setEditingPctId] = useState<string | null>(null);
+  const [editPctForm, setEditPctForm] = useState({ lg: 60, cn: 40, khoanType: 'pct' as 'pct' | 'fixed' | 'tiered', fixedFee: 0, tiers: [] as KhoanTierDef[] });
+  const [branchKhoanEditing, setBranchKhoanEditing] = useState(false);
+  const [branchKhoanForm, setBranchKhoanForm] = useState({ khoanType: 'pct' as 'pct' | 'fixed' | 'tiered', lg: 60, cn: 40, fixedFee: 0, tiers: [] as KhoanTierDef[] });
+
   const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -121,6 +135,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [perfPnl, setPerfPnl] = useState<ProjectPnl[]>([]);
   const [perfLoading, setPerfLoading] = useState(false);
 
+  const [laborByClient, setLaborByClient] = useState<Record<string, LaborHistoryEntry[]>>({});
+
   useEffect(() => {
     (async () => {
       const [{ data: pj }, { data: oh }, { data: ppj }, { data: poh }] = await Promise.all([
@@ -133,8 +149,23 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       setOverhead((oh || []) as BranchOverhead[]);
       setPrevProjectsPnl((ppj || []) as ProjectPnl[]);
       setPrevOverhead((poh || []) as BranchOverhead[]);
+
+      const tieredBranchRegions = branches.filter(b => b.khoan_type === 'tiered').map(b => b.region).filter(Boolean) as string[];
+      const tieredClientIds = tieredBranchRegions.length ? clients.filter(c => c.region && tieredBranchRegions.includes(c.region)).map(c => c.id) : [];
+      if (tieredClientIds.length) {
+        const curMonthNum = parseInt(month.split('-')[1], 10);
+        const prefix = `T${curMonthNum}W`;
+        const { data: lh } = await supabase.from('client_labor_history').select('*').in('client_id', tieredClientIds).like('week_label', `${prefix}%`);
+        const map: Record<string, LaborHistoryEntry[]> = {};
+        for (const e of (lh || []) as LaborHistoryEntry[]) {
+          if (!map[e.client_id]) map[e.client_id] = [];
+          map[e.client_id].push(e);
+        }
+        setLaborByClient(map);
+      }
     })();
-  }, [month, prevMonth]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, prevMonth, clients, branches]);
 
   // Fetch manager-transfer history + P&L for the performance report tab.
   useEffect(() => {
@@ -444,6 +475,30 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       setIsDeleting(false);
     }
   };
+
+  const peakWorkersMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const [clientId, entries] of Object.entries(laborByClient)) {
+      map[clientId] = entries.reduce((mx, e) => Math.max(mx, e.count), 0);
+    }
+    return map;
+  }, [laborByClient]);
+
+  const branchPeakWorkers = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const b of branches) {
+      if (b.khoan_type !== 'tiered' || !b.region) continue;
+      const branchClientIds = clients.filter(c => c.region === b.region).map(c => c.id);
+      const weekTotals: Record<string, number> = {};
+      for (const cid of branchClientIds) {
+        for (const e of (laborByClient[cid] || [])) {
+          weekTotals[e.week_label] = (weekTotals[e.week_label] || 0) + e.count;
+        }
+      }
+      map[b.id] = Object.values(weekTotals).reduce((mx, v) => Math.max(mx, v), 0);
+    }
+    return map;
+  }, [branches, clients, laborByClient]);
 
   // ── Per-branch stats (clients/workers/finance) ──────────────────
   const branchStats = useMemo(() => {
@@ -868,6 +923,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   <Building2 size={15} className="text-[#999]" />
                   <div className="text-[12.5px] font-semibold text-[#111] flex-1">Khách hàng đang phụ trách</div>
                   <span className="text-[11px] text-[#999]">{stats?.branchClients.length || 0} KH · {stats?.workers.toLocaleString() || 0} LĐ tổng</span>
+                  <button onClick={() => { setEditPctMode(v => !v); setEditingPctId(null); }}
+                    className={`p-1 rounded-md transition ${editPctMode ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-[#888] hover:bg-[#F5F4EF]'}`}
+                    title="Chỉnh tỷ lệ khoán">
+                    <Settings2 size={14} />
+                  </button>
                 </div>
                 {!stats?.branchClients.length ? (
                   <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">
@@ -899,18 +959,144 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                               <div className="text-[10.5px] text-[#999]">{c.industrial_zones?.[0] || '—'}</div>
                             </td>
                             <td className="px-3 py-2 text-center">
-                              <select value={c.project_type || 'contracted'}
-                                onChange={async e => {
-                                  const pt = e.target.value as 'managed' | 'contracted';
-                                  const updates: Partial<Client> = { project_type: pt };
-                                  if (pt === 'managed') { updates.default_lg_pct = 100; updates.default_cn_pct = 0; }
-                                  await supabase.from('clients').update(updates).eq('id', c.id);
-                                  toast(`${c.name}: ${pt === 'managed' ? 'Khong khoan' : 'Da khoan'}`);
+                              {editPctMode && editingPctId === c.id ? (
+                                <div className="flex flex-col gap-1.5 items-center min-w-[200px]">
+                                  <div className="flex items-center gap-1">
+                                    <select value={c.project_type || 'contracted'}
+                                      onChange={async e => {
+                                        const pt = e.target.value as 'managed' | 'contracted';
+                                        const lg = pt === 'managed' ? 100 : editPctForm.lg;
+                                        const cn = pt === 'managed' ? 0 : editPctForm.cn;
+                                        await supabase.from('clients').update({ project_type: pt, default_lg_pct: lg, default_cn_pct: cn }).eq('id', c.id);
+                                        Object.assign(c, { project_type: pt, default_lg_pct: lg, default_cn_pct: cn });
+                                        toast(`${c.name}: ${pt === 'managed' ? 'Dự án CT' : 'Đã khoán'}`);
+                                      }}
+                                      className="text-[10px] px-1 py-0.5 rounded border border-[#ddd] outline-none bg-white">
+                                      <option value="contracted">Khoán</option>
+                                      <option value="managed">Dự án CT</option>
+                                    </select>
+                                    <button onClick={async () => {
+                                      const updates: Partial<Client> = {};
+                                      if ((c.project_type || 'contracted') === 'contracted') {
+                                        updates.khoan_type = editPctForm.khoanType;
+                                        if (editPctForm.khoanType === 'pct') {
+                                          updates.default_lg_pct = editPctForm.lg;
+                                          updates.default_cn_pct = editPctForm.cn;
+                                          updates.khoan_fixed_fee = 0;
+                                          updates.khoan_tiers = undefined;
+                                        } else if (editPctForm.khoanType === 'fixed') {
+                                          updates.khoan_fixed_fee = editPctForm.fixedFee;
+                                          updates.khoan_tiers = undefined;
+                                        } else {
+                                          updates.khoan_tiers = editPctForm.tiers;
+                                          updates.khoan_fixed_fee = 0;
+                                        }
+                                      }
+                                      if (Object.keys(updates).length > 0) {
+                                        await supabase.from('clients').update(updates).eq('id', c.id);
+                                        Object.assign(c, updates);
+                                      }
+                                      setEditingPctId(null);
+                                      toast(`${c.name}: Đã cập nhật khoán`);
+                                    }} className="p-0.5 rounded bg-blue-600 text-white hover:bg-blue-700"><Check size={10} /></button>
+                                    <button onClick={() => setEditingPctId(null)} className="p-0.5 rounded bg-gray-200 text-gray-600 hover:bg-gray-300"><X size={10} /></button>
+                                  </div>
+                                  {(c.project_type || 'contracted') === 'contracted' && (
+                                    <>
+                                      <select value={editPctForm.khoanType}
+                                        onChange={e => {
+                                          const kt = e.target.value as 'pct' | 'fixed' | 'tiered';
+                                          setEditPctForm(prev => ({
+                                            ...prev, khoanType: kt,
+                                            tiers: kt === 'tiered' && prev.tiers.length === 0
+                                              ? [{ min_workers: 0, lg_pct: prev.lg, cn_pct: prev.cn }, { min_workers: 300, lg_pct: 50, cn_pct: 50 }]
+                                              : prev.tiers,
+                                          }));
+                                        }}
+                                        className="text-[10px] px-1 py-0.5 rounded border border-[#ddd] outline-none bg-white w-full">
+                                        <option value="pct">Theo tỷ lệ %</option>
+                                        <option value="fixed">Phí cố định/công</option>
+                                        <option value="tiered">Theo bậc LĐ</option>
+                                      </select>
+                                      {editPctForm.khoanType === 'pct' && (
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-[#999]">LG</span>
+                                          <input type="number" min={0} max={100} value={editPctForm.lg}
+                                            onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); setEditPctForm(prev => ({ ...prev, lg: v, cn: 100 - v })); }}
+                                            className="w-9 text-[10px] px-1 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                          <span className="text-[9px] text-[#999]">CN</span>
+                                          <span className="text-[10px] font-medium text-[#666] w-5">{editPctForm.cn}</span>
+                                        </div>
+                                      )}
+                                      {editPctForm.khoanType === 'fixed' && (
+                                        <div className="flex items-center gap-1">
+                                          <input type="number" min={0} value={editPctForm.fixedFee}
+                                            onChange={e => setEditPctForm(prev => ({ ...prev, fixedFee: Math.max(0, +e.target.value) }))}
+                                            className="w-20 text-[10px] px-1 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                          <span className="text-[9px] text-[#999]">đ/người/công</span>
+                                        </div>
+                                      )}
+                                      {editPctForm.khoanType === 'tiered' && (
+                                        <div className="flex flex-col gap-1 w-full">
+                                          {editPctForm.tiers.map((tier, ti) => (
+                                            <div key={ti} className="flex items-center gap-1 bg-[#F9F9F6] rounded px-1.5 py-1">
+                                              <span className="text-[9px] text-[#999] shrink-0">≥</span>
+                                              <input type="number" min={0} value={tier.min_workers}
+                                                onChange={e => { const tiers = [...editPctForm.tiers]; tiers[ti] = { ...tier, min_workers: Math.max(0, +e.target.value) }; setEditPctForm(prev => ({ ...prev, tiers })); }}
+                                                className="w-12 text-[10px] px-1 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                              <span className="text-[9px] text-[#999]">LĐ →</span>
+                                              <span className="text-[9px] text-[#999]">LG</span>
+                                              <input type="number" min={0} max={100} value={tier.lg_pct}
+                                                onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); const tiers = [...editPctForm.tiers]; tiers[ti] = { ...tier, lg_pct: v, cn_pct: 100 - v }; setEditPctForm(prev => ({ ...prev, tiers })); }}
+                                                className="w-8 text-[10px] px-0.5 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                              <span className="text-[9px] text-[#999]">CN</span>
+                                              <span className="text-[10px] font-medium text-[#666] w-4">{tier.cn_pct}</span>
+                                              {editPctForm.tiers.length > 1 && (
+                                                <button onClick={() => { const tiers = editPctForm.tiers.filter((_, i) => i !== ti); setEditPctForm(prev => ({ ...prev, tiers })); }}
+                                                  className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={9} /></button>
+                                              )}
+                                            </div>
+                                          ))}
+                                          <button onClick={() => {
+                                            const last = editPctForm.tiers[editPctForm.tiers.length - 1];
+                                            setEditPctForm(prev => ({ ...prev, tiers: [...prev.tiers, { min_workers: (last?.min_workers || 0) + 100, lg_pct: 50, cn_pct: 50 }] }));
+                                          }} className="text-[9px] text-blue-600 hover:text-blue-800 self-start flex items-center gap-0.5">
+                                            <Plus size={9} /> Thêm bậc
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <span onClick={() => {
+                                  if (!editPctMode) return;
+                                  setEditingPctId(c.id);
+                                  setEditPctForm({
+                                    lg: c.default_lg_pct ?? 60, cn: c.default_cn_pct ?? 40,
+                                    khoanType: (c.khoan_type || 'pct') as 'pct' | 'fixed' | 'tiered',
+                                    fixedFee: c.khoan_fixed_fee || 0,
+                                    tiers: (c.khoan_tiers || []) as KhoanTierDef[],
+                                  });
                                 }}
-                                className={`text-[10px] px-1.5 py-0.5 rounded font-medium border-0 outline-none cursor-pointer ${c.project_type === 'managed' ? 'bg-blue-50 text-blue-700' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
-                                <option value="contracted">Khoan {c.default_lg_pct ?? 60}/{c.default_cn_pct ?? 40}</option>
-                                <option value="managed">Khong khoan</option>
-                              </select>
+                                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium inline-block ${
+                                    c.project_type === 'managed' ? 'bg-blue-50 text-blue-700'
+                                    : 'bg-[#EAF3DE] text-[#27500A]'
+                                  } ${editPctMode ? 'cursor-pointer ring-1 ring-blue-300 hover:ring-blue-500' : ''}`}>
+                                  {(() => {
+                                    if (c.project_type === 'managed') return 'Dự án CT';
+                                    const bkt = selected.khoan_type || 'pct';
+                                    if (bkt === 'tiered') {
+                                      const tiers = (selected.khoan_tiers || []) as KhoanTierDef[];
+                                      const peak = branchPeakWorkers[selected.id] || (stats?.workers || 0);
+                                      const active = resolveActiveTier(tiers, peak);
+                                      if (active) return `LG ${active.lg_pct} / CN ${active.cn_pct}`;
+                                    }
+                                    if (bkt === 'fixed') return `${(selected.khoan_fixed_fee || 0).toLocaleString('vi-VN')}đ/công`;
+                                    return `Khoán LG ${c.default_lg_pct ?? 60} / CN ${c.default_cn_pct ?? 40}`;
+                                  })()}
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2 text-right font-semibold">{(c.current_workers || 0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">
@@ -932,6 +1118,144 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </table>
                 )}
               </div>
+              {/* Cài đặt khoán chi nhánh */}
+              {selected && (
+                <div className="mt-4 bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
+                    <Wallet size={15} className="text-[#999]" />
+                    <div className="text-[12.5px] font-semibold text-[#111] flex-1">Cài đặt khoán chi nhánh</div>
+                    {!branchKhoanEditing ? (
+                      <button onClick={() => {
+                        setBranchKhoanEditing(true);
+                        setBranchKhoanForm({
+                          khoanType: (selected.khoan_type || 'pct') as 'pct' | 'fixed' | 'tiered',
+                          lg: selected.branch_type === 'company' ? 100 : 60,
+                          cn: selected.branch_type === 'company' ? 0 : 40,
+                          fixedFee: selected.khoan_fixed_fee || 0,
+                          tiers: (selected.khoan_tiers || []) as KhoanTierDef[],
+                        });
+                      }} className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                        <Pencil size={11} /> Chỉnh sửa
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={async () => {
+                          await updateBranch(selected.id, {
+                            khoan_type: branchKhoanForm.khoanType,
+                            khoan_fixed_fee: branchKhoanForm.khoanType === 'fixed' ? branchKhoanForm.fixedFee : 0,
+                            khoan_tiers: branchKhoanForm.khoanType === 'tiered' ? branchKhoanForm.tiers : null,
+                          } as any);
+                          setBranchKhoanEditing(false);
+                          toast('Đã cập nhật cài đặt khoán');
+                        }} className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
+                          <Check size={10} /> Lưu
+                        </button>
+                        <button onClick={() => setBranchKhoanEditing(false)} className="text-[10px] px-2 py-1 rounded bg-gray-200 text-gray-600 hover:bg-gray-300">Huỷ</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-3.5 py-3">
+                    {!branchKhoanEditing ? (
+                      <div className="text-[12px] text-[#555]">
+                        {(() => {
+                          const kt = selected.khoan_type || 'pct';
+                          if (kt === 'fixed') return (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-medium">Phí cố định</span>
+                              <span>{(selected.khoan_fixed_fee || 0).toLocaleString('vi-VN')}đ / người / công</span>
+                            </span>
+                          );
+                          if (kt === 'tiered') {
+                            const tiers = (selected.khoan_tiers || []) as KhoanTierDef[];
+                            const totalW = stats?.workers || 0;
+                            const peak = branchPeakWorkers[selected.id] || totalW;
+                            const active = resolveActiveTier(tiers, peak);
+                            return (
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-medium text-[11px]">Khoán theo bậc</span>
+                                  <span className="text-[10px] text-[#999]">LĐ cao nhất tháng này: <span className="font-semibold text-[#333]">{peak.toLocaleString()}</span></span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {tiers.map((t, i) => {
+                                    const isActive = active && t.min_workers === active.min_workers;
+                                    return (
+                                      <span key={i} className={`text-[11px] px-2 py-1 rounded-lg border ${isActive ? 'bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold' : 'bg-[#F9F9F6] border-[#E8E7E2] text-[#888]'}`}>
+                                        {isActive && '▸ '}≥ {t.min_workers} LĐ → LG {t.lg_pct} / CN {t.cn_pct}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return <span className="text-[#999]">Khoán theo tỷ lệ % (mặc định — cấu hình trên từng KH)</span>;
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-[#999] w-20 shrink-0">Loại khoán:</span>
+                          <select value={branchKhoanForm.khoanType}
+                            onChange={e => {
+                              const kt = e.target.value as 'pct' | 'fixed' | 'tiered';
+                              setBranchKhoanForm(prev => ({
+                                ...prev, khoanType: kt,
+                                tiers: kt === 'tiered' && prev.tiers.length === 0
+                                  ? [{ min_workers: 0, lg_pct: 40, cn_pct: 60 }, { min_workers: 300, lg_pct: 50, cn_pct: 50 }]
+                                  : prev.tiers,
+                              }));
+                            }}
+                            className="text-[11px] px-2 py-1 rounded border border-[#ddd] outline-none bg-white">
+                            <option value="pct">Theo tỷ lệ % (mặc định)</option>
+                            <option value="fixed">Phí cố định / công</option>
+                            <option value="tiered">Theo bậc lao động</option>
+                          </select>
+                        </div>
+                        {branchKhoanForm.khoanType === 'fixed' && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-[#999] w-20 shrink-0">Phí/công:</span>
+                            <input type="number" min={0} value={branchKhoanForm.fixedFee}
+                              onChange={e => setBranchKhoanForm(prev => ({ ...prev, fixedFee: Math.max(0, +e.target.value) }))}
+                              className="w-28 text-[11px] px-2 py-1 rounded border border-[#ddd] text-right outline-none" />
+                            <span className="text-[10px] text-[#999]">đ/người/công</span>
+                          </div>
+                        )}
+                        {branchKhoanForm.khoanType === 'tiered' && (
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] text-[#999]">Bậc thang — nếu LĐ cao nhất trong tháng đạt mốc sẽ tự áp dụng bậc tương ứng:</span>
+                            {branchKhoanForm.tiers.map((tier, ti) => (
+                              <div key={ti} className="flex items-center gap-1.5 bg-[#F9F9F6] rounded-lg px-2.5 py-1.5">
+                                <span className="text-[10px] text-[#999]">≥</span>
+                                <input type="number" min={0} value={tier.min_workers}
+                                  onChange={e => { const tiers = [...branchKhoanForm.tiers]; tiers[ti] = { ...tier, min_workers: Math.max(0, +e.target.value) }; setBranchKhoanForm(prev => ({ ...prev, tiers })); }}
+                                  className="w-16 text-[11px] px-1.5 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                <span className="text-[10px] text-[#999]">lao động →</span>
+                                <span className="text-[10px] font-medium text-[#666]">LG</span>
+                                <input type="number" min={0} max={100} value={tier.lg_pct}
+                                  onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); const tiers = [...branchKhoanForm.tiers]; tiers[ti] = { ...tier, lg_pct: v, cn_pct: 100 - v }; setBranchKhoanForm(prev => ({ ...prev, tiers })); }}
+                                  className="w-10 text-[11px] px-1 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                                <span className="text-[10px] font-medium text-[#666]">CN</span>
+                                <span className="text-[11px] font-semibold text-[#333] w-6">{tier.cn_pct}</span>
+                                {branchKhoanForm.tiers.length > 1 && (
+                                  <button onClick={() => setBranchKhoanForm(prev => ({ ...prev, tiers: prev.tiers.filter((_, i) => i !== ti) }))}
+                                    className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={11} /></button>
+                                )}
+                              </div>
+                            ))}
+                            <button onClick={() => {
+                              const last = branchKhoanForm.tiers[branchKhoanForm.tiers.length - 1];
+                              setBranchKhoanForm(prev => ({ ...prev, tiers: [...prev.tiers, { min_workers: (last?.min_workers || 0) + 100, lg_pct: 50, cn_pct: 50 }] }));
+                            }} className="text-[10px] text-blue-600 hover:text-blue-800 self-start flex items-center gap-0.5 mt-0.5">
+                              <Plus size={10} /> Thêm bậc
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {selected && (
                 <div className="mt-4">
                   <BranchZones branchId={selected.id} branchClients={stats?.branchClients || []} allClients={clients} managers={managers}
