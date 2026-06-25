@@ -38,6 +38,12 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+const PROVINCES = [
+  'Bình Dương', 'Bình Phước', 'Đồng Nai', 'Hồ Chí Minh', 'Long An',
+  'Bà Rịa - Vũng Tàu', 'Tây Ninh', 'Bình Thuận', 'Lâm Đồng',
+  'Đà Nẵng', 'Hà Nội', 'Hải Phòng', 'Bắc Ninh', 'Hưng Yên',
+];
+
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Hồ sơ chi nhánh', icon: <BadgeCheck size={15} /> },
   { key: 'operations', label: 'Vận hành', icon: <ClipboardList size={15} /> },
@@ -624,7 +630,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </div>
                   <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
                     <Field label="Dia danh">
-                      <input value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input" list="location-options" placeholder="VD: Bien Hoa, Nhon Trach, Cu Chi" />
+                      <select value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input">
+                        <option value="">-- Chon dia danh --</option>
+                        {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+                        {form.location && !PROVINCES.includes(form.location) && <option value={form.location}>{form.location}</option>}
+                      </select>
                     </Field>
                     <Field label="Dia chi van phong">
                       <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="field-input" />
@@ -1158,7 +1168,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
           </Field>
           <Field label="Địa danh">
-            <input value={newBranch.location} onChange={e => setNewBranch(v => ({ ...v, location: e.target.value }))} className="field-input" list="location-options" placeholder="VD: Biên Hòa, Nhơn Trạch, Củ Chi, Quận 9" />
+            <select value={newBranch.location} onChange={e => setNewBranch(v => ({ ...v, location: e.target.value }))} className="field-input">
+              <option value="">-- Chon dia danh --</option>
+              {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
           </Field>
           <Field label="Link Google Maps">
             <input value={newBranch.map_link} onChange={e => setNewBranch(v => ({ ...v, map_link: e.target.value }))} className="field-input" placeholder="https://maps.app.goo.gl/..." />

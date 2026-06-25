@@ -1164,9 +1164,9 @@ export default function Clients({
                               className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
                             >
                               <option value="">—</option>
-                              {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                              {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
                             </select>
-                          ) : (c.region || '—')}
+                          ) : (branches.find(b => b.region === c.region)?.name || c.region || '—')}
                         </td>
                       )}
                       {col('manager') && (

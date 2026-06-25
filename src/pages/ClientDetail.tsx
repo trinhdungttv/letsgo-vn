@@ -49,7 +49,7 @@ interface ClientDetailProps {
 
 export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
-  const { regions } = useRegions();
+  void useRegions;
   const { managers } = useManagers();
   const [activeTab, setActiveTab] = useState<'overview' | 'profile' | 'crm'>('overview');
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
@@ -1183,8 +1183,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>
                       <select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                        {!regions.some(r => r.name === form.region) && form.region && <option key={form.region}>{form.region}</option>}
-                        {regions.map(r => <option key={r.id}>{r.name}</option>)}
+                        <option value="">-- Chon chi nhanh --</option>
+                        {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                        {form.region && !branches.some(b => (b.region || b.name) === form.region) && <option value={form.region}>{form.region}</option>}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
