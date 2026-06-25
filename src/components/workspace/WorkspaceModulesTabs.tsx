@@ -19,9 +19,10 @@ interface Props {
   toast: (msg: string) => void
   onTabChange?: (tab: ModuleKey) => void
   onTaskDone?: (taskId: string) => void
+  hiddenSections?: string[]
 }
 
-export function WorkspaceModulesTabs({ clients, onClientUpdate, toast, onTabChange, onTaskDone }: Props) {
+export function WorkspaceModulesTabs({ clients, onClientUpdate, toast, onTabChange, onTaskDone, hiddenSections }: Props) {
   const [activeTab, setActiveTab] = useState<ModuleKey>('morning')
 
   function handleTabChange(key: ModuleKey) {
@@ -50,7 +51,7 @@ export function WorkspaceModulesTabs({ clients, onClientUpdate, toast, onTabChan
         ))}
       </div>
 
-      {activeTab === 'morning' && <MorningPrioritySection clients={clients} onClientUpdate={onClientUpdate} onTaskDone={onTaskDone} />}
+      {activeTab === 'morning' && <MorningPrioritySection clients={clients} onClientUpdate={onClientUpdate} onTaskDone={onTaskDone} hiddenSections={hiddenSections} />}
       {activeTab === 'winloss' && <WinLossSection clients={clients} />}
       {activeTab === 'kcn' && <KCNGridSection toast={toast} />}
     </div>

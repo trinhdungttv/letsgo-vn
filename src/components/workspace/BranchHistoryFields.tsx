@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, CalendarDays } from 'lucide-react'
+import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, CalendarDays, Pencil, Trash2, Check, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import type { Branch, MorningPriority } from '../../lib/types'
 import { GOAL_TYPE_LABELS } from '../../lib/types'
@@ -22,6 +22,7 @@ const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
 const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 const inputCls = "w-full text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-2 bg-[#FAFAF8] text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors resize-y min-h-[64px]"
+const editInputCls = "w-full text-[11px] border border-[#E5E3DD] rounded-md px-2 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400 transition-colors resize-y min-h-[40px]"
 
 const FIELD_META: Record<string, { icon: typeof Activity; color: string }> = {
   'Tình trạng': { icon: Activity, color: 'text-blue-500' },
@@ -113,6 +114,9 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const [history, setHistory] = useState<MorningPriority[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<{ status_note: string; difficulties: string; opportunities: string }>({ status_note: '', difficulties: '', opportunities: '' })
+  const [editSaving, setEditSaving] = useState(false)
 
   useEffect(() => {
     if (!branch.region) { setHistory([]); return }
@@ -130,26 +134,103 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const today = todayStr()
   const selectedEntries = selectedDate ? history.filter(h => h.priority_date === selectedDate) : []
 
+  function startEdit(h: MorningPriority) {
+    const parsed = h.goal_note ? parseGoalNote(h.goal_note) : null
+    setEditForm({
+      status_note: parsed?.find(f => f.label === 'Tình trạng')?.text || '',
+      difficulties: parsed?.find(f => f.label === 'Khó khăn')?.text || '',
+      opportunities: parsed?.find(f => f.label === 'Cơ hội')?.text || '',
+    })
+    setEditingId(h.id)
+  }
+
+  async function saveEdit(id: string) {
+    setEditSaving(true)
+    const parts: string[] = []
+    if (editForm.status_note.trim()) parts.push(`Tình trạng: ${editForm.status_note.trim()}`)
+    if (editForm.difficulties.trim()) parts.push(`Khó khăn: ${editForm.difficulties.trim()}`)
+    if (editForm.opportunities.trim()) parts.push(`Cơ hội: ${editForm.opportunities.trim()}`)
+    const goal_note = parts.join('\n') || 'Cập nhật thông tin chi nhánh'
+    const { error } = await supabase.from('morning_priorities').update({ goal_note, updated_at: new Date().toISOString() }).eq('id', id)
+    if (!error) {
+      setHistory(prev => prev.map(h => h.id === id ? { ...h, goal_note } : h))
+    }
+    setEditingId(null)
+    setEditSaving(false)
+  }
+
+  async function deleteEntry(id: string) {
+    if (!confirm('Xoá phiên ghi nhận này?')) return
+    const { error } = await supabase.from('morning_priorities').delete().eq('id', id)
+    if (!error) {
+      setHistory(prev => prev.filter(h => h.id !== id))
+    }
+  }
+
   function renderEntry(h: MorningPriority, forceOpen = false) {
     const outcome = h.outcome_status ? OUTCOME_LABELS[h.outcome_status] : null
     const isExpanded = forceOpen || expandedId === h.id
+    const isEditing = editingId === h.id
     return (
-      <div key={h.id} className="border border-[#E8E7E2] bg-[#fafafa] rounded-lg overflow-hidden">
+      <div key={h.id} className="border border-[#E8E7E2] bg-[#fafafa] rounded-lg overflow-hidden group/entry">
         <div
-          onClick={() => !forceOpen && setExpandedId(prev => prev === h.id ? null : h.id)}
-          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 ${forceOpen ? '' : 'cursor-pointer hover:bg-[#f0f0ed] transition-colors'}`}
+          onClick={() => !forceOpen && !isEditing && setExpandedId(prev => prev === h.id ? null : h.id)}
+          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 ${forceOpen || isEditing ? '' : 'cursor-pointer hover:bg-[#f0f0ed] transition-colors'}`}
         >
           <span className="text-[11px] font-medium text-[#111]">Phiên {formatDate(h.priority_date)}</span>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
+            {!isEditing && (
+              <div className="flex items-center gap-0.5 opacity-0 group-hover/entry:opacity-100 transition-opacity">
+                <button
+                  onClick={e => { e.stopPropagation(); startEdit(h) }}
+                  title="Sửa"
+                  className="p-1 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500 transition"
+                ><Pencil size={11} /></button>
+                <button
+                  onClick={e => { e.stopPropagation(); deleteEntry(h.id) }}
+                  title="Xoá"
+                  className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
+                ><Trash2 size={11} /></button>
+              </div>
+            )}
             {outcome && (
               <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${outcome.cls}`}>
                 {outcome.label}
               </span>
             )}
-            {!forceOpen && (isExpanded ? <ChevronUp size={13} className="text-[#bbb]" /> : <ChevronDown size={13} className="text-[#bbb]" />)}
+            {!forceOpen && !isEditing && (isExpanded ? <ChevronUp size={13} className="text-[#bbb]" /> : <ChevronDown size={13} className="text-[#bbb]" />)}
           </div>
         </div>
-        {isExpanded && (
+        {isEditing ? (
+          <div className="px-2.5 pb-2 flex flex-col gap-1.5">
+            <div>
+              <label className="flex items-center gap-1 text-[9px] font-semibold text-[#999] uppercase tracking-wide mb-0.5">
+                <Activity size={10} className="text-blue-500" /> Tình trạng
+              </label>
+              <textarea value={editForm.status_note} onChange={e => setEditForm(f => ({ ...f, status_note: e.target.value }))} className={editInputCls} rows={2} />
+            </div>
+            <div>
+              <label className="flex items-center gap-1 text-[9px] font-semibold text-[#999] uppercase tracking-wide mb-0.5">
+                <AlertTriangle size={10} className="text-amber-500" /> Khó khăn
+              </label>
+              <textarea value={editForm.difficulties} onChange={e => setEditForm(f => ({ ...f, difficulties: e.target.value }))} className={editInputCls} rows={2} />
+            </div>
+            <div>
+              <label className="flex items-center gap-1 text-[9px] font-semibold text-[#999] uppercase tracking-wide mb-0.5">
+                <TrendingUp size={10} className="text-emerald-500" /> Cơ hội
+              </label>
+              <textarea value={editForm.opportunities} onChange={e => setEditForm(f => ({ ...f, opportunities: e.target.value }))} className={editInputCls} rows={2} />
+            </div>
+            <div className="flex justify-end gap-1.5 mt-0.5">
+              <button onClick={() => setEditingId(null)} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-[#f4f4f1] transition">
+                <X size={10} /> Huỷ
+              </button>
+              <button onClick={() => saveEdit(h.id)} disabled={editSaving} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 transition">
+                <Check size={10} /> {editSaving ? '...' : 'Lưu'}
+              </button>
+            </div>
+          </div>
+        ) : isExpanded && (
           <div className="px-2.5 pb-2 flex flex-col gap-1.5">
             {(() => {
               const fields = h.goal_note ? parseGoalNote(h.goal_note) : null

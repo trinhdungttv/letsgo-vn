@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
@@ -58,10 +58,54 @@ function AppInner() {
     reloadPipeline,
   } = useCRMData(!!user);
 
-  const [page, setPage] = useState<Page>(() => {
+  function parseHash(): Page {
+    const h = window.location.hash.replace('#/', '').split('/')[0];
+    return h && PAGES.includes(h as Page) ? (h as Page) : 'dashboard';
+  }
+
+  const [page, setPageRaw] = useState<Page>(() => {
+    const fromHash = window.location.hash.length > 2 ? parseHash() : null;
+    if (fromHash) return fromHash;
     const saved = localStorage.getItem('lgvn_page');
     return saved && PAGES.includes(saved as Page) ? (saved as Page) : 'dashboard';
   });
+
+  const skipHashSync = useRef(false);
+
+  const setPage = useCallback((p: Page, replace = false) => {
+    setPageRaw(p);
+    const newHash = `#/${p}`;
+    if (window.location.hash !== newHash) {
+      skipHashSync.current = true;
+      if (replace) {
+        window.history.replaceState(null, '', newHash);
+      } else {
+        window.history.pushState(null, '', newHash);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const onNav = () => {
+      if (skipHashSync.current) { skipHashSync.current = false; return; }
+      const p = parseHash();
+      setPageRaw(p);
+      if (p === 'finance' || p === 'workspace') loadFinance('2026-06');
+      if (p === 'market') loadMarket();
+    };
+    window.addEventListener('popstate', onNav);
+    window.addEventListener('hashchange', onNav);
+    return () => { window.removeEventListener('popstate', onNav); window.removeEventListener('hashchange', onNav); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadFinance, loadMarket]);
+
+  useEffect(() => {
+    if (!window.location.hash || window.location.hash === '#/') {
+      window.history.replaceState(null, '', `#/${page}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [activeRegion, setActiveRegion] = usePersistedState<string[]>('lgvn_activeRegion', ['Tất cả']);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedClientId'));
   const [selectedDealId, setSelectedDealId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedDealId'));
@@ -86,7 +130,7 @@ function AppInner() {
 
   // Guard against a restored page the current user no longer has access to
   useEffect(() => {
-    if (user && rolePermissions.length && !canAccess(user.role, page, rolePermissions)) setPage('dashboard');
+    if (user && rolePermissions.length && !canAccess(user.role, page, rolePermissions)) setPage('dashboard', true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, rolePermissions]);
   const [toastMsg, setToastMsg] = useState('');
@@ -292,7 +336,7 @@ function AppInner() {
             laborHistory={laborHistory[selectedClient.id] || []}
             managerHistory={managerHistory[selectedClient.id] || []}
             products={products}
-            onBack={() => setPage('clients')}
+            onBack={() => window.history.back()}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
             onManagerHistoryAdd={handleManagerHistoryAdd}
@@ -348,7 +392,7 @@ function AppInner() {
             deal={selectedDeal} leads={leads} products={products}
             activities={activities.filter(a => a.deal_id === selectedDeal.id)}
             onDealUpdate={handleDealUpdate} onActivityCreate={handleActivityCreate}
-            onBack={() => setPage('crm-board')} toast={toast}
+            onBack={() => window.history.back()} toast={toast}
           />
         )}
         {page === 'crm-pipeline' && (

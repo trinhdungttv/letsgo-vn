@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   AlertTriangle, FileText, FilePlus, Send, ClipboardList,
   CalendarClock, TrendingUp, Wallet, CheckCircle2,
-  Settings, GripVertical, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw,
+  Settings, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw,
   History, Search, Pencil, Trash2,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
@@ -61,15 +61,29 @@ function SectionCard({ title, icon, children, action }: { title: string; icon?: 
   );
 }
 
-// --- Workspace layout customization (show/hide + reorder supplementary sections, font size) ---
-type SectionKey = 'alerts' | 'prospects';
+// --- Workspace layout customization (show/hide sections, font size) ---
+type SectionKey = 'quick_actions' | 'hd_can_xu_ly' | 'cong_viec_chua_ht' | 'cap_nhat_cn' | 'viec_dang_treo' | 'cong_viec_sap_toi' | 'alerts' | 'prospects' | 'lich_su';
 
 const SECTION_LABELS: Record<SectionKey, string> = {
+  quick_actions: 'Thao tác nhanh',
+  hd_can_xu_ly: 'HĐ cần xử lý',
+  cong_viec_chua_ht: 'Công việc chưa hoàn thành',
+  cap_nhat_cn: 'Cập nhật thông tin CN',
+  viec_dang_treo: 'Việc đang treo',
+  cong_viec_sap_toi: 'Công việc sắp tới',
   alerts: 'Thông báo theo vai trò',
   prospects: 'Prospects cần follow-up',
+  lich_su: 'Lịch sử hoàn thành',
 };
 
-const DEFAULT_ORDER: SectionKey[] = ['alerts', 'prospects'];
+const SECTION_GROUPS: { label: string; keys: SectionKey[] }[] = [
+  { label: 'Chung', keys: ['quick_actions'] },
+  { label: 'Ưu tiên hôm nay', keys: ['hd_can_xu_ly', 'cong_viec_chua_ht', 'cap_nhat_cn'] },
+  { label: 'Quản lý công việc', keys: ['viec_dang_treo', 'cong_viec_sap_toi'] },
+  { label: 'Bảng phụ & Lịch sử', keys: ['alerts', 'prospects', 'lich_su'] },
+];
+
+const DEFAULT_ORDER: SectionKey[] = ['quick_actions', 'hd_can_xu_ly', 'cong_viec_chua_ht', 'cap_nhat_cn', 'viec_dang_treo', 'cong_viec_sap_toi', 'alerts', 'prospects', 'lich_su'];
 
 interface WorkspaceLayout {
   order: SectionKey[];
@@ -95,7 +109,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
 
   const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout', DEFAULT_LAYOUT);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dragKey, setDragKey] = useState<SectionKey | null>(null);
   const [activeModule, setActiveModule] = useState<'morning' | 'winloss' | 'kcn'>('morning');
 
   // Merge in any new section keys and drop ones that no longer exist
@@ -202,19 +215,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
       ...prev,
       hidden: prev.hidden.includes(key) ? prev.hidden.filter(k => k !== key) : [...prev.hidden, key],
     }));
-  };
-
-  const handleDropSection = (targetKey: SectionKey) => {
-    if (!dragKey || dragKey === targetKey) { setDragKey(null); return; }
-    setLayout(prev => {
-      const newOrder = [...order];
-      const from = newOrder.indexOf(dragKey);
-      const to = newOrder.indexOf(targetKey);
-      newOrder.splice(from, 1);
-      newOrder.splice(to, 0, dragKey);
-      return { ...prev, order: newOrder };
-    });
-    setDragKey(null);
   };
 
   // --- Derived data ---
@@ -509,8 +509,6 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   };
 
   const visibleSections = order.filter(k => sectionAvailable(k, user.role) && !layout.hidden.includes(k));
-  const configurableSections = order.filter(k => sectionAvailable(k, user.role));
-
   // --- Quick actions ---
   const quickActions: { label: string; icon: React.ReactNode; onClick: () => void }[] = [
     { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
@@ -554,61 +552,66 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
               </div>
             </div>
 
-            {/* Show/hide + reorder supplementary sections */}
-            {configurableSections.length > 0 && (
-              <div>
-                <div className="text-[12px] font-semibold text-[#333] mb-2">Hiển thị &amp; sắp xếp các bảng phụ (kéo thả để đổi vị trí)</div>
-                <div className="space-y-1">
-                  {configurableSections.map(key => {
-                    const isHidden = layout.hidden.includes(key);
-                    return (
-                      <div
-                        key={key}
-                        draggable
-                        onDragStart={() => setDragKey(key)}
-                        onDragOver={e => e.preventDefault()}
-                        onDrop={() => handleDropSection(key)}
-                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[#F0EFEA] cursor-move transition ${isHidden ? 'opacity-50' : 'bg-[#FAFAF8]'} hover:bg-[#F4F4F1]`}
-                      >
-                        <GripVertical size={14} className="text-[#bbb] shrink-0" />
-                        <span className="flex-1 text-[12.5px] text-[#333]">{SECTION_LABELS[key]}</span>
-                        <button onClick={() => toggleHidden(key)} className="text-[#999] hover:text-blue-600 transition shrink-0" title={isHidden ? 'Hiện' : 'Ẩn'}>
-                          {isHidden ? <EyeOff size={15} /> : <Eye size={15} />}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Show/hide workspace sections */}
+            <div>
+              <div className="text-[12px] font-semibold text-[#333] mb-2">Hiển thị / ẩn các mục</div>
+              {SECTION_GROUPS.map(group => {
+                const groupKeys = group.keys.filter(k => sectionAvailable(k, user.role));
+                if (!groupKeys.length) return null;
+                return (
+                  <div key={group.label} className="mb-2.5">
+                    <div className="text-[10px] font-medium text-[#999] uppercase tracking-wide mb-1">{group.label}</div>
+                    <div className="space-y-1">
+                      {groupKeys.map(key => {
+                        const isHidden = layout.hidden.includes(key);
+                        return (
+                          <div
+                            key={key}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[#F0EFEA] transition ${isHidden ? 'opacity-50 bg-[#fafafa]' : 'bg-[#FAFAF8]'} hover:bg-[#F4F4F1]`}
+                          >
+                            <span className="flex-1 text-[12px] text-[#333]">{SECTION_LABELS[key]}</span>
+                            <button onClick={() => toggleHidden(key)} className="text-[#999] hover:text-blue-600 transition shrink-0" title={isHidden ? 'Hiện' : 'Ẩn'}>
+                              {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
         {/* 1. QUICK ACTIONS */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
-          {quickActions.map(a => (
-            <button
-              key={a.label}
-              onClick={a.onClick}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[#E8E7E2] bg-white text-[12px] font-medium text-[#333] hover:border-blue-300 hover:bg-blue-50 transition-colors"
-            >
-              {a.icon}{a.label}
-            </button>
-          ))}
-        </div>
+        {!layout.hidden.includes('quick_actions') && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+            {quickActions.map(a => (
+              <button
+                key={a.label}
+                onClick={a.onClick}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[#E8E7E2] bg-white text-[12px] font-medium text-[#333] hover:border-blue-300 hover:bg-blue-50 transition-colors"
+              >
+                {a.icon}{a.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 3. MODULES (Morning Priority, Win/Loss, KCN Grid) */}
         <div className="mt-4">
-          <WorkspaceModulesTabs clients={clients} onClientUpdate={onClientUpdate} toast={toast} onTabChange={setActiveModule} onTaskDone={handleMorningTaskDone} />
+          <WorkspaceModulesTabs clients={clients} onClientUpdate={onClientUpdate} toast={toast} onTabChange={setActiveModule} onTaskDone={handleMorningTaskDone} hiddenSections={layout.hidden} />
         </div>
 
         {/* chỉ hiện khi tab Morning Priority */}
         {activeModule === 'morning' && <>
 
         {/* BOTTOM — 2 cột */}
-        <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-3 mt-4">
+        {(!layout.hidden.includes('viec_dang_treo') || !layout.hidden.includes('cong_viec_sap_toi')) && (
+        <div className={`grid grid-cols-1 ${!layout.hidden.includes('viec_dang_treo') && !layout.hidden.includes('cong_viec_sap_toi') ? 'lg:grid-cols-[2fr_1fr]' : ''} gap-3 mt-4`}>
           {/* Left: Việc đang treo (full) */}
-          <SectionCard
+          {!layout.hidden.includes('viec_dang_treo') && <SectionCard
             title="Việc đang treo"
             icon={<ClipboardList size={14} className="text-[#888]" />}
             action={
@@ -766,17 +769,18 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
                 })}
               </div>
             )}
-          </SectionCard>
+          </SectionCard>}
 
           {/* Right: Công việc sắp tới */}
-          <WorkTasksCard
+          {!layout.hidden.includes('cong_viec_sap_toi') && <WorkTasksCard
             clients={clients}
             tasks={visibleMyTasks}
             onTaskCreated={handleTaskCreated}
             onStatusChange={handleTaskStatus}
             onDelete={handleTaskDelete}
-          />
+          />}
         </div>
+        )}
 
         </>}
 
@@ -790,7 +794,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
         )}
 
         {/* LỊCH SỬ CÔNG VIỆC HOÀN THÀNH — dưới cùng */}
-        <div className="mt-6 bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+        {!layout.hidden.includes('lich_su') && <div className="mt-6 bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] bg-[#F9F9F7]">
             <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#333]">
               <History size={14} className="text-[#888]" />
@@ -889,7 +893,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </div>
       {/* Quick action modals */}
       {showQuoteModal && <QuoteModal toast={toast} onClose={() => setShowQuoteModal(false)} />}

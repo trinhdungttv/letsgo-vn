@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
+  Filter, Check,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
 import { useBranchStaffs } from '../hooks/useBranchStaffs';
@@ -109,8 +110,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [month] = useState(currentMonthStr());
+  const prevMonth = useMemo(() => shiftMonth(month, -1), [month]);
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
+  const [prevProjectsPnl, setPrevProjectsPnl] = useState<ProjectPnl[]>([]);
+  const [prevOverhead, setPrevOverhead] = useState<BranchOverhead[]>([]);
 
   // ── Manager performance report ──────────────────────────────────
   const [perfHistory, setPerfHistory] = useState<(ClientManagerHistory & { clients?: { name: string } | null })[]>([]);
@@ -119,14 +123,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   useEffect(() => {
     (async () => {
-      const [{ data: pj }, { data: oh }] = await Promise.all([
+      const [{ data: pj }, { data: oh }, { data: ppj }, { data: poh }] = await Promise.all([
         supabase.from('projects_pnl').select('*').eq('month', month),
         supabase.from('branch_overhead').select('*').eq('month', month),
+        supabase.from('projects_pnl').select('*').eq('month', prevMonth),
+        supabase.from('branch_overhead').select('*').eq('month', prevMonth),
       ]);
       setProjectsPnl((pj || []) as ProjectPnl[]);
       setOverhead((oh || []) as BranchOverhead[]);
+      setPrevProjectsPnl((ppj || []) as ProjectPnl[]);
+      setPrevOverhead((poh || []) as BranchOverhead[]);
     })();
-  }, [month]);
+  }, [month, prevMonth]);
 
   // Fetch manager-transfer history + P&L for the performance report tab.
   useEffect(() => {
@@ -469,11 +477,44 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     return map;
   }, [branches, clients, projectsPnl, overhead]);
 
+  // ── Previous month stats ─────────────────────────────────────
+  const prevBranchLnRong = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const b of branches) {
+      const projects = b.region ? prevProjectsPnl.filter(p => p.branch_manager === b.region) : [];
+      const lnCn = projects.reduce((s, p) => {
+        if (p.project_type === 'shared') return s + (p.revenue || 0) * (p.cn_pct || 0) / 100;
+        return s;
+      }, 0);
+      const oh = b.region ? prevOverhead.filter(o => o.branch_manager === b.region).reduce((s, o) => s + (o.value || 0), 0) : 0;
+      map[b.id] = lnCn - oh;
+    }
+    return map;
+  }, [branches, prevProjectsPnl, prevOverhead]);
+
+  // ── LN branch filter (multi-select) ────────────────────────
+  const [lnBranchFilter, setLnBranchFilter] = useState<Set<string>>(new Set());
+  const [showLnFilter, setShowLnFilter] = useState(false);
+  const [showAlertPopup, setShowAlertPopup] = useState(false);
+
+  function toggleLnBranch(id: string) {
+    setLnBranchFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   // ── KPI strip ─────────────────────────────────────────────────
   const totalWorkers = clients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
   const totalActiveClients = clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended').length;
-  const totalLnRong = Object.values(branchStats).reduce((s, v) => s + v.lnRong, 0);
+  const lnFilterIds = lnBranchFilter.size > 0 ? lnBranchFilter : new Set(branches.map(b => b.id));
+  const filteredLnRong = Object.entries(branchStats).filter(([id]) => lnFilterIds.has(id)).reduce((s, [, v]) => s + v.lnRong, 0);
+  const filteredPrevLnRong = Object.entries(prevBranchLnRong).filter(([id]) => lnFilterIds.has(id)).reduce((s, [, v]) => s + v, 0);
+  const thisMonthNum = Number(month.split('-')[1]);
+  const prevMonthNum = Number(prevMonth.split('-')[1]);
   const needsAttention = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0).length;
+  const alertBranches = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0);
   const displayBranches = useMemo(() => filterType === 'all' ? branches : branches.filter(b => (b.branch_type || 'contracted') === filterType), [branches, filterType]);
 
   // Avatar of the branch's "Trưởng Chi Nhánh" — falls back to the branch initials circle.
@@ -1101,29 +1142,29 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           <div className="text-[12px] text-[#999] mt-0.5">{branches.length} chi nhánh đang hoạt động</div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-            <button onClick={() => setViewMode('grid')} className={`px-3 py-1.5 text-[12px] font-medium flex items-center gap-1.5 transition ${viewMode === 'grid' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
-              <LayoutGrid size={13} /> Cards
+          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5">
+            <button onClick={() => setViewMode('grid')} className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'grid' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
+              <LayoutGrid size={12} /> Cards
             </button>
-            <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 text-[12px] font-medium flex items-center gap-1.5 border-l border-gray-300 transition ${viewMode === 'list' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
-              <List size={13} /> Danh sách
+            <button onClick={() => setViewMode('list')} className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'list' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
+              <List size={12} /> Danh sách
             </button>
           </div>
-          <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-            {([['all', 'Tat ca'], ['contracted', 'Da Khoan'], ['company', 'Du An CT']] as const).map(([val, label]) => (
+          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5">
+            {([['all', 'Tất cả'], ['contracted', 'Đã khoán'], ['company', 'Dự án CT']] as const).map(([val, label]) => (
               <button key={val} onClick={() => setFilterType(val)}
-                className={`px-2.5 py-1.5 text-[11px] font-medium transition ${filterType === val ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'} ${val !== 'all' ? 'border-l border-gray-300' : ''}`}>
+                className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md transition ${filterType === val ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
                 {label}
               </button>
             ))}
           </div>
           {missingRegions.length > 0 && (
-            <button onClick={handleSyncFromRegions} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">
-              <RefreshCw size={13} /> Đồng bộ từ Khu vực ({missingRegions.length})
+            <button onClick={handleSyncFromRegions} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">
+              <RefreshCw size={12} /> Đồng bộ ({missingRegions.length})
             </button>
           )}
-          <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
-            <Plus size={13} /> Thêm CN
+          <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
+            <Plus size={12} /> Thêm CN
           </button>
         </div>
       </div>
@@ -1187,8 +1228,113 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       <div className="grid grid-cols-4 gap-2.5">
         <Kpi label="Tổng lao động" value={totalWorkers.toLocaleString()} accent="#0F6E56" icon={<Users size={14} />} />
         <Kpi label="Tổng KH active" value={String(totalActiveClients)} sub={`Trên ${branches.length} chi nhánh`} accent="#185FA5" icon={<Building2 size={14} />} />
-        <Kpi label="LN ròng tháng này" value={`${totalLnRong >= 0 ? '+' : ''}${fmtTrieu(totalLnRong)} tr`} sub="Tổng các chi nhánh" accent={totalLnRong >= 0 ? '#0F6E56' : '#A32D2D'} valueColor={totalLnRong >= 0 ? 'text-emerald-600' : 'text-red-600'} icon={<Wallet size={14} />} />
-        <Kpi label="Cần xử lý" value={String(needsAttention)} sub="CN có vấn đề" accent="#BA7517" valueColor="text-amber-600" icon={<AlertTriangle size={14} />} />
+
+        {/* LN Ròng — split prev/this month with branch filter */}
+        <div className="bg-white border border-[#E8E7E2] rounded-xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[2.5px]" style={{ background: filteredLnRong >= 0 ? '#0F6E56' : '#A32D2D' }} />
+          <div className="flex items-center justify-between px-3.5 pt-3 pb-1">
+            <span className="text-[10.5px] uppercase tracking-wide text-[#999] font-medium">LN ròng chi nhánh</span>
+            <button onClick={() => setShowLnFilter(v => !v)} className={`p-1 rounded-md transition ${showLnFilter ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-blue-500 hover:bg-blue-50'}`} title="Lọc chi nhánh">
+              <Filter size={13} />
+            </button>
+          </div>
+          {showLnFilter && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowLnFilter(false)} />
+              <div className="absolute right-2 top-10 z-40 bg-white border border-[#E8E7E2] rounded-lg shadow-xl w-56 max-h-64 overflow-y-auto p-1.5">
+                <div className="flex items-center justify-between px-2 py-1 mb-1">
+                  <span className="text-[10px] font-semibold text-[#999] uppercase tracking-wide">Chọn chi nhánh</span>
+                  {lnBranchFilter.size > 0 && (
+                    <button onClick={() => setLnBranchFilter(new Set())} className="text-[10px] text-blue-600 hover:underline">Bỏ lọc</button>
+                  )}
+                </div>
+                {branches.map(b => {
+                  const isChecked = lnBranchFilter.size === 0 || lnBranchFilter.has(b.id);
+                  return (
+                    <button key={b.id} onClick={() => toggleLnBranch(b.id)}
+                      className={`flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-left transition ${isChecked && lnBranchFilter.size > 0 ? 'bg-blue-50' : 'hover:bg-[#F5F4EF]'}`}>
+                      <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${isChecked && lnBranchFilter.size > 0 ? 'bg-blue-600 border-blue-600' : 'border-[#ccc]'}`}>
+                        {isChecked && lnBranchFilter.size > 0 && <Check size={10} className="text-white" />}
+                      </span>
+                      <span className="text-[11px] text-[#333] truncate">{b.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          <div className="grid grid-cols-2 divide-x divide-[#F0EFEB] px-3.5 pb-2.5">
+            <div className="pr-3">
+              <div className="text-[9px] uppercase text-[#bbb] mb-0.5">Tháng {prevMonthNum}</div>
+              <div className={`text-[18px] font-semibold ${filteredPrevLnRong >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {filteredPrevLnRong >= 0 ? '+' : ''}{fmtTrieu(filteredPrevLnRong)} <span className="text-[12px] font-normal text-[#999]">tr</span>
+              </div>
+            </div>
+            <div className="pl-3">
+              <div className="text-[9px] uppercase text-[#bbb] mb-0.5">Tháng {thisMonthNum}</div>
+              <div className={`text-[18px] font-semibold ${filteredLnRong >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {filteredLnRong >= 0 ? '+' : ''}{fmtTrieu(filteredLnRong)} <span className="text-[12px] font-normal text-[#999]">tr</span>
+              </div>
+            </div>
+          </div>
+          {lnBranchFilter.size > 0 && (
+            <div className="px-3.5 pb-2 -mt-0.5">
+              <span className="text-[10px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Đang lọc {lnBranchFilter.size} CN</span>
+            </div>
+          )}
+        </div>
+
+        {/* Cần xử lý — clickable with issue list popup */}
+        <div className="relative">
+          <div onClick={() => needsAttention > 0 && setShowAlertPopup(v => !v)} className={needsAttention > 0 ? 'cursor-pointer' : ''}>
+            <Kpi label="Cần xử lý" value={String(needsAttention)} sub="CN có vấn đề" accent="#BA7517" valueColor="text-amber-600" icon={<AlertTriangle size={14} />} />
+          </div>
+          {showAlertPopup && alertBranches.length > 0 && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowAlertPopup(false)} />
+              <div className="absolute left-0 right-0 top-full mt-1 z-40 bg-white border border-[#E8E7E2] rounded-xl shadow-xl max-h-80 overflow-y-auto">
+                <div className="px-3.5 py-2 border-b border-[#F0EFEB] text-[10px] font-semibold text-[#999] uppercase tracking-wide">
+                  Chi nhánh cần xử lý
+                </div>
+                {alertBranches.map(b => {
+                  const st = branchStats[b.id];
+                  const expiring = st.branchClients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30 && d >= 0; });
+                  const danger = st.branchClients.filter(c => c.status === 'danger');
+                  return (
+                    <div key={b.id} className="px-3.5 py-2.5 border-b border-[#F0EFEB] last:border-b-0 hover:bg-[#FAFAF8] cursor-pointer" onClick={() => { setSelectedId(b.id); setShowAlertPopup(false); }}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        {renderAvatar(b, 22)}
+                        <span className="text-[12px] font-semibold text-[#111]">{b.name}</span>
+                      </div>
+                      {expiring.length > 0 && (
+                        <div className="mb-1">
+                          <div className="text-[10px] font-medium text-amber-700 mb-0.5">{expiring.length} HĐ sắp hết hạn:</div>
+                          <div className="flex flex-wrap gap-1">
+                            {expiring.map(c => (
+                              <span key={c.id} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                {c.name} — {daysUntil(c.contract_end)} ngày
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {danger.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-medium text-red-700 mb-0.5">{danger.length} KH cần xử lý:</div>
+                          <div className="flex flex-wrap gap-1">
+                            {danger.map(c => (
+                              <span key={c.id} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-800 border border-red-200">{c.name}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {displayBranches.length === 0 ? (

@@ -94,6 +94,7 @@ interface Props {
   clients: Client[]
   onClientUpdate: (client: Client) => void
   onTaskDone?: (taskId: string) => void
+  hiddenSections?: string[]
 }
 
 function todayStr() {
@@ -103,7 +104,7 @@ function todayStr() {
 interface ContractSuggest { client: Client; daysLeft: number; kcn: string }
 interface VisitSuggest { branchName: string; daysSince: number | null }
 
-export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: Props) {
+export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone, hiddenSections }: Props) {
   const { user } = useAuth()
   const { regions } = useRegions()
   const { branches, updateBranch } = useBranchData()
@@ -386,6 +387,10 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
     }),
   ].sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999))
 
+  const visibleMorningCols = (['hd_can_xu_ly', 'cong_viec_chua_ht', 'cap_nhat_cn'] as const).filter(k => !hiddenSections?.includes(k))
+  const morningColCount = visibleMorningCols.filter(k => k !== 'cap_nhat_cn' || visitSuggests.length > 0).length
+  const morningGridCls = morningColCount >= 3 ? 'md:grid-cols-3' : morningColCount === 2 ? 'md:grid-cols-2' : ''
+
   function urgColor(daysLeft: number) {
     if (daysLeft <= 7) return 'bg-red-50 text-red-700 border-red-200'
     return 'bg-amber-50 text-amber-700 border-amber-200'
@@ -528,10 +533,10 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
         </div>
 
         {/* Auto-suggest 3 cột */}
-        {(contractSuggests.length > 0 || visitSuggests.length > 0 || pendingTasks.length > 0) && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-1">
+        {morningColCount > 0 && (contractSuggests.length > 0 || visitSuggests.length > 0 || pendingTasks.length > 0) && (
+          <div className={`grid grid-cols-1 ${morningGridCls} gap-3 mb-1`}>
             {/* Cột trái: HĐ cần xử lý */}
-            <div>
+            {!hiddenSections?.includes('hd_can_xu_ly') && <div>
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide">
                   <FileWarning size={12} />
@@ -619,10 +624,10 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
                   )
                 })}
               </div>
-            </div>
+            </div>}
 
             {/* Cột giữa: Công việc chưa hoàn thành */}
-            <div>
+            {!hiddenSections?.includes('cong_viec_chua_ht') && <div>
               <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
                 <ListTodo size={12} />
                 Công việc chưa hoàn thành
@@ -764,10 +769,10 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone }: 
                   })}
                 </div>
               )}
-            </div>
+            </div>}
 
             {/* Cột phải: Chi nhánh cần hỏi thăm */}
-            {visitSuggests.length > 0 && (
+            {!hiddenSections?.includes('cap_nhat_cn') && visitSuggests.length > 0 && (
               <div>
                 <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
                   <Phone size={12} />
