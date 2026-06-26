@@ -1525,7 +1525,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             })()}
 
             {activeTab === 'finance' && selected && (
-              <BranchFinance branch={selected} branchStaffs={branchStaffs} toast={toast} />
+              <BranchFinance branch={selected} clients={clients} branchStaffs={branchStaffs} toast={toast} />
             )}
 
             {activeTab === 'staff' && (

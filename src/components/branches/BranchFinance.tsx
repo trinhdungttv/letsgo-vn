@@ -3,7 +3,7 @@ import { Plus, Trash2, Copy } from 'lucide-react';
 import { Bar, Line } from 'react-chartjs-2';
 import { supabase } from '../../lib/supabase';
 import { shiftMonth, monthLabel, calcPnl } from '../../lib/format';
-import type { Branch, ProjectPnl, ProjectPnlCost, BranchStaff } from '../../lib/types';
+import type { Branch, Client, ProjectPnl, ProjectPnlCost, BranchStaff } from '../../lib/types';
 
 interface OverheadRow { id: string; branch_id: string; month: string; label: string; value: number; cost_type: string }
 
@@ -14,11 +14,12 @@ const DEFAULT_OVERHEAD_LABELS = [
 
 interface Props {
   branch: Branch;
+  clients?: Client[];
   branchStaffs?: BranchStaff[];
   toast: (msg: string) => void;
 }
 
-export default function BranchFinance({ branch, branchStaffs = [], toast }: Props) {
+export default function BranchFinance({ branch, clients = [], branchStaffs = [], toast }: Props) {
   const now = new Date();
   const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const months = useMemo(() => {
@@ -32,13 +33,32 @@ export default function BranchFinance({ branch, branchStaffs = [], toast }: Prop
   const [pnlData, setPnlData] = useState<{ projects: ProjectPnl[]; costs: Record<string, ProjectPnlCost[]> }>({ projects: [], costs: {} });
 
   const loadOverhead = useCallback(async () => {
-    const { data } = await supabase.from('branch_overhead').select('*').eq('branch_manager', branch.name);
+    const ohMatchValues = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
+    const { data } = await supabase.from('branch_overhead').select('*').in('branch_manager', ohMatchValues);
     setOverhead((data ?? []) as OverheadRow[]);
   }, [branch.name]);
 
+  const branchClientIds = useMemo(() => {
+    if (!branch.region) return [];
+    return clients.filter(c => c.region === branch.region).map(c => c.id);
+  }, [clients, branch.region]);
+
   const loadPnl = useCallback(async () => {
-    const { data: pj } = await supabase.from('projects_pnl').select('*, clients(name)').eq('branch_manager', branch.name);
-    const projects = (pj ?? []) as ProjectPnl[];
+    const matchValues = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
+    const queries: Promise<{ data: any }>[] = [
+      supabase.from('projects_pnl').select('*, clients(name)').in('branch_manager', matchValues),
+    ];
+    if (branchClientIds.length) {
+      queries.push(supabase.from('projects_pnl').select('*, clients(name)').in('client_id', branchClientIds));
+    }
+    const results = await Promise.all(queries);
+    const seen = new Set<string>();
+    const projects: ProjectPnl[] = [];
+    for (const r of results) {
+      for (const p of ((r.data ?? []) as ProjectPnl[])) {
+        if (!seen.has(p.id)) { seen.add(p.id); projects.push(p); }
+      }
+    }
     const allIds = projects.map(p => p.id);
     let allCosts: ProjectPnlCost[] = [];
     if (allIds.length) {
@@ -48,7 +68,7 @@ export default function BranchFinance({ branch, branchStaffs = [], toast }: Prop
     const grouped: Record<string, ProjectPnlCost[]> = {};
     for (const c of allCosts) (grouped[c.pnl_id] ??= []).push(c);
     setPnlData({ projects, costs: grouped });
-  }, [branch.name]);
+  }, [branch.name, branch.region, branch.short_name, branchClientIds]);
 
   useEffect(() => { loadOverhead(); loadPnl(); }, [loadOverhead, loadPnl]);
 
