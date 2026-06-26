@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
@@ -105,9 +105,22 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const selected = branches.find(b => b.id === selectedId) || null;
   const { staffs: branchStaffs, loading: staffLoading, add: addStaff, update: updateStaff, remove: removeStaff } = useBranchStaffs(selected?.id ?? null);
-  const [staffForm, setStaffForm] = useState<{ name: string; role: string; phone: string; email: string }>({ name: '', role: '', phone: '', email: '' });
+  const [staffForm, setStaffForm] = useState<{ name: string; role: string; phone: string; email: string; salary: number }>({ name: '', role: '', phone: '', email: '', salary: 0 });
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [staffFormOpen, setStaffFormOpen] = useState(false);
+  const [salaryHistoryMap, setSalaryHistoryMap] = useState<Record<string, { id: string; amount: number; effective_from: string; notes: string | null }[]>>({});
+  const [salaryHistoryOpen, setSalaryHistoryOpen] = useState<string | null>(null);
+  const [newSalaryForm, setNewSalaryForm] = useState({ amount: 0, effective_from: '', notes: '' });
+
+  useEffect(() => {
+    if (!branchStaffs.length) { setSalaryHistoryMap({}); return; }
+    supabase.from('staff_salary_history').select('*').in('staff_id', branchStaffs.map(s => s.id)).order('effective_from', { ascending: false })
+      .then(({ data }) => {
+        const map: Record<string, typeof data> = {};
+        for (const h of (data ?? []) as any[]) (map[h.staff_id] ??= []).push(h);
+        setSalaryHistoryMap(map);
+      });
+  }, [branchStaffs]);
 
   const [adding, setAdding] = useState(false);
   const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '', branch_type: 'contracted' as 'contracted' | 'company' });
@@ -1512,7 +1525,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             })()}
 
             {activeTab === 'finance' && selected && (
-              <BranchFinance branch={selected} toast={toast} />
+              <BranchFinance branch={selected} branchStaffs={branchStaffs} toast={toast} />
             )}
 
             {activeTab === 'staff' && (
@@ -1523,7 +1536,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <div className="text-[12px] font-semibold text-[#444] uppercase tracking-wide flex-1">Nhan su van phong chi nhanh</div>
                     <span className="text-[11px] text-[#999] mr-2">{branchStaffs.length} nguoi</span>
                     <button
-                      onClick={() => { setStaffForm({ name: '', role: '', phone: '', email: '' }); setEditingStaffId(null); setStaffFormOpen(true); }}
+                      onClick={() => { setStaffForm({ name: '', role: '', phone: '', email: '', salary: 0 }); setEditingStaffId(null); setStaffFormOpen(true); }}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition"
                     >
                       <Plus size={12} /> Them
@@ -1549,6 +1562,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                           <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Email</label>
                           <input value={staffForm.email} onChange={e => setStaffForm(f => ({ ...f, email: e.target.value }))} className="field-input" placeholder="Email" />
                         </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Muc luong (d/thang)</label>
+                          <input type="number" min={0} value={staffForm.salary || ''} onChange={e => setStaffForm(f => ({ ...f, salary: +e.target.value || 0 }))} className="field-input" placeholder="VD: 8000000" />
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -1556,11 +1573,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                           onClick={async () => {
                             try {
                               if (editingStaffId) {
-                                await updateStaff(editingStaffId, { name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null });
+                                await updateStaff(editingStaffId, { name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary });
                                 await logActivity({ user, action: 'update', table: 'branch_staffs', recordId: editingStaffId, description: `Cap nhat nhan su "${staffForm.name}" tai chi nhanh "${selected?.name}"` });
                                 toast('Da cap nhat');
                               } else {
-                                const added = await addStaff({ name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null });
+                                const added = await addStaff({ name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary });
                                 await logActivity({ user, action: 'insert', table: 'branch_staffs', recordId: added.id, description: `Them nhan su "${staffForm.name}" vao chi nhanh "${selected?.name}"` });
                                 toast('Da them nhan su');
                               }
@@ -1589,23 +1606,32 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
                           <th className="text-left font-medium px-4 py-2">Ho ten</th>
                           <th className="text-left font-medium px-3 py-2">Chuc vu</th>
+                          <th className="text-right font-medium px-3 py-2">Luong</th>
                           <th className="text-left font-medium px-3 py-2">SDT</th>
-                          <th className="text-left font-medium px-3 py-2">Email</th>
                           <th className="text-center font-medium px-3 py-2 w-20"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {branchStaffs.map(s => (
-                          <tr key={s.id} className="border-t border-[#F0EEE9] hover:bg-[#FAFAF8]">
+                          <React.Fragment key={s.id}>
+                          <tr className="border-t border-[#F0EEE9] hover:bg-[#FAFAF8]">
                             <td className="px-4 py-2.5 font-medium text-[#111]">{s.name}</td>
                             <td className="px-3 py-2.5 text-[#555]">{s.role || '—'}</td>
+                            <td className="px-3 py-2.5 text-right">
+                              <span className="font-medium text-[#111]">{s.salary ? s.salary.toLocaleString('vi-VN') : '—'}</span>
+                              {s.salary > 0 && (
+                                <button onClick={() => setSalaryHistoryOpen(v => v === s.id ? null : s.id)}
+                                  className="ml-1.5 text-[9px] text-blue-500 hover:text-blue-700">
+                                  {salaryHistoryOpen === s.id ? '▾' : '▸'} LS
+                                </button>
+                              )}
+                            </td>
                             <td className="px-3 py-2.5 text-[#555]">{s.phone || '—'}</td>
-                            <td className="px-3 py-2.5 text-[#555]">{s.email || '—'}</td>
                             <td className="px-3 py-2.5 text-center">
                               <div className="flex items-center justify-center gap-1">
                                 <button
                                   onClick={() => {
-                                    setStaffForm({ name: s.name, role: s.role || '', phone: s.phone || '', email: s.email || '' });
+                                    setStaffForm({ name: s.name, role: s.role || '', phone: s.phone || '', email: s.email || '', salary: s.salary || 0 });
                                     setEditingStaffId(s.id);
                                     setStaffFormOpen(true);
                                   }}
@@ -1631,6 +1657,51 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                               </div>
                             </td>
                           </tr>
+                          {salaryHistoryOpen === s.id && (
+                            <tr className="border-t border-blue-100 bg-blue-50/30">
+                              <td colSpan={5} className="px-4 py-3">
+                                <div className="text-[11px] font-semibold text-[#666] mb-2">Lich su luong — {s.name}</div>
+                                <div className="flex gap-2 mb-2">
+                                  <input type="number" min={0} placeholder="Muc luong moi" value={newSalaryForm.amount || ''} onChange={e => setNewSalaryForm(f => ({ ...f, amount: +e.target.value || 0 }))}
+                                    className="w-28 text-[11px] px-2 py-1 rounded border border-gray-300 outline-none text-right" />
+                                  <input type="month" value={newSalaryForm.effective_from} onChange={e => setNewSalaryForm(f => ({ ...f, effective_from: e.target.value }))}
+                                    className="text-[11px] px-2 py-1 rounded border border-gray-300 outline-none" />
+                                  <input placeholder="Ghi chu" value={newSalaryForm.notes} onChange={e => setNewSalaryForm(f => ({ ...f, notes: e.target.value }))}
+                                    className="flex-1 text-[11px] px-2 py-1 rounded border border-gray-300 outline-none" />
+                                  <button disabled={!newSalaryForm.amount || !newSalaryForm.effective_from} onClick={async () => {
+                                    const { data, error } = await supabase.from('staff_salary_history').insert({
+                                      staff_id: s.id, amount: newSalaryForm.amount, effective_from: newSalaryForm.effective_from, notes: newSalaryForm.notes || null,
+                                    }).select().single();
+                                    if (error) { toast('Loi: ' + error.message); return; }
+                                    await updateStaff(s.id, { salary: newSalaryForm.amount });
+                                    setSalaryHistoryMap(prev => ({ ...prev, [s.id]: [data as any, ...(prev[s.id] || [])] }));
+                                    setNewSalaryForm({ amount: 0, effective_from: '', notes: '' });
+                                    toast('Da cap nhat luong');
+                                  }} className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                                    Tang luong
+                                  </button>
+                                </div>
+                                {(salaryHistoryMap[s.id] || []).length === 0 ? (
+                                  <div className="text-[10px] text-[#999]">Chua co lich su. Them muc luong moi phia tren.</div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {(salaryHistoryMap[s.id] || []).map(h => (
+                                      <div key={h.id} className="flex items-center gap-2 text-[11px] bg-white rounded px-2 py-1">
+                                        <span className="font-medium text-[#111]">T{Number(h.effective_from.split('-')[1])}/{h.effective_from.split('-')[0]}</span>
+                                        <span className="text-emerald-700 font-semibold">{h.amount.toLocaleString('vi-VN')} d</span>
+                                        {h.notes && <span className="text-[#888]">— {h.notes}</span>}
+                                        <button onClick={async () => {
+                                          await supabase.from('staff_salary_history').delete().eq('id', h.id);
+                                          setSalaryHistoryMap(prev => ({ ...prev, [s.id]: (prev[s.id] || []).filter(x => x.id !== h.id) }));
+                                        }} className="ml-auto text-gray-400 hover:text-red-500"><Trash2 size={10} /></button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>

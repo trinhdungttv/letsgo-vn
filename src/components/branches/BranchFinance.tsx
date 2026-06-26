@@ -3,16 +3,22 @@ import { Plus, Trash2, Copy } from 'lucide-react';
 import { Bar, Line } from 'react-chartjs-2';
 import { supabase } from '../../lib/supabase';
 import { shiftMonth, monthLabel, calcPnl } from '../../lib/format';
-import type { Branch, ProjectPnl, ProjectPnlCost } from '../../lib/types';
+import type { Branch, ProjectPnl, ProjectPnlCost, BranchStaff } from '../../lib/types';
 
 interface OverheadRow { id: string; branch_id: string; month: string; label: string; value: number; cost_type: string }
 
+const DEFAULT_OVERHEAD_LABELS = [
+  'CP Thuê mặt bằng', 'CP Điện sinh hoạt', 'CP Internet', 'CP Văn phòng phẩm', 'CP Phát sinh khác',
+  'CP Xăng xe', 'CP Tiếp khách', 'CP Điện thoại',
+];
+
 interface Props {
   branch: Branch;
+  branchStaffs?: BranchStaff[];
   toast: (msg: string) => void;
 }
 
-export default function BranchFinance({ branch, toast }: Props) {
+export default function BranchFinance({ branch, branchStaffs = [], toast }: Props) {
   const now = new Date();
   const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const months = useMemo(() => {
@@ -49,6 +55,8 @@ export default function BranchFinance({ branch, toast }: Props) {
   const monthOverhead = overhead.filter(o => o.month === month);
   const monthProjects = pnlData.projects.filter(p => p.month === month);
   const overheadTotal = monthOverhead.reduce((s, o) => s + (o.value || 0), 0);
+  const staffSalaryTotal = branchStaffs.reduce((s, st) => s + (st.salary || 0), 0);
+  const totalCpCn = overheadTotal + staffSalaryTotal;
 
   const projectRows = monthProjects.map(p => {
     const costs = pnlData.costs[p.id] || [];
@@ -59,7 +67,7 @@ export default function BranchFinance({ branch, toast }: Props) {
   const totalRevenue = projectRows.reduce((s, p) => s + p.revenue, 0);
   const totalCost = projectRows.reduce((s, p) => s + p.tc, 0);
   const totalLnCn = projectRows.reduce((s, p) => s + p.cnP, 0);
-  const lnRong = totalLnCn - overheadTotal;
+  const lnRong = totalLnCn - totalCpCn;
 
   const addOverheadRow = async () => {
     const { data, error } = await supabase.from('branch_overhead')
@@ -109,7 +117,7 @@ export default function BranchFinance({ branch, toast }: Props) {
         const r = calcPnl(p, cs);
         return s + r.cnP;
       }, 0);
-      const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0);
+      const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0) + staffSalaryTotal;
       return { month: m, rev, cost, lnCn, oh, lnRong: lnCn - oh };
     });
   }, [chartMonths, pnlData, overhead]);
@@ -137,7 +145,7 @@ export default function BranchFinance({ branch, toast }: Props) {
         </div>
         <div className="bg-[#F5F4EF] rounded-lg p-3 text-center">
           <div className="text-[10px] uppercase text-[#999] mb-1">CP co dinh CN</div>
-          <div className="text-[18px] font-semibold text-red-600">{fmtVnd(overheadTotal)} d</div>
+          <div className="text-[18px] font-semibold text-red-600">{fmtVnd(totalCpCn)} d</div>
         </div>
         <div className="bg-white border-2 border-[#E8E7E2] rounded-lg p-3 text-center">
           <div className="text-[10px] uppercase text-[#999] mb-1">LN rong CN</div>
@@ -189,8 +197,23 @@ export default function BranchFinance({ branch, toast }: Props) {
             <button onClick={copyFromPrevMonth} className="flex items-center gap-1 text-[11px] text-[#666] hover:text-[#111] border border-gray-300 px-2 py-1 rounded-lg transition">
               <Copy size={11} /> Sao chep thang truoc
             </button>
-            <button onClick={addOverheadRow} className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium">
-              <Plus size={12} /> Them
+            <select onChange={async e => {
+              if (!e.target.value) return;
+              const label = e.target.value;
+              e.target.value = '';
+              if (monthOverhead.some(o => o.label === label)) { toast('Da co muc nay'); return; }
+              const { data, error } = await supabase.from('branch_overhead')
+                .insert({ branch_manager: branch.name, month, label, value: 0, cost_type: 'Cố định' })
+                .select().single();
+              if (error) { toast('Loi: ' + error.message); return; }
+              setOverhead(prev => [...prev, data as OverheadRow]);
+            }} className="text-[11px] px-1.5 py-1 rounded border border-gray-300 outline-none bg-white text-blue-600">
+              <option value="">+ Them</option>
+              {DEFAULT_OVERHEAD_LABELS.filter(l => !monthOverhead.some(o => o.label === l)).map(l => <option key={l} value={l}>{l}</option>)}
+              <option value="__custom__" disabled>——————</option>
+            </select>
+            <button onClick={addOverheadRow} className="text-[11px] text-[#999] hover:text-blue-600" title="Them muc tu do">
+              <Plus size={12} />
             </button>
           </div>
         </div>
@@ -216,6 +239,25 @@ export default function BranchFinance({ branch, toast }: Props) {
               <span>Tong CP co dinh</span>
               <span className="text-red-600">{fmtVnd(overheadTotal)} d</span>
             </div>
+            {staffSalaryTotal > 0 && (
+              <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                <div className="text-[10.5px] text-[#999] uppercase font-medium">Luong nhan su VP</div>
+                {branchStaffs.filter(st => st.salary > 0).map(st => (
+                  <div key={st.id} className="flex justify-between text-[12px]">
+                    <span className="text-[#555]">{st.name} — {st.role || 'NV'}</span>
+                    <span className="text-[#111]">{fmtVnd(st.salary)} d</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-[12px] font-medium pt-1 border-t border-gray-50">
+                  <span>Tong luong NS</span>
+                  <span className="text-red-600">{fmtVnd(staffSalaryTotal)} d</span>
+                </div>
+              </div>
+            )}
+            <div className="flex justify-between pt-2 border-t border-gray-200 text-[12px] font-semibold mt-2">
+              <span>Tong CP van hanh</span>
+              <span className="text-red-600">{fmtVnd(totalCpCn)} d</span>
+            </div>
           </div>
         )}
       </div>
@@ -224,7 +266,8 @@ export default function BranchFinance({ branch, toast }: Props) {
         <div className="text-[12px] font-medium text-[#111] mb-1">Ket qua kinh doanh {monthLabel(month)}</div>
         <div className="text-[11px] text-[#666] bg-[#F5F4EF] rounded-lg px-3 py-2">
           LN du an (phan CN): <strong className="text-[#185FA5]">{fmtVnd(totalLnCn)}</strong>
-          {' - '}CP co dinh: <strong className="text-red-600">{fmtVnd(overheadTotal)}</strong>
+          {' - '}CP van hanh: <strong className="text-red-600">{fmtVnd(totalCpCn)}</strong>
+          {staffSalaryTotal > 0 && <span className="text-[10px] text-[#999]"> (CP {fmtVnd(overheadTotal)} + Luong {fmtVnd(staffSalaryTotal)})</span>}
           {' = '}LN rong: <strong className={lnRong >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtVnd(lnRong)}</strong> d
         </div>
       </div>

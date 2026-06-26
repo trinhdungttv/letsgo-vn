@@ -115,6 +115,15 @@ export interface BranchStaff {
   created_at: string;
 }
 
+export interface StaffSalaryHistory {
+  id: string;
+  staff_id: string;
+  amount: number;
+  effective_from: string;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface AiChatMessage {
   id: string;
   user_id: string;
