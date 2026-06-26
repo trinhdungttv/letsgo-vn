@@ -16,9 +16,13 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
-import { fmtTrieu, daysUntil, monthLabel, shiftMonth } from '../lib/format';
+import { fmtTrieu, daysUntil, monthLabel, shiftMonth, getBranchTypeForMonth } from '../lib/format';
 
 type KhoanTierDef = { min_workers: number; lg_pct: number; cn_pct: number };
+
+function getKhoanMode(h: { notes: string | null }): 'common' | 'per_project' {
+  return h.notes?.includes('[per_project]') ? 'per_project' : 'common';
+}
 
 function resolveActiveTier(tiers: KhoanTierDef[], peakWorkers: number): KhoanTierDef | null {
   if (!tiers.length) return null;
@@ -47,11 +51,7 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-const PROVINCES = [
-  'Bình Dương', 'Bình Phước', 'Đồng Nai', 'Hồ Chí Minh', 'Long An',
-  'Bà Rịa - Vũng Tàu', 'Tây Ninh', 'Bình Thuận', 'Lâm Đồng',
-  'Đà Nẵng', 'Hà Nội', 'Hải Phòng', 'Bắc Ninh', 'Hưng Yên',
-];
+import { useProvinces } from '../hooks/useProvinces';
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Hồ sơ chi nhánh', icon: <BadgeCheck size={15} /> },
@@ -67,6 +67,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const { managers, add: addManager } = useManagers();
   const { categories: overheadCats, add: addOverheadCat, rename: renameOverheadCat, remove: removeOverheadCat } = useOverheadCategories();
   const { regions, add: addRegion, remove: removeRegion } = useRegions();
+  const { provinces: PROVINCES, addProvince } = useProvinces();
   const regionNames = regions.map(r => r.name).filter(n => n !== 'Tất cả');
   const managerNames = managers.map(m => m.name);
 
@@ -118,6 +119,13 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [editPctForm, setEditPctForm] = useState({ lg: 60, cn: 40, khoanType: 'pct' as 'pct' | 'fixed' | 'tiered', fixedFee: 0, tiers: [] as KhoanTierDef[] });
   const [branchKhoanEditing, setBranchKhoanEditing] = useState(false);
   const [branchKhoanForm, setBranchKhoanForm] = useState({ khoanType: 'pct' as 'pct' | 'fixed' | 'tiered', lg: 60, cn: 40, fixedFee: 0, tiers: [] as KhoanTierDef[] });
+
+  const [khoanConfirm, setKhoanConfirm] = useState<{
+    mode: 'common' | 'per_project';
+    lg: number; cn: number;
+    clients: { id: string; name: string; current_lg: number; current_cn: number; new_lg: number; new_cn: number }[];
+    pendingSave: (clientUpdates?: { id: string; lg: number; cn: number }[]) => Promise<void>;
+  } | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
@@ -241,8 +249,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const [showHistory, setShowHistory] = useState(false);
   const [branchTypeHistory, setBranchTypeHistory] = useState<BranchTypeHistory[]>([]);
+  const activeKhoan = useMemo(() => getBranchTypeForMonth(branchTypeHistory, currentMonthStr()), [branchTypeHistory]);
   const [showTypeHistory, setShowTypeHistory] = useState(false);
-  const [newTypeEntry, setNewTypeEntry] = useState({ branch_type: 'company' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, notes: '' });
+  const [newTypeEntry, setNewTypeEntry] = useState({ branch_type: 'contracted' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, khoan_mode: 'common' as 'common' | 'per_project', notes: '' });
+  const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
+  const [editTypeForm, setEditTypeForm] = useState({ branch_type: 'contracted' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, khoan_mode: 'common' as 'common' | 'per_project', notes: '' });
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [recordDate, setRecordDate] = useState(todayStr());
   useEffect(() => { setShowHistory(false); setShowTypeHistory(false); setRecordDate(todayStr()); }, [selectedId]);
@@ -251,6 +262,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     supabase.from('branch_type_history').select('*').eq('branch_id', selectedId).order('effective_from', { ascending: false })
       .then(({ data }) => setBranchTypeHistory((data ?? []) as BranchTypeHistory[]));
   }, [selectedId]);
+
+  const [allBranchLatestHistory, setAllBranchLatestHistory] = useState<Record<string, BranchTypeHistory>>({});
+  useEffect(() => {
+    supabase.from('branch_type_history').select('*').order('effective_from', { ascending: false })
+      .then(({ data }) => {
+        const map: Record<string, BranchTypeHistory> = {};
+        for (const h of (data ?? []) as BranchTypeHistory[]) {
+          if (!map[h.branch_id]) map[h.branch_id] = h;
+        }
+        setAllBranchLatestHistory(map);
+      });
+  }, [branchTypeHistory]);
 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
@@ -726,10 +749,17 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </div>
                   <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
                     <Field label="Dia danh">
-                      <select value={form.location || ''} onChange={e => setF({ location: e.target.value })} className="field-input">
+                      <select value={form.location || ''} onChange={e => {
+                        if (e.target.value === '__new__') {
+                          const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                          if (v && v.trim()) { addProvince(v.trim()); setF({ location: v.trim() }); }
+                          return;
+                        }
+                        setF({ location: e.target.value });
+                      }} className="field-input">
                         <option value="">-- Chon dia danh --</option>
                         {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
-                        {form.location && !PROVINCES.includes(form.location) && <option value={form.location}>{form.location}</option>}
+                        <option value="__new__">+ Thêm tỉnh/thành mới…</option>
                       </select>
                     </Field>
                     <Field label="Dia chi van phong">
@@ -779,7 +809,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <div className="flex items-center gap-2">
                       {branchTypeHistory.length > 0 && (
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${branchTypeHistory[0].branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {branchTypeHistory[0].branch_type === 'company' ? 'Du An CT' : `Da Khoan ${branchTypeHistory[0].lg_pct}/${branchTypeHistory[0].cn_pct}`}
+                          {branchTypeHistory[0].branch_type === 'company' ? 'Du An CT' : `Da Khoan ${branchTypeHistory[0].lg_pct > 0 ? branchTypeHistory[0].lg_pct + '/' + branchTypeHistory[0].cn_pct : ''}`}
                         </span>
                       )}
                       {showTypeHistory ? <ChevronUp size={14} className="text-[#999]" /> : <ChevronDown size={14} className="text-[#999]" />}
@@ -815,18 +845,43 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                                   {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                                 </select>
                               </div>
-                              <div className="flex items-end gap-2">
-                                <div className="flex-1">
-                                  <label className="text-[10px] text-[#999] block mb-0.5">LGV %</label>
-                                  <input type="number" min={0} max={100} value={newTypeEntry.lg_pct}
-                                    onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); setNewTypeEntry(prev => ({ ...prev, lg_pct: v, cn_pct: 100 - v })); }}
-                                    className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-center" />
-                                </div>
-                                <div className="flex-1">
-                                  <label className="text-[10px] text-[#999] block mb-0.5">CN %</label>
-                                  <div className="text-[12px] px-2 py-1.5 bg-gray-100 rounded-lg text-center">{newTypeEntry.cn_pct}</div>
-                                </div>
+                              <div>
+                                <label className="text-[10px] text-[#999] block mb-0.5">Phan chia loi nhuan</label>
+                                <select value={newTypeEntry.khoan_mode} onChange={e => setNewTypeEntry(v => ({ ...v, khoan_mode: e.target.value as 'common' | 'per_project' }))}
+                                  className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                                  <option value="common">Muc chung (ap dung cai dat khoan chi nhanh)</option>
+                                  <option value="per_project">Theo tung du an (cau hinh rieng tung KH)</option>
+                                </select>
                               </div>
+                              {newTypeEntry.khoan_mode === 'common' && selected && (
+                                <div className="col-span-2 text-[11px] bg-[#F9F9F6] rounded-lg px-3 py-2 space-y-1">
+                                  <div className="text-[#888] font-medium">Cai dat khoan hien tai cua chi nhanh:</div>
+                                  {(() => {
+                                    const kt = selected.khoan_type || 'pct';
+                                    if (kt === 'tiered') {
+                                      const tiers = (selected.khoan_tiers || []) as KhoanTierDef[];
+                                      return (
+                                        <div className="flex flex-wrap gap-1">
+                                          <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium text-[10px]">Theo bac LD</span>
+                                          {tiers.map((t, i) => (
+                                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-[#E8E7E2] text-[#555]">
+                                              ≥{t.min_workers} LD → LG {t.lg_pct} / CN {t.cn_pct}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      );
+                                    }
+                                    if (kt === 'fixed') return <span className="text-[#555]">Phi co dinh: {(selected.khoan_fixed_fee || 0).toLocaleString('vi-VN')}d/cong</span>;
+                                    return <span className="text-[#555]">Ty le % — cau hinh tren tung KH tai tab Van hanh</span>;
+                                  })()}
+                                  <div className="text-[10px] text-blue-500">Tat ca du an se ap dung cai dat nay. Chinh sua tai muc "Cai dat khoan" o tab Van hanh.</div>
+                                </div>
+                              )}
+                              {newTypeEntry.khoan_mode === 'per_project' && (
+                                <div className="col-span-2 text-[11px] text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+                                  Ty le khoan se duoc cau hinh rieng tren tung khach hang tai tab Van hanh (bam bieu tuong ⚙ ben canh bang KH).
+                                </div>
+                              )}
                             </>
                           )}
                           <div className="col-span-2">
@@ -836,24 +891,75 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                               className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
                           </div>
                         </div>
-                        <button onClick={async () => {
+                        <button onClick={() => {
                           if (!selected || !newTypeEntry.effective_from) { toast('Chon thang ap dung'); return; }
-                          const { data, error } = await supabase.from('branch_type_history').insert({
-                            branch_id: selected.id,
-                            branch_type: newTypeEntry.branch_type,
-                            effective_from: newTypeEntry.effective_from,
-                            manager_name: newTypeEntry.branch_type === 'contracted' ? newTypeEntry.manager_name || null : null,
-                            lg_pct: newTypeEntry.lg_pct,
-                            cn_pct: newTypeEntry.cn_pct,
-                            notes: newTypeEntry.notes || null,
-                            created_by: user?.full_name || null,
-                          }).select().single();
-                          if (error) { toast('Loi: ' + error.message); return; }
-                          setBranchTypeHistory(prev => [data as BranchTypeHistory, ...prev].sort((a, b) => b.effective_from.localeCompare(a.effective_from)));
-                          const newType = newTypeEntry.branch_type;
-                          if (selected.branch_type !== newType) await updateBranch(selected.id, { branch_type: newType });
-                          setNewTypeEntry({ branch_type: 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, notes: '' });
-                          toast('Da them moc thoi gian');
+                          const branchClients = stats?.branchClients || [];
+                          const contractedClients = branchClients.filter(c => (c.project_type || 'contracted') === 'contracted');
+
+                          const doSave = async (clientUpdates?: { id: string; lg: number; cn: number }[]) => {
+                            const modeTag = newTypeEntry.branch_type === 'contracted' && newTypeEntry.khoan_mode === 'per_project' ? '[per_project]' : '';
+                            const notesWithMode = [modeTag, newTypeEntry.notes || ''].filter(Boolean).join(' ');
+                            const { data, error } = await supabase.from('branch_type_history').insert({
+                              branch_id: selected.id,
+                              branch_type: newTypeEntry.branch_type,
+                              effective_from: newTypeEntry.effective_from,
+                              manager_name: newTypeEntry.branch_type === 'contracted' ? newTypeEntry.manager_name || null : null,
+                              lg_pct: newTypeEntry.khoan_mode === 'per_project' ? 0 : (selected.khoan_type === 'tiered' || selected.khoan_type === 'fixed') ? 0 : newTypeEntry.lg_pct,
+                              cn_pct: newTypeEntry.khoan_mode === 'per_project' ? 0 : (selected.khoan_type === 'tiered' || selected.khoan_type === 'fixed') ? 0 : newTypeEntry.cn_pct,
+                              notes: notesWithMode || null,
+                              created_by: user?.full_name || null,
+                            }).select().single();
+                            if (error) { toast('Loi: ' + error.message); return; }
+                            setBranchTypeHistory(prev => [data as BranchTypeHistory, ...prev].sort((a, b) => b.effective_from.localeCompare(a.effective_from)));
+                            const newType = newTypeEntry.branch_type;
+                            if (selected.branch_type !== newType) await updateBranch(selected.id, { branch_type: newType });
+                            if (clientUpdates && clientUpdates.length > 0) {
+                              for (const cu of clientUpdates) {
+                                await supabase.from('clients').update({ default_lg_pct: cu.lg, default_cn_pct: cu.cn }).eq('id', cu.id);
+                                const cl = branchClients.find(c => c.id === cu.id);
+                                if (cl) Object.assign(cl, { default_lg_pct: cu.lg, default_cn_pct: cu.cn });
+                              }
+                            }
+                            setNewTypeEntry({ branch_type: newTypeEntry.branch_type, effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, khoan_mode: 'common', notes: '' });
+                            toast('Da them moc thoi gian');
+                          };
+
+                          const currentYM = new Date().toISOString().slice(0, 7);
+                          const isPast = newTypeEntry.effective_from < currentYM;
+
+                          if (isPast || newTypeEntry.branch_type === 'company' || contractedClients.length === 0) {
+                            doSave();
+                            if (isPast && newTypeEntry.branch_type === 'contracted') toast('Da ghi nhan lich su khoan (qua khu — khong thay doi ty le KH hien tai)');
+                            return;
+                          }
+
+                          const branchKt = selected.khoan_type || 'pct';
+                          const isCommon = newTypeEntry.khoan_mode === 'common';
+                          const isTieredOrFixed = branchKt === 'tiered' || branchKt === 'fixed';
+
+                          if (isCommon && isTieredOrFixed) {
+                            doSave();
+                            toast(branchKt === 'tiered'
+                              ? 'Ap dung khoan theo bac LD — ty le tu dong theo so lao dong'
+                              : 'Ap dung phi co dinh — khong thay doi ty le tren KH');
+                            return;
+                          }
+
+                          const confirmClients = contractedClients.map(c => ({
+                            id: c.id, name: c.name,
+                            current_lg: c.default_lg_pct ?? 60,
+                            current_cn: c.default_cn_pct ?? 40,
+                            new_lg: isCommon ? newTypeEntry.lg_pct : (c.default_lg_pct ?? 60),
+                            new_cn: isCommon ? newTypeEntry.cn_pct : (c.default_cn_pct ?? 40),
+                          }));
+
+                          setKhoanConfirm({
+                            mode: newTypeEntry.khoan_mode,
+                            lg: newTypeEntry.lg_pct,
+                            cn: newTypeEntry.cn_pct,
+                            clients: confirmClients,
+                            pendingSave: doSave,
+                          });
                         }} disabled={!newTypeEntry.effective_from}
                           className="w-full py-1.5 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-40 transition">
                           Luu
@@ -862,33 +968,161 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
                       {branchTypeHistory.length === 0 ? (
                         <div className="text-[12px] text-[#999] text-center py-3">Chua co lich su. Them moc dau tien phia tren.</div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {branchTypeHistory.map(h => (
-                            <div key={h.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 group">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[12px] font-medium text-[#111]">
-                                    T{Number(h.effective_from.split('-')[1])}/{h.effective_from.split('-')[0]}
-                                  </span>
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${h.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
-                                    {h.branch_type === 'company' ? 'Du An CT' : `Khoan ${h.lg_pct}/${h.cn_pct}`}
-                                  </span>
-                                  {h.manager_name && <span className="text-[11px] text-[#666]">{h.manager_name}</span>}
+                      ) : (() => {
+                        const now = new Date();
+                        const nowYM = now.getFullYear() * 12 + now.getMonth();
+                        const monthsBetween = (a: string, b: string) => {
+                          const [ay, am] = a.split('-').map(Number);
+                          const [by, bm] = b.split('-').map(Number);
+                          return Math.abs((by * 12 + bm) - (ay * 12 + am));
+                        };
+                        const monthsToNow = (d: string) => {
+                          const [y, m] = d.split('-').map(Number);
+                          return nowYM - (y * 12 + (m - 1));
+                        };
+                        return (
+                          <div className="relative ml-3">
+                            <div className="absolute left-[5px] top-0 bottom-0 w-px bg-gray-300" />
+                            {branchTypeHistory.map((h, idx) => {
+                              const isEditing = editingTypeId === h.id;
+                              const isLatest = idx === 0;
+                              const mToNow = monthsToNow(h.effective_from);
+                              const mToNext = idx > 0 ? monthsBetween(branchTypeHistory[idx - 1].effective_from, h.effective_from) : 0;
+                              const displayNotes = (h.notes || '').replace('[per_project]', '').trim();
+                              const dotColor = h.branch_type === 'company' ? 'bg-blue-500' : 'bg-amber-500';
+
+                              return (
+                                <div key={h.id} className="relative pl-6 pb-4 group">
+                                  <div className={`absolute left-[2px] top-1.5 w-[7px] h-[7px] rounded-full border-2 border-white ${dotColor} ring-1 ring-gray-300`} />
+
+                                  {idx > 0 && (
+                                    <div className="absolute left-[-18px] top-[-8px] text-[9px] text-[#bbb] bg-white px-1">{mToNext} th</div>
+                                  )}
+
+                                  {isEditing ? (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <label className="text-[10px] text-[#999] block mb-0.5">Thang</label>
+                                          <input type="month" value={editTypeForm.effective_from} onChange={e => setEditTypeForm(v => ({ ...v, effective_from: e.target.value }))}
+                                            className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                                        </div>
+                                        <div>
+                                          <label className="text-[10px] text-[#999] block mb-0.5">Hinh thuc</label>
+                                          <select value={editTypeForm.branch_type} onChange={e => {
+                                            const t = e.target.value as 'contracted' | 'company';
+                                            setEditTypeForm(v => ({ ...v, branch_type: t, lg_pct: t === 'company' ? 100 : v.lg_pct, cn_pct: t === 'company' ? 0 : v.cn_pct }));
+                                          }} className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                                            <option value="company">Du An Cong Ty</option>
+                                            <option value="contracted">Da Khoan</option>
+                                          </select>
+                                        </div>
+                                        {editTypeForm.branch_type === 'contracted' && (
+                                          <>
+                                            <div>
+                                              <label className="text-[10px] text-[#999] block mb-0.5">Nguoi nhan khoan</label>
+                                              <select value={editTypeForm.manager_name} onChange={e => setEditTypeForm(v => ({ ...v, manager_name: e.target.value }))}
+                                                className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
+                                                <option value="">-- Chon --</option>
+                                                {managers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                                              </select>
+                                            </div>
+                                            <div className="flex items-end gap-2">
+                                              <div className="flex-1">
+                                                <label className="text-[10px] text-[#999] block mb-0.5">LGV %</label>
+                                                <input type="number" min={0} max={100} value={editTypeForm.lg_pct}
+                                                  onChange={e => { const v = Math.max(0, Math.min(100, +e.target.value)); setEditTypeForm(prev => ({ ...prev, lg_pct: v, cn_pct: 100 - v })); }}
+                                                  className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-center" />
+                                              </div>
+                                              <div className="flex-1">
+                                                <label className="text-[10px] text-[#999] block mb-0.5">CN %</label>
+                                                <div className="text-[12px] px-2 py-1.5 bg-gray-100 rounded-lg text-center">{editTypeForm.cn_pct}</div>
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
+                                        <div className="col-span-2">
+                                          <label className="text-[10px] text-[#999] block mb-0.5">Ghi chu</label>
+                                          <input value={editTypeForm.notes} onChange={e => setEditTypeForm(v => ({ ...v, notes: e.target.value }))}
+                                            className="w-full text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                                        </div>
+                                      </div>
+                                      <div className="flex gap-1.5">
+                                        <button onClick={async () => {
+                                          const modeTag = editTypeForm.branch_type === 'contracted' && editTypeForm.khoan_mode === 'per_project' ? '[per_project]' : '';
+                                          const notesWithMode = [modeTag, editTypeForm.notes || ''].filter(Boolean).join(' ');
+                                          const updates = {
+                                            branch_type: editTypeForm.branch_type,
+                                            effective_from: editTypeForm.effective_from,
+                                            manager_name: editTypeForm.branch_type === 'contracted' ? editTypeForm.manager_name || null : null,
+                                            lg_pct: editTypeForm.branch_type === 'company' ? 100 : editTypeForm.lg_pct,
+                                            cn_pct: editTypeForm.branch_type === 'company' ? 0 : editTypeForm.cn_pct,
+                                            notes: notesWithMode || null,
+                                          };
+                                          const { error } = await supabase.from('branch_type_history').update(updates).eq('id', h.id);
+                                          if (error) { toast('Loi: ' + error.message); return; }
+                                          setBranchTypeHistory(prev => prev.map(x => x.id === h.id ? { ...x, ...updates } : x).sort((a, b) => b.effective_from.localeCompare(a.effective_from)));
+                                          setEditingTypeId(null);
+                                          toast('Da cap nhat');
+                                        }} className="text-[10px] px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
+                                          <Check size={10} /> Luu
+                                        </button>
+                                        <button onClick={() => setEditingTypeId(null)} className="text-[10px] px-2.5 py-1 rounded bg-gray-200 text-gray-600 hover:bg-gray-300">Huy</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-start gap-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-[12px] font-semibold text-[#111]">
+                                            T{Number(h.effective_from.split('-')[1])}/{h.effective_from.split('-')[0]}
+                                          </span>
+                                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${h.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                                            {h.branch_type === 'company' ? 'Du An CT' : `Da Khoan${h.lg_pct > 0 ? ` ${h.lg_pct}/${h.cn_pct}` : ''}`}
+                                          </span>
+                                          {h.manager_name && <span className="text-[11px] text-[#666]">{h.manager_name}</span>}
+                                          {isLatest && (
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+                                              Hien tai · {mToNow} thang
+                                            </span>
+                                          )}
+                                          {!isLatest && (
+                                            <span className="text-[9px] text-[#bbb]">{mToNow} thang truoc</span>
+                                          )}
+                                        </div>
+                                        {displayNotes && <div className="text-[10.5px] text-[#888] mt-0.5">{displayNotes}</div>}
+                                      </div>
+                                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                                        <button onClick={() => {
+                                          setEditingTypeId(h.id);
+                                          setEditTypeForm({
+                                            branch_type: h.branch_type,
+                                            effective_from: h.effective_from,
+                                            manager_name: h.manager_name || '',
+                                            lg_pct: h.lg_pct,
+                                            cn_pct: h.cn_pct,
+                                            khoan_mode: getKhoanMode(h),
+                                            notes: (h.notes || '').replace('[per_project]', '').trim(),
+                                          });
+                                        }} className="text-gray-400 hover:text-blue-600 p-0.5">
+                                          <Pencil size={11} />
+                                        </button>
+                                        <button onClick={async () => {
+                                          await supabase.from('branch_type_history').delete().eq('id', h.id);
+                                          setBranchTypeHistory(prev => prev.filter(x => x.id !== h.id));
+                                          toast('Da xoa');
+                                        }} className="text-gray-400 hover:text-red-600 p-0.5">
+                                          <Trash2 size={11} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                                {h.notes && <div className="text-[10.5px] text-[#888] mt-0.5">{h.notes}</div>}
-                              </div>
-                              <button onClick={async () => {
-                                await supabase.from('branch_type_history').delete().eq('id', h.id);
-                                setBranchTypeHistory(prev => prev.filter(x => x.id !== h.id));
-                                toast('Da xoa');
-                              }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition">
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -916,18 +1150,28 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               </div>
             )}
 
-            {activeTab === 'operations' && (
+            {activeTab === 'operations' && (() => {
+              const isCompanyPhase = activeKhoan?.type === 'company';
+              return (
               <>
+              {isCompanyPhase && (
+                <div className="mb-3 flex items-center gap-2 px-3.5 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-[12px] text-blue-700">
+                  <Building2 size={14} />
+                  <span>Giai đoạn <span className="font-semibold">Dự án Công ty</span> — LGV quản lý 100% lợi nhuận{activeKhoan.manager ? ` (trước đây: ${activeKhoan.manager})` : ''}</span>
+                </div>
+              )}
               <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                 <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
                   <Building2 size={15} className="text-[#999]" />
                   <div className="text-[12.5px] font-semibold text-[#111] flex-1">Khách hàng đang phụ trách</div>
                   <span className="text-[11px] text-[#999]">{stats?.branchClients.length || 0} KH · {stats?.workers.toLocaleString() || 0} LĐ tổng</span>
-                  <button onClick={() => { setEditPctMode(v => !v); setEditingPctId(null); }}
-                    className={`p-1 rounded-md transition ${editPctMode ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-[#888] hover:bg-[#F5F4EF]'}`}
-                    title="Chỉnh tỷ lệ khoán">
-                    <Settings2 size={14} />
-                  </button>
+                  {!isCompanyPhase && (
+                    <button onClick={() => { setEditPctMode(v => !v); setEditingPctId(null); }}
+                      className={`p-1 rounded-md transition ${editPctMode ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-[#888] hover:bg-[#F5F4EF]'}`}
+                      title="Chỉnh tỷ lệ khoán">
+                      <Settings2 size={14} />
+                    </button>
+                  )}
                 </div>
                 {!stats?.branchClients.length ? (
                   <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">
@@ -938,7 +1182,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <thead>
                       <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
                         <th className="text-left font-medium px-3.5 py-2">Công ty</th>
-                        <th className="text-center font-medium px-3 py-2">Loai du an</th>
+                        {!isCompanyPhase && <th className="text-center font-medium px-3 py-2">Loai du an</th>}
                         <th className="text-right font-medium px-3 py-2">Lao động</th>
                         <th className="text-right font-medium px-3 py-2">HĐ còn</th>
                         <th className="text-center font-medium px-3 py-2">Trạng thái</th>
@@ -958,7 +1202,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                               </div>
                               <div className="text-[10.5px] text-[#999]">{c.industrial_zones?.[0] || '—'}</div>
                             </td>
-                            <td className="px-3 py-2 text-center">
+                            {!isCompanyPhase && <td className="px-3 py-2 text-center">
                               {editPctMode && editingPctId === c.id ? (
                                 <div className="flex flex-col gap-1.5 items-center min-w-[200px]">
                                   <div className="flex items-center gap-1">
@@ -1097,7 +1341,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                                   })()}
                                 </span>
                               )}
-                            </td>
+                            </td>}
                             <td className="px-3 py-2 text-right font-semibold">{(c.current_workers || 0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">
                               {d === null ? '—' : (
@@ -1264,7 +1508,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 </div>
               )}
               </>
-            )}
+            );
+            })()}
 
             {activeTab === 'finance' && selected && (
               <BranchFinance branch={selected} toast={toast} />
@@ -1440,6 +1685,92 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           onCancel={() => { setDeleteTarget(null); setDeletePassword(''); }}
           onConfirm={confirmDeleteBranch}
         />
+
+        {/* Khoan confirmation modal */}
+        {khoanConfirm && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setKhoanConfirm(null); }}>
+            <div className="bg-white rounded-xl shadow-2xl p-5 w-[480px] max-h-[80vh] overflow-y-auto">
+              <div className="text-[14px] font-semibold text-[#111] mb-1">
+                {khoanConfirm.mode === 'common' ? 'Xác nhận áp dụng mức khoán chung' : 'Xác nhận khoán theo từng dự án'}
+              </div>
+              <div className="text-[11.5px] text-[#888] mb-3">
+                {khoanConfirm.mode === 'common'
+                  ? `Tất cả dự án khoán sẽ được đổi về LGV ${khoanConfirm.lg} / CN ${khoanConfirm.cn}. Xem chi tiết bên dưới:`
+                  : 'Mỗi dự án sẽ có tỷ lệ riêng. Điều chỉnh nếu cần trước khi xác nhận:'}
+              </div>
+
+              <table className="w-full text-[12px] mb-3">
+                <thead>
+                  <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
+                    <th className="text-left font-medium px-2.5 py-1.5">Dự án</th>
+                    <th className="text-center font-medium px-2 py-1.5">Hiện tại</th>
+                    <th className="text-center font-medium px-2 py-1.5">{khoanConfirm.mode === 'common' ? 'Sau khi đổi' : 'LGV %'}</th>
+                    {khoanConfirm.mode === 'per_project' && <th className="text-center font-medium px-2 py-1.5">CN %</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {khoanConfirm.clients.map((cl, idx) => {
+                    const changed = cl.new_lg !== cl.current_lg || cl.new_cn !== cl.current_cn;
+                    return (
+                      <tr key={cl.id} className={`border-t border-[#F0EEE9] ${changed ? 'bg-amber-50' : ''}`}>
+                        <td className="px-2.5 py-2 font-medium text-[#111]">{cl.name}</td>
+                        <td className="px-2 py-2 text-center text-[#999]">LG {cl.current_lg} / CN {cl.current_cn}</td>
+                        {khoanConfirm.mode === 'common' ? (
+                          <td className="px-2 py-2 text-center">
+                            <span className={`font-semibold ${changed ? 'text-amber-700' : 'text-[#666]'}`}>
+                              LG {cl.new_lg} / CN {cl.new_cn}
+                            </span>
+                            {changed && <span className="text-[9px] text-amber-600 ml-1">⚠ đổi</span>}
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-2 py-2 text-center">
+                              <input type="number" min={0} max={100} value={cl.new_lg}
+                                onChange={e => {
+                                  const v = Math.max(0, Math.min(100, +e.target.value));
+                                  setKhoanConfirm(prev => {
+                                    if (!prev) return prev;
+                                    const cls = [...prev.clients];
+                                    cls[idx] = { ...cls[idx], new_lg: v, new_cn: 100 - v };
+                                    return { ...prev, clients: cls };
+                                  });
+                                }}
+                                className="w-14 text-[11px] px-1 py-0.5 rounded border border-[#ddd] text-center outline-none" />
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <span className="text-[11px] font-medium text-[#666]">{cl.new_cn}</span>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {khoanConfirm.mode === 'common' && khoanConfirm.clients.some(c => c.new_lg !== c.current_lg) && (
+                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  ⚠ Các dự án đánh dấu sẽ bị thay đổi tỷ lệ khoán. Hành động này không thể hoàn tác.
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button onClick={async () => {
+                  const clientUpdates = khoanConfirm.clients
+                    .filter(c => c.new_lg !== c.current_lg || c.new_cn !== c.current_cn)
+                    .map(c => ({ id: c.id, lg: c.new_lg, cn: c.new_cn }));
+                  await khoanConfirm.pendingSave(clientUpdates);
+                  setKhoanConfirm(null);
+                }} className="flex-1 py-2 rounded-lg text-[13px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+                  Xác nhận & Lưu
+                </button>
+                <button onClick={() => setKhoanConfirm(null)} className="flex-1 py-2 rounded-lg text-[13px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
+                  Hủy
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1533,9 +1864,17 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
           </Field>
           <Field label="Địa danh">
-            <select value={newBranch.location} onChange={e => setNewBranch(v => ({ ...v, location: e.target.value }))} className="field-input">
+            <select value={newBranch.location} onChange={e => {
+              if (e.target.value === '__new__') {
+                const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                if (v && v.trim()) { addProvince(v.trim()); setNewBranch(nb => ({ ...nb, location: v.trim() })); }
+                return;
+              }
+              setNewBranch(nb => ({ ...nb, location: e.target.value }));
+            }} className="field-input">
               <option value="">-- Chon dia danh --</option>
               {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="__new__">+ Thêm tỉnh/thành mới…</option>
             </select>
           </Field>
           <Field label="Link Google Maps">
@@ -1689,9 +2028,21 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       ) : (
                         <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#E1F5EE] text-[#085041]">Hoạt động tốt</span>
                       )}
-                      <span className={`inline-flex text-[9px] px-1.5 py-0.5 rounded-full font-medium ${(b.branch_type || 'contracted') === 'company' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
-                        {(b.branch_type || 'contracted') === 'company' ? 'Du An CT' : 'Da Khoan'}
-                      </span>
+                      {(() => {
+                        const latest = allBranchLatestHistory[b.id];
+                        if (!latest) return (
+                          <span className="inline-flex text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-gray-50 text-gray-400 border border-gray-200">Chua thiet lap</span>
+                        );
+                        if (latest.branch_type === 'company') return (
+                          <span className="inline-flex text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 border border-blue-200">Du An CT</span>
+                        );
+                        const dateStr = `T${Number(latest.effective_from.split('-')[1])}/${latest.effective_from.split('-')[0]}`;
+                        return (
+                          <span className="inline-flex text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                            Da Khoan · {dateStr}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                   <ChevronRight size={16} className="text-[#ccc] shrink-0 mt-1" />

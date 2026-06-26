@@ -252,7 +252,7 @@ export default function Clients({
   const { staffs: allBranchStaffs } = useAllBranchStaffs();
   const { payrollStaffs } = usePayrollStaffs();
 
-  const regionNames = [ALL_OPTION, ...regions.map(r => r.name)];
+  const regionNames = [ALL_OPTION, ...branches.map(b => b.region || b.name)];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
   const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
 
@@ -1716,7 +1716,7 @@ export default function Clients({
                     <select value={editingManager.region || ''} onChange={e => setEditingManager({ ...editingManager, region: e.target.value })}
                       className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
                       <option value="">—</option>
-                      {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                      {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1725,7 +1725,7 @@ export default function Clients({
                   {[
                     ['Số điện thoại', selectedManager.phone],
                     ['Email', selectedManager.email],
-                    ['Chi nhánh', selectedManager.region],
+                    ['Chi nhánh', branches.find(b => b.region === selectedManager.region)?.name || selectedManager.region],
                   ].map(([label, val]) => (
                     <div key={label}>
                       <label className="text-[12px] text-[#666] font-medium">{label}</label>
@@ -1804,7 +1804,7 @@ export default function Clients({
                 <select value={newManagerForm.region} onChange={e => setNewManagerForm(f => ({ ...f, region: e.target.value }))}
                   className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
                   <option value="">—</option>
-                  {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                  {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
                 </select>
               </div>
             </div>

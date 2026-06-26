@@ -96,6 +96,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     payment_start: null as number | null, payment_end: null as number | null,
     salary_day: null as number | null, salary_day_end: null as number | null,
     extra_salary_days: [] as { start: number; end: number | null }[],
+    extra_calc_days: [] as { start: number; end: number | null }[],
   });
 
   // ── Date picker modal state ───────────────────────────────────────
@@ -175,6 +176,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       payment_start: c.payment_start, payment_end: c.payment_end,
       salary_day: c.salary_day, salary_day_end: c.salary_day_end,
       extra_salary_days: Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [],
+      extra_calc_days: Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [],
     });
   };
 
@@ -476,6 +478,18 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             markers.push({ x: cutoffX, day: cutoffDay, label: 'Chot cong', color: 'bg-orange-400', textCls: 'text-orange-600', shape: 'circle', endX: cutoffEndX ?? undefined, endDay: cutoffEndOk ?? undefined, dashCls: 'border-orange-300' });
                           if (!isRecruitment && calcX != null && calcDay != null)
                             markers.push({ x: calcX, day: calcDay, label: 'Tinh luong', color: 'bg-blue-400', textCls: 'text-blue-600', shape: 'diamond', endX: calcEndX ?? undefined, endDay: calcEndOk ?? undefined, dashCls: 'border-blue-300' });
+                          if (!isRecruitment) {
+                            const extraCalcs: { start: number; end: number | null }[] = Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [];
+                            for (const ex of extraCalcs) {
+                              const exDay = rd(ex.start, true);
+                              const exEnd = rd(ex.end);
+                              const exEndOk = exEnd != null && exDay != null && exEnd > exDay ? exEnd : null;
+                              const exX = exDay != null ? ((Math.min(exDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                              const exEndX = exEndOk != null ? (exEndOk / daysInMonth) * 100 : null;
+                              if (exX != null && exDay != null)
+                                markers.push({ x: exX, day: exDay, label: 'Tinh luong', color: 'bg-blue-300', textCls: 'text-blue-500', shape: 'diamond', endX: exEndX ?? undefined, endDay: exEndOk ?? undefined, dashCls: 'border-blue-200' });
+                            }
+                          }
                           if (invoiceX != null && invoiceDay != null)
                             markers.push({ x: invoiceX, day: invoiceDay, label: 'Xuat HD', color: 'bg-cyan-500', textCls: 'text-cyan-600', shape: 'square', endX: invoiceEndX ?? undefined, endDay: invoiceEndOk ?? undefined, dashCls: 'border-cyan-300', external: true });
                           if (payDueX != null && payDueDay != null)
@@ -862,6 +876,40 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 );
               })}
             </div>
+            {editForm.extra_calc_days.map((ex, idx) => (
+              <div key={`ec-${idx}`} className="flex items-center gap-3 mt-2">
+                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12px] text-[#666]">
+                  <span className="inline-block w-2 h-2 rounded-full bg-blue-300" />
+                  TL {idx + 2}
+                  <button type="button" onClick={() => {
+                    const arr = [...editForm.extra_calc_days];
+                    arr.splice(idx, 1);
+                    setEditForm({ ...editForm, extra_calc_days: arr });
+                  }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
+                </div>
+                <div className="flex-1">
+                  <input type="number" min={1} max={31} value={ex.start}
+                    onChange={e => {
+                      const arr = [...editForm.extra_calc_days];
+                      arr[idx] = { ...arr[idx], start: Math.max(1, Math.min(31, +e.target.value)) };
+                      setEditForm({ ...editForm, extra_calc_days: arr });
+                    }}
+                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex-1">
+                  <input type="number" min={1} max={31} placeholder="—" value={ex.end ?? ''}
+                    onChange={e => {
+                      const arr = [...editForm.extra_calc_days];
+                      const v = e.target.value;
+                      arr[idx] = { ...arr[idx], end: v === '' ? null : Math.max(1, Math.min(31, +v)) };
+                      setEditForm({ ...editForm, extra_calc_days: arr });
+                    }}
+                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={() => setEditForm({ ...editForm, extra_calc_days: [...editForm.extra_calc_days, { start: 15, end: null }] })}
+              className="text-[10.5px] text-blue-500 hover:text-blue-700 mt-1.5 hover:underline">+ Them dot tinh luong</button>
             {editForm.extra_salary_days.map((ex, idx) => (
               <div key={`ex-${idx}`} className="flex items-center gap-3 mt-2">
                 <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12px] text-[#666]">

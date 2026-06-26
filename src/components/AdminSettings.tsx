@@ -66,7 +66,7 @@ export default function AdminSettings({
   onColumnsChange, onClose, toast,
 }: AdminSettingsProps) {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>('regions');
+  const [tab, setTab] = useState<Tab>('managers');
   const [saving, setSaving] = useState(false);
 
   // Regions state
@@ -173,7 +173,6 @@ export default function AdminSettings({
   };
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'regions', label: 'Chi Nhánh' },
     { key: 'managers', label: 'Quản lý' },
     { key: 'payroll', label: 'NS Tính lương' },
     { key: 'columns', label: 'Bộ lọc cột' },
@@ -198,60 +197,7 @@ export default function AdminSettings({
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {/* TAB 1 - REGIONS */}
-          {tab === 'regions' && (
-            <div className="space-y-3">
-              <div className="flex gap-2">
-                <input
-                  value={newRegion}
-                  onChange={e => setNewRegion(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddRegion()}
-                  placeholder="Tên chi nhánh mới..."
-                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button onClick={handleAddRegion} disabled={saving || !newRegion.trim()}
-                  className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5">
-                  <Plus className="w-4 h-4" /> Thêm
-                </button>
-              </div>
-              <div className="space-y-2">
-                {regions.map(r => (
-                  <div key={r.id} className="flex items-center gap-2 p-2.5 bg-gray-50 rounded-lg border border-gray-200">
-                    {editingRegion?.id === r.id ? (
-                      <>
-                        <input
-                          value={editingRegion.name}
-                          onChange={e => setEditingRegion({ ...editingRegion, name: e.target.value })}
-                          onKeyDown={e => e.key === 'Enter' && handleSaveRegion()}
-                          className="flex-1 px-2.5 py-1.5 text-sm border border-blue-400 rounded-md focus:outline-none"
-                          autoFocus
-                        />
-                        <button onClick={handleSaveRegion} disabled={saving} className="p-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => setEditingRegion(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-md hover:bg-gray-300">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <span className="flex-1 text-sm text-gray-800 font-medium">{r.name}</span>
-                        <button onClick={() => setEditingRegion({ id: r.id, name: r.name })} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded-md">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => handleDeleteRegion(r)} disabled={saving} className="p-1.5 text-red-500 hover:bg-red-50 rounded-md">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {regions.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Chưa có chi nhánh nào</p>}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2 - MANAGERS */}
+          {/* TAB 1 - MANAGERS */}
           {tab === 'managers' && (
             <div className="space-y-3">
               <button onClick={() => setShowAddMgr(v => !v)}
@@ -272,7 +218,7 @@ export default function AdminSettings({
                   <select value={newMgr.region || ''} onChange={e => setNewMgr(f => ({ ...f, region: e.target.value }))}
                     className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">— Chọn chi nhánh —</option>
-                    {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                    {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
                   </select>
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setShowAddMgr(false)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>
@@ -298,7 +244,7 @@ export default function AdminSettings({
                         <select value={editingMgr.region || ''} onChange={e => setEditingMgr({ ...editingMgr, region: e.target.value })}
                           className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
                           <option value="">— Chọn chi nhánh —</option>
-                          {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                          {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
                         </select>
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setEditingMgr(null)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>

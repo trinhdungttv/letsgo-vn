@@ -46,6 +46,7 @@ export interface Client {
   salary_day: number | null;
   salary_day_end: number | null;
   extra_salary_days: { start: number; end: number | null }[];
+  extra_calc_days: { start: number; end: number | null }[];
   next_month_pay: boolean;
   contract_start: string | null;
   contract_end: string | null;

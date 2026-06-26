@@ -8,6 +8,7 @@ import { useAuth } from '../../lib/auth';
 import { formatDate } from '../../lib/format';
 import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
+import { useProvinces } from '../../hooks/useProvinces';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -66,7 +67,8 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
-  const provinceOptions = Array.from(new Set(marketZones.map(z => z.location).filter((v): v is string => !!v))).sort();
+  const { provinces: sharedProvinces, addProvince } = useProvinces();
+  const provinceOptions = sharedProvinces;
   const provinceNames = [ALL_OPTION, ...provinceOptions];
   const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
 
@@ -223,14 +225,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               <select value={editForm.location || ''} onChange={e => {
                 if (e.target.value === '__new__') {
                   const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
-                  if (v && v.trim()) setEditForm(f => ({ ...f, location: v.trim() }));
+                  if (v && v.trim()) { addProvince(v.trim()); setEditForm(f => ({ ...f, location: v.trim() })); }
                   return;
                 }
                 setEditForm(f => ({ ...f, location: e.target.value || null }));
               }} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
                 <option value="">—</option>
                 {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
-                {editForm.location && !provinceOptions.includes(editForm.location) && <option value={editForm.location}>{editForm.location}</option>}
                 <option value="__new__">+ Thêm tỉnh/thành mới…</option>
               </select>
             </div>
@@ -401,14 +402,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                 <select value={addForm.location} onChange={e => {
                   if (e.target.value === '__new__') {
                     const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
-                    if (v && v.trim()) setAddForm(f => ({ ...f, location: v.trim() }));
+                    if (v && v.trim()) { addProvince(v.trim()); setAddForm(f => ({ ...f, location: v.trim() })); }
                     return;
                   }
                   setAddForm(f => ({ ...f, location: e.target.value }));
                 }} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white">
                   <option value="">—</option>
                   {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
-                  {addForm.location && !provinceOptions.includes(addForm.location) && <option value={addForm.location}>{addForm.location}</option>}
                   <option value="__new__">+ Thêm tỉnh/thành mới…</option>
                 </select></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Ban quản lý</label>

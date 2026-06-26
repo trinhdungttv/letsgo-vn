@@ -171,11 +171,12 @@ export function fmtTrieu(value: number): string {
   return Math.round(value).toLocaleString('vi-VN');
 }
 
-export function getBranchTypeForMonth(history: BranchTypeHistory[], month: string): { type: BranchType; manager: string | null; lgPct: number; cnPct: number } | null {
+export function getBranchTypeForMonth(history: BranchTypeHistory[], month: string): { type: BranchType; manager: string | null; lgPct: number; cnPct: number; khoanMode: 'common' | 'per_project' } | null {
   const applicable = history.filter(h => h.effective_from <= month);
   if (!applicable.length) return null;
   const latest = applicable.reduce((a, b) => (a.effective_from > b.effective_from ? a : b));
-  return { type: latest.branch_type as BranchType, manager: latest.manager_name, lgPct: latest.lg_pct, cnPct: latest.cn_pct };
+  const khoanMode = latest.notes?.includes('[per_project]') ? 'per_project' as const : 'common' as const;
+  return { type: latest.branch_type as BranchType, manager: latest.manager_name, lgPct: latest.lg_pct, cnPct: latest.cn_pct, khoanMode };
 }
 
 // P&L calculation shared by the Finance Workspace project tabs.

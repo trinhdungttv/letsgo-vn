@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
-import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth } from '../../lib/format';
+import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
-import type { ClientBranchHistory } from '../../lib/types';
+import type { ClientBranchHistory, BranchTypeHistory } from '../../lib/types';
 
 interface PnLProjectTabProps {
   clients: Client[];
@@ -55,6 +55,7 @@ export default function PnLProjectTab({
   type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
   const [allBranchHistory, setAllBranchHistory] = useState<ClientBranchHistory[]>([]);
+  const [branchTypeHistoryMap, setBranchTypeHistoryMap] = useState<Record<string, BranchTypeHistory[]>>({});
 
   const [zoneData, setZoneData] = useState<{ zones: BranchZone[]; costs: Record<string, BranchZoneCost[]>; staffs: BranchStaff[] }>({ zones: [], costs: {}, staffs: [] });
   useEffect(() => {
@@ -90,6 +91,12 @@ export default function PnLProjectTab({
       .then(({ data }) => { if (data) setExtraClients(data as MinClient[]); });
     supabase.from('client_branch_history').select('*').order('effective_from')
       .then(({ data }) => { if (data) setAllBranchHistory(data as ClientBranchHistory[]); });
+    supabase.from('branch_type_history').select('*').order('effective_from', { ascending: false })
+      .then(({ data }) => {
+        const map: Record<string, BranchTypeHistory[]> = {};
+        for (const h of (data ?? []) as BranchTypeHistory[]) (map[h.branch_id] ??= []).push(h);
+        setBranchTypeHistoryMap(map);
+      });
   }, []);
 
   const mergedClients = useMemo(() => {
@@ -188,9 +195,21 @@ export default function PnLProjectTab({
         }
 
         const ec = extraClients.find(c => c.id === clientId);
-        const clientProjectType: ProjectPnlType = ec?.project_type === 'managed' ? 'managed' : 'shared';
-        if (clientProjectType === 'managed') { lgPct = 100; cnPct = 0; }
-        else if (!settings?.pending_lg_pct) {
+        let clientProjectType: ProjectPnlType = ec?.project_type === 'managed' ? 'managed' : 'shared';
+
+        const clientRegion = ec?.region || client?.region;
+        const matchedBranch = clientRegion ? branches.find(b => b.region === clientRegion) : null;
+        const branchKhoan = matchedBranch ? getBranchTypeForMonth(branchTypeHistoryMap[matchedBranch.id] || [], month) : null;
+
+        if (branchKhoan?.type === 'company') {
+          clientProjectType = 'managed';
+          lgPct = 100; cnPct = 0;
+        } else if (branchKhoan?.type === 'contracted' && branchKhoan.khoanMode === 'common' && branchKhoan.lgPct > 0) {
+          lgPct = branchKhoan.lgPct;
+          cnPct = branchKhoan.cnPct;
+        } else if (clientProjectType === 'managed') {
+          lgPct = 100; cnPct = 0;
+        } else if (!settings?.pending_lg_pct) {
           lgPct = ec?.default_lg_pct ?? lgPct;
           cnPct = ec?.default_cn_pct ?? cnPct;
         }
