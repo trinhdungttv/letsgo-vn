@@ -632,7 +632,14 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const prevMonthNum = Number(prevMonth.split('-')[1]);
   const needsAttention = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0).length;
   const alertBranches = branches.filter(b => (branchStats[b.id]?.alerts.length || 0) > 0);
-  const displayBranches = useMemo(() => filterType === 'all' ? branches : branches.filter(b => (b.branch_type || 'contracted') === filterType), [branches, filterType]);
+  const displayBranches = useMemo(() => {
+    if (filterType === 'all') return branches;
+    return branches.filter(b => {
+      const latest = allBranchLatestHistory[b.id];
+      const effectiveType = latest ? latest.branch_type : (b.branch_type || 'contracted');
+      return effectiveType === filterType;
+    });
+  }, [branches, filterType, allBranchLatestHistory]);
 
   // Avatar of the branch's "Trưởng Chi Nhánh" — falls back to the branch initials circle.
   const renderAvatar = (b: { manager_avatar_url?: string | null; name?: string; short_name?: string | null }, size: number) => {
@@ -759,8 +766,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <Field label="Ten rut gon">
                       <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="field-input" />
                     </Field>
-                    <Field label="Quan ly phu trach">
-                      <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Ten quan ly" />
+                    <Field label="Trưởng VP - CN">
+                      <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Chọn hoặc nhập tên" />
                     </Field>
                     <Field label="Khu vuc phu trach (lien ket KH)">
                       <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Ten khu vuc" />
@@ -1961,8 +1968,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               placeholder="Tự điền theo Tên chi nhánh — chỉ sửa nếu cần liên kết khác"
             />
           </Field>
-          <Field label="Quản lý phụ trách">
-            <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Tên quản lý — gõ tên mới nếu chưa có" />
+          <Field label="Trưởng VP - CN">
+            <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Chọn hoặc nhập tên" />
           </Field>
           <Field label="Địa danh">
             <select value={newBranch.location} onChange={e => {

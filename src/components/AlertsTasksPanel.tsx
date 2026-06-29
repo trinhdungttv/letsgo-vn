@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { AlertCircle, RefreshCw, ClipboardList, CheckCircle2, Clock, Circle } from 'lucide-react';
-import type { Client, CooperationSuspensionRequest } from '../lib/types';
-import { daysUntil } from '../lib/format';
+import { AlertCircle, RefreshCw, ClipboardList, Trash2, X, Eye } from 'lucide-react';
+import type { Client, CooperationSuspensionRequest, WorkTask, WorkTaskComment } from '../lib/types';
+import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS, type DocStatus, type TaskStatus as WTaskStatus } from '../lib/types';
+import { daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done';
@@ -18,12 +19,18 @@ interface DashboardTask {
   source_type?: 'contract' | 'pipeline' | 'workspace';
   due_date?: string | null;
   crm_id?: string | null;
+  // enriched from work_tasks
+  _work_task?: WorkTask;
+  _real_id?: string;
 }
 
-const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; icon: React.ReactNode; cls: string; bg: string }> = {
-  pending:     { label: 'Cần làm',    icon: <Circle size={13} />,       cls: 'text-slate-600',   bg: 'bg-slate-100'   },
-  in_progress: { label: 'Đang làm',   icon: <Clock size={13} />,        cls: 'text-blue-600',    bg: 'bg-blue-100'    },
-  done:        { label: 'Hoàn thành', icon: <CheckCircle2 size={13} />, cls: 'text-emerald-600', bg: 'bg-emerald-100' },
+const DOC_STATUS_BTN: Record<string, string> = {
+  chua_soan: 'bg-gray-100 text-gray-600',
+  dang_soan: 'bg-blue-100 text-blue-700',
+  cho_duyet: 'bg-amber-100 text-amber-700',
+  cho_kh_ky: 'bg-violet-100 text-violet-700',
+  hoan_tat:  'bg-green-100 text-green-700',
+  ngung_hd:  'bg-red-100 text-red-700',
 };
 
 interface Props {
@@ -39,10 +46,14 @@ interface Props {
 export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate }: Props) {
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
-  const [reportTarget, setReportTarget] = useState<{ id: string; title: string } | null>(null);
-  const [reportNote, setReportNote] = useState('');
   const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [detailTask, setDetailTask] = useState<DashboardTask | null>(null);
+  const [detailComments, setDetailComments] = useState<WorkTaskComment[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [rawWorkTasks, setRawWorkTasks] = useState<WorkTask[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<DashboardTask | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -53,15 +64,33 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         supabase.from('work_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
       ]);
 
-      // De-dupe contract tasks by client_id (keep most recent, list is ordered by created_at desc)
+      const allWorkTasks = (workTasks || []) as WorkTask[];
+      setRawWorkTasks(allWorkTasks);
+
+      // Build map: client_id → work_task (Tái ký HĐ) for merging with contract alerts
+      const renewalByClient = new Map<string, WorkTask>();
+      for (const wt of allWorkTasks) {
+        if (wt.task_type === 'Tái ký HĐ' && wt.client_id) {
+          renewalByClient.set(wt.client_id, wt);
+        }
+      }
+
+      // De-dupe contract tasks by client_id, enrich with work_task if exists
       const seenClientIds = new Set<string>();
       const ct: DashboardTask[] = [];
       for (const t of (contractTasks || []) as any[]) {
         const key = t.client_id || t.id;
         if (seenClientIds.has(key)) continue;
         seenClientIds.add(key);
-        ct.push({ ...t, source_type: 'contract' as const });
+        const linkedWt = t.client_id ? renewalByClient.get(t.client_id) : undefined;
+        ct.push({
+          ...t,
+          source_type: 'contract' as const,
+          status: linkedWt ? (linkedWt.status as TaskStatus) : t.status,
+          _work_task: linkedWt,
+        });
       }
+
       const pt: DashboardTask[] = (pipelineTasks || []).map((t: any) => ({
         id: `pt_${t.id}`,
         client_id: null,
@@ -75,23 +104,28 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         due_date: t.due_date,
         crm_id: t.crm_id,
         _real_id: t.id,
-      } as any));
-      const wt: DashboardTask[] = (workTasks || []).map((t: any) => {
-        const relatedClient = t.client_id ? clients.find(c => c.id === t.client_id) : null;
-        return {
-          id: `wt_${t.id}`,
-          client_id: t.client_id,
-          client_name: relatedClient?.name || t.title,
-          client_region: relatedClient?.region || null,
-          description: relatedClient ? t.title : (t.task_type || ''),
-          status: t.status as TaskStatus,
-          source_status: null,
-          created_at: t.created_at,
-          source_type: 'workspace' as const,
-          due_date: t.due_date,
-          _real_id: t.id,
-        } as any;
-      });
+      }));
+
+      // Non-renewal work tasks only (renewal ones are merged into contract column)
+      const wt: DashboardTask[] = allWorkTasks
+        .filter(t => t.task_type !== 'Tái ký HĐ')
+        .map((t) => {
+          const relatedClient = t.client_id ? clients.find(c => c.id === t.client_id) : null;
+          return {
+            id: `wt_${t.id}`,
+            client_id: t.client_id,
+            client_name: relatedClient?.name || t.title,
+            client_region: relatedClient?.region || null,
+            description: relatedClient ? t.title : (t.task_type || ''),
+            status: t.status as TaskStatus,
+            source_status: null,
+            created_at: t.created_at,
+            source_type: 'workspace' as const,
+            due_date: t.due_date,
+            _real_id: t.id,
+            _work_task: t,
+          };
+        });
 
       setTasks([...ct, ...pt, ...wt]);
     } finally {
@@ -99,7 +133,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     }
   }, [clients]);
 
-  // Sync alerts → tasks (insert missing ones; guarded against concurrent runs to avoid duplicates)
+  // Sync alerts → tasks
   const syncInFlight = useRef(false);
   const syncAlertTasks = useCallback(async (alertClients: Client[]) => {
     if (!alertClients.length || syncInFlight.current) return;
@@ -116,13 +150,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         if (c.status === 'danger') description = 'Hợp đồng khẩn cấp cần xử lý';
         else if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
         else if (d !== null) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
-        return {
-          client_id: c.id,
-          client_name: c.name,
-          client_region: c.region,
-          description,
-          source_status: c.status,
-        };
+        return { client_id: c.id, client_name: c.name, client_region: c.region, description, source_status: c.status };
       });
       await supabase.from('dashboard_tasks').insert(upserts);
       await loadTasks();
@@ -156,7 +184,6 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
 
   const expiringClients = useMemo(() => clients.filter(c => c.cooperation_status !== 'suspended' && (() => { const d = daysUntil(c.contract_end); return d !== null && d <= 30; })()), [clients]);
 
-  // Clients needing attention: hard alerts (danger/warn) + contracts expiring within 30 days (exclude suspended)
   const alertAndExpiringClients = useMemo(() => {
     const map = new Map<string, Client>();
     for (const c of clients) {
@@ -172,40 +199,38 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alertAndExpiringClients.length]);
 
-  const updateTaskStatus = async (id: string, status: TaskStatus) => {
-    if ((id.startsWith('pt_') || id.startsWith('wt_')) && status === 'done') {
-      const task = tasks.find(t => t.id === id);
-      setReportTarget({ id, title: task?.description || task?.client_name || '' });
-      setReportNote('');
-      return;
+  const confirmDeleteTask = async () => {
+    if (!deleteConfirm) return;
+    setDeleting(true);
+    const task = deleteConfirm;
+    if (task.source_type === 'contract') {
+      await supabase.from('dashboard_tasks').delete().eq('id', task.id);
+      if (task._work_task) {
+        await supabase.from('work_tasks').delete().eq('id', task._work_task.id);
+      }
+    } else if (task.id.startsWith('pt_')) {
+      const realId = task._real_id || task.id.replace('pt_', '');
+      await supabase.from('crm_pipeline_tasks').delete().eq('id', realId);
+    } else if (task.id.startsWith('wt_')) {
+      const realId = task._real_id || task.id.replace('wt_', '');
+      await supabase.from('work_tasks').delete().eq('id', realId);
     }
-    if (id.startsWith('pt_')) {
-      const realId = id.replace('pt_', '');
-      await supabase.from('crm_pipeline_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', realId);
-    } else if (id.startsWith('wt_')) {
-      const realId = id.replace('wt_', '');
-      await supabase.from('work_tasks').update({ status, updated_at: new Date().toISOString(), completed_at: null }).eq('id', realId);
-    } else {
-      await supabase.from('dashboard_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
-    }
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+    setTasks(prev => prev.filter(t => t.id !== task.id));
+    if (detailTask?.id === task.id) setDetailTask(null);
+    setDeleteConfirm(null);
+    setDeleting(false);
   };
 
-  const confirmTaskDone = async () => {
-    if (!reportTarget || !reportNote.trim()) return;
-    const note = reportNote.trim();
-    const id = reportTarget.id;
-    const updatedAt = new Date().toISOString();
-    if (id.startsWith('pt_')) {
-      const realId = id.replace('pt_', '');
-      await supabase.from('crm_pipeline_tasks').update({ status: 'done', result_note: note, updated_at: updatedAt }).eq('id', realId);
-    } else if (id.startsWith('wt_')) {
-      const realId = id.replace('wt_', '');
-      await supabase.from('work_tasks').update({ status: 'done', notes: note, completed_at: updatedAt, updated_at: updatedAt }).eq('id', realId);
+  const openDetail = async (task: DashboardTask) => {
+    setDetailTask(task);
+    setDetailComments([]);
+    const workTaskId = task._work_task?.id || (task.id.startsWith('wt_') ? (task._real_id || task.id.replace('wt_', '')) : null);
+    if (workTaskId) {
+      setDetailLoading(true);
+      const { data } = await supabase.from('work_task_comments').select('*').eq('task_id', workTaskId).order('created_at', { ascending: true });
+      if (data) setDetailComments(data as WorkTaskComment[]);
+      setDetailLoading(false);
     }
-    setTasks(prev => prev.filter(t => t.id !== id));
-    setReportTarget(null);
-    setReportNote('');
   };
 
   const findClientForTask = useCallback((task: DashboardTask): Client | null => {
@@ -224,12 +249,39 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
   const contractTasks = useMemo(() => visibleTasks.filter(t => t.source_type === 'contract'), [visibleTasks]);
   const workTasks = useMemo(() => visibleTasks.filter(t => t.source_type !== 'contract'), [visibleTasks]);
 
+  const renderDocStatusBadge = (docStatus: string | null | undefined) => {
+    if (!docStatus) return null;
+    const step = DOC_STATUS_STEPS.find(s => s.key === docStatus);
+    if (!step) return null;
+    const cls = DOC_STATUS_BTN[docStatus] ?? 'bg-gray-100 text-gray-600';
+    return (
+      <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${cls}`}>
+        {step.label}
+      </span>
+    );
+  };
+
+  const renderTaskStatusBadge = (status: string) => {
+    const label = (TASK_STATUS_LABELS as Record<string, string>)[status] ?? status;
+    const cls = (TASK_STATUS_COLORS as Record<string, string>)[status] ?? 'bg-slate-100 text-slate-600 border-slate-300';
+    return (
+      <span className={`text-[10px] px-2 py-0.5 rounded-md border font-medium ${cls}`}>
+        {label}
+      </span>
+    );
+  };
+
   const renderTask = (task: DashboardTask) => {
-    const cfg = TASK_STATUS_CONFIG[task.status] || TASK_STATUS_CONFIG.pending;
     const relatedClient = findClientForTask(task);
     const daysLeft = task.source_type === 'contract' && relatedClient ? daysUntil(relatedClient.contract_end) : null;
+    const wt = task._work_task;
+
     return (
-      <div key={task.id} className="flex items-center gap-2 px-3 py-2 border-b border-[#F0EEE9]">
+      <div
+        key={task.id}
+        className="flex items-center gap-2 px-3 py-2 border-b border-[#F0EEE9] hover:bg-[#FAFAF8] cursor-pointer group transition-colors"
+        onClick={() => openDetail(task)}
+      >
         {task.source_type === 'pipeline' ? (
           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium shrink-0 bg-orange-100 text-orange-700">
             <ClipboardList size={10} /> BD
@@ -244,15 +296,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           </span>
         ) : null}
         <div className="flex-1 min-w-0">
-          {task.source_type === 'pipeline' && task.crm_id && onOpenPipelineEntry ? (
-            <button onClick={() => onOpenPipelineEntry(task.crm_id!)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
-          ) : relatedClient && onOpenClient ? (
-            <button onClick={() => onOpenClient(relatedClient.id)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
-          ) : relatedClient && onSelectClient ? (
-            <button onClick={() => onSelectClient(relatedClient)} className="font-medium text-[12px] truncate text-blue-700 hover:underline text-left block w-full">{task.client_name}</button>
-          ) : (
-            <div className="font-medium text-[12px] truncate">{task.client_name}</div>
-          )}
+          <div className="font-medium text-[12px] truncate text-[#111]">{task.client_name}</div>
           <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
           {task.due_date && (
             <div className={`text-[10.5px] mt-0.5 ${new Date(task.due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
@@ -263,21 +307,25 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         {task.client_region && (
           <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
         )}
-        {/* Status selector */}
-        <div className="relative shrink-0">
-          <select
-            value={task.status}
-            onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-            className={`appearance-none text-[10.5px] font-medium pl-5 pr-4 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 ${cfg.bg} ${cfg.cls}`}
-          >
-            {(Object.entries(TASK_STATUS_CONFIG) as [TaskStatus, typeof TASK_STATUS_CONFIG[TaskStatus]][]).map(([val, c]) => (
-              <option key={val} value={val}>{c.label}</option>
-            ))}
-          </select>
-          <span className={`absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none ${cfg.cls}`}>
-            {cfg.icon}
-          </span>
+        {/* Status badge (read-only, mirroring Workspace) */}
+        <div className="shrink-0">
+          {task.source_type === 'contract' && wt?.doc_status
+            ? renderDocStatusBadge(wt.doc_status)
+            : task.source_type === 'contract' && !wt
+            ? <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-gray-100 text-gray-600">Chưa xử lý</span>
+            : wt
+            ? renderTaskStatusBadge(wt.status)
+            : renderTaskStatusBadge(task.status)
+          }
         </div>
+        {/* Delete button */}
+        <button
+          onClick={e => { e.stopPropagation(); setDeleteConfirm(task); }}
+          title="Xoá"
+          className="p-1 rounded hover:bg-red-50 text-transparent group-hover:text-[#ccc] hover:!text-red-500 transition shrink-0"
+        >
+          <Trash2 size={12} />
+        </button>
       </div>
     );
   };
@@ -351,34 +399,193 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         </div>
       </div>
 
-      {reportTarget && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => { setReportTarget(null); setReportNote(''); }}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-4 space-y-2.5" onClick={e => e.stopPropagation()}>
-            <div className="text-[12.5px] font-semibold text-[#333]">
-              Hoàn thành: <span className="font-normal">{reportTarget.title}</span>
+      {/* Detail popup */}
+      {detailTask && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => setDetailTask(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <Eye size={16} className="text-blue-500 shrink-0" />
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-semibold text-[#111] truncate">{detailTask.client_name}</h2>
+                  <p className="text-[11px] text-[#888] mt-0.5 truncate">{detailTask.description}</p>
+                </div>
+              </div>
+              <button onClick={() => setDetailTask(null)} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition shrink-0">
+                <X size={16} />
+              </button>
             </div>
-            <textarea
-              value={reportNote}
-              onChange={e => setReportNote(e.target.value)}
-              placeholder="Anh chị vui lòng nhập kết quả công việc tại đây, để team cùng nắm thông tin , thanks."
-              rows={3}
-              autoFocus
-              className="w-full text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 resize-none"
-            />
-            <div className="flex gap-2">
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-3 max-h-[60vh] overflow-y-auto">
+              {/* Info grid */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Trạng thái</div>
+                  {detailTask.source_type === 'contract' && detailTask._work_task?.doc_status
+                    ? renderDocStatusBadge(detailTask._work_task.doc_status)
+                    : detailTask.source_type === 'contract' && !detailTask._work_task
+                    ? <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-gray-100 text-gray-600">Chưa xử lý</span>
+                    : detailTask._work_task
+                    ? renderTaskStatusBadge(detailTask._work_task.status)
+                    : renderTaskStatusBadge(detailTask.status)
+                  }
+                </div>
+                {detailTask.client_region && (
+                  <div>
+                    <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Khu vực</div>
+                    <span className="text-[12px] text-[#333]">{detailTask.client_region}</span>
+                  </div>
+                )}
+                {detailTask.due_date && (
+                  <div>
+                    <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Hạn</div>
+                    <span className={`text-[12px] ${new Date(detailTask.due_date) < new Date() ? 'text-red-500 font-medium' : 'text-[#333]'}`}>
+                      {detailTask.due_date}
+                    </span>
+                  </div>
+                )}
+                {detailTask._work_task?.priority && (
+                  <div>
+                    <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Ưu tiên</div>
+                    <span className="text-[12px] text-[#333]">
+                      {detailTask._work_task.priority === 'high' ? 'Cao' : detailTask._work_task.priority === 'medium' ? 'TB' : 'Thấp'}
+                    </span>
+                  </div>
+                )}
+                {detailTask.source_type === 'contract' && (() => {
+                  const c = findClientForTask(detailTask);
+                  const d = c ? daysUntil(c.contract_end) : null;
+                  if (d === null) return null;
+                  return (
+                    <div>
+                      <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Hạn hợp đồng</div>
+                      <span className={`text-[12px] font-medium ${d <= 0 ? 'text-red-600' : d <= 7 ? 'text-red-500' : 'text-amber-600'}`}>
+                        {d <= 0 ? `Đã hết hạn ${Math.abs(d)} ngày` : `Còn ${d} ngày`}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Doc status progress for Tái ký HĐ */}
+              {detailTask.source_type === 'contract' && detailTask._work_task?.doc_status && (
+                <div>
+                  <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-2">Tiến trình hồ sơ</div>
+                  <div className="flex gap-0.5">
+                    {DOC_STATUS_STEPS.filter(s => !s.danger).map((step, i) => {
+                      const currentIdx = DOC_STATUS_STEPS.filter(s => !s.danger).findIndex(s => s.key === detailTask._work_task?.doc_status);
+                      const isActive = i <= currentIdx;
+                      const isCurrent = step.key === detailTask._work_task?.doc_status;
+                      return (
+                        <div
+                          key={step.key}
+                          className={`flex-1 text-center py-1.5 text-[9.5px] font-medium rounded-md transition ${
+                            isCurrent ? (DOC_STATUS_BTN[step.key] ?? 'bg-gray-100 text-gray-600') + ' ring-1 ring-offset-1 ring-gray-300' :
+                            isActive ? 'bg-gray-100 text-gray-500' :
+                            'bg-gray-50 text-gray-300'
+                          }`}
+                        >
+                          {step.label}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {detailTask._work_task?.notes && (
+                <div>
+                  <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Ghi chú</div>
+                  <div className="text-[12px] text-[#333] bg-[#FAFAFA] border border-[#E8E7E2] rounded-lg px-3 py-2 whitespace-pre-wrap">
+                    {detailTask._work_task.notes}
+                  </div>
+                </div>
+              )}
+
+              {/* Comments */}
+              <div>
+                <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1.5">
+                  Bình luận {detailLoading && <span className="text-[#ccc] normal-case">(đang tải...)</span>}
+                </div>
+                {detailComments.length === 0 && !detailLoading ? (
+                  <div className="text-[11px] text-[#bbb] py-2 text-center border border-dashed border-[#E8E7E2] rounded-lg">Chưa có bình luận</div>
+                ) : (
+                  <div className="border border-[#E8E7E2] rounded-lg divide-y divide-[#F0EEE9] overflow-hidden">
+                    {detailComments.map(cm => (
+                      <div key={cm.id} className="px-3 py-2">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
+                          <span className="text-[10px] text-[#bbb]">
+                            {new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Navigations */}
+              <div className="flex gap-2 pt-1">
+                {detailTask.source_type === 'pipeline' && detailTask.crm_id && onOpenPipelineEntry && (
+                  <button
+                    onClick={() => { onOpenPipelineEntry(detailTask.crm_id!); setDetailTask(null); }}
+                    className="text-[11px] px-3 py-1.5 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+                  >Mở Pipeline</button>
+                )}
+                {detailTask.source_type !== 'pipeline' && (() => {
+                  const c = findClientForTask(detailTask);
+                  if (!c) return null;
+                  return onOpenClient ? (
+                    <button
+                      onClick={() => { onOpenClient(c.id); setDetailTask(null); }}
+                      className="text-[11px] px-3 py-1.5 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+                    >Xem khách hàng</button>
+                  ) : onSelectClient ? (
+                    <button
+                      onClick={() => { onSelectClient(c); setDetailTask(null); }}
+                      className="text-[11px] px-3 py-1.5 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+                    >Xem khách hàng</button>
+                  ) : null;
+                })()}
+                <button
+                  onClick={() => { setDeleteConfirm(detailTask); }}
+                  className="text-[11px] px-3 py-1.5 rounded-md border border-red-200 text-red-600 font-medium hover:bg-red-50 transition ml-auto"
+                >Xoá</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={() => { if (!deleting) setDeleteConfirm(null); }}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h2 className="text-[14px] font-semibold text-[#111]">Xác nhận xoá</h2>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[12.5px] text-[#333] leading-relaxed">
+                Bạn có chắc muốn xoá công việc <strong>"{deleteConfirm.client_name}"</strong>?
+              </p>
+              <p className="text-[11px] text-red-500 mt-2">Hành động này không thể hoàn tác.</p>
+            </div>
+            <div className="px-5 pb-4 flex gap-2">
               <button
-                onClick={() => { setReportTarget(null); setReportNote(''); }}
-                className="flex-1 py-1.5 border border-gray-300 text-gray-500 rounded-lg text-[12px] font-medium hover:bg-gray-50 transition"
-              >
-                Huỷ
-              </button>
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleting}
+                className="flex-1 px-3 py-2 text-[12px] font-medium text-[#555] bg-gray-100 hover:bg-gray-200 rounded-lg transition disabled:opacity-50"
+              >Huỷ</button>
               <button
-                onClick={confirmTaskDone}
-                disabled={!reportNote.trim()}
-                className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-[12px] font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
-              >
-                Xác nhận hoàn thành
-              </button>
+                onClick={confirmDeleteTask}
+                disabled={deleting}
+                className="flex-1 px-3 py-2 text-[12px] font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition disabled:opacity-50"
+              >{deleting ? 'Đang xoá...' : 'Xoá'}</button>
             </div>
           </div>
         </div>
