@@ -135,6 +135,8 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone, hi
   const [submittingSuspend, setSubmittingSuspend] = useState(false)
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentContent, setEditingCommentContent] = useState('')
+  const [contractThreshold, setContractThreshold] = usePersistedState('lgvn_contract_threshold_days', 17)
+  const [showContractSettings, setShowContractSettings] = useState(false)
 
   useEffect(() => { loadPendingTasks(); loadDoneTasks() }, [user])
 
@@ -369,7 +371,7 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone, hi
     .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
     .filter(c => !pendingTasks.some(t => t.client_id === c.id && t.task_type === 'Tái ký HĐ'))
     .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
-    .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= 17)
+    .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= contractThreshold)
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .map(x => ({ ...x, kcn: x.client.industrial_zones?.[0] || '' }))
 
@@ -541,6 +543,32 @@ export function MorningPrioritySection({ clients, onClientUpdate, onTaskDone, hi
                 <div className="flex items-center gap-1 text-[10px] font-medium text-[#888] uppercase tracking-wide">
                   <FileWarning size={12} />
                   HĐ cần xử lý
+                  <span className="text-[9px] text-[#bbb] font-normal normal-case ml-0.5">≤ {contractThreshold} ngày</span>
+                  <div className="relative ml-0.5">
+                    <button
+                      onClick={() => setShowContractSettings(v => !v)}
+                      title="Cài đặt ngưỡng cảnh báo HĐ"
+                      className="text-[#bbb] hover:text-blue-600 transition-colors"
+                    >
+                      <Settings size={11} />
+                    </button>
+                    {showContractSettings && (
+                      <div className="absolute left-0 top-full mt-1 z-10 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2.5 w-48 normal-case">
+                        <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Hiển thị HĐ còn (ngày)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={contractThreshold}
+                          onChange={e => setContractThreshold(Math.max(1, Number(e.target.value) || 1))}
+                          className="text-[11.5px] border border-[#E8E7E2] rounded-md px-2 py-1 bg-white text-[#333] focus:outline-none focus:border-blue-400 w-full"
+                        />
+                        <div className="text-[9px] text-[#aaa] mt-1.5 leading-relaxed">
+                          HĐ hết hạn trong vòng {contractThreshold} ngày sẽ hiện ở đây.
+                        </div>
+                        <button onClick={() => setShowContractSettings(false)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 w-full">Đóng</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={() => { setShowManualAdd(v => !v); setManualSearch('') }}

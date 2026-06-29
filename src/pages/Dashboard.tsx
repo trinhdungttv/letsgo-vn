@@ -435,6 +435,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
               onOpenPipelineEntry={onOpenPipelineEntry}
               isAdmin={isAdmin}
               onClientUpdate={onClientUpdate}
+              clientToBranch={clientToBranch}
             />
           </div>
         </div>

@@ -484,6 +484,30 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missingRegions, regionNames, branches]);
 
+  // Đồng bộ region cũ trên clients → region mới theo tên chi nhánh
+  const [syncingRegions, setSyncingRegions] = useState(false);
+  const handleSyncClientRegions = async () => {
+    if (!branches.length || !clients.length) return;
+    setSyncingRegions(true);
+    let updated = 0;
+    for (const c of clients) {
+      if (!c.region) continue;
+      // Tìm branch match theo region cũ (name / region / short_name)
+      const br = branches.find(b => [b.name, b.region, b.short_name].filter(Boolean).includes(c.region!));
+      if (!br || !br.region) continue;
+      if (c.region === br.region) continue; // đã đúng rồi
+      await supabase.from('clients').update({ region: br.region }).eq('id', c.id);
+      updated++;
+    }
+    // Cũng xoá dashboard_tasks cũ vì client_region đã lỗi thời
+    if (updated > 0) {
+      await supabase.from('dashboard_tasks').delete().neq('id', '');
+    }
+    setSyncingRegions(false);
+    toast(updated > 0 ? `Đã cập nhật ${updated} khách hàng` : 'Tất cả region đã đúng');
+    if (updated > 0) window.location.reload();
+  };
+
   const handleDeleteBranch = (b: Branch) => {
     setDeleteTarget(b);
     setDeletePassword('');
@@ -678,7 +702,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
         <div className="grid grid-cols-[240px_1fr] gap-3 items-start">
           {/* Sidebar */}
-          <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden self-start">
+          <div className="flex flex-col gap-2.5 self-start">
+          <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
             <div className="px-4 py-4 border-b border-[#E8E7E2] text-center">
               <div className="flex justify-center mb-2">
                 <input
@@ -734,135 +759,213 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             </div>
           </div>
 
+          {/* Khoan timeline - sidebar */}
+          <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#444] uppercase tracking-wide">
+                <ClipboardList size={12} className="text-[#1D4ED8]" />
+                Hình thức khoán
+              </span>
+              <button onClick={() => { setActiveTab('profile'); setShowTypeHistory(true); setEditingTypeId(null); }} className="text-[9px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition font-medium">
+                + Thêm
+              </button>
+            </div>
+            <div className="px-3 py-2">
+              {branchTypeHistory.length === 0 ? (
+                <div className="text-[10px] text-[#bbb] text-center py-2">Chưa thiết lập</div>
+              ) : (
+                <div className="relative ml-2">
+                  <div className="absolute left-[3px] top-1 bottom-1 w-px bg-gray-200" />
+                  {branchTypeHistory.map((h, idx) => {
+                    const isLatest = idx === 0;
+                    const dotColor = h.branch_type === 'company' ? 'bg-blue-500' : 'bg-amber-500';
+                    const displayNotes = (h.notes || '').replace('[per_project]', '').trim();
+                    return (
+                      <div
+                        key={h.id}
+                        className="relative pl-4 pb-2.5 last:pb-0 group cursor-pointer"
+                        onClick={() => { setActiveTab('profile'); setEditingTypeId(h.id); setEditTypeForm({ branch_type: h.branch_type, effective_from: h.effective_from, manager_name: h.manager_name || '', lg_pct: h.lg_pct, cn_pct: h.cn_pct, khoan_mode: getKhoanMode(h), notes: (h.notes || '').replace('[per_project]', '').trim() }); setShowTypeHistory(true); }}
+                      >
+                        <div className={`absolute left-0 top-[5px] w-[7px] h-[7px] rounded-full ${dotColor} ring-2 ring-white`} />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] font-semibold text-[#111]">
+                            T{Number(h.effective_from.split('-')[1])}/{h.effective_from.split('-')[0]}
+                          </span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${h.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {h.branch_type === 'company' ? 'Dự án CT' : `Khoán${h.lg_pct > 0 ? ` ${h.lg_pct}/${h.cn_pct}` : ''}`}
+                          </span>
+                          {isLatest && <span className="text-[8px] px-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">Hiện tại</span>}
+                        </div>
+                        {h.manager_name && <div className="text-[10px] text-[#666] mt-0.5">{h.manager_name}</div>}
+                        {displayNotes && <div className="text-[9px] text-[#aaa] mt-0.5 truncate">{displayNotes}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          </div>
+
           {/* Main content */}
           <div className="space-y-3">
             {activeTab === 'profile' && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {/* Action bar */}
                 <div className="flex items-center justify-between">
-                  <div className="text-[13px] font-semibold text-[#111]">Ho so chi nhanh</div>
+                  <div className="text-[13px] font-semibold text-[#111]">Hồ sơ chi nhánh</div>
                   <div className="flex items-center gap-2">
                     <button onClick={saveProfile} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
-                      <Save size={13} /> Luu thay doi
+                      <Save size={13} /> Lưu thay đổi
                     </button>
                     <button onClick={() => handleDeleteBranch(selected)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium text-red-600 border border-red-200 hover:bg-red-50 transition">
-                      <Trash2 size={13} /> Xoa
+                      <Trash2 size={13} /> Xoá
                     </button>
                   </div>
                 </div>
 
-                {/* Section 1: Thong tin co ban */}
-                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
-                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
-                      <Building2 size={14} className="text-[#0F6E56]" />
-                      Thong tin co ban
-                    </div>
+                {/* KPI Summary Strip */}
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2.5 text-center">
+                    <div className="text-[18px] font-bold text-[#111]">{stats?.branchClients.length || 0}</div>
+                    <div className="text-[9.5px] uppercase text-[#999] mt-0.5">Khách hàng</div>
                   </div>
-                  <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
-                    <Field label="Ten chi nhanh">
-                      <input value={form.name || ''} onChange={e => setF({ name: e.target.value })} className="field-input" />
-                    </Field>
-                    <Field label="Ten rut gon">
-                      <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="field-input" />
-                    </Field>
-                    <Field label="Trưởng VP - CN">
-                      <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="field-input" list="manager-options" placeholder="Chọn hoặc nhập tên" />
-                    </Field>
-                    <Field label="Khu vuc phu trach (lien ket KH)">
-                      <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="field-input" list="region-options" placeholder="Ten khu vuc" />
-                    </Field>
-                    <Field label="Trang thai">
-                      <select value={form.status || 'active'} onChange={e => setF({ status: e.target.value as BranchStatus })} className="field-input">
-                        <option value="active">Hoat dong</option>
-                        <option value="paused">Tam dung</option>
-                      </select>
-                    </Field>
-                    <Field label="Ngay thanh lap">
-                      <input type="date" value={form.established_date || ''} onChange={e => setF({ established_date: e.target.value })} className="field-input" />
-                    </Field>
+                  <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2.5 text-center">
+                    <div className="text-[18px] font-bold text-[#111]">{(stats?.workers || 0).toLocaleString()}</div>
+                    <div className="text-[9.5px] uppercase text-[#999] mt-0.5">Lao động</div>
+                  </div>
+                  <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2.5 text-center">
+                    <div className={`text-[18px] font-bold ${(stats?.lnRong || 0) < 0 ? 'text-red-600' : 'text-[#111]'}`}>
+                      {fmtTrieu(stats?.lnRong || 0)} <span className="text-[11px] font-normal text-[#999]">tr</span>
+                    </div>
+                    <div className="text-[9.5px] uppercase text-[#999] mt-0.5">LN ròng</div>
+                  </div>
+                  <div className="bg-white border border-[#E8E7E2] rounded-lg px-3 py-2.5 text-center">
+                    {stats?.alerts.length ? (
+                      <>
+                        <div className="text-[18px] font-bold text-amber-600">{stats.alerts.length}</div>
+                        <div className="text-[9.5px] uppercase text-amber-600 mt-0.5">Cảnh báo</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-[18px] font-bold text-emerald-600">0</div>
+                        <div className="text-[9.5px] uppercase text-emerald-600 mt-0.5">Tốt</div>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* Section 2: Dia chi & lien he (an cho LGV Cong ty vi da co trong Van hanh) */}
-                {selected.short_name !== 'LGV' && (
+                {/* Thông tin & Liên hệ — ultra compact */}
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
-                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
-                      <MapPin size={14} className="text-[#2563EB]" />
-                      Dia chi & lien he
-                    </div>
+                  <div className="px-3 py-1.5 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center gap-2">
+                    <Building2 size={12} className="text-[#0F6E56]" />
+                    <span className="text-[10px] font-semibold text-[#444] uppercase tracking-wide">Thông tin & Liên hệ</span>
                   </div>
-                  <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-4">
-                    <Field label="Dia danh">
-                      <select value={form.location || ''} onChange={e => {
-                        if (e.target.value === '__new__') {
-                          const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
-                          if (v && v.trim()) { addProvince(v.trim()); setF({ location: v.trim() }); }
-                          return;
-                        }
-                        setF({ location: e.target.value });
-                      }} className="field-input">
-                        <option value="">-- Chon dia danh --</option>
-                        {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
-                        <option value="__new__">+ Thêm tỉnh/thành mới…</option>
-                      </select>
-                    </Field>
-                    <Field label="Dia chi van phong">
-                      <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="field-input" />
-                    </Field>
-                    <Field label="So dien thoai">
-                      <input value={form.phone || ''} onChange={e => setF({ phone: e.target.value })} className="field-input" />
-                    </Field>
-                    <Field label="Email">
-                      <input value={form.email || ''} onChange={e => setF({ email: e.target.value })} className="field-input" />
-                    </Field>
-                    <Field label="Link Google Maps" full>
-                      <div className="flex gap-2">
-                        <input value={form.map_link || ''} onChange={e => setF({ map_link: e.target.value })} className="field-input flex-1" placeholder="https://maps.app.goo.gl/..." />
-                        {form.map_link && (
-                          <a href={form.map_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0">
-                            <MapPin size={13} /> Xem ban do
-                          </a>
-                        )}
+                  <div className="px-3 py-2 flex flex-col gap-1.5">
+                    {/* Row 1: Core info */}
+                    <div className="grid grid-cols-4 gap-2 items-end">
+                      <InlineField label="Tên CN">
+                        <input value={form.name || ''} onChange={e => setF({ name: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                      </InlineField>
+                      <InlineField label="Rút gọn">
+                        <input value={form.short_name || ''} onChange={e => setF({ short_name: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                      </InlineField>
+                      <InlineField label="Trưởng VP - CN">
+                        <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" list="manager-options" placeholder="Chọn tên" />
+                      </InlineField>
+                      <InlineField label="Khu vực (liên kết KH)">
+                        <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" list="region-options" />
+                      </InlineField>
+                    </div>
+                    {/* Row 2: Status + address */}
+                    <div className={`grid ${selected.short_name !== 'LGV' ? 'grid-cols-6' : 'grid-cols-3'} gap-2 items-end`}>
+                      <InlineField label="Trạng thái">
+                        <select value={form.status || 'active'} onChange={e => setF({ status: e.target.value as BranchStatus })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors">
+                          <option value="active">Hoạt động</option>
+                          <option value="paused">Tạm dừng</option>
+                        </select>
+                      </InlineField>
+                      <InlineField label="Thành lập">
+                        <input type="date" value={form.established_date || ''} onChange={e => setF({ established_date: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                      </InlineField>
+                      {selected.short_name !== 'LGV' && (
+                        <>
+                          <InlineField label="Địa danh">
+                            <select value={form.location || ''} onChange={e => {
+                              if (e.target.value === '__new__') {
+                                const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                                if (v && v.trim()) { addProvince(v.trim()); setF({ location: v.trim() }); }
+                                return;
+                              }
+                              setF({ location: e.target.value });
+                            }} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors">
+                              <option value="">--</option>
+                              {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+                              <option value="__new__">+ Thêm…</option>
+                            </select>
+                          </InlineField>
+                          <InlineField label="SĐT">
+                            <input value={form.phone || ''} onChange={e => setF({ phone: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                          </InlineField>
+                          <InlineField label="Email">
+                            <input value={form.email || ''} onChange={e => setF({ email: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                          </InlineField>
+                          <InlineField label="Maps">
+                            <div className="flex gap-1">
+                              <input value={form.map_link || ''} onChange={e => setF({ map_link: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors flex-1" placeholder="Link..." />
+                              {form.map_link && (
+                                <a href={form.map_link} target="_blank" rel="noopener noreferrer" className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0 flex items-center">
+                                  <MapPin size={10} />
+                                </a>
+                              )}
+                            </div>
+                          </InlineField>
+                        </>
+                      )}
+                    </div>
+                    {/* Row 3: Address + notes in one line */}
+                    {selected.short_name !== 'LGV' && (
+                      <div className="grid grid-cols-2 gap-2 items-end">
+                        <InlineField label="Địa chỉ VP">
+                          <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
+                        </InlineField>
+                        <InlineField label="Ghi chú">
+                          <input value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" placeholder="Ghi chú nội bộ..." />
+                        </InlineField>
                       </div>
-                    </Field>
+                    )}
+                    {selected.short_name === 'LGV' && (
+                      <InlineField label="Ghi chú">
+                        <input value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" placeholder="Ghi chú nội bộ..." />
+                      </InlineField>
+                    )}
                   </div>
                 </div>
-                )}
 
-                {/* Section 3: Ghi chu */}
+                {/* === MAIN: Lịch sử trao đổi — always visible, center stage === */}
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8]">
-                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
-                      <Pencil size={14} className="text-[#D97706]" />
-                      Ghi chu
-                    </div>
+                  <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center gap-2">
+                    <History size={14} className="text-[#7C3AED]" />
+                    <span className="text-[12px] font-semibold text-[#444] uppercase tracking-wide">Lịch sử trao đổi & Tình trạng</span>
                   </div>
                   <div className="p-4">
-                    <textarea value={form.notes || ''} onChange={e => setF({ notes: e.target.value })} className="field-input min-h-[80px] resize-y w-full" placeholder="Ghi chu noi bo ve chi nhanh..." />
+                    <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
                   </div>
                 </div>
 
-                {/* Section: Lich su hinh thuc khoan */}
-                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <button onClick={() => setShowTypeHistory(v => !v)}
-                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#FAFAF8] transition-colors">
-                    <span className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
-                      <ClipboardList size={14} className="text-[#1D4ED8]" />
-                      Hinh thuc khoan & phan chia loi nhuan
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {branchTypeHistory.length > 0 && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${branchTypeHistory[0].branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {branchTypeHistory[0].branch_type === 'company' ? 'Du An CT' : `Da Khoan ${branchTypeHistory[0].lg_pct > 0 ? branchTypeHistory[0].lg_pct + '/' + branchTypeHistory[0].cn_pct : ''}`}
+                {showTypeHistory && (
+                  <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => { setShowTypeHistory(false); setEditingTypeId(null); }}>
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                      <div className="sticky top-0 bg-white px-5 py-3 border-b border-[#E8E7E2] flex items-center justify-between z-10">
+                        <span className="flex items-center gap-2 text-[13px] font-semibold text-[#111]">
+                          <ClipboardList size={14} className="text-[#1D4ED8]" />
+                          Hình thức khoán & Phân chia lợi nhuận
                         </span>
-                      )}
-                      {showTypeHistory ? <ChevronUp size={14} className="text-[#999]" /> : <ChevronDown size={14} className="text-[#999]" />}
-                    </div>
-                  </button>
-                  {showTypeHistory && (
-                    <div className="px-4 pb-4 border-t border-[#E8E7E2] pt-3 space-y-3">
+                        <button onClick={() => { setShowTypeHistory(false); setEditingTypeId(null); }} className="text-[#999] hover:text-[#333] transition">
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className="px-5 py-4 space-y-3">
                       <div className="bg-gray-50 rounded-lg p-3 space-y-2">
                         <div className="text-[10.5px] text-[#999] uppercase font-medium">Them moc thoi gian</div>
                         <div className="grid grid-cols-2 gap-2">
@@ -1170,29 +1273,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         );
                       })()}
                     </div>
-                  )}
-                </div>
-
-                {/* Section 4: Lich su trao doi */}
-                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-                  <button
-                    onClick={() => setShowHistory(v => !v)}
-                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#FAFAF8] transition-colors"
-                  >
-                    <span className="flex items-center gap-2 text-[12px] font-semibold text-[#444] uppercase tracking-wide">
-                      <History size={14} className="text-[#7C3AED]" />
-                      Lich su trao doi & tinh trang / kho khan / co hoi
-                    </span>
-                    {showHistory ? <ChevronUp size={14} className="text-[#999]" /> : <ChevronDown size={14} className="text-[#999]" />}
-                  </button>
-                  {showHistory && (
-                    <div className="px-4 pb-4 border-t border-[#E8E7E2]">
-                      <div className="pt-4">
-                        <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
-                      </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -1926,6 +2010,15 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               <RefreshCw size={12} /> Đồng bộ ({missingRegions.length})
             </button>
           )}
+          <button
+            onClick={handleSyncClientRegions}
+            disabled={syncingRegions}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 transition"
+            title="Cập nhật region cũ trên KH theo tên chi nhánh hiện tại"
+          >
+            <RefreshCw size={12} className={syncingRegions ? 'animate-spin' : ''} />
+            {syncingRegions ? 'Đang xử lý...' : 'Sync region KH'}
+          </button>
           <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
             <Plus size={12} /> Thêm CN
           </button>
@@ -2284,6 +2377,15 @@ function DeleteBranchModal({ deleteTarget, deletePassword, setDeletePassword, is
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function InlineField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <label className="text-[9px] font-medium text-[#999] uppercase tracking-wide leading-none">{label}</label>
+      {children}
     </div>
   );
 }

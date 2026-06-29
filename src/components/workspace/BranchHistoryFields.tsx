@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, CalendarDays, Pencil, Trash2, Check, X } from 'lucide-react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, Pencil, Trash2, Check, X, Plus, Send } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import type { Branch, MorningPriority } from '../../lib/types'
 import { GOAL_TYPE_LABELS } from '../../lib/types'
 import { formatDate } from '../../lib/format'
+import { useAuth } from '../../lib/auth'
 
 interface Props {
   branch: Branch
@@ -21,7 +22,7 @@ const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
 
 const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
-const inputCls = "w-full text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-2 bg-[#FAFAF8] text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors resize-y min-h-[64px]"
+const inputCls = "w-full text-[11.5px] border border-[#E5E3DD] rounded-md px-2.5 py-2 bg-[#FAFAF8] text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors resize-y min-h-[56px]"
 const editInputCls = "w-full text-[11px] border border-[#E5E3DD] rounded-md px-2 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400 transition-colors resize-y min-h-[40px]"
 
 const FIELD_META: Record<string, { icon: typeof Activity; color: string }> = {
@@ -30,8 +31,6 @@ const FIELD_META: Record<string, { icon: typeof Activity; color: string }> = {
   'Cơ hội': { icon: TrendingUp, color: 'text-emerald-500' },
 }
 
-// Tách goal_note dạng "Tình trạng: ... Khó khăn: ... Cơ hội: ..." (nối bằng \n)
-// thành từng mục riêng để hiển thị mỗi mục 1 dòng.
 function parseGoalNote(note: string): { label: string; text: string }[] | null {
   const re = /(Tình trạng|Khó khăn|Cơ hội): /g
   const matches = [...note.matchAll(re)]
@@ -47,9 +46,6 @@ export function todayStr(): string {
   return new Date().toISOString().split('T')[0]
 }
 
-// Ghi nhận 1 "phiên" trao đổi/cập nhật thông tin chi nhánh vào morning_priorities
-// (đè lên phiên trong ngày nếu đã có) — để lịch & lịch sử trao đổi nhận biết
-// ngày hôm nay đã có cập nhật.
 export async function recordBranchUpdateSession(
   userId: string,
   region: string,
@@ -90,8 +86,6 @@ export async function recordBranchUpdateSession(
   }
 }
 
-// Trả về danh sách "YYYY-MM-DD" (hoặc null cho ô trống đầu lịch) cho tháng hiện tại,
-// tuần bắt đầu từ Thứ 2.
 function buildMonthGrid(): (string | null)[] {
   const now = new Date()
   const year = now.getFullYear()
@@ -106,10 +100,6 @@ function buildMonthGrid(): (string | null)[] {
   return cells
 }
 
-// Hiển thị lịch sử trao đổi công việc của chi nhánh (từ morning_priorities,
-// target_client = "Chi nhánh {region}") và 3 ô ghi nhanh Tình trạng/Khó khăn/Cơ hội.
-// Dùng chung cho tab "Hồ sơ chi nhánh" (Branches.tsx) và panel cập nhật nhanh
-// từ Workspace -> Morning Priority -> "Cập nhật thông tin CN".
 export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, onRecordDateChange }: Props) {
   const [history, setHistory] = useState<MorningPriority[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
@@ -117,6 +107,71 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<{ status_note: string; difficulties: string; opportunities: string }>({ status_note: '', difficulties: '', opportunities: '' })
   const [editSaving, setEditSaving] = useState(false)
+  const [showInputForm, setShowInputForm] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const { user } = useAuth()
+
+  // Auto-save draft to localStorage
+  const draftKey = branch.region ? `lgvn_branch_draft_${branch.region}` : null
+  const draftLoaded = useRef(false)
+
+  useEffect(() => {
+    if (!draftKey || draftLoaded.current) return
+    try {
+      const saved = localStorage.getItem(draftKey)
+      if (saved) {
+        const draft = JSON.parse(saved)
+        if (draft.status_note || draft.difficulties || draft.opportunities) {
+          onChange({ status_note: draft.status_note || '', difficulties: draft.difficulties || '', opportunities: draft.opportunities || '' })
+        }
+      }
+    } catch {}
+    draftLoaded.current = true
+  }, [draftKey])
+
+  const saveDraft = useCallback(() => {
+    if (!draftKey) return
+    const draft = { status_note: branch.status_note || '', difficulties: branch.difficulties || '', opportunities: branch.opportunities || '' }
+    if (draft.status_note || draft.difficulties || draft.opportunities) {
+      localStorage.setItem(draftKey, JSON.stringify(draft))
+    } else {
+      localStorage.removeItem(draftKey)
+    }
+  }, [draftKey, branch.status_note, branch.difficulties, branch.opportunities])
+
+  useEffect(() => {
+    if (!draftLoaded.current) return
+    saveDraft()
+  }, [saveDraft])
+
+  const hasContent = !!(branch.status_note?.trim() || branch.difficulties?.trim() || branch.opportunities?.trim())
+
+  async function handleSaveSession() {
+    if (!user || !branch.region || !hasContent) return
+    setSaving(true)
+    try {
+      await recordBranchUpdateSession(user.id, branch.region, {
+        status_note: branch.status_note ?? null,
+        difficulties: branch.difficulties ?? null,
+        opportunities: branch.opportunities ?? null,
+      }, recordDate)
+      // Reload history
+      const { data } = await supabase
+        .from('morning_priorities')
+        .select('*')
+        .eq('target_name', `Chi nhánh ${branch.region}`)
+        .order('priority_date', { ascending: false })
+        .limit(30)
+      if (data) setHistory(data as MorningPriority[])
+      // Clear fields & draft
+      onChange({ status_note: '', difficulties: '', opportunities: '' })
+      if (draftKey) localStorage.removeItem(draftKey)
+    } catch (e) {
+      alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (!branch.region) { setHistory([]); return }
@@ -125,7 +180,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
       .select('*')
       .eq('target_name', `Chi nhánh ${branch.region}`)
       .order('priority_date', { ascending: false })
-      .limit(20)
+      .limit(30)
       .then(({ data }) => setHistory((data || []) as MorningPriority[]))
   }, [branch.region, refreshKey])
 
@@ -133,6 +188,26 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const sessionDates = useMemo(() => new Set(history.map(h => h.priority_date)), [history])
   const today = todayStr()
   const selectedEntries = selectedDate ? history.filter(h => h.priority_date === selectedDate) : []
+
+  const pastSuggestions = useMemo(() => {
+    const status: string[] = []
+    const difficulties: string[] = []
+    const opportunities: string[] = []
+    const seen = { s: new Set<string>(), d: new Set<string>(), o: new Set<string>() }
+    for (const h of history) {
+      if (!h.goal_note) continue
+      const parsed = parseGoalNote(h.goal_note)
+      if (!parsed) continue
+      for (const f of parsed) {
+        const t = f.text.trim()
+        if (!t) continue
+        if (f.label === 'Tình trạng' && !seen.s.has(t)) { seen.s.add(t); status.push(t) }
+        if (f.label === 'Khó khăn' && !seen.d.has(t)) { seen.d.add(t); difficulties.push(t) }
+        if (f.label === 'Cơ hội' && !seen.o.has(t)) { seen.o.add(t); opportunities.push(t) }
+      }
+    }
+    return { status: status.slice(0, 5), difficulties: difficulties.slice(0, 5), opportunities: opportunities.slice(0, 5) }
+  }, [history])
 
   function startEdit(h: MorningPriority) {
     const parsed = h.goal_note ? parseGoalNote(h.goal_note) : null
@@ -172,13 +247,16 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
     const isExpanded = forceOpen || expandedId === h.id
     const isEditing = editingId === h.id
     return (
-      <div key={h.id} className="border border-[#E8E7E2] bg-[#fafafa] rounded-lg overflow-hidden group/entry">
+      <div key={h.id} className="border border-[#E8E7E2] bg-white rounded-lg overflow-hidden group/entry">
         <div
           onClick={() => !forceOpen && !isEditing && setExpandedId(prev => prev === h.id ? null : h.id)}
-          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 ${forceOpen || isEditing ? '' : 'cursor-pointer hover:bg-[#f0f0ed] transition-colors'}`}
+          className={`flex items-center justify-between gap-2 px-3 py-2 ${forceOpen || isEditing ? 'bg-[#fafafa]' : 'cursor-pointer hover:bg-[#fafafa] transition-colors'}`}
         >
-          <span className="text-[11px] font-medium text-[#111]">Phiên {formatDate(h.priority_date)}</span>
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${sessionDates.has(h.priority_date) ? 'bg-blue-500' : 'bg-gray-300'}`} />
+            <span className="text-[11.5px] font-semibold text-[#111]">{formatDate(h.priority_date)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
             {!isEditing && (
               <div className="flex items-center gap-0.5 opacity-0 group-hover/entry:opacity-100 transition-opacity">
                 <button
@@ -198,11 +276,11 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
                 {outcome.label}
               </span>
             )}
-            {!forceOpen && !isEditing && (isExpanded ? <ChevronUp size={13} className="text-[#bbb]" /> : <ChevronDown size={13} className="text-[#bbb]" />)}
+            {!forceOpen && !isEditing && (isExpanded ? <ChevronUp size={12} className="text-[#bbb]" /> : <ChevronDown size={12} className="text-[#bbb]" />)}
           </div>
         </div>
         {isEditing ? (
-          <div className="px-2.5 pb-2 flex flex-col gap-1.5">
+          <div className="px-3 pb-2.5 flex flex-col gap-1.5">
             <div>
               <label className="flex items-center gap-1 text-[9px] font-semibold text-[#999] uppercase tracking-wide mb-0.5">
                 <Activity size={10} className="text-blue-500" /> Tình trạng
@@ -231,7 +309,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
             </div>
           </div>
         ) : isExpanded && (
-          <div className="px-2.5 pb-2 flex flex-col gap-1.5">
+          <div className="px-3 pb-2.5 flex flex-col gap-1.5">
             {(() => {
               const fields = h.goal_note ? parseGoalNote(h.goal_note) : null
               if (fields) {
@@ -239,7 +317,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
                   const meta = FIELD_META[f.label]
                   const Icon = meta?.icon
                   return (
-                    <div key={f.label} className="flex items-start gap-1.5 bg-white border border-[#F0EFEB] rounded-md px-2 py-1.5">
+                    <div key={f.label} className="flex items-start gap-1.5 bg-[#fafafa] border border-[#F0EFEB] rounded-md px-2.5 py-1.5">
                       {Icon && <Icon size={12} className={`${meta.color} mt-[1px] shrink-0`} />}
                       <div className="min-w-0">
                         <div className="text-[9px] font-semibold text-[#999] uppercase tracking-wide">{f.label}</div>
@@ -256,7 +334,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
               )
             })()}
             {h.outcome_note && (
-              <div className="text-[11px] text-[#888] bg-white border border-[#F0EFEB] rounded-md px-2 py-1">
+              <div className="text-[11px] text-[#888] bg-[#fafafa] border border-[#F0EFEB] rounded-md px-2 py-1">
                 {h.outcome_note}
               </div>
             )}
@@ -267,121 +345,176 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      {/* Cột trái: Lịch sử trao đổi */}
-      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa] flex flex-col">
-        <div className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-          <History size={12} className="text-[#888]" />
-          Lịch sử trao đổi công việc
+    <div className="flex flex-col gap-3">
+      {/* Top row: Mini calendar + Input form side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-3">
+        {/* Mini calendar */}
+        <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">
+              T{new Date().getMonth() + 1}/{new Date().getFullYear()}
+            </span>
+            <span className="text-[9px] text-[#bbb]">{history.length} phiên</span>
+          </div>
+          <div className="grid grid-cols-7 gap-0.5 mb-1">
+            {WEEKDAY_LABELS.map(d => (
+              <div key={d} className="text-[8px] text-center text-[#bbb] font-medium">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-0.5">
+            {monthGrid.map((dateStr, i) => {
+              if (!dateStr) return <div key={`empty-${i}`} />
+              const hasSession = sessionDates.has(dateStr)
+              const isToday = dateStr === today
+              const isSelected = selectedDate === dateStr
+              const day = Number(dateStr.split('-')[2])
+              return (
+                <button
+                  key={dateStr}
+                  type="button"
+                  onClick={() => hasSession && setSelectedDate(prev => prev === dateStr ? null : dateStr)}
+                  className={[
+                    'aspect-square flex items-center justify-center rounded text-[10px] transition-colors',
+                    isSelected ? 'bg-blue-600 text-white font-semibold' : hasSession ? 'bg-blue-100 text-blue-700 font-medium hover:bg-blue-200 cursor-pointer' : 'text-[#ccc] cursor-default',
+                    isToday && !isSelected ? 'ring-1.5 ring-red-400' : '',
+                  ].join(' ')}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+          {/* Selected date entries */}
+          {selectedDate && selectedEntries.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-[#E8E7E2] flex flex-col gap-1">
+              <div className="text-[9px] font-semibold text-[#888] uppercase">{formatDate(selectedDate)}</div>
+              {selectedEntries.map(h => renderEntry(h, true))}
+            </div>
+          )}
         </div>
 
-        {history.length === 0 ? (
-          <div className="text-[11px] text-[#bbb] py-3 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
-            Chưa có lịch sử trao đổi
+        {/* Input form for new session */}
+        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+          <div
+            className="flex items-center justify-between px-3 py-2 bg-[#FAFAF8] border-b border-[#E8E7E2] cursor-pointer"
+            onClick={() => setShowInputForm(v => !v)}
+          >
+            <div className="flex items-center gap-2">
+              <Plus size={12} className="text-[#7C3AED]" />
+              <span className="text-[10.5px] font-semibold text-[#555] uppercase tracking-wide">Ghi nhận phiên mới</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#999]">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}</span>
+              {showInputForm ? <ChevronUp size={12} className="text-[#bbb]" /> : <ChevronDown size={12} className="text-[#bbb]" />}
+            </div>
           </div>
-        ) : (
-          <>
-            {/* Lịch tháng hiện tại — ngày có phiên trao đổi tô xanh, hôm nay viền đỏ */}
-            <div className="border border-[#E8E7E2] rounded-lg p-2 mb-2 bg-white">
-              <div className="grid grid-cols-7 gap-1 mb-1">
-                {WEEKDAY_LABELS.map(d => (
-                  <div key={d} className="text-[9px] text-center text-[#bbb] font-medium">{d}</div>
-                ))}
+          {showInputForm && (
+            <div className="p-3 grid grid-cols-1 lg:grid-cols-3 gap-2.5">
+              <div>
+                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                  <Activity size={11} className="text-blue-500" />
+                  Tình trạng hiện tại
+                </label>
+                <textarea
+                  value={branch.status_note || ''}
+                  onChange={e => onChange({ status_note: e.target.value })}
+                  placeholder="Tình trạng hoạt động..."
+                  className={inputCls}
+                />
+                {pastSuggestions.status.length > 0 && !branch.status_note && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {pastSuggestions.status.map((s, i) => (
+                      <button key={i} type="button" onClick={() => onChange({ status_note: s })}
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition truncate max-w-[140px] border border-blue-100">
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-7 gap-1">
-                {monthGrid.map((dateStr, i) => {
-                  if (!dateStr) return <div key={`empty-${i}`} />
-                  const hasSession = sessionDates.has(dateStr)
-                  const isToday = dateStr === today
-                  const isSelected = selectedDate === dateStr
-                  const day = Number(dateStr.split('-')[2])
-                  return (
-                    <button
-                      key={dateStr}
-                      type="button"
-                      onClick={() => hasSession && setSelectedDate(prev => prev === dateStr ? null : dateStr)}
-                      className={[
-                        'aspect-square flex items-center justify-center rounded-md text-[11px] transition-colors',
-                        isSelected ? 'bg-blue-600 text-white font-semibold' : hasSession ? 'bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 cursor-pointer' : 'text-[#ccc] cursor-default',
-                        isToday && !isSelected ? 'ring-2 ring-red-400' : '',
-                      ].join(' ')}
-                    >
-                      {day}
-                    </button>
-                  )
-                })}
+              <div>
+                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                  <AlertTriangle size={11} className="text-amber-500" />
+                  Khó khăn
+                </label>
+                <textarea
+                  value={branch.difficulties || ''}
+                  onChange={e => onChange({ difficulties: e.target.value })}
+                  placeholder="Khó khăn đang gặp..."
+                  className={inputCls}
+                />
+                {pastSuggestions.difficulties.length > 0 && !branch.difficulties && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {pastSuggestions.difficulties.map((s, i) => (
+                      <button key={i} type="button" onClick={() => onChange({ difficulties: s })}
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 hover:bg-amber-100 transition truncate max-w-[140px] border border-amber-100">
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                  <TrendingUp size={11} className="text-emerald-500" />
+                  Cơ hội
+                </label>
+                <textarea
+                  value={branch.opportunities || ''}
+                  onChange={e => onChange({ opportunities: e.target.value })}
+                  placeholder="Cơ hội phát triển..."
+                  className={inputCls}
+                />
+                {pastSuggestions.opportunities.length > 0 && !branch.opportunities && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {pastSuggestions.opportunities.map((s, i) => (
+                      <button key={i} type="button" onClick={() => onChange({ opportunities: s })}
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition truncate max-w-[140px] border border-emerald-100">
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Save button */}
+              <div className="lg:col-span-3 flex items-center justify-between pt-1">
+                {draftKey && hasContent && (
+                  <span className="text-[9px] text-[#bbb] flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                    Bản nháp đã lưu tự động
+                  </span>
+                )}
+                {!hasContent && <span />}
+                <button
+                  onClick={handleSaveSession}
+                  disabled={saving || !hasContent}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11.5px] font-medium bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-40 transition shadow-sm"
+                >
+                  <Send size={12} />
+                  {saving ? 'Đang lưu...' : 'Lưu phiên ghi nhận'}
+                </button>
               </div>
             </div>
-
-            {selectedDate && (
-              <div className="flex flex-col gap-1.5 mb-2">
-                {selectedEntries.map(h => renderEntry(h, true))}
-              </div>
-            )}
-
-            <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
-              {history.map(h => renderEntry(h))}
-            </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Cột phải: Ghi nhận phiên hôm nay */}
-      <div className="border border-[#E8E7E2] rounded-lg bg-white flex flex-col divide-y divide-[#F0EFEB]">
-        <div className="p-2.5">
-          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-            <CalendarDays size={12} className="text-[#888]" />
-            Ngày ghi nhận phiên này
-          </label>
-          <input
-            type="date"
-            value={recordDate}
-            onChange={e => onRecordDateChange(e.target.value)}
-            className="text-[12px] border border-[#E5E3DD] rounded-md px-2.5 py-1.5 bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white"
-          />
-          <div className="text-[10px] text-[#aaa] mt-1">
-            Nội dung 3 ô dưới sẽ thành 1 dòng lịch sử cho ngày này khi bấm Lưu.
+      {/* Session history list */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-2">
+          <History size={12} className="text-[#888]" />
+          <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Các phiên ghi nhận</span>
+          <span className="text-[9px] text-[#bbb] ml-auto">{history.length} phiên</span>
+        </div>
+        {history.length === 0 ? (
+          <div className="text-[11px] text-[#bbb] py-4 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
+            Chưa có lịch sử trao đổi — ghi nhận phiên đầu tiên ở trên
           </div>
-        </div>
-
-        <div className="p-2.5">
-          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-            <Activity size={12} className="text-blue-500" />
-            Tình trạng hiện tại
-          </label>
-          <textarea
-            value={branch.status_note || ''}
-            onChange={e => onChange({ status_note: e.target.value })}
-            placeholder="Tình trạng hoạt động hiện tại của chi nhánh..."
-            className={inputCls}
-          />
-        </div>
-
-        <div className="p-2.5">
-          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-            <AlertTriangle size={12} className="text-amber-500" />
-            Khó khăn
-          </label>
-          <textarea
-            value={branch.difficulties || ''}
-            onChange={e => onChange({ difficulties: e.target.value })}
-            placeholder="Những khó khăn chi nhánh đang gặp phải..."
-            className={inputCls}
-          />
-        </div>
-
-        <div className="p-2.5">
-          <label className="flex items-center gap-1 text-[10px] font-semibold text-[#555] uppercase tracking-wide mb-1.5">
-            <TrendingUp size={12} className="text-emerald-500" />
-            Cơ hội
-          </label>
-          <textarea
-            value={branch.opportunities || ''}
-            onChange={e => onChange({ opportunities: e.target.value })}
-            placeholder="Cơ hội phát triển / mở rộng tại chi nhánh..."
-            className={inputCls}
-          />
-        </div>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto pr-0.5">
+            {history.map(h => renderEntry(h))}
+          </div>
+        )}
       </div>
     </div>
   )

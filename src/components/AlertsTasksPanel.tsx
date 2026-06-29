@@ -41,9 +41,10 @@ interface Props {
   onOpenPipelineEntry?: (crmId: string) => void;
   isAdmin?: boolean;
   onClientUpdate?: (client: Client) => void;
+  clientToBranch?: Record<string, string>;
 }
 
-export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate }: Props) {
+export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate, clientToBranch }: Props) {
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
@@ -140,19 +141,30 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     syncInFlight.current = true;
     try {
       const ids = alertClients.map(c => c.id);
-      const { data: existing } = await supabase.from('dashboard_tasks').select('client_id').in('client_id', ids);
+      const { data: existing } = await supabase.from('dashboard_tasks').select('id, client_id, client_name, client_region').in('client_id', ids);
       const existingIds = new Set((existing || []).map((r: any) => r.client_id));
+
+      // Update stale name/region on existing tasks
+      for (const row of (existing || []) as any[]) {
+        const client = alertClients.find(c => c.id === row.client_id);
+        if (!client) continue;
+        if (row.client_name !== client.name || row.client_region !== client.region) {
+          await supabase.from('dashboard_tasks').update({ client_name: client.name, client_region: client.region }).eq('id', row.id);
+        }
+      }
+
       const missing = alertClients.filter(c => !existingIds.has(c.id));
-      if (!missing.length) return;
-      const upserts = missing.map(c => {
-        const d = daysUntil(c.contract_end);
-        let description = 'Hợp đồng sắp hết hạn';
-        if (c.status === 'danger') description = 'Hợp đồng khẩn cấp cần xử lý';
-        else if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
-        else if (d !== null) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
-        return { client_id: c.id, client_name: c.name, client_region: c.region, description, source_status: c.status };
-      });
-      await supabase.from('dashboard_tasks').insert(upserts);
+      if (missing.length) {
+        const upserts = missing.map(c => {
+          const d = daysUntil(c.contract_end);
+          let description = 'Hợp đồng sắp hết hạn';
+          if (c.status === 'danger') description = 'Hợp đồng khẩn cấp cần xử lý';
+          else if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
+          else if (d !== null) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
+          return { client_id: c.id, client_name: c.name, client_region: c.region, description, source_status: c.status };
+        });
+        await supabase.from('dashboard_tasks').insert(upserts);
+      }
       await loadTasks();
     } finally {
       syncInFlight.current = false;
@@ -204,16 +216,19 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     setDeleting(true);
     const task = deleteConfirm;
     if (task.source_type === 'contract') {
+      // Xoá dashboard_task alert + xoá work_task liên kết → client quay lại "HĐ cần xử lý" trong Workspace
       await supabase.from('dashboard_tasks').delete().eq('id', task.id);
       if (task._work_task) {
         await supabase.from('work_tasks').delete().eq('id', task._work_task.id);
       }
     } else if (task.id.startsWith('pt_')) {
+      // Pipeline task: reset về pending thay vì xoá
       const realId = task._real_id || task.id.replace('pt_', '');
-      await supabase.from('crm_pipeline_tasks').delete().eq('id', realId);
+      await supabase.from('crm_pipeline_tasks').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', realId);
     } else if (task.id.startsWith('wt_')) {
+      // Work task: reset về pending, xoá doc_status → quay lại "Công việc chưa hoàn thành" trong Workspace
       const realId = task._real_id || task.id.replace('wt_', '');
-      await supabase.from('work_tasks').delete().eq('id', realId);
+      await supabase.from('work_tasks').update({ status: 'pending', doc_status: null, updated_at: new Date().toISOString() }).eq('id', realId);
     }
     setTasks(prev => prev.filter(t => t.id !== task.id));
     if (detailTask?.id === task.id) setDetailTask(null);
@@ -305,7 +320,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           )}
         </div>
         {task.client_region && (
-          <span className="text-[10.5px] text-gray-400 shrink-0">{task.client_region}</span>
+          <span className="text-[10.5px] text-gray-400 shrink-0">{(task.client_id && clientToBranch?.[task.client_id]) || task.client_region}</span>
         )}
         {/* Status badge (read-only, mirroring Workspace) */}
         <div className="shrink-0">
@@ -435,7 +450,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                 {detailTask.client_region && (
                   <div>
                     <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Khu vực</div>
-                    <span className="text-[12px] text-[#333]">{detailTask.client_region}</span>
+                    <span className="text-[12px] text-[#333]">{(detailTask.client_id && clientToBranch?.[detailTask.client_id]) || detailTask.client_region}</span>
                   </div>
                 )}
                 {detailTask.due_date && (
@@ -554,26 +569,31 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                 })()}
                 <button
                   onClick={() => { setDeleteConfirm(detailTask); }}
-                  className="text-[11px] px-3 py-1.5 rounded-md border border-red-200 text-red-600 font-medium hover:bg-red-50 transition ml-auto"
-                >Xoá</button>
+                  className="text-[11px] px-3 py-1.5 rounded-md border border-amber-200 text-amber-600 font-medium hover:bg-amber-50 transition ml-auto"
+                >Gỡ khỏi Dashboard</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete confirmation modal */}
+      {/* Reset confirmation modal */}
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={() => { if (!deleting) setDeleteConfirm(null); }}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200">
-              <h2 className="text-[14px] font-semibold text-[#111]">Xác nhận xoá</h2>
+              <h2 className="text-[14px] font-semibold text-[#111]">Gỡ khỏi Dashboard</h2>
             </div>
             <div className="px-5 py-4">
               <p className="text-[12.5px] text-[#333] leading-relaxed">
-                Bạn có chắc muốn xoá công việc <strong>"{deleteConfirm.client_name}"</strong>?
+                Gỡ <strong>"{deleteConfirm.client_name}"</strong> khỏi bảng cảnh báo?
               </p>
-              <p className="text-[11px] text-red-500 mt-2">Hành động này không thể hoàn tác.</p>
+              <p className="text-[11px] text-[#888] mt-2 leading-relaxed">
+                {deleteConfirm.source_type === 'contract'
+                  ? 'Công việc sẽ quay về mục "HĐ cần xử lý" trong Workspace để xử lý lại.'
+                  : 'Công việc sẽ được đặt lại trạng thái và hiển thị lại trong Workspace.'
+                }
+              </p>
             </div>
             <div className="px-5 pb-4 flex gap-2">
               <button
@@ -584,8 +604,8 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
               <button
                 onClick={confirmDeleteTask}
                 disabled={deleting}
-                className="flex-1 px-3 py-2 text-[12px] font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition disabled:opacity-50"
-              >{deleting ? 'Đang xoá...' : 'Xoá'}</button>
+                className="flex-1 px-3 py-2 text-[12px] font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition disabled:opacity-50"
+              >{deleting ? 'Đang xử lý...' : 'Xác nhận'}</button>
             </div>
           </div>
         </div>
