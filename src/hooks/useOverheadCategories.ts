@@ -12,9 +12,9 @@ export function useOverheadCategories() {
 
   useEffect(() => { load(); }, [load]);
 
-  const add = async (label: string) => {
+  const add = async (label: string, costType: 'fixed' | 'operational' = 'fixed') => {
     const { data, error } = await supabase.from('overhead_categories')
-      .insert({ label, sort_order: categories.length }).select().single();
+      .insert({ label, sort_order: categories.length, is_default: false, cost_type: costType }).select().single();
     if (error) throw error;
     setCategories(prev => [...prev, data as OverheadCategory]);
     return data as OverheadCategory;
@@ -32,5 +32,30 @@ export function useOverheadCategories() {
     setCategories(prev => prev.filter(c => c.id !== id));
   };
 
-  return { categories, add, rename, remove, reload: load };
+  const toggleDefault = async (id: string, isDefault: boolean) => {
+    const { error } = await supabase.from('overhead_categories').update({ is_default: isDefault }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, is_default: isDefault } : c));
+  };
+
+  const updateCostType = async (id: string, costType: 'fixed' | 'operational') => {
+    const { error } = await supabase.from('overhead_categories').update({ cost_type: costType }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, cost_type: costType } : c));
+  };
+
+  const updateIcon = async (id: string, icon: string) => {
+    const { error } = await supabase.from('overhead_categories').update({ icon }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, icon } : c));
+  };
+
+  const reorder = async (reordered: OverheadCategory[]) => {
+    setCategories(reordered);
+    for (let i = 0; i < reordered.length; i++) {
+      await supabase.from('overhead_categories').update({ sort_order: i }).eq('id', reordered[i].id);
+    }
+  };
+
+  return { categories, add, rename, remove, toggleDefault, updateCostType, updateIcon, reorder, reload: load };
 }

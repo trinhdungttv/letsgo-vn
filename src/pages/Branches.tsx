@@ -66,7 +66,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const { user } = useAuth();
   const { branches, addBranch, updateBranch, deleteBranch } = useBranchData();
   const { managers, add: addManager } = useManagers();
-  const { categories: overheadCats, add: addOverheadCat, rename: renameOverheadCat, remove: removeOverheadCat } = useOverheadCategories();
+  const {
+    categories: overheadCats, add: addOverheadCat, rename: renameOverheadCat, remove: removeOverheadCat,
+    toggleDefault: toggleOverheadCatDefault, updateCostType: updateOverheadCatCostType,
+    updateIcon: updateOverheadCatIcon, reorder: reorderOverheadCats,
+  } = useOverheadCategories();
   const { regions, add: addRegion, remove: removeRegion } = useRegions();
   const { provinces: PROVINCES, addProvince } = useProvinces();
   const regionNames = regions.map(r => r.name).filter(n => n !== 'Tất cả');
@@ -1533,7 +1537,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             })()}
 
             {activeTab === 'finance' && selected && (
-              <BranchFinance branch={selected} projectsPnl={projectsPnl} pnlCostsMap={pnlCostsMap} branchStaffs={branchStaffs} toast={toast} />
+              <BranchFinance branch={selected} projectsPnl={projectsPnl} pnlCostsMap={pnlCostsMap} branchStaffs={branchStaffs}
+                overheadCategories={overheadCats} onCategoryAdd={addOverheadCat} onCategoryRename={renameOverheadCat}
+                onCategoryRemove={removeOverheadCat} onCategoryToggleDefault={toggleOverheadCatDefault}
+                onCategoryUpdateCostType={updateOverheadCatCostType} onCategoryUpdateIcon={updateOverheadCatIcon}
+                onCategoryReorder={reorderOverheadCats} toast={toast} />
             )}
 
             {activeTab === 'staff' && (

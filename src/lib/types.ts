@@ -634,6 +634,9 @@ export interface OverheadCategory {
   id: string;
   label: string;
   sort_order: number;
+  is_default?: boolean;
+  cost_type?: 'fixed' | 'operational';
+  icon?: string;
 }
 
 export interface BranchZoneCost {
