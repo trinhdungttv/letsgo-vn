@@ -3,7 +3,7 @@ import { Plus, Trash2, Copy } from 'lucide-react';
 import { Bar, Line } from 'react-chartjs-2';
 import { supabase } from '../../lib/supabase';
 import { shiftMonth, monthLabel, calcPnl } from '../../lib/format';
-import type { Branch, Client, ProjectPnl, ProjectPnlCost, BranchStaff } from '../../lib/types';
+import type { Branch, ProjectPnl, ProjectPnlCost, BranchStaff } from '../../lib/types';
 
 interface OverheadRow { id: string; branch_id: string; month: string; label: string; value: number; cost_type: string }
 
@@ -14,12 +14,13 @@ const DEFAULT_OVERHEAD_LABELS = [
 
 interface Props {
   branch: Branch;
-  clients?: Client[];
+  projectsPnl: ProjectPnl[];
+  pnlCostsMap: Record<string, ProjectPnlCost[]>;
   branchStaffs?: BranchStaff[];
   toast: (msg: string) => void;
 }
 
-export default function BranchFinance({ branch, clients = [], branchStaffs = [], toast }: Props) {
+export default function BranchFinance({ branch, projectsPnl, pnlCostsMap, branchStaffs = [], toast }: Props) {
   const now = new Date();
   const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const months = useMemo(() => {
@@ -30,56 +31,28 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
 
   const [month, setMonth] = useState(curMonth);
   const [overhead, setOverhead] = useState<OverheadRow[]>([]);
-  const [pnlData, setPnlData] = useState<{ projects: ProjectPnl[]; costs: Record<string, ProjectPnlCost[]> }>({ projects: [], costs: {} });
 
   const loadOverhead = useCallback(async () => {
     const ohMatchValues = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
     const { data } = await supabase.from('branch_overhead').select('*').in('branch_manager', ohMatchValues);
     setOverhead((data ?? []) as OverheadRow[]);
-  }, [branch.name]);
+  }, [branch.name, branch.region, branch.short_name]);
 
-  const branchClientIds = useMemo(() => {
-    if (!branch.region) return [];
-    return clients.filter(c => c.region === branch.region).map(c => c.id);
-  }, [clients, branch.region]);
+  useEffect(() => { loadOverhead(); }, [loadOverhead]);
 
-  const loadPnl = useCallback(async () => {
-    const matchValues = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
-    const queries: Promise<{ data: any }>[] = [
-      supabase.from('projects_pnl').select('*, clients(name)').in('branch_manager', matchValues),
-    ];
-    if (branchClientIds.length) {
-      queries.push(supabase.from('projects_pnl').select('*, clients(name)').in('client_id', branchClientIds));
-    }
-    const results = await Promise.all(queries);
-    const seen = new Set<string>();
-    const projects: ProjectPnl[] = [];
-    for (const r of results) {
-      for (const p of ((r.data ?? []) as ProjectPnl[])) {
-        if (!seen.has(p.id)) { seen.add(p.id); projects.push(p); }
-      }
-    }
-    const allIds = projects.map(p => p.id);
-    let allCosts: ProjectPnlCost[] = [];
-    if (allIds.length) {
-      const { data: cs } = await supabase.from('project_pnl_costs').select('*').in('pnl_id', allIds);
-      allCosts = (cs ?? []) as ProjectPnlCost[];
-    }
-    const grouped: Record<string, ProjectPnlCost[]> = {};
-    for (const c of allCosts) (grouped[c.pnl_id] ??= []).push(c);
-    setPnlData({ projects, costs: grouped });
-  }, [branch.name, branch.region, branch.short_name, branchClientIds]);
-
-  useEffect(() => { loadOverhead(); loadPnl(); }, [loadOverhead, loadPnl]);
+  const branchProjects = useMemo(() => {
+    const matchValues = new Set([branch.name, branch.region, branch.short_name].filter(Boolean));
+    return projectsPnl.filter(p => matchValues.has(p.branch_manager || ''));
+  }, [projectsPnl, branch.name, branch.region, branch.short_name]);
 
   const monthOverhead = overhead.filter(o => o.month === month);
-  const monthProjects = pnlData.projects.filter(p => p.month === month);
+  const monthProjects = branchProjects.filter(p => p.month === month);
   const overheadTotal = monthOverhead.reduce((s, o) => s + (o.value || 0), 0);
   const staffSalaryTotal = branchStaffs.reduce((s, st) => s + (st.salary || 0), 0);
   const totalCpCn = overheadTotal + staffSalaryTotal;
 
   const projectRows = monthProjects.map(p => {
-    const costs = pnlData.costs[p.id] || [];
+    const costs = pnlCostsMap[p.id] || [];
     const r = calcPnl(p, costs);
     return { ...p, ...r };
   });
@@ -91,7 +64,7 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
 
   const addOverheadRow = async () => {
     const { data, error } = await supabase.from('branch_overhead')
-      .insert({ branch_manager: branch.name, month, label: 'Chi phi moi', value: 0, cost_type: 'Cố định' })
+      .insert({ branch_manager: branch.region || branch.name, month, label: 'Chi phi moi', value: 0, cost_type: 'Cố định' })
       .select().single();
     if (error) { toast('Loi: ' + error.message); return; }
     setOverhead(prev => [...prev, data as OverheadRow]);
@@ -114,7 +87,7 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
     for (const r of prevRows) {
       if (monthOverhead.some(o => o.label === r.label)) continue;
       const { data } = await supabase.from('branch_overhead')
-        .insert({ branch_manager: branch.name, month, label: r.label, value: r.value, cost_type: r.cost_type })
+        .insert({ branch_manager: branch.region || branch.name, month, label: r.label, value: r.value, cost_type: r.cost_type })
         .select().single();
       if (data) setOverhead(prev2 => [...prev2, data as OverheadRow]);
     }
@@ -125,22 +98,23 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
 
   const chartMonths = months;
   const chartData = useMemo(() => {
+    const matchValues = new Set([branch.name, branch.region, branch.short_name].filter(Boolean));
     return chartMonths.map(m => {
-      const mp = pnlData.projects.filter(p => p.month === m);
+      const mp = projectsPnl.filter(p => p.month === m && matchValues.has(p.branch_manager || ''));
       const rev = mp.reduce((s, p) => s + p.revenue, 0);
       const cost = mp.reduce((s, p) => {
-        const cs = pnlData.costs[p.id] || [];
+        const cs = pnlCostsMap[p.id] || [];
         return s + cs.reduce((ss, c) => ss + (c.value || 0), 0);
       }, 0);
       const lnCn = mp.reduce((s, p) => {
-        const cs = pnlData.costs[p.id] || [];
+        const cs = pnlCostsMap[p.id] || [];
         const r = calcPnl(p, cs);
         return s + r.cnP;
       }, 0);
       const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0) + staffSalaryTotal;
       return { month: m, rev, cost, lnCn, oh, lnRong: lnCn - oh };
     });
-  }, [chartMonths, pnlData, overhead]);
+  }, [chartMonths, projectsPnl, pnlCostsMap, overhead, staffSalaryTotal, branch.name, branch.region, branch.short_name]);
 
   return (
     <div className="space-y-4">
@@ -223,7 +197,7 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
               e.target.value = '';
               if (monthOverhead.some(o => o.label === label)) { toast('Da co muc nay'); return; }
               const { data, error } = await supabase.from('branch_overhead')
-                .insert({ branch_manager: branch.name, month, label, value: 0, cost_type: 'Cố định' })
+                .insert({ branch_manager: branch.region || branch.name, month, label, value: 0, cost_type: 'Cố định' })
                 .select().single();
               if (error) { toast('Loi: ' + error.message); return; }
               setOverhead(prev => [...prev, data as OverheadRow]);
@@ -301,30 +275,25 @@ export default function BranchFinance({ branch, clients = [], branchStaffs = [],
                 labels: chartData.map(d => 'T' + Number(d.month.split('-')[1])),
                 datasets: [
                   { label: 'Doanh thu', data: chartData.map(d => d.rev), backgroundColor: '#6EE7B7' },
-                  { label: 'Chi phi', data: chartData.map(d => d.cost + d.oh), backgroundColor: '#FCA5A5' },
-                  { label: 'LN rong', data: chartData.map(d => d.lnRong), backgroundColor: '#93C5FD' },
+                  { label: 'Chi phi', data: chartData.map(d => d.cost), backgroundColor: '#FCA5A5' },
+                  { label: 'LN du an', data: chartData.map(d => d.lnCn), backgroundColor: '#93C5FD' },
                 ],
               }}
-              options={{ responsive: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }, scales: { y: { beginAtZero: true } } }}
-              height={180}
+              options={{ responsive: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }, scales: { y: { ticks: { font: { size: 9 }, callback: v => (Number(v) / 1e6).toFixed(0) + 'tr' } }, x: { ticks: { font: { size: 10 } } } } }}
             />
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5">
-            <div className="text-[11px] font-medium text-[#111] mb-2">LN rong trend</div>
+            <div className="text-[11px] font-medium text-[#111] mb-2">LN rong CN (6 thang)</div>
             <Line
               data={{
                 labels: chartData.map(d => 'T' + Number(d.month.split('-')[1])),
-                datasets: [{
-                  label: 'LN rong CN',
-                  data: chartData.map(d => d.lnRong),
-                  borderColor: '#10B981',
-                  backgroundColor: 'rgba(16,185,129,0.1)',
-                  fill: true,
-                  tension: 0.3,
-                }],
+                datasets: [
+                  { label: 'LN du an', data: chartData.map(d => d.lnCn), borderColor: '#3B82F6', backgroundColor: '#93C5FD', tension: 0.3, fill: false },
+                  { label: 'CP co dinh', data: chartData.map(d => d.oh), borderColor: '#EF4444', backgroundColor: '#FCA5A5', tension: 0.3, fill: false },
+                  { label: 'LN rong', data: chartData.map(d => d.lnRong), borderColor: '#10B981', backgroundColor: '#6EE7B7', tension: 0.3, fill: true },
+                ],
               }}
-              options={{ responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }}
-              height={180}
+              options={{ responsive: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }, scales: { y: { ticks: { font: { size: 9 }, callback: v => (Number(v) / 1e6).toFixed(0) + 'tr' } }, x: { ticks: { font: { size: 10 } } } } }}
             />
           </div>
         </div>

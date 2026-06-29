@@ -15,8 +15,8 @@ import BranchFinance from '../components/branches/BranchFinance';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
-import { fmtTrieu, daysUntil, monthLabel, shiftMonth, getBranchTypeForMonth } from '../lib/format';
+import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, ProjectPnlCost, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
+import { fmtTrieu, daysUntil, monthLabel, shiftMonth, getBranchTypeForMonth, calcPnl } from '../lib/format';
 
 type KhoanTierDef = { min_workers: number; lg_pct: number; cn_pct: number };
 
@@ -147,6 +147,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [month] = useState(currentMonthStr());
   const prevMonth = useMemo(() => shiftMonth(month, -1), [month]);
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
+  const [pnlCostsMap, setPnlCostsMap] = useState<Record<string, ProjectPnlCost[]>>({});
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
   const [prevProjectsPnl, setPrevProjectsPnl] = useState<ProjectPnl[]>([]);
   const [prevOverhead, setPrevOverhead] = useState<BranchOverhead[]>([]);
@@ -160,16 +161,20 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   useEffect(() => {
     (async () => {
-      const [{ data: pj }, { data: oh }, { data: ppj }, { data: poh }] = await Promise.all([
-        supabase.from('projects_pnl').select('*').eq('month', month),
-        supabase.from('branch_overhead').select('*').eq('month', month),
-        supabase.from('projects_pnl').select('*').eq('month', prevMonth),
-        supabase.from('branch_overhead').select('*').eq('month', prevMonth),
+      const [{ data: pj }, { data: oh }] = await Promise.all([
+        supabase.from('projects_pnl').select('*, clients(name)').order('month', { ascending: false }),
+        supabase.from('branch_overhead').select('*'),
       ]);
-      setProjectsPnl((pj || []) as ProjectPnl[]);
+      const allPj = (pj || []) as ProjectPnl[];
+      setProjectsPnl(allPj);
       setOverhead((oh || []) as BranchOverhead[]);
-      setPrevProjectsPnl((ppj || []) as ProjectPnl[]);
-      setPrevOverhead((poh || []) as BranchOverhead[]);
+      setPrevProjectsPnl(allPj.filter(p => p.month === prevMonth));
+      setPrevOverhead(((oh || []) as BranchOverhead[]).filter(o => o.month === prevMonth));
+
+      const { data: cs } = await supabase.from('projects_pnl_costs').select('*');
+      const costMap: Record<string, ProjectPnlCost[]> = {};
+      for (const c of (cs ?? []) as ProjectPnlCost[]) (costMap[c.pnl_id] ??= []).push(c);
+      setPnlCostsMap(costMap);
 
       const tieredBranchRegions = branches.filter(b => b.khoan_type === 'tiered').map(b => b.region).filter(Boolean) as string[];
       const tieredClientIds = tieredBranchRegions.length ? clients.filter(c => c.region && tieredBranchRegions.includes(c.region)).map(c => c.id) : [];
@@ -550,13 +555,14 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     for (const b of branches) {
       const branchClients = b.region ? clients.filter(c => c.region === b.region) : [];
       const workers = branchClients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
-      const projects = b.region ? projectsPnl.filter(p => p.branch_manager === b.region) : [];
+      const projects = b.region ? projectsPnl.filter(p => p.month === month && p.branch_manager === b.region) : [];
       const revenue = projects.reduce((s, p) => s + (p.revenue || 0), 0);
       const lnCn = projects.reduce((s, p) => {
-        if (p.project_type === 'shared') return s + (p.revenue || 0) * (p.cn_pct || 0) / 100;
-        return s;
+        const costs = pnlCostsMap[p.id] || [];
+        const r = calcPnl(p, costs);
+        return s + r.cnP;
       }, 0);
-      const overheadTotal = b.region ? overhead.filter(o => o.branch_manager === b.region).reduce((s, o) => s + (o.value || 0), 0) : 0;
+      const overheadTotal = b.region ? overhead.filter(o => o.month === month && o.branch_manager === b.region).reduce((s, o) => s + (o.value || 0), 0) : 0;
       const lnRong = lnCn - overheadTotal;
       const alerts: string[] = [];
       const expiring = branchClients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30 && d >= 0; });
@@ -566,7 +572,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       map[b.id] = { branchClients, workers, revenue, lnCn, overheadTotal, lnRong, alerts };
     }
     return map;
-  }, [branches, clients, projectsPnl, overhead]);
+  }, [branches, clients, projectsPnl, pnlCostsMap, overhead]);
 
   // ── Previous month stats ─────────────────────────────────────
   const prevBranchLnRong = useMemo(() => {
@@ -1525,7 +1531,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             })()}
 
             {activeTab === 'finance' && selected && (
-              <BranchFinance branch={selected} clients={clients} branchStaffs={branchStaffs} toast={toast} />
+              <BranchFinance branch={selected} projectsPnl={projectsPnl} pnlCostsMap={pnlCostsMap} branchStaffs={branchStaffs} toast={toast} />
             )}
 
             {activeTab === 'staff' && (
