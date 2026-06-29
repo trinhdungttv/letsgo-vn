@@ -10,6 +10,7 @@ import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../com
 import { useManagers } from '../hooks/useManagers';
 import { useRegions } from '../hooks/useRegions';
 import { useOverheadCategories } from '../hooks/useOverheadCategories';
+import { useHashSubRoute } from '../hooks/useHashSubRoute';
 import BranchZones from '../components/branches/BranchZones';
 import BranchFinance from '../components/branches/BranchFinance';
 import { supabase } from '../lib/supabase';
@@ -99,9 +100,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     }
   };
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const TAB_KEYS = ['profile', 'operations', 'finance', 'staff', 'performance'] as const;
+  const { selectedId, setSelectedId, activeTab, setActiveTab } = useHashSubRoute<Tab>({
+    page: 'branches', validTabs: TAB_KEYS, defaultTab: 'profile', items: branches,
+  });
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [activeTab, setActiveTab] = useState<Tab>('profile');
 
   const selected = branches.find(b => b.id === selectedId) || null;
   const { staffs: branchStaffs, loading: staffLoading, add: addStaff, update: updateStaff, remove: removeStaff } = useBranchStaffs(selected?.id ?? null);
@@ -260,7 +263,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [form, setForm] = useState<Partial<Branch>>({});
   useEffect(() => {
     if (selected) setForm(selected);
-    setActiveTab('profile');
   }, [selectedId, selected]);
 
   const setF = (fields: Partial<Branch>) => setForm(prev => ({ ...prev, ...fields }));

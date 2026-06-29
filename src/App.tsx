@@ -8,6 +8,7 @@ import { supabase } from './lib/supabase';
 import { logActivity } from './lib/audit';
 import { usePersistedState } from './hooks/usePersistedState';
 import { sortLaborHistory } from './lib/format';
+import { shortId, expandId } from './hooks/useHashSubRoute';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -85,11 +86,26 @@ function AppInner() {
     }
   }, []);
 
+  const resolveHashIds = useCallback(() => {
+    const parts = window.location.hash.replace('#/', '').split('/');
+    const page = parts[0];
+    const sub = parts[1];
+    if (page === 'client-detail' && sub) {
+      const id = expandId(sub, clients) || clients.find(c => c.id === sub)?.id || null;
+      if (id) setSelectedClientId(id);
+    }
+    if (page === 'crm-deal' && sub) {
+      const id = expandId(sub, deals) || deals.find(d => d.id === sub)?.id || null;
+      if (id) setSelectedDealId(id);
+    }
+  }, [clients, deals]);
+
   useEffect(() => {
     const onNav = () => {
       if (skipHashSync.current) { skipHashSync.current = false; return; }
       const p = parseHash();
       setPageRaw(p);
+      resolveHashIds();
       if (p === 'finance' || p === 'workspace') loadFinance('2026-06');
       if (p === 'market') loadMarket();
     };
@@ -97,7 +113,7 @@ function AppInner() {
     window.addEventListener('hashchange', onNav);
     return () => { window.removeEventListener('popstate', onNav); window.removeEventListener('hashchange', onNav); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadFinance, loadMarket]);
+  }, [loadFinance, loadMarket, resolveHashIds]);
 
   useEffect(() => {
     if (!window.location.hash || window.location.hash === '#/') {
@@ -105,6 +121,8 @@ function AppInner() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => { resolveHashIds(); }, [resolveHashIds]);
 
   const [activeRegion, setActiveRegion] = usePersistedState<string[]>('lgvn_activeRegion', ['Tất cả']);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => localStorage.getItem('lgvn_selectedClientId'));
@@ -157,7 +175,9 @@ function AppInner() {
 
   const handleSelectClient = useCallback((id: string) => {
     setSelectedClientId(id);
-    setPage('client-detail');
+    setPageRaw('client-detail');
+    const sid = shortId(id);
+    window.history.pushState(null, '', `#/client-detail/${sid}`);
   }, []);
 
   const [pipelineFocusId, setPipelineFocusId] = useState<string | null>(null);
@@ -168,7 +188,9 @@ function AppInner() {
 
   const handleSelectDeal = useCallback((id: string) => {
     setSelectedDealId(id);
-    setPage('crm-deal');
+    setPageRaw('crm-deal');
+    const sid = shortId(id);
+    window.history.pushState(null, '', `#/crm-deal/${sid}`);
   }, []);
 
   const handleClientUpdate = useCallback((updated: Client) => {

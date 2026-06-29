@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useHashTab } from '../hooks/useHashSubRoute';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
@@ -51,7 +52,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const { user } = useAuth();
   void useRegions;
   const { managers } = useManagers();
-  const [activeTab, setActiveTab] = useState<'overview' | 'profile' | 'crm'>('overview');
+  const CD_TAB_KEYS = ['overview', 'profile', 'crm'] as const;
+  const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile' | 'crm'>('client-detail', CD_TAB_KEYS, 'overview', 2);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);

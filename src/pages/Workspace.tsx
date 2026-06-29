@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useHashTab } from '../hooks/useHashSubRoute';
 import {
   AlertTriangle, FileText, FilePlus, Send, ClipboardList,
   CalendarClock, TrendingUp, Wallet, CheckCircle2,
@@ -109,7 +110,8 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
 
   const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout', DEFAULT_LAYOUT);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeModule, setActiveModule] = useState<'morning' | 'winloss' | 'kcn'>('morning');
+  const WS_TAB_KEYS = ['morning', 'winloss', 'kcn'] as const;
+  const [activeModule, setActiveModule] = useHashTab<'morning' | 'winloss' | 'kcn'>('workspace', WS_TAB_KEYS, 'morning');
 
   // Merge in any new section keys and drop ones that no longer exist
   const order = [...layout.order.filter(k => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter(k => !layout.order.includes(k))];

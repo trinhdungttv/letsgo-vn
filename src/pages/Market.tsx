@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { MapPin, Coins, Eye, Building2, FileText } from 'lucide-react';
+import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client } from '../lib/types';
 import ZonesTab from './market/ZonesTab';
@@ -29,9 +30,11 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, onRefresh, toast }: MarketProps) {
-  const [tab, setTab] = useState<MarketTab>('zones');
+  const MARKET_TAB_KEYS = ['zones', 'wage', 'comp', 'leads', 'quote'] as const;
+  const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
+  const setTab = (t: MarketTab) => setTabRaw(t);
   const goTab = (t: MarketTab, zone?: string) => {
     setTab(t);
     if (zone !== undefined) setZoneFilter(zone);

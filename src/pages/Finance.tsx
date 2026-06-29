@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck } from 'lucide-react';
+import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
 // OverheadTab removed — moved to Chi Nhánh > Tài chính
@@ -62,7 +63,8 @@ interface FinanceProps {
 export default function Finance({ finance, clients, onLoadFinance, onFinanceUpdate, onClientUpdate, toast }: FinanceProps) {
   const { user } = useAuth();
   const [month, setMonth] = useState('2026-06');
-  const [activeTab, setActiveTab] = usePersistedState<WorkspaceTab>('lgvn_finance_activeTab', 'clients');
+  const FINANCE_TAB_KEYS = ['clients', 'pnl', 'performance', 'payment'] as const;
+  const [activeTab, setActiveTab] = useHashTab<WorkspaceTab>('finance', FINANCE_TAB_KEYS, 'clients');
 
   useEffect(() => { onLoadFinance(month); }, [month, onLoadFinance]);
 
