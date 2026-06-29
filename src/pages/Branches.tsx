@@ -158,6 +158,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
   const [prevProjectsPnl, setPrevProjectsPnl] = useState<ProjectPnl[]>([]);
   const [prevOverhead, setPrevOverhead] = useState<BranchOverhead[]>([]);
+  const [allStaffSalary, setAllStaffSalary] = useState<Record<string, number>>({});
 
   // ── Manager performance report ──────────────────────────────────
   const [perfHistory, setPerfHistory] = useState<(ClientManagerHistory & { clients?: { name: string } | null })[]>([]);
@@ -178,10 +179,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       setPrevProjectsPnl(allPj.filter(p => p.month === prevMonth));
       setPrevOverhead(((oh || []) as BranchOverhead[]).filter(o => o.month === prevMonth));
 
-      const { data: cs } = await supabase.from('projects_pnl_costs').select('*');
+      const [{ data: cs }, { data: allStaffs }] = await Promise.all([
+        supabase.from('projects_pnl_costs').select('*'),
+        supabase.from('branch_staffs').select('id, branch_id, salary'),
+      ]);
       const costMap: Record<string, ProjectPnlCost[]> = {};
       for (const c of (cs ?? []) as ProjectPnlCost[]) (costMap[c.pnl_id] ??= []).push(c);
       setPnlCostsMap(costMap);
+      const salaryMap: Record<string, number> = {};
+      for (const s of (allStaffs ?? []) as { branch_id: string; salary: number }[]) {
+        salaryMap[s.branch_id] = (salaryMap[s.branch_id] || 0) + (s.salary || 0);
+      }
+      setAllStaffSalary(salaryMap);
 
       const tieredBranchRegions = branches.filter(b => b.khoan_type === 'tiered').map(b => b.region).filter(Boolean) as string[];
       const tieredClientIds = tieredBranchRegions.length ? clients.filter(c => c.region && tieredBranchRegions.includes(c.region)).map(c => c.id) : [];
@@ -559,41 +568,46 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       alerts: string[];
     }> = {};
     for (const b of branches) {
-      const branchClients = b.region ? clients.filter(c => c.region === b.region) : [];
+      const matchValues = new Set([b.name, b.region, b.short_name].filter(Boolean));
+      const branchClients = clients.filter(c => c.region && matchValues.has(c.region));
       const workers = branchClients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
-      const projects = b.region ? projectsPnl.filter(p => p.month === month && p.branch_manager === b.region) : [];
+      const projects = projectsPnl.filter(p => p.month === month && matchValues.has(p.branch_manager || ''));
       const revenue = projects.reduce((s, p) => s + (p.revenue || 0), 0);
       const lnCn = projects.reduce((s, p) => {
         const costs = pnlCostsMap[p.id] || [];
         const r = calcPnl(p, costs);
         return s + r.cnP;
       }, 0);
-      const overheadTotal = b.region ? overhead.filter(o => o.month === month && o.branch_manager === b.region).reduce((s, o) => s + (o.value || 0), 0) : 0;
-      const lnRong = lnCn - overheadTotal;
+      const overheadTotal = overhead.filter(o => o.month === month && matchValues.has(o.branch_manager)).reduce((s, o) => s + (o.value || 0), 0);
+      const staffSalary = allStaffSalary[b.id] || 0;
+      const lnRong = lnCn - overheadTotal - staffSalary;
       const alerts: string[] = [];
       const expiring = branchClients.filter(c => { const d = daysUntil(c.contract_end); return d !== null && d <= 30 && d >= 0; });
       if (expiring.length) alerts.push(`${expiring.length} HĐ sắp hết hạn`);
       const danger = branchClients.filter(c => c.status === 'danger');
       if (danger.length) alerts.push(`${danger.length} KH cần xử lý`);
-      map[b.id] = { branchClients, workers, revenue, lnCn, overheadTotal, lnRong, alerts };
+      map[b.id] = { branchClients, workers, revenue, lnCn, overheadTotal: overheadTotal + staffSalary, lnRong, alerts };
     }
     return map;
-  }, [branches, clients, projectsPnl, pnlCostsMap, overhead]);
+  }, [branches, clients, projectsPnl, pnlCostsMap, overhead, allStaffSalary]);
 
   // ── Previous month stats ─────────────────────────────────────
   const prevBranchLnRong = useMemo(() => {
     const map: Record<string, number> = {};
     for (const b of branches) {
-      const projects = b.region ? prevProjectsPnl.filter(p => p.branch_manager === b.region) : [];
+      const matchValues = new Set([b.name, b.region, b.short_name].filter(Boolean));
+      const projects = prevProjectsPnl.filter(p => matchValues.has(p.branch_manager || ''));
       const lnCn = projects.reduce((s, p) => {
-        if (p.project_type === 'shared') return s + (p.revenue || 0) * (p.cn_pct || 0) / 100;
-        return s;
+        const costs = pnlCostsMap[p.id] || [];
+        const r = calcPnl(p, costs);
+        return s + r.cnP;
       }, 0);
-      const oh = b.region ? prevOverhead.filter(o => o.branch_manager === b.region).reduce((s, o) => s + (o.value || 0), 0) : 0;
-      map[b.id] = lnCn - oh;
+      const oh = prevOverhead.filter(o => matchValues.has(o.branch_manager)).reduce((s, o) => s + (o.value || 0), 0);
+      const staffSalary = allStaffSalary[b.id] || 0;
+      map[b.id] = lnCn - oh - staffSalary;
     }
     return map;
-  }, [branches, prevProjectsPnl, prevOverhead]);
+  }, [branches, prevProjectsPnl, prevOverhead, pnlCostsMap, allStaffSalary]);
 
   // ── LN branch filter (multi-select) ────────────────────────
   const [lnBranchFilter, setLnBranchFilter] = useState<Set<string>>(new Set());

@@ -10,7 +10,7 @@ import {
   AlertCircle, TrendingUp, Users, BarChart2, Target,
   ChevronDown, X, Phone, Mail,
 } from 'lucide-react';
-import type { Client, ProjectPnl, FinanceRecord } from '../lib/types';
+import type { Client, ProjectPnl, FinanceRecord, Branch, MarketZone, Manager } from '../lib/types';
 import { statusPill, formatCurrency, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -52,8 +52,8 @@ interface DashboardProps {
   onClientUpdate?: (client: Client) => void;
 }
 
-type ScopeMode = 'all' | 'region' | 'manager';
-type GroupMode = 'region' | 'manager';
+type ScopeMode = 'all' | 'region' | 'branch' | 'manager';
+// Grouping always by branch
 
 interface GroupRow {
   key: string;
@@ -74,22 +74,57 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
   const isAdmin = (user as any)?.role === 'admin';
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
   const [selectedScope, setSelectedScope] = useState<string>('');
-  const [groupMode, setGroupMode] = useState<GroupMode>('region');
+  // Build client→branch mapping
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
   const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Unique regions & managers
-  const regions = useMemo(() => [...new Set(clients.map(c => c.region).filter(Boolean) as string[])].sort(), [clients]);
-  const managers = useMemo(() => [...new Set(clients.map(c => c.manager).filter(Boolean) as string[])].sort(), [clients]);
+  // Load branches, market zones, managers for filters
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [marketZones, setMarketZones] = useState<MarketZone[]>([]);
+  const [allManagers, setAllManagers] = useState<Manager[]>([]);
+  useEffect(() => {
+    supabase.from('branches').select('*').order('name').then(({ data }) => setBranches((data ?? []) as Branch[]));
+    supabase.from('market_zones').select('id, name, location').then(({ data }) => setMarketZones((data ?? []) as MarketZone[]));
+    supabase.from('managers').select('*').order('name').then(({ data }) => setAllManagers((data ?? []) as Manager[]));
+  }, []);
+
+  // Provinces from market zones (shared data source)
+  const provinces = useMemo(() =>
+    [...new Set(marketZones.map(z => z.location).filter(Boolean) as string[])].sort(),
+    [marketZones]
+  );
+
+  // Zone names grouped by province for client matching
+  const zonesByProvince = useMemo(() => {
+    const map: Record<string, Set<string>> = {};
+    for (const z of marketZones) {
+      if (!z.location) continue;
+      (map[z.location] ??= new Set()).add(z.name);
+    }
+    return map;
+  }, [marketZones]);
+
+  const branchNames = useMemo(() => branches.map(b => ({ label: b.name, region: b.region })), [branches]);
+  const managers = useMemo(() => allManagers.map(m => m.name).sort(), [allManagers]);
 
   // Filtered clients based on global scope (exclude suspended)
   const filteredClients = useMemo(() => {
     const base = clients.filter(c => c.cooperation_status !== 'suspended');
     if (scopeMode === 'all' || !selectedScope) return base;
-    if (scopeMode === 'region') return base.filter(c => c.region === selectedScope);
+    if (scopeMode === 'region') {
+      const zonesInProvince = zonesByProvince[selectedScope];
+      if (!zonesInProvince) return base;
+      return base.filter(c => c.industrial_zones?.some(iz => zonesInProvince.has(iz)));
+    }
+    if (scopeMode === 'branch') {
+      const br = branches.find(b => b.name === selectedScope);
+      if (!br) return base;
+      const matchValues = new Set([br.name, br.region, br.short_name].filter(Boolean));
+      return base.filter(c => c.region && matchValues.has(c.region));
+    }
     return base.filter(c => c.manager === selectedScope);
-  }, [clients, scopeMode, selectedScope]);
+  }, [clients, scopeMode, selectedScope, zonesByProvince, branches]);
 
   const curMonth = currentMonthStr();
   const curMonthNum = parseInt(curMonth.split('-')[1], 10);
@@ -130,11 +165,22 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
   const danger = filteredClients.filter(c => c.status === 'danger').length;
   const warn = filteredClients.filter(c => c.status === 'warn').length;
 
-  // Groups for bar chart & table — doanh thu & lợi nhuận lấy từ P&L dự án (projects_pnl)
+  // Map client region → branch name
+  const clientToBranch = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of clients) {
+      if (!c.region) continue;
+      const br = branches.find(b => [b.name, b.region, b.short_name].filter(Boolean).includes(c.region!));
+      if (br) map[c.id] = br.name;
+    }
+    return map;
+  }, [clients, branches]);
+
+  // Groups for bar chart & table — always grouped by branch
   const groups = useMemo((): GroupRow[] => {
     const map: Record<string, GroupRow> = {};
     for (const c of filteredClients) {
-      const key = (groupMode === 'region' ? c.region : c.manager) || 'Khác';
+      const key = clientToBranch[c.id] || 'Khác';
       if (!map[key]) map[key] = { key, count: 0, workers: 0, revenue: 0, costs: 0, profit: 0 };
       const w = c.current_workers || 0;
       const projects = pnlByClient[c.id] || [];
@@ -150,7 +196,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
       map[key].profit += profit;
     }
     return Object.values(map).sort((a, b) => b.workers - a.workers);
-  }, [filteredClients, groupMode, pnlByClient]);
+  }, [filteredClients, clientToBranch, pnlByClient]);
 
   const trendData = [2420, 2510, 2590, 2670, 2790, totalWorkers || 2847];
 
@@ -240,7 +286,9 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
     return counts;
   }, [filteredClients]);
 
-  const scopeOptions = scopeMode === 'region' ? regions : scopeMode === 'manager' ? managers : [];
+  const scopeOptions = scopeMode === 'region' ? provinces
+    : scopeMode === 'branch' ? branchNames.map(b => b.label)
+    : scopeMode === 'manager' ? managers : [];
 
   return (
     <>
@@ -254,7 +302,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
         {/* Global Filter */}
         <div className="flex items-center gap-2">
           <span className="text-[11.5px] text-[#888] font-medium">Bộ lọc:</span>
-          {(['all', 'region', 'manager'] as ScopeMode[]).map(m => (
+          {(['all', 'region', 'branch', 'manager'] as ScopeMode[]).map(m => (
             <button
               key={m}
               onClick={() => { setScopeMode(m); setSelectedScope(''); }}
@@ -264,7 +312,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
                   : 'bg-white border-gray-300 text-gray-600 hover:border-blue-400'
               }`}
             >
-              {m === 'all' ? 'Toàn bộ' : m === 'region' ? 'Khu vực' : 'Quản lý'}
+              {m === 'all' ? 'Toàn bộ' : m === 'region' ? 'Khu vực' : m === 'branch' ? 'Chi nhánh' : 'Quản lý'}
             </button>
           ))}
           {scopeMode !== 'all' && (
@@ -274,7 +322,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
                 onChange={e => setSelectedScope(e.target.value)}
                 className="appearance-none pl-3 pr-8 py-1.5 rounded-lg border border-gray-300 text-[11.5px] text-gray-700 bg-white focus:outline-none focus:border-blue-500 cursor-pointer"
               >
-                <option value="">-- Chọn {scopeMode === 'region' ? 'khu vực' : 'quản lý'} --</option>
+                <option value="">-- Chọn {scopeMode === 'region' ? 'khu vực' : scopeMode === 'branch' ? 'chi nhánh' : 'quản lý'} --</option>
                 {scopeOptions.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
               <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -397,15 +445,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Users size={13} className="text-blue-500" />
-                <span className="text-[12.5px] font-semibold text-[#111]">Lao động theo {groupMode === 'region' ? 'khu vực' : 'quản lý'}</span>
-              </div>
-              <div className="flex gap-1">
-                {(['region', 'manager'] as GroupMode[]).map(m => (
-                  <button key={m} onClick={() => setGroupMode(m)}
-                    className={`px-2 py-0.5 rounded text-[10.5px] font-medium border transition ${groupMode === m ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-300'}`}>
-                    {m === 'region' ? 'KV' : 'QL'}
-                  </button>
-                ))}
+                <span className="text-[12.5px] font-semibold text-[#111]">Lao động theo chi nhánh</span>
               </div>
             </div>
             <div className="p-3" style={{ height: 180 }}>
@@ -420,7 +460,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
           <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5">
               <BarChart2 size={13} className="text-emerald-500" />
-              <span className="text-[12.5px] font-semibold text-[#111]">Doanh thu theo {groupMode === 'region' ? 'khu vực' : 'quản lý'}</span>
+              <span className="text-[12.5px] font-semibold text-[#111]">Doanh thu theo chi nhánh</span>
             </div>
             <div className="p-3" style={{ height: 180 }}>
               {groups.length ? (
@@ -435,21 +475,13 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
         {/* Summary Table */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
-            <span className="text-[12.5px] font-semibold text-[#111]">Báo cáo tổng hợp</span>
-            <div className="flex gap-1">
-              {(['region', 'manager'] as GroupMode[]).map(m => (
-                <button key={m} onClick={() => setGroupMode(m)}
-                  className={`px-3 py-1 rounded-lg text-[11.5px] font-medium border transition ${groupMode === m ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-500 hover:border-blue-400'}`}>
-                  {m === 'region' ? 'Theo khu vực' : 'Theo quản lý'}
-                </button>
-              ))}
-            </div>
+            <span className="text-[12.5px] font-semibold text-[#111]">Báo cáo tổng hợp theo chi nhánh</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-[#E8E7E2]">
-                  {[groupMode === 'region' ? 'Khu vực' : 'Quản lý','Số KH','Tổng LĐ','Doanh thu','Chi phí','Lợi nhuận','Margin'].map(h => (
+                  {['Chi nhánh','Số KH','Tổng LĐ','Doanh thu','Chi phí','Lợi nhuận','Margin'].map(h => (
                     <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -458,8 +490,8 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
                 {groups.map(g => (
                   <tr
                     key={g.key}
-                    onClick={groupMode === 'region' && onOpenBranch ? () => onOpenBranch(g.key) : undefined}
-                    className={`border-b border-[#F0EEE9] last:border-0 hover:bg-gray-50 transition-colors ${groupMode === 'region' && onOpenBranch ? 'cursor-pointer' : ''}`}
+                    onClick={onOpenBranch ? () => onOpenBranch(g.key) : undefined}
+                    className={`border-b border-[#F0EEE9] last:border-0 hover:bg-gray-50 transition-colors ${onOpenBranch ? 'cursor-pointer' : ''}`}
                   >
                     <td className="px-3 py-2 font-semibold">{g.key}</td>
                     <td className="px-3 py-2">{g.count}</td>
