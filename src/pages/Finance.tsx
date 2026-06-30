@@ -712,6 +712,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             onDeleteCost={finData.deletePnlCost}
             splitSettings={finData.splitSettings}
             onSaveSplitSettings={finData.saveSplitSettings}
+            invoiceSettings={finData.invoiceSettings}
+            onSaveInvoiceSettings={finData.saveInvoiceSettings}
             branches={branchList}
             costCategories={costCategories}
             onAddCategory={addCostCat}

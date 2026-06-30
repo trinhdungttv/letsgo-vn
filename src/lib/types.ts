@@ -560,11 +560,13 @@ export interface PnlRevenueLine {
   amount: number;
   invoice_date: string | null;
   sort_order: number;
+  period_label: string | null;
 }
 
 export type ProjectPnlType = 'shared' | 'managed';
 export type CostPayer = 'lg' | 'cn' | 'ch';
 export type OverheadCostType = 'Cố định' | 'Biến đổi';
+export type PnlInvoiceMode = 'single' | 'periodic';
 
 export interface ProjectPnl {
   id: string;
@@ -581,6 +583,7 @@ export interface ProjectPnl {
   updated_at: string;
   split_temp_until: string | null;
   split_reverted: boolean;
+  invoice_mode: PnlInvoiceMode;
   clients?: { name: string } | null;
 }
 
@@ -598,6 +601,15 @@ export interface PnlSplitSettings {
   updated_at: string;
 }
 
+export interface PnlInvoiceSettings {
+  client_id: string;
+  period_count: number;
+  period_labels: string[];
+  invoice_label_template: string;
+  invoice_days: number[];
+  updated_at: string;
+}
+
 export interface ProjectPnlCost {
   id: string;
   pnl_id: string;
@@ -605,6 +617,7 @@ export interface ProjectPnlCost {
   value: number;
   payer: CostPayer;
   sort_order: number;
+  period_label: string | null;
 }
 
 export interface BranchOverhead {

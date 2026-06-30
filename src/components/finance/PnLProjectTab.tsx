@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
-import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
+import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine, PnlInvoiceSettings } from '../../lib/types';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import type { ClientBranchHistory, BranchTypeHistory } from '../../lib/types';
@@ -19,6 +19,8 @@ interface PnLProjectTabProps {
   onDeleteCost: (id: string, pnlId: string) => Promise<void>;
   splitSettings: Record<string, PnlSplitSettings>;
   onSaveSplitSettings: (clientId: string, fields: Partial<Omit<PnlSplitSettings, 'id' | 'client_id' | 'updated_at'>>) => Promise<PnlSplitSettings>;
+  invoiceSettings: Record<string, PnlInvoiceSettings>;
+  onSaveInvoiceSettings: (clientId: string, fields: Partial<Omit<PnlInvoiceSettings, 'client_id' | 'updated_at'>>) => Promise<PnlInvoiceSettings>;
   branches: Branch[];
   costCategories: CostCategory[];
   onAddCategory: (label: string) => Promise<CostCategory>;
@@ -32,12 +34,14 @@ interface PnLProjectTabProps {
 }
 
 const PAYER_LABEL: Record<CostPayer, string> = { lg: 'LGV trả', cn: 'CN trả', ch: 'Chung' };
+const PERIOD_LABELS = ['Kỳ 1', 'Kỳ 2', 'Kỳ 3', 'Kỳ 4'];
 
 export default function PnLProjectTab({
   clients, month, projectsPnl, pnlCosts,
   onAddProject, onUpdateProject, onDeleteProject,
   onLoadCosts, onAddCost, onUpdateCost, onDeleteCost,
   splitSettings, onSaveSplitSettings,
+  invoiceSettings, onSaveInvoiceSettings,
   branches = [], costCategories, onAddCategory, onRenameCategory, onDeleteCategory, onToggleCategoryDefault, onSetCategoryGroup, onSetCategoryPayer,
   currentUser, toast,
 }: PnLProjectTabProps) {
@@ -172,8 +176,41 @@ export default function PnLProjectTab({
     return { categories: costCategories, taxPct: s?.tax_pct ?? 20, taxExempt: s?.tax_exempt ?? false };
   }, [splitSettings, costCategories]);
 
+  const invoiceSettingsFor = useCallback((clientId: string): PnlInvoiceSettings => {
+    return invoiceSettings[clientId] ?? {
+      client_id: clientId, period_count: 3, period_labels: PERIOD_LABELS,
+      invoice_label_template: 'Hoa don', invoice_days: [10, 20, 30, 31], updated_at: '',
+    };
+  }, [invoiceSettings]);
+
+  const periodLabelsFor = useCallback((clientId: string): string[] => {
+    const s = invoiceSettingsFor(clientId);
+    return Array.from({ length: Math.max(1, s.period_count) }, (_, i) => s.period_labels[i] || `Kỳ ${i + 1}`);
+  }, [invoiceSettingsFor]);
+
   const costs = selId ? (pnlCosts[selId] || []) : [];
   const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
+
+  // Tự dọn dữ liệu cũ: nếu dự án bật "Nhiều kỳ" và đã có kỳ trong Doanh thu chi tiết,
+  // các dòng chi phí Lương/BHXH còn sót lại chưa gắn kỳ (tạo từ trước khi bật chế độ này)
+  // sẽ được gộp vào kỳ đầu tiên thay vì đứng tách biệt gây cộng dư tổng chi phí.
+  useEffect(() => {
+    if (!selected || selected.invoice_mode !== 'periodic') return;
+    const lines = revLines[selected.id] || [];
+    if (lines.length === 0) return;
+    const firstPeriod = periodLabelsFor(selected.client_id)[0];
+    if (!firstPeriod) return;
+    const orphans = costs.filter(c =>
+      !c.period_label && (costCategories.find(cat => cat.label === c.label)?.group_type ?? 'general') === 'salary'
+    );
+    if (orphans.length === 0) return;
+    (async () => {
+      for (const c of orphans) {
+        try { await onUpdateCost(c.id, { period_label: firstPeriod }); } catch { /* bỏ qua, thử lại ở lần render sau */ }
+      }
+      toast(`Đã gộp ${orphans.length} dòng chi phí lương chưa gắn kỳ vào ${firstPeriod}`);
+    })();
+  }, [selected, costs, revLines, costCategories, periodLabelsFor, onUpdateCost, toast]);
 
   // Dự án đã có lợi nhuận TỪ TRƯỚC khi mở lên (chốt ở lần truy cập trước) — mọi chỉnh sửa
   // trong phiên này phải xác nhận trước khi lưu, tránh sửa nhầm số liệu đã chốt.
@@ -259,19 +296,20 @@ export default function PnLProjectTab({
           created_by: currentUser || null,
           split_temp_until: splitTempUntil,
           split_reverted: splitReverted,
+          invoice_mode: 'single',
         });
 
         if (prevCosts.length > 0) {
           for (let i = 0; i < prevCosts.length; i++) {
-            await onAddCost({ pnl_id: created.id, label: prevCosts[i].label, value: 0, payer: prevCosts[i].payer, sort_order: i });
+            await onAddCost({ pnl_id: created.id, label: prevCosts[i].label, value: 0, payer: prevCosts[i].payer, sort_order: i, period_label: null });
           }
         } else {
           const defaults = costCategories.filter(c => c.is_default);
           for (let i = 0; i < defaults.length; i++) {
-            await onAddCost({ pnl_id: created.id, label: defaults[i].label, value: 0, payer: defaults[i].default_payer ?? 'ch', sort_order: i });
+            await onAddCost({ pnl_id: created.id, label: defaults[i].label, value: 0, payer: defaults[i].default_payer ?? 'ch', sort_order: i, period_label: null });
           }
           if (!defaults.length) {
-            await onAddCost({ pnl_id: created.id, label: 'Chi phi moi', value: 0, payer: 'ch', sort_order: 0 });
+            await onAddCost({ pnl_id: created.id, label: 'Chi phi moi', value: 0, payer: 'ch', sort_order: 0, period_label: null });
           }
         }
         lastId = created.id;
@@ -349,22 +387,57 @@ export default function PnLProjectTab({
     }
   };
 
+  const [newCostPeriod, setNewCostPeriod] = useState('Kỳ 1');
   const [costSettingsOpen, setCostSettingsOpen] = useState(false);
+  const [invoiceSettingsOpen, setInvoiceSettingsOpen] = useState(false);
+  const [invSettingsForm, setInvSettingsForm] = useState<{ periodCount: number; periodLabels: string[]; invoiceLabel: string; invoiceDays: number[] }>({
+    periodCount: 3, periodLabels: ['Kỳ 1', 'Kỳ 2', 'Kỳ 3', 'Kỳ 4'], invoiceLabel: 'Hoa don', invoiceDays: [10, 20, 30, 31],
+  });
+
+  useEffect(() => {
+    if (!selected || !invoiceSettingsOpen) return;
+    const s = invoiceSettingsFor(selected.client_id);
+    setInvSettingsForm({
+      periodCount: s.period_count,
+      periodLabels: Array.from({ length: 4 }, (_, i) => s.period_labels[i] || `Kỳ ${i + 1}`),
+      invoiceLabel: s.invoice_label_template,
+      invoiceDays: Array.from({ length: 4 }, (_, i) => s.invoice_days[i] || [10, 20, 30, 31][i]),
+    });
+  }, [selected, invoiceSettingsOpen, invoiceSettingsFor]);
+
+  const saveInvoiceSettingsForm = async () => {
+    if (!selected) return;
+    try {
+      await onSaveInvoiceSettings(selected.client_id, {
+        period_count: Math.min(4, Math.max(1, invSettingsForm.periodCount)),
+        period_labels: invSettingsForm.periodLabels,
+        invoice_label_template: invSettingsForm.invoiceLabel.trim() || 'Hoa don',
+        invoice_days: invSettingsForm.invoiceDays,
+      });
+      toast('Đã lưu cài đặt — áp dụng cho các tháng sau của dự án này');
+      setInvoiceSettingsOpen(false);
+    } catch (e) { toast('Lỗi: ' + (e instanceof Error ? e.message : String(e))); }
+  };
   const [newCatLabel, setNewCatLabel] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [editingCatLabel, setEditingCatLabel] = useState('');
 
-  const addCostFromCategory = async (catLabel: string) => {
+  const addCostFromCategory = async (catLabel: string, periodLabel: string | null = null) => {
     if (!selected) return;
-    if (costs.some(c => c.label === catLabel)) { toast('Hang muc nay da co'); return; }
+    const isPeriodic = selected.invoice_mode === 'periodic';
+    if (periodLabel) {
+      if (costs.some(c => c.label === catLabel && c.period_label === periodLabel)) { toast('Hang muc nay da co trong ky nay'); return; }
+    } else if (costs.some(c => c.label === catLabel)) { toast('Hang muc nay da co'); return; }
     const defaultPayer = costCategories.find(cat => cat.label === catLabel)?.default_payer ?? 'lg';
     try {
-      await onAddCost({ pnl_id: selected.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: costs.length });
-      for (const p of monthProjects) {
-        if (p.id === selected.id) continue;
-        const existing = pnlCosts[p.id] || [];
-        if (!existing.some(c => c.label === catLabel)) {
-          await onAddCost({ pnl_id: p.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: existing.length });
+      await onAddCost({ pnl_id: selected.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: costs.length, period_label: periodLabel });
+      if (!isPeriodic) {
+        for (const p of monthProjects) {
+          if (p.id === selected.id) continue;
+          const existing = pnlCosts[p.id] || [];
+          if (!existing.some(c => c.label === catLabel)) {
+            await onAddCost({ pnl_id: p.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: existing.length, period_label: null });
+          }
         }
       }
     } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
@@ -548,6 +621,22 @@ export default function PnLProjectTab({
                 <span className={`text-[10px] px-2 py-1 rounded font-medium ${selected.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
                   {selected.project_type === 'managed' ? 'Không Khoán - Nhận Lương' : 'Đã Nhận Khoán'}
                 </span>
+                <div className="flex border border-gray-300 rounded-lg overflow-hidden text-[10px] font-medium shrink-0">
+                  <button
+                    onClick={() => guard(() => updateField({ invoice_mode: 'single' }))}
+                    title="Xuất 1 hoá đơn cho cả tháng"
+                    className={`px-2 py-1 transition ${selected.invoice_mode !== 'periodic' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+                  >
+                    1 hoá đơn
+                  </button>
+                  <button
+                    onClick={() => guard(() => updateField({ invoice_mode: 'periodic' }))}
+                    title="Xuất nhiều hoá đơn theo kỳ trong tháng (vd: chốt công 10 ngày/lần)"
+                    className={`px-2 py-1 transition border-l border-gray-300 ${selected.invoice_mode === 'periodic' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+                  >
+                    Nhiều kỳ
+                  </button>
+                </div>
                 <button onClick={() => handleDelete(selected.id)} className="text-red-600 hover:bg-red-50 rounded-md p-1.5 transition">
                   <Trash2 size={14} />
                 </button>
@@ -616,12 +705,44 @@ export default function PnLProjectTab({
             {/* Revenue lines */}
             {(() => {
               const lines = revLines[selected.id] || [];
+              const isPeriodic = selected.invoice_mode === 'periodic';
+              const settings = invoiceSettingsFor(selected.client_id);
+              const periodLabels = periodLabelsFor(selected.client_id);
               const addLine = async () => {
+                const periodIndex = Math.min(lines.length, periodLabels.length - 1);
+                const periodLabel = isPeriodic ? periodLabels[periodIndex] : null;
+                const invoiceDate = isPeriodic && settings.invoice_days[periodIndex]
+                  ? `${month}-${String(Math.min(settings.invoice_days[periodIndex], 28)).padStart(2, '0')}`
+                  : null;
                 const { data, error } = await supabase.from('pnl_revenue_lines')
-                  .insert({ pnl_id: selected.id, label: 'Hoa don', amount: 0, sort_order: lines.length })
+                  .insert({ pnl_id: selected.id, label: settings.invoice_label_template || 'Hoa don', amount: 0, sort_order: lines.length, period_label: periodLabel, invoice_date: invoiceDate })
                   .select().single();
                 if (error) { toast('Loi: ' + error.message); return; }
                 setRevLines(prev => ({ ...prev, [selected.id]: [...(prev[selected.id] || []), data as PnlRevenueLine] }));
+
+                if (periodLabel) {
+                  const salaryRows = costs.filter(c => (costCategories.find(cat => cat.label === c.label)?.group_type ?? 'general') === 'salary');
+                  const unassigned = salaryRows.filter(c => !c.period_label);
+                  if (lines.length === 0 && unassigned.length > 0) {
+                    // Kỳ đầu tiên — gắn các dòng chi phí lương chưa thuộc kỳ nào vào kỳ này, không tạo dòng mới trùng lặp.
+                    for (const c of unassigned) {
+                      try { await onUpdateCost(c.id, { period_label: periodLabel }); }
+                      catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
+                    }
+                  } else {
+                    const knownLabels = [...new Set(salaryRows.map(c => c.label))];
+                    const templates = knownLabels.length > 0
+                      ? knownLabels.map(label => ({ label, payer: salaryRows.find(c => c.label === label)?.payer ?? 'ch' }))
+                      : costCategories.filter(cat => cat.group_type === 'salary').map(cat => ({ label: cat.label, payer: cat.default_payer ?? 'ch' }));
+                    for (let i = 0; i < templates.length; i++) {
+                      const t = templates[i];
+                      if (costs.some(c => c.label === t.label && c.period_label === periodLabel)) continue;
+                      try {
+                        await onAddCost({ pnl_id: selected.id, label: t.label, value: 0, payer: t.payer, sort_order: costs.length + i, period_label: periodLabel });
+                      } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
+                    }
+                  }
+                }
               };
               const updateLine = async (lineId: string, fields: Partial<PnlRevenueLine>) => {
                 await supabase.from('pnl_revenue_lines').update(fields).eq('id', lineId);
@@ -644,6 +765,12 @@ export default function PnLProjectTab({
                     <div className="text-[12px] font-medium text-[#111]">Doanh thu chi tiet</div>
                     <div className="flex items-center gap-2">
                       {lines.length > 0 && <span className="text-[11px] text-[#888]">{lines.length} hoa don · Tong: {selected.revenue.toLocaleString('vi-VN')} d</span>}
+                      {isPeriodic && (
+                        <button onClick={() => setInvoiceSettingsOpen(true)} title="Cai dat ky / ten hoa don mac dinh"
+                          className="p-1 rounded-md border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
+                          <Settings size={12} />
+                        </button>
+                      )}
                       <button onClick={addLine} className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium">
                         <Plus size={12} /> Them HD
                       </button>
@@ -654,6 +781,7 @@ export default function PnLProjectTab({
                       <table className="w-full text-[12px]">
                         <thead>
                           <tr className="text-[10px] text-[#999] uppercase">
+                            {isPeriodic && <th className="text-left font-medium pb-1.5 w-[90px]">Kỳ</th>}
                             <th className="text-left font-medium pb-1.5">Ten hoa don</th>
                             <th className="text-right font-medium pb-1.5 w-[160px]">So tien</th>
                             <th className="text-center font-medium pb-1.5 w-[120px]">Ngay XHD</th>
@@ -663,6 +791,18 @@ export default function PnLProjectTab({
                         <tbody>
                           {lines.map(l => (
                             <tr key={l.id} className="border-t border-[#F0EEE9]">
+                              {isPeriodic && (
+                                <td className="py-1.5 pr-2">
+                                  <select
+                                    value={l.period_label || ''}
+                                    onChange={e => { const v = e.target.value || null; guard(() => updateLine(l.id, { period_label: v })); }}
+                                    className="w-full text-[12px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                                  >
+                                    <option value="">-- Chọn kỳ --</option>
+                                    {periodLabels.map(p => <option key={p} value={p}>{p}</option>)}
+                                  </select>
+                                </td>
+                              )}
                               <td className="py-1.5 pr-2">
                                 <input key={`rl-${l.id}`} defaultValue={l.label} onBlur={e => {
                                     const target = e.target; const v = target.value;
@@ -806,16 +946,31 @@ export default function PnLProjectTab({
 
             {/* Row 3: Costs */}
             {(() => {
+              const isPeriodic = selected.invoice_mode === 'periodic';
+              const periodOptions = periodLabelsFor(selected.client_id);
+              const selectedNewCostPeriod = periodOptions.includes(newCostPeriod) ? newCostPeriod : periodOptions[0];
               const groupOf = (label: string): CostGroupType => costCategories.find(cat => cat.label === label)?.group_type ?? 'general';
               const salaryCosts = costs.filter(c => groupOf(c.label) === 'salary');
               const generalCosts = costs.filter(c => groupOf(c.label) !== 'salary');
 
-              const renderRow = (c: ProjectPnlCost) => {
+              const renderRow = (c: ProjectPnlCost, showPeriod: boolean) => {
                 const isVP = c.label === 'Chi Phí Văn Phòng';
                 const vpInfo = isVP && selected ? getZoneVpCost(selected.client_id) : null;
                 return (
                   <React.Fragment key={c.id}>
                     <tr className="border-t border-[#F0EEE9]">
+                      {showPeriod && (
+                        <td className="py-1.5 pr-2">
+                          <select
+                            value={c.period_label || ''}
+                            onChange={e => { const v = e.target.value || null; guard(() => updateCostField(c, { period_label: v })); }}
+                            className="w-full text-[12px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                          >
+                            <option value="">-- Chọn kỳ --</option>
+                            {periodOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </td>
+                      )}
                       <td className="py-1.5 pr-2">
                         <select
                           value={c.label}
@@ -823,7 +978,7 @@ export default function PnLProjectTab({
                           className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent"
                         >
                           <option value={c.label}>{c.label}</option>
-                          {costCategories.filter(cat => cat.label !== c.label && !costs.some(x => x.label === cat.label)).map(cat => (
+                          {costCategories.filter(cat => cat.label !== c.label && (showPeriod || !costs.some(x => x.label === cat.label))).map(cat => (
                             <option key={cat.id} value={cat.label}>{cat.label}</option>
                           ))}
                         </select>
@@ -863,7 +1018,7 @@ export default function PnLProjectTab({
                     </tr>
                     {isVP && vpInfo && (
                       <tr className="bg-blue-50/50">
-                        <td colSpan={4} className="px-3 py-1.5 text-[10px] text-blue-600">
+                        <td colSpan={showPeriod ? 5 : 4} className="px-3 py-1.5 text-[10px] text-blue-600">
                           Tu tinh: VP "{vpInfo.zoneName}" — Tong CP: {vpInfo.totalCost.toLocaleString('vi-VN')} d
                           (CP co dinh: {vpInfo.fixedCosts.toLocaleString('vi-VN')} + Luong NS: {vpInfo.staffCosts.toLocaleString('vi-VN')})
                           / {vpInfo.projectCount} du an = {vpInfo.amount.toLocaleString('vi-VN')} d/du an
@@ -875,6 +1030,7 @@ export default function PnLProjectTab({
               };
 
               const renderTable = (title: string, rows: ProjectPnlCost[], subtotal: number, emptyHint: string, accent: 'salary' | 'general') => {
+                const showPeriod = isPeriodic && accent === 'salary';
                 const accentCls = accent === 'salary'
                   ? { bar: 'bg-amber-400', badge: 'bg-[#FDF1D6] text-amber-800 border-amber-300', total: 'text-amber-700' }
                   : { bar: 'bg-[#9DB7D8]', badge: 'bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]', total: 'text-[#185FA5]' };
@@ -891,13 +1047,14 @@ export default function PnLProjectTab({
                         <table className="w-full text-[12px] mb-1">
                           <thead>
                             <tr className="text-[10px] text-[#999] uppercase">
+                              {showPeriod && <th className="text-left font-medium pb-1.5 w-[90px]">Kỳ</th>}
                               <th className="text-left font-medium pb-1.5">Khoản chi phí</th>
                               <th className="text-right font-medium pb-1.5 w-[120px]">Giá trị</th>
                               <th className="text-center font-medium pb-1.5 w-[95px]">Bên chi trả</th>
                               <th className="w-[28px]"></th>
                             </tr>
                           </thead>
-                          <tbody>{rows.map(renderRow)}</tbody>
+                          <tbody>{rows.map(c => renderRow(c, showPeriod))}</tbody>
                         </table>
                       )}
                       <div className="flex items-center justify-between text-[11px] pt-1.5 pb-2 border-t border-dashed border-gray-300">
@@ -923,12 +1080,29 @@ export default function PnLProjectTab({
                     {renderTable('Chi phí Lương + BHXH', salaryCosts, r.salaryCost, 'Chưa có khoản lương/BHXH nào — gán nhóm "Lương/BHXH" cho hạng mục trong Quản lý hạng mục.', 'salary')}
                     {renderTable('Chi phí chung', generalCosts, r.generalCost, 'Chưa có khoản chi phí chung nào.', 'general')}
                     <div className="pt-1 flex items-center gap-2">
+                      {isPeriodic && (
+                        <select
+                          value={selectedNewCostPeriod}
+                          onChange={e => setNewCostPeriod(e.target.value)}
+                          title="Kỳ áp dụng cho khoản chi phí sắp thêm"
+                          className="w-[90px] text-[11px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none text-[#666]"
+                        >
+                          {periodOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      )}
                       {(() => {
-                        const available = costCategories.filter(cat => !costs.some(c => c.label === cat.label));
+                        const available = costCategories.filter(cat => (isPeriodic && cat.group_type === 'salary') || !costs.some(c => c.label === cat.label));
                         return available.length > 0 ? (
                           <select
                             value=""
-                            onChange={e => { const v = e.target.value; if (v) guard(() => addCostFromCategory(v)); e.target.value = ''; }}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (v) {
+                                const isSalary = costCategories.find(cat => cat.label === v)?.group_type === 'salary';
+                                guard(() => addCostFromCategory(v, isPeriodic && isSalary ? selectedNewCostPeriod : null));
+                              }
+                              e.target.value = '';
+                            }}
                             className="flex-1 text-[11px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none text-[#666]"
                           >
                             <option value="">+ Them hang muc chi phi...</option>
@@ -947,6 +1121,38 @@ export default function PnLProjectTab({
                   <div className="px-3.5 py-2 bg-[#F5F4EF] border-t border-[#E8E7E2] flex items-center justify-between text-[12px] font-medium">
                     <span>Tổng chi phí</span>
                     <span className="text-red-600">{fmtTrieu(r.tc)} đ</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Row 3b: Period summary — only when project xuất hoá đơn nhiều kỳ trong tháng */}
+            {selected.invoice_mode === 'periodic' && (() => {
+              const lines = revLines[selected.id] || [];
+              const periodKeys = [...new Set([
+                ...lines.map(l => l.period_label || '—'),
+                ...costs.map(c => c.period_label || '—'),
+              ])].sort();
+              if (periodKeys.length === 0) return null;
+              return (
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] text-[12px] font-medium text-[#111]">
+                    Tổng hợp theo kỳ
+                  </div>
+                  <div className="p-3.5 space-y-2">
+                    {periodKeys.map(pk => {
+                      const periodRevenue = lines.filter(l => (l.period_label || '—') === pk).reduce((s, l) => s + (l.amount || 0), 0);
+                      const periodCost = costs.filter(c => (c.period_label || '—') === pk).reduce((s, c) => s + (Number(c.value) || 0), 0);
+                      const periodProfit = periodRevenue - periodCost;
+                      return (
+                        <div key={pk} className="flex items-center justify-between text-[12px] border border-[#E8E7E2] rounded-lg px-3 py-2">
+                          <span className="font-medium text-[#111] w-[90px] truncate">{pk}</span>
+                          <span className="text-[#666]">DT <strong className="text-[#111]">{fmtTrieu(periodRevenue)}</strong></span>
+                          <span className="text-[#666]">CP <strong className="text-red-600">{fmtTrieu(periodCost)}</strong></span>
+                          <span className={`font-semibold ${periodProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>LN {fmtTrieu(periodProfit)} đ</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -1119,6 +1325,68 @@ export default function PnLProjectTab({
         </div>
       )}
 
+      {invoiceSettingsOpen && selected && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setInvoiceSettingsOpen(false); }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[420px]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-[13px] font-semibold text-[#111]">Cai dat hoa don nhieu ky</div>
+              <button onClick={() => setInvoiceSettingsOpen(false)} className="text-[#aaa] hover:text-[#666]"><XIcon size={15} /></button>
+            </div>
+            <div className="text-[10.5px] text-[#888] mb-3">
+              Ap dung cho khach hang <strong>{selected.clients?.name || mergedClients.find(x => x.id === selected.client_id)?.name}</strong> — nho cai dat nay cho cac thang sau, khong can go lai.
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-[12px] text-[#666] w-[110px]">So ky / thang:</span>
+              <input
+                type="number" min={1} max={4}
+                value={invSettingsForm.periodCount}
+                onChange={e => setInvSettingsForm(f => ({ ...f, periodCount: Math.min(4, Math.max(1, +e.target.value || 1)) }))}
+                className="w-[70px] text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+              />
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-[12px] text-[#666] w-[110px]">Ten hoa don:</span>
+              <input
+                value={invSettingsForm.invoiceLabel}
+                onChange={e => setInvSettingsForm(f => ({ ...f, invoiceLabel: e.target.value }))}
+                placeholder="Hoa don"
+                className="flex-1 text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="text-[10px] text-[#999] uppercase mb-1.5">Ten ky &amp; ngay xuat hoa don mac dinh</div>
+            <div className="space-y-1.5 mb-4">
+              {Array.from({ length: invSettingsForm.periodCount }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={invSettingsForm.periodLabels[i] || ''}
+                    onChange={e => setInvSettingsForm(f => { const labels = [...f.periodLabels]; labels[i] = e.target.value; return { ...f, periodLabels: labels }; })}
+                    placeholder={`Kỳ ${i + 1}`}
+                    className="flex-1 text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+                  />
+                  <div className="relative w-[80px]">
+                    <input
+                      type="number" min={1} max={31}
+                      value={invSettingsForm.invoiceDays[i] || ''}
+                      onChange={e => setInvSettingsForm(f => { const days = [...f.invoiceDays]; days[i] = Math.min(31, Math.max(1, +e.target.value || 1)); return { ...f, invoiceDays: days }; })}
+                      className="w-full text-[12px] px-2 py-1.5 pr-7 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">ngày</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={saveInvoiceSettingsForm} className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
+                Luu
+              </button>
+              <button onClick={() => setInvoiceSettingsOpen(false)} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
+                Huy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmAction && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]" onClick={e => { if (e.target === e.currentTarget) { confirmAction.revert?.(); setConfirmAction(null); } }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[360px]">
@@ -1128,7 +1396,7 @@ export default function PnLProjectTab({
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => { confirmAction.run(); setConfirmAction(null); }}
+                onClick={() => { confirmAction.run(); setConfirmAction(null); setLockedSnapshot(false); }}
                 className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition"
               >
                 Lưu thay đổi

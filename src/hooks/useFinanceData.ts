@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { ProjectPnl, ProjectPnlCost, BranchOverhead, PnlSplitSettings } from '../lib/types';
+import type { ProjectPnl, ProjectPnlCost, BranchOverhead, PnlSplitSettings, PnlInvoiceSettings } from '../lib/types';
 
 export function useFinanceData() {
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
   const [pnlCosts, setPnlCosts] = useState<Record<string, ProjectPnlCost[]>>({});
   const [overhead, setOverhead] = useState<BranchOverhead[]>([]);
   const [splitSettings, setSplitSettings] = useState<Record<string, PnlSplitSettings>>({});
+  const [invoiceSettings, setInvoiceSettings] = useState<Record<string, PnlInvoiceSettings>>({});
   const [loading, setLoading] = useState(false);
 
   // ── projects_pnl ──────────────────────────────────────────────────
@@ -178,17 +179,48 @@ export function useFinanceData() {
     return saved;
   }, [splitSettings]);
 
-  useEffect(() => { loadProjectsPnl(); loadOverhead(); loadSplitSettings(); }, [loadProjectsPnl, loadOverhead, loadSplitSettings]);
+  // ── pnl_invoice_settings ──────────────────────────────────────────
+  const loadInvoiceSettings = useCallback(async () => {
+    const { data, error } = await supabase.from('pnl_invoice_settings').select('*');
+    if (error) throw error;
+    const rows = (data || []) as PnlInvoiceSettings[];
+    const map: Record<string, PnlInvoiceSettings> = {};
+    for (const row of rows) map[row.client_id] = row;
+    setInvoiceSettings(map);
+    return map;
+  }, []);
+
+  const saveInvoiceSettings = useCallback(async (clientId: string, fields: Partial<Omit<PnlInvoiceSettings, 'client_id' | 'updated_at'>>) => {
+    const current = invoiceSettings[clientId];
+    const payload = {
+      client_id: clientId,
+      period_count: current?.period_count ?? 3,
+      period_labels: current?.period_labels ?? ['Kỳ 1', 'Kỳ 2', 'Kỳ 3', 'Kỳ 4'],
+      invoice_label_template: current?.invoice_label_template ?? 'Hoa don',
+      invoice_days: current?.invoice_days ?? [10, 20, 30, 31],
+      ...fields,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from('pnl_invoice_settings').upsert(payload, { onConflict: 'client_id' }).select().single();
+    if (error) throw error;
+    const saved = data as PnlInvoiceSettings;
+    setInvoiceSettings(prev => ({ ...prev, [clientId]: saved }));
+    return saved;
+  }, [invoiceSettings]);
+
+  useEffect(() => { loadProjectsPnl(); loadOverhead(); loadSplitSettings(); loadInvoiceSettings(); }, [loadProjectsPnl, loadOverhead, loadSplitSettings, loadInvoiceSettings]);
 
   return {
     projectsPnl, setProjectsPnl,
     pnlCosts, setPnlCosts,
     overhead, setOverhead,
     splitSettings, setSplitSettings,
+    invoiceSettings, setInvoiceSettings,
     loading,
     loadProjectsPnl, addProjectPnl, updateProjectPnl, deleteProjectPnl,
     loadPnlCosts, addPnlCost, updatePnlCost, deletePnlCost,
     loadOverhead, addOverhead, updateOverhead, deleteOverhead, copyOverheadFromMonth,
     loadSplitSettings, saveSplitSettings,
+    loadInvoiceSettings, saveInvoiceSettings,
   };
 }
