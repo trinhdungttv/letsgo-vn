@@ -13,6 +13,7 @@ import { useOverheadCategories } from '../hooks/useOverheadCategories';
 import { useHashSubRoute } from '../hooks/useHashSubRoute';
 import BranchZones from '../components/branches/BranchZones';
 import BranchFinance from '../components/branches/BranchFinance';
+import AddBranchModal from '../components/branches/AddBranchModal';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -130,8 +131,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   }, [branchStaffs]);
 
   const [adding, setAdding] = useState(false);
-  const [newBranch, setNewBranch] = useState({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '', branch_type: 'contracted' as 'contracted' | 'company' });
-  const [regionTouched, setRegionTouched] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'contracted' | 'company'>('all');
 
   const [editPctMode, setEditPctMode] = useState(false);
@@ -378,46 +377,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         setRecordDate(todayStr());
       }
       toast('Đã lưu thông tin chi nhánh');
-    } catch (e) {
-      toast('Lỗi: ' + errMsg(e));
-    }
-  };
-
-  const handleAddBranch = async () => {
-    if (!newBranch.name.trim()) { toast('Vui lòng nhập tên chi nhánh'); return; }
-    const region = newBranch.region.trim();
-    if (region && branches.some(b => b.region === region)) {
-      toast(`"${region}" đã được liên kết với chi nhánh khác — vui lòng đặt tên khu vực phụ trách khác`);
-      return;
-    }
-    try {
-      const mgr = await resolveManager(newBranch.manager_name);
-      const created = await addBranch({
-        name: newBranch.name.trim(),
-        short_name: newBranch.short_name.trim() || null,
-        manager_id: mgr.id,
-        manager_name: mgr.name,
-        region: region || null,
-        location: newBranch.location.trim() || null,
-        map_link: newBranch.map_link.trim() || null,
-        manager_avatar_url: null,
-        address: null,
-        phone: null,
-        email: null,
-        established_date: null,
-        status: 'active',
-        branch_type: newBranch.branch_type,
-        notes: null,
-        status_note: null,
-        difficulties: null,
-        opportunities: null,
-      });
-      if (region) await ensureRegion(region);
-      toast('Da them chi nhanh');
-      setAdding(false);
-      setNewBranch({ name: '', short_name: '', region: '', manager_name: '', location: '', map_link: '', branch_type: 'contracted' });
-      setRegionTouched(false);
-      setSelectedId(created.id);
     } catch (e) {
       toast('Lỗi: ' + errMsg(e));
     }
@@ -2025,68 +1984,19 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         </div>
       </div>
 
-      {adding && (
-        <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5 grid grid-cols-4 gap-2.5 items-end">
-          <Field label="Loai chi nhanh" full>
-            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-              <button type="button" onClick={() => setNewBranch(v => ({ ...v, branch_type: 'contracted' }))}
-                className={`flex-1 px-3 py-1.5 text-[12px] font-medium transition ${newBranch.branch_type === 'contracted' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999]'}`}>
-                Da Khoan
-              </button>
-              <button type="button" onClick={() => setNewBranch(v => ({ ...v, branch_type: 'company' }))}
-                className={`flex-1 px-3 py-1.5 text-[12px] font-medium border-l border-gray-300 transition ${newBranch.branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'text-[#999]'}`}>
-                Du An Cong Ty
-              </button>
-            </div>
-          </Field>
-          <Field label="Tên chi nhánh">
-            <input
-              value={newBranch.name}
-              onChange={e => {
-                const name = e.target.value;
-                setNewBranch(v => ({ ...v, name, region: regionTouched ? v.region : name }));
-              }}
-              className="field-input"
-              placeholder="BH - Ms Thương"
-            />
-          </Field>
-          <Field label="Tên rút gọn">
-            <input value={newBranch.short_name} onChange={e => setNewBranch(v => ({ ...v, short_name: e.target.value }))} className="field-input" placeholder="BH" />
-          </Field>
-          <Field label="Khu vực phụ trách (liên kết KH)">
-            <input
-              value={newBranch.region}
-              onChange={e => { setRegionTouched(true); setNewBranch(v => ({ ...v, region: e.target.value })); }}
-              className="field-input"
-              placeholder="Tự điền theo Tên chi nhánh — chỉ sửa nếu cần liên kết khác"
-            />
-          </Field>
-          <Field label="Trưởng VP - CN">
-            <input value={newBranch.manager_name} onChange={e => setNewBranch(v => ({ ...v, manager_name: e.target.value }))} className="field-input" list="manager-options" placeholder="Chọn hoặc nhập tên" />
-          </Field>
-          <Field label="Địa danh">
-            <select value={newBranch.location} onChange={e => {
-              if (e.target.value === '__new__') {
-                const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
-                if (v && v.trim()) { addProvince(v.trim()); setNewBranch(nb => ({ ...nb, location: v.trim() })); }
-                return;
-              }
-              setNewBranch(nb => ({ ...nb, location: e.target.value }));
-            }} className="field-input">
-              <option value="">-- Chon dia danh --</option>
-              {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
-              <option value="__new__">+ Thêm tỉnh/thành mới…</option>
-            </select>
-          </Field>
-          <Field label="Link Google Maps">
-            <input value={newBranch.map_link} onChange={e => setNewBranch(v => ({ ...v, map_link: e.target.value }))} className="field-input" placeholder="https://maps.app.goo.gl/..." />
-          </Field>
-          <div className="col-span-4 flex gap-2">
-            <button onClick={handleAddBranch} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">Lưu</button>
-            <button onClick={() => setAdding(false)} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">Hủy</button>
-          </div>
-        </div>
-      )}
+      <AddBranchModal
+        open={adding}
+        onClose={() => setAdding(false)}
+        branches={branches}
+        managers={managers}
+        provinces={PROVINCES}
+        addBranch={addBranch}
+        addManager={addManager}
+        ensureRegion={ensureRegion}
+        addProvince={addProvince}
+        toast={toast}
+        onCreated={created => setSelectedId(created.id)}
+      />
 
       {/* KPI strip */}
       <div className="grid grid-cols-4 gap-2.5">
@@ -2390,14 +2300,6 @@ function InlineField({ label, children }: { label: string; children: React.React
   );
 }
 
-function Field({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return (
-    <div className={`flex flex-col gap-1 ${full ? 'col-span-2' : ''}`}>
-      <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">{label}</label>
-      {children}
-    </div>
-  );
-}
 
 function Kpi({ label, value, sub, accent, valueColor, icon }: { label: string; value: string; sub?: string; accent: string; valueColor?: string; icon: React.ReactNode }) {
   return (
