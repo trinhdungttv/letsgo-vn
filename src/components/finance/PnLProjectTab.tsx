@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
@@ -175,12 +175,24 @@ export default function PnLProjectTab({
   const costs = selId ? (pnlCosts[selId] || []) : [];
   const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
 
-  // Dự án đã có lợi nhuận (đã nhập đủ dữ liệu) — mọi chỉnh sửa phải xác nhận trước khi lưu,
-  // để tránh sửa nhầm số liệu đã chốt. Dự án LN = 0 (chưa nhập) thì sửa tự do.
-  const isLocked = !!r && r.profit !== 0;
+  // Dự án đã có lợi nhuận TỪ TRƯỚC khi mở lên (chốt ở lần truy cập trước) — mọi chỉnh sửa
+  // trong phiên này phải xác nhận trước khi lưu, tránh sửa nhầm số liệu đã chốt.
+  // Chỉ chốt trạng thái khoá MỘT LẦN khi chọn dự án, không tính lại theo từng phím gõ —
+  // để nhập liệu lần đầu (revenue → công → chi phí...) không tự khoá lẫn nhau giữa các trường.
+  const pnlCostsRef = useRef(pnlCosts);
+  pnlCostsRef.current = pnlCosts;
+  const [lockedSnapshot, setLockedSnapshot] = useState(false);
+  useEffect(() => {
+    if (!selected) { setLockedSnapshot(false); return; }
+    const c = pnlCostsRef.current[selected.id] || [];
+    const rr = calcPnl(selected, c, taxOptsFor(selected.client_id));
+    setLockedSnapshot(rr.profit !== 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
   const [confirmAction, setConfirmAction] = useState<{ run: () => void; revert?: () => void } | null>(null);
   const guard = (run: () => void, revert?: () => void) => {
-    if (isLocked) setConfirmAction({ run, revert });
+    if (lockedSnapshot) setConfirmAction({ run, revert });
     else run();
   };
 
