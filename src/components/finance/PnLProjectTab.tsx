@@ -175,6 +175,15 @@ export default function PnLProjectTab({
   const costs = selId ? (pnlCosts[selId] || []) : [];
   const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
 
+  // Dự án đã có lợi nhuận (đã nhập đủ dữ liệu) — mọi chỉnh sửa phải xác nhận trước khi lưu,
+  // để tránh sửa nhầm số liệu đã chốt. Dự án LN = 0 (chưa nhập) thì sửa tự do.
+  const isLocked = !!r && r.profit !== 0;
+  const [confirmAction, setConfirmAction] = useState<{ run: () => void; revert?: () => void } | null>(null);
+  const guard = (run: () => void, revert?: () => void) => {
+    if (isLocked) setConfirmAction({ run, revert });
+    else run();
+  };
+
   const handleAdd = async () => {
     if (newClientIds.length === 0) { toast('Vui lòng chọn khách hàng'); return; }
     try {
@@ -536,7 +545,7 @@ export default function PnLProjectTab({
                 <select
                   key={selected.id + '-branch'}
                   value={selected.branch_manager || ''}
-                  onChange={e => updateField({ branch_manager: e.target.value || null })}
+                  onChange={e => { const v = e.target.value || null; guard(() => updateField({ branch_manager: v })); }}
                   className="flex-1 min-w-[160px] text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 bg-white"
                 >
                   <option value="">-- Chon chi nhanh --</option>
@@ -557,7 +566,14 @@ export default function PnLProjectTab({
                         type="text"
                         defaultValue={selected.revenue ? selected.revenue.toLocaleString('vi-VN') : '0'}
                         onFocus={e => { e.target.value = String(selected.revenue || 0); }}
-                        onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateField({ revenue: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                        onBlur={e => {
+                          const target = e.target;
+                          const v = +target.value.replace(/\D/g, '') || 0;
+                          guard(
+                            () => { updateField({ revenue: v }); target.value = v.toLocaleString('vi-VN'); },
+                            () => { target.value = (selected.revenue || 0).toLocaleString('vi-VN'); }
+                          );
+                        }}
                         className="w-full text-[12px] px-2.5 py-1.5 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
                       />
                       <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
@@ -570,7 +586,14 @@ export default function PnLProjectTab({
                     key={`md-${selected.id}`}
                     type="number"
                     defaultValue={selected.total_man_days || 0}
-                    onBlur={e => updateField({ total_man_days: +e.target.value || 0 })}
+                    onBlur={e => {
+                      const target = e.target;
+                      const v = +target.value || 0;
+                      guard(
+                        () => updateField({ total_man_days: v }),
+                        () => { target.value = String(selected.total_man_days || 0); }
+                      );
+                    }}
                     className="w-full text-[12px] px-2.5 py-1.5 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">cong</span>
@@ -629,24 +652,37 @@ export default function PnLProjectTab({
                           {lines.map(l => (
                             <tr key={l.id} className="border-t border-[#F0EEE9]">
                               <td className="py-1.5 pr-2">
-                                <input key={`rl-${l.id}`} defaultValue={l.label} onBlur={e => updateLine(l.id, { label: e.target.value })}
+                                <input key={`rl-${l.id}`} defaultValue={l.label} onBlur={e => {
+                                    const target = e.target; const v = target.value;
+                                    guard(() => updateLine(l.id, { label: v }), () => { target.value = l.label; });
+                                  }}
                                   className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent" />
                               </td>
                               <td className="py-1.5">
                                 <div className="relative">
                                   <input key={`ra-${l.id}`} type="text" defaultValue={l.amount ? l.amount.toLocaleString('vi-VN') : '0'}
                                     onFocus={e => { e.target.value = String(l.amount || 0); }}
-                                    onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateLine(l.id, { amount: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                                    onBlur={e => {
+                                      const target = e.target;
+                                      const v = +target.value.replace(/\D/g, '') || 0;
+                                      guard(
+                                        () => { updateLine(l.id, { amount: v }); target.value = v.toLocaleString('vi-VN'); },
+                                        () => { target.value = (l.amount || 0).toLocaleString('vi-VN'); }
+                                      );
+                                    }}
                                     className="w-full text-[12px] px-2 py-1 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right" />
                                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">d</span>
                                 </div>
                               </td>
                               <td className="py-1.5 text-center">
-                                <input key={`rd-${l.id}`} type="date" defaultValue={l.invoice_date || ''} onChange={e => updateLine(l.id, { invoice_date: e.target.value || null })}
+                                <input key={`rd-${l.id}`} type="date" defaultValue={l.invoice_date || ''} onChange={e => {
+                                    const target = e.target; const v = target.value || null;
+                                    guard(() => updateLine(l.id, { invoice_date: v }), () => { target.value = l.invoice_date || ''; });
+                                  }}
                                   className="text-[11px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
                               </td>
                               <td className="py-1.5 text-center">
-                                <button onClick={() => deleteLine(l.id)} className="text-[#bbb] hover:text-red-600 transition"><Trash2 size={13} /></button>
+                                <button onClick={() => guard(() => deleteLine(l.id))} className="text-[#bbb] hover:text-red-600 transition"><Trash2 size={13} /></button>
                               </td>
                             </tr>
                           ))}
@@ -666,13 +702,13 @@ export default function PnLProjectTab({
               <div className="p-3.5 space-y-3">
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden max-w-[420px]">
                   <button
-                    onClick={() => updateField({ project_type: 'managed' as ProjectPnlType })}
+                    onClick={() => guard(() => updateField({ project_type: 'managed' as ProjectPnlType }))}
                     className={`flex-1 py-1.5 text-[11.5px] font-medium transition ${selected.project_type === 'managed' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
                   >
                     Không Khoán - Nhận Lương
                   </button>
                   <button
-                    onClick={() => updateField({ project_type: 'shared' as ProjectPnlType })}
+                    onClick={() => guard(() => updateField({ project_type: 'shared' as ProjectPnlType }))}
                     className={`flex-1 py-1.5 text-[11.5px] font-medium transition border-l border-gray-300 ${selected.project_type === 'shared' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
                   >
                     Đã Nhận Khoán
@@ -771,7 +807,7 @@ export default function PnLProjectTab({
                       <td className="py-1.5 pr-2">
                         <select
                           value={c.label}
-                          onChange={e => updateCostField(c, { label: e.target.value })}
+                          onChange={e => { const v = e.target.value; guard(() => updateCostField(c, { label: v })); }}
                           className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent"
                         >
                           <option value={c.label}>{c.label}</option>
@@ -785,7 +821,14 @@ export default function PnLProjectTab({
                           <input
                             type="text" defaultValue={c.value ? c.value.toLocaleString('vi-VN') : '0'}
                             onFocus={e => { e.target.value = String(c.value || 0); }}
-                            onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateCostField(c, { value: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                            onBlur={e => {
+                              const target = e.target;
+                              const v = +target.value.replace(/\D/g, '') || 0;
+                              guard(
+                                () => { updateCostField(c, { value: v }); target.value = v.toLocaleString('vi-VN'); },
+                                () => { target.value = (c.value || 0).toLocaleString('vi-VN'); }
+                              );
+                            }}
                             className="w-full text-[12px] px-2 py-1 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
                           />
                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
@@ -794,14 +837,14 @@ export default function PnLProjectTab({
                       <td className="py-1.5 text-center">
                         <select
                           value={c.payer}
-                          onChange={e => updateCostField(c, { payer: e.target.value as CostPayer })}
+                          onChange={e => { const v = e.target.value as CostPayer; guard(() => updateCostField(c, { payer: v })); }}
                           className="text-[11px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none"
                         >
                           {Object.entries(PAYER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                         </select>
                       </td>
                       <td className="py-1.5 text-center">
-                        <button onClick={() => removeCostRow(c)} className="text-[#bbb] hover:text-red-600 transition">
+                        <button onClick={() => guard(() => removeCostRow(c))} className="text-[#bbb] hover:text-red-600 transition">
                           <Trash2 size={13} />
                         </button>
                       </td>
@@ -873,7 +916,7 @@ export default function PnLProjectTab({
                         return available.length > 0 ? (
                           <select
                             value=""
-                            onChange={e => { if (e.target.value) addCostFromCategory(e.target.value); e.target.value = ''; }}
+                            onChange={e => { const v = e.target.value; if (v) guard(() => addCostFromCategory(v)); e.target.value = ''; }}
                             className="flex-1 text-[11px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none text-[#666]"
                           >
                             <option value="">+ Them hang muc chi phi...</option>
@@ -1058,6 +1101,31 @@ export default function PnLProjectTab({
               </button>
               <button onClick={() => setTaxSettingsOpen(false)} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
                 Huy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]" onClick={e => { if (e.target === e.currentTarget) { confirmAction.revert?.(); setConfirmAction(null); } }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[360px]">
+            <div className="text-[13px] font-semibold text-[#111] mb-2">Xác nhận thay đổi</div>
+            <div className="text-[12px] text-[#666] mb-4">
+              Dự án này đã có lợi nhuận (dữ liệu đã chốt). Bạn có chắc muốn lưu thay đổi này không?
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { confirmAction.run(); setConfirmAction(null); }}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition"
+              >
+                Lưu thay đổi
+              </button>
+              <button
+                onClick={() => { confirmAction.revert?.(); setConfirmAction(null); }}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition"
+              >
+                Huỷ
               </button>
             </div>
           </div>
