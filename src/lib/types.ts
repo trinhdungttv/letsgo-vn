@@ -561,6 +561,7 @@ export interface PnlRevenueLine {
   invoice_date: string | null;
   sort_order: number;
   period_label: string | null;
+  man_days: number;
 }
 
 export type ProjectPnlType = 'shared' | 'managed';

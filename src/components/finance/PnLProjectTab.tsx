@@ -191,26 +191,51 @@ export default function PnLProjectTab({
   const costs = selId ? (pnlCosts[selId] || []) : [];
   const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
 
-  // Tự dọn dữ liệu cũ: nếu dự án bật "Nhiều kỳ" và đã có kỳ trong Doanh thu chi tiết,
-  // các dòng chi phí Lương/BHXH còn sót lại chưa gắn kỳ (tạo từ trước khi bật chế độ này)
-  // sẽ được gộp vào kỳ đầu tiên thay vì đứng tách biệt gây cộng dư tổng chi phí.
+  // Tự dọn dữ liệu chi phí Lương/BHXH ở dự án "Nhiều kỳ":
+  // - Dòng chưa gắn kỳ (tạo từ trước khi bật chế độ này) → coi như thuộc kỳ đầu tiên.
+  // - Nếu việc đó khiến 2+ dòng cùng hạng mục + cùng kỳ tồn tại song song (vd vừa có dòng cũ
+  //   164.199.000 vừa có dòng người dùng tự nhập 50.000.000 cho Kỳ 1) → gộp làm 1, cộng dồn giá trị,
+  //   xoá các dòng thừa, tránh cộng dư "Tổng chi phí".
   useEffect(() => {
     if (!selected || selected.invoice_mode !== 'periodic') return;
     const lines = revLines[selected.id] || [];
     if (lines.length === 0) return;
     const firstPeriod = periodLabelsFor(selected.client_id)[0];
     if (!firstPeriod) return;
-    const orphans = costs.filter(c =>
-      !c.period_label && (costCategories.find(cat => cat.label === c.label)?.group_type ?? 'general') === 'salary'
-    );
-    if (orphans.length === 0) return;
+
+    const isSalary = (c: ProjectPnlCost) => (costCategories.find(cat => cat.label === c.label)?.group_type ?? 'general') === 'salary';
+    const salaryRows = costs.filter(isSalary);
+
+    const groups = new Map<string, ProjectPnlCost[]>();
+    for (const c of salaryRows) {
+      const period = c.period_label || firstPeriod;
+      const key = `${c.label}::${period}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(c);
+    }
+
+    const work = [...groups.entries()].filter(([, rows]) => rows.length > 1 || !rows[0].period_label);
+    if (work.length === 0) return;
+
     (async () => {
-      for (const c of orphans) {
-        try { await onUpdateCost(c.id, { period_label: firstPeriod }); } catch { /* bỏ qua, thử lại ở lần render sau */ }
+      for (const [key, rows] of work) {
+        const period = key.slice(key.lastIndexOf('::') + 2);
+        if (rows.length === 1) {
+          try { await onUpdateCost(rows[0].id, { period_label: period }); } catch { /* thử lại ở lần render sau */ }
+          continue;
+        }
+        const keep = rows.find(r => r.period_label === period) ?? rows[0];
+        const total = rows.reduce((s, r) => s + (r.value || 0), 0);
+        try {
+          await onUpdateCost(keep.id, { value: total, period_label: period });
+          for (const r of rows) {
+            if (r.id !== keep.id) await onDeleteCost(r.id, selected.id);
+          }
+        } catch { /* thử lại ở lần render sau */ }
       }
-      toast(`Đã gộp ${orphans.length} dòng chi phí lương chưa gắn kỳ vào ${firstPeriod}`);
+      toast('Đã tự gộp các dòng chi phí lương bị trùng kỳ/hạng mục');
     })();
-  }, [selected, costs, revLines, costCategories, periodLabelsFor, onUpdateCost, toast]);
+  }, [selected, costs, revLines, costCategories, periodLabelsFor, onUpdateCost, onDeleteCost, toast]);
 
   // Dự án đã có lợi nhuận TỪ TRƯỚC khi mở lên (chốt ở lần truy cập trước) — mọi chỉnh sửa
   // trong phiên này phải xác nhận trước khi lưu, tránh sửa nhầm số liệu đã chốt.
@@ -683,21 +708,29 @@ export default function PnLProjectTab({
                 </div>
                 <span className="text-[12px] text-[#666]">Tong so cong:</span>
                 <div className="relative w-[120px]">
-                  <input
-                    key={`md-${selected.id}`}
-                    type="number"
-                    defaultValue={selected.total_man_days || 0}
-                    onBlur={e => {
-                      const target = e.target;
-                      const v = +target.value || 0;
-                      guard(
-                        () => updateField({ total_man_days: v }),
-                        () => { target.value = String(selected.total_man_days || 0); }
-                      );
-                    }}
-                    className="w-full text-[12px] px-2.5 py-1.5 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
-                  />
-                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">cong</span>
+                  {(revLines[selected.id]?.length ?? 0) > 0 ? (
+                    <div className="text-[12px] px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-right font-medium text-[#111]">
+                      {(selected.total_man_days || 0).toLocaleString('vi-VN')} <span className="text-[10px] text-[#999]">cong</span>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        key={`md-${selected.id}`}
+                        type="number"
+                        defaultValue={selected.total_man_days || 0}
+                        onBlur={e => {
+                          const target = e.target;
+                          const v = +target.value || 0;
+                          guard(
+                            () => updateField({ total_man_days: v }),
+                            () => { target.value = String(selected.total_man_days || 0); }
+                          );
+                        }}
+                        className="w-full text-[12px] px-2.5 py-1.5 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">cong</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -747,24 +780,33 @@ export default function PnLProjectTab({
               const updateLine = async (lineId: string, fields: Partial<PnlRevenueLine>) => {
                 await supabase.from('pnl_revenue_lines').update(fields).eq('id', lineId);
                 setRevLines(prev => ({ ...prev, [selected.id]: (prev[selected.id] || []).map(l => l.id === lineId ? { ...l, ...fields } : l) }));
+                const updated = (revLines[selected.id] || []).map(l => l.id === lineId ? { ...l, ...fields } : l);
                 if ('amount' in fields) {
-                  const updated = (revLines[selected.id] || []).map(l => l.id === lineId ? { ...l, ...fields } : l);
                   const total = updated.reduce((s, l) => s + (l.amount || 0), 0);
                   updateField({ revenue: total });
+                }
+                if ('man_days' in fields) {
+                  const totalDays = updated.reduce((s, l) => s + (l.man_days || 0), 0);
+                  updateField({ total_man_days: totalDays });
                 }
               };
               const deleteLine = async (lineId: string) => {
                 await supabase.from('pnl_revenue_lines').delete().eq('id', lineId);
                 const updated = (revLines[selected.id] || []).filter(l => l.id !== lineId);
                 setRevLines(prev => ({ ...prev, [selected.id]: updated }));
-                if (updated.length > 0) updateField({ revenue: updated.reduce((s, l) => s + (l.amount || 0), 0) });
+                if (updated.length > 0) {
+                  updateField({
+                    revenue: updated.reduce((s, l) => s + (l.amount || 0), 0),
+                    total_man_days: updated.reduce((s, l) => s + (l.man_days || 0), 0),
+                  });
+                }
               };
               return (
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                   <div className="px-3.5 py-2 border-b border-[#E8E7E2] flex items-center justify-between">
                     <div className="text-[12px] font-medium text-[#111]">Doanh thu chi tiet</div>
                     <div className="flex items-center gap-2">
-                      {lines.length > 0 && <span className="text-[11px] text-[#888]">{lines.length} hoa don · Tong: {selected.revenue.toLocaleString('vi-VN')} d</span>}
+                      {lines.length > 0 && <span className="text-[11px] text-[#888]">{lines.length} hoa don · Tong: {selected.revenue.toLocaleString('vi-VN')} d · {(selected.total_man_days || 0).toLocaleString('vi-VN')} cong</span>}
                       {isPeriodic && (
                         <button onClick={() => setInvoiceSettingsOpen(true)} title="Cai dat ky / ten hoa don mac dinh"
                           className="p-1 rounded-md border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
@@ -784,6 +826,7 @@ export default function PnLProjectTab({
                             {isPeriodic && <th className="text-left font-medium pb-1.5 w-[90px]">Kỳ</th>}
                             <th className="text-left font-medium pb-1.5">Ten hoa don</th>
                             <th className="text-right font-medium pb-1.5 w-[160px]">So tien</th>
+                            <th className="text-right font-medium pb-1.5 w-[90px]">So cong</th>
                             <th className="text-center font-medium pb-1.5 w-[120px]">Ngay XHD</th>
                             <th className="w-[28px]"></th>
                           </tr>
@@ -825,6 +868,18 @@ export default function PnLProjectTab({
                                     className="w-full text-[12px] px-2 py-1 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right" />
                                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">d</span>
                                 </div>
+                              </td>
+                              <td className="py-1.5">
+                                <input key={`rm-${l.id}`} type="number" defaultValue={l.man_days || 0}
+                                  onBlur={e => {
+                                    const target = e.target;
+                                    const v = +target.value || 0;
+                                    guard(
+                                      () => updateLine(l.id, { man_days: v }),
+                                      () => { target.value = String(l.man_days || 0); }
+                                    );
+                                  }}
+                                  className="w-full text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right" />
                               </td>
                               <td className="py-1.5 text-center">
                                 <input key={`rd-${l.id}`} type="date" defaultValue={l.invoice_date || ''} onChange={e => {
@@ -1130,10 +1185,11 @@ export default function PnLProjectTab({
             {selected.invoice_mode === 'periodic' && (() => {
               const lines = revLines[selected.id] || [];
               const periodKeys = [...new Set([
-                ...lines.map(l => l.period_label || '—'),
-                ...costs.map(c => c.period_label || '—'),
+                ...lines.map(l => l.period_label).filter((p): p is string => !!p),
+                ...costs.map(c => c.period_label).filter((p): p is string => !!p),
               ])].sort();
-              if (periodKeys.length === 0) return null;
+              const chiPhiChung = costs.filter(c => !c.period_label).reduce((s, c) => s + (Number(c.value) || 0), 0);
+              if (periodKeys.length === 0 && chiPhiChung === 0) return null;
               return (
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                   <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] text-[12px] font-medium text-[#111]">
@@ -1141,8 +1197,8 @@ export default function PnLProjectTab({
                   </div>
                   <div className="p-3.5 space-y-2">
                     {periodKeys.map(pk => {
-                      const periodRevenue = lines.filter(l => (l.period_label || '—') === pk).reduce((s, l) => s + (l.amount || 0), 0);
-                      const periodCost = costs.filter(c => (c.period_label || '—') === pk).reduce((s, c) => s + (Number(c.value) || 0), 0);
+                      const periodRevenue = lines.filter(l => l.period_label === pk).reduce((s, l) => s + (l.amount || 0), 0);
+                      const periodCost = costs.filter(c => c.period_label === pk).reduce((s, c) => s + (Number(c.value) || 0), 0);
                       const periodProfit = periodRevenue - periodCost;
                       return (
                         <div key={pk} className="flex items-center justify-between text-[12px] border border-[#E8E7E2] rounded-lg px-3 py-2">
@@ -1153,6 +1209,20 @@ export default function PnLProjectTab({
                         </div>
                       );
                     })}
+                    {chiPhiChung > 0 && (
+                      <div className="flex items-center justify-between text-[12px] border border-dashed border-[#E8E7E2] rounded-lg px-3 py-2 text-[#888]">
+                        <span className="font-medium w-[90px] truncate">Chi phí chung</span>
+                        <span>theo tháng, không tính riêng kỳ</span>
+                        <span>CP <strong className="text-red-600">{fmtTrieu(chiPhiChung)}</strong></span>
+                        <span></span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-[12px] bg-[#F5F4EF] rounded-lg px-3 py-2 mt-1">
+                      <span className="font-semibold text-[#111] w-[90px] truncate">Tổng cộng</span>
+                      <span className="text-[#666]">DT <strong className="text-[#111]">{fmtTrieu(selected.revenue)}</strong></span>
+                      <span className="text-[#666]">CP <strong className="text-red-600">{fmtTrieu(r?.tc ?? 0)}</strong></span>
+                      <span className={`font-semibold ${(r?.profit ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>LN {fmtTrieu(r?.profit ?? 0)} đ</span>
+                    </div>
                   </div>
                 </div>
               );
