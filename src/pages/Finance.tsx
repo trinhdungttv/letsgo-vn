@@ -107,7 +107,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
   const { branches: branchList } = useBranchData();
-  const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat, toggleDefault: toggleCostCatDefault } = useCostCategories();
+  const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat, toggleDefault: toggleCostCatDefault, setGroupType: setCostCatGroup, setDefaultPayer: setCostCatPayer } = useCostCategories();
 
   useEffect(() => {
     if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
@@ -718,6 +718,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             onRenameCategory={renameCostCat}
             onDeleteCategory={removeCostCat}
             onToggleCategoryDefault={toggleCostCatDefault}
+            onSetCategoryGroup={setCostCatGroup}
+            onSetCategoryPayer={setCostCatPayer}
             currentUser={user?.full_name}
             toast={toast}
           />

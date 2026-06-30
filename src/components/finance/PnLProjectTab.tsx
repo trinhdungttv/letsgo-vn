@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
-import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
+import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine } from '../../lib/types';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import type { ClientBranchHistory, BranchTypeHistory } from '../../lib/types';
@@ -25,6 +25,8 @@ interface PnLProjectTabProps {
   onRenameCategory: (id: string, label: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onToggleCategoryDefault: (id: string, val: boolean) => Promise<void>;
+  onSetCategoryGroup: (id: string, val: CostGroupType) => Promise<void>;
+  onSetCategoryPayer: (id: string, val: CostPayer) => Promise<void>;
   currentUser?: string | null;
   toast: (msg: string) => void;
 }
@@ -36,7 +38,7 @@ export default function PnLProjectTab({
   onAddProject, onUpdateProject, onDeleteProject,
   onLoadCosts, onAddCost, onUpdateCost, onDeleteCost,
   splitSettings, onSaveSplitSettings,
-  branches = [], costCategories, onAddCategory, onRenameCategory, onDeleteCategory, onToggleCategoryDefault,
+  branches = [], costCategories, onAddCategory, onRenameCategory, onDeleteCategory, onToggleCategoryDefault, onSetCategoryGroup, onSetCategoryPayer,
   currentUser, toast,
 }: PnLProjectTabProps) {
   const monthProjects = useMemo(() => projectsPnl.filter(p => p.month === month), [projectsPnl, month]);
@@ -165,8 +167,13 @@ export default function PnLProjectTab({
     }
   }, [selId, selected?.lg_pct, selected?.cn_pct]);
 
+  const taxOptsFor = useCallback((clientId: string) => {
+    const s = splitSettings[clientId];
+    return { categories: costCategories, taxPct: s?.tax_pct ?? 20, taxExempt: s?.tax_exempt ?? false };
+  }, [splitSettings, costCategories]);
+
   const costs = selId ? (pnlCosts[selId] || []) : [];
-  const r = selected ? calcPnl(selected, costs) : null;
+  const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
 
   const handleAdd = async () => {
     if (newClientIds.length === 0) { toast('Vui lòng chọn khách hàng'); return; }
@@ -240,7 +247,7 @@ export default function PnLProjectTab({
         } else {
           const defaults = costCategories.filter(c => c.is_default);
           for (let i = 0; i < defaults.length; i++) {
-            await onAddCost({ pnl_id: created.id, label: defaults[i].label, value: 0, payer: 'ch', sort_order: i });
+            await onAddCost({ pnl_id: created.id, label: defaults[i].label, value: 0, payer: defaults[i].default_payer ?? 'ch', sort_order: i });
           }
           if (!defaults.length) {
             await onAddCost({ pnl_id: created.id, label: 'Chi phi moi', value: 0, payer: 'ch', sort_order: 0 });
@@ -298,6 +305,29 @@ export default function PnLProjectTab({
     setSplitEditOpen(false);
   };
 
+  const [taxSettingsOpen, setTaxSettingsOpen] = useState(false);
+  const [taxPctInput, setTaxPctInput] = useState('20');
+  const [taxExemptInput, setTaxExemptInput] = useState(false);
+
+  useEffect(() => {
+    if (!selected) return;
+    const s = splitSettings[selected.client_id];
+    setTaxPctInput(String(s?.tax_pct ?? 20));
+    setTaxExemptInput(s?.tax_exempt ?? false);
+  }, [selected?.client_id, selected, splitSettings]);
+
+  const saveTaxSettings = async () => {
+    if (!selected) return;
+    try {
+      const pct = Math.min(100, Math.max(0, +taxPctInput || 0));
+      await onSaveSplitSettings(selected.client_id, { tax_pct: pct, tax_exempt: taxExemptInput });
+      toast('Đã lưu cài đặt thuế TNDN');
+      setTaxSettingsOpen(false);
+    } catch (e) {
+      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const [costSettingsOpen, setCostSettingsOpen] = useState(false);
   const [newCatLabel, setNewCatLabel] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
@@ -306,13 +336,14 @@ export default function PnLProjectTab({
   const addCostFromCategory = async (catLabel: string) => {
     if (!selected) return;
     if (costs.some(c => c.label === catLabel)) { toast('Hang muc nay da co'); return; }
+    const defaultPayer = costCategories.find(cat => cat.label === catLabel)?.default_payer ?? 'lg';
     try {
-      await onAddCost({ pnl_id: selected.id, label: catLabel, value: 0, payer: 'lg', sort_order: costs.length });
+      await onAddCost({ pnl_id: selected.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: costs.length });
       for (const p of monthProjects) {
         if (p.id === selected.id) continue;
         const existing = pnlCosts[p.id] || [];
         if (!existing.some(c => c.label === catLabel)) {
-          await onAddCost({ pnl_id: p.id, label: catLabel, value: 0, payer: 'lg', sort_order: existing.length });
+          await onAddCost({ pnl_id: p.id, label: catLabel, value: 0, payer: defaultPayer, sort_order: existing.length });
         }
       }
     } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
@@ -455,7 +486,7 @@ export default function PnLProjectTab({
             <div className="px-3 py-6 text-center text-[12px] text-[#999]">Chưa có dự án nào</div>
           ) : visibleProjects.map(p => {
             const c = pnlCosts[p.id] || [];
-            const rr = calcPnl(p, c);
+            const rr = calcPnl(p, c, taxOptsFor(p.client_id));
             return (
               <div
                 key={p.id}
@@ -726,110 +757,145 @@ export default function PnLProjectTab({
             </div>
 
             {/* Row 3: Costs */}
-            <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-              <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
-                <div className="text-[12px] font-medium text-[#111]">Chi phí dự án</div>
-                <div className="flex gap-1.5 text-[10px]">
-                  <span className="px-1.5 py-0.5 rounded font-medium bg-[#E6F1FB] text-[#0C447C]">LGV trả</span>
-                  <span className="px-1.5 py-0.5 rounded font-medium bg-[#EAF3DE] text-[#27500A]">CN trả</span>
-                  <span className="px-1.5 py-0.5 rounded font-medium bg-[#F5F4EF] border border-gray-300 text-[#666]">Chung</span>
-                </div>
-              </div>
-              <div className="p-3.5">
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="text-[10px] text-[#999] uppercase">
-                      <th className="text-left font-medium pb-1.5">Khoản chi phí</th>
-                      <th className="text-right font-medium pb-1.5 w-[120px]">Giá trị</th>
-                      <th className="text-center font-medium pb-1.5 w-[95px]">Bên chi trả</th>
-                      <th className="w-[28px]"></th>
+            {(() => {
+              const groupOf = (label: string): CostGroupType => costCategories.find(cat => cat.label === label)?.group_type ?? 'general';
+              const salaryCosts = costs.filter(c => groupOf(c.label) === 'salary');
+              const generalCosts = costs.filter(c => groupOf(c.label) !== 'salary');
+
+              const renderRow = (c: ProjectPnlCost) => {
+                const isVP = c.label === 'Chi Phí Văn Phòng';
+                const vpInfo = isVP && selected ? getZoneVpCost(selected.client_id) : null;
+                return (
+                  <React.Fragment key={c.id}>
+                    <tr className="border-t border-[#F0EEE9]">
+                      <td className="py-1.5 pr-2">
+                        <select
+                          value={c.label}
+                          onChange={e => updateCostField(c, { label: e.target.value })}
+                          className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent"
+                        >
+                          <option value={c.label}>{c.label}</option>
+                          {costCategories.filter(cat => cat.label !== c.label && !costs.some(x => x.label === cat.label)).map(cat => (
+                            <option key={cat.id} value={cat.label}>{cat.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-1.5">
+                        <div className="relative">
+                          <input
+                            type="text" defaultValue={c.value ? c.value.toLocaleString('vi-VN') : '0'}
+                            onFocus={e => { e.target.value = String(c.value || 0); }}
+                            onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateCostField(c, { value: v }); e.target.value = v.toLocaleString('vi-VN'); }}
+                            className="w-full text-[12px] px-2 py-1 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
+                        </div>
+                      </td>
+                      <td className="py-1.5 text-center">
+                        <select
+                          value={c.payer}
+                          onChange={e => updateCostField(c, { payer: e.target.value as CostPayer })}
+                          className="text-[11px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none"
+                        >
+                          {Object.entries(PAYER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-1.5 text-center">
+                        <button onClick={() => removeCostRow(c)} className="text-[#bbb] hover:text-red-600 transition">
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {costs.map(c => {
-                      const isVP = c.label === 'Chi Phí Văn Phòng';
-                      const vpInfo = isVP && selected ? getZoneVpCost(selected.client_id) : null;
-                      return (
-                      <React.Fragment key={c.id}>
-                      <tr className="border-t border-[#F0EEE9]">
-                        <td className="py-1.5 pr-2">
-                          <select
-                            value={c.label}
-                            onChange={e => updateCostField(c, { label: e.target.value })}
-                            className="w-full text-[12px] px-1.5 py-1 border-b border-dashed border-gray-300 outline-none focus:border-blue-500 bg-transparent"
-                          >
-                            <option value={c.label}>{c.label}</option>
-                            {costCategories.filter(cat => cat.label !== c.label && !costs.some(x => x.label === cat.label)).map(cat => (
-                              <option key={cat.id} value={cat.label}>{cat.label}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-1.5">
-                          <div className="relative">
-                            <input
-                              type="text" defaultValue={c.value ? c.value.toLocaleString('vi-VN') : '0'}
-                              onFocus={e => { e.target.value = String(c.value || 0); }}
-                              onBlur={e => { const v = +e.target.value.replace(/\D/g, '') || 0; updateCostField(c, { value: v }); e.target.value = v.toLocaleString('vi-VN'); }}
-                              className="w-full text-[12px] px-2 py-1 pr-8 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
-                            />
-                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ</span>
-                          </div>
-                        </td>
-                        <td className="py-1.5 text-center">
-                          <select
-                            value={c.payer}
-                            onChange={e => updateCostField(c, { payer: e.target.value as CostPayer })}
-                            className="text-[11px] px-1.5 py-1 border border-gray-300 rounded-lg outline-none"
-                          >
-                            {Object.entries(PAYER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                          </select>
-                        </td>
-                        <td className="py-1.5 text-center">
-                          <button onClick={() => removeCostRow(c)} className="text-[#bbb] hover:text-red-600 transition">
-                            <Trash2 size={13} />
-                          </button>
+                    {isVP && vpInfo && (
+                      <tr className="bg-blue-50/50">
+                        <td colSpan={4} className="px-3 py-1.5 text-[10px] text-blue-600">
+                          Tu tinh: VP "{vpInfo.zoneName}" — Tong CP: {vpInfo.totalCost.toLocaleString('vi-VN')} d
+                          (CP co dinh: {vpInfo.fixedCosts.toLocaleString('vi-VN')} + Luong NS: {vpInfo.staffCosts.toLocaleString('vi-VN')})
+                          / {vpInfo.projectCount} du an = {vpInfo.amount.toLocaleString('vi-VN')} d/du an
                         </td>
                       </tr>
-                      {isVP && vpInfo && (
-                        <tr className="bg-blue-50/50">
-                          <td colSpan={4} className="px-3 py-1.5 text-[10px] text-blue-600">
-                            Tu tinh: VP "{vpInfo.zoneName}" — Tong CP: {vpInfo.totalCost.toLocaleString('vi-VN')} d
-                            (CP co dinh: {vpInfo.fixedCosts.toLocaleString('vi-VN')} + Luong NS: {vpInfo.staffCosts.toLocaleString('vi-VN')})
-                            / {vpInfo.projectCount} du an = {vpInfo.amount.toLocaleString('vi-VN')} d/du an
-                          </td>
-                        </tr>
+                    )}
+                  </React.Fragment>
+                );
+              };
+
+              const renderTable = (title: string, rows: ProjectPnlCost[], subtotal: number, emptyHint: string, accent: 'salary' | 'general') => {
+                const accentCls = accent === 'salary'
+                  ? { bar: 'bg-amber-400', badge: 'bg-[#FDF1D6] text-amber-800 border-amber-300', total: 'text-amber-700' }
+                  : { bar: 'bg-[#9DB7D8]', badge: 'bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]', total: 'text-[#185FA5]' };
+                return (
+                  <div className={`rounded-lg border ${accent === 'salary' ? 'border-amber-200 bg-[#FFFCF5]' : 'border-[#D8E6F5] bg-[#F8FBFE]'} overflow-hidden`}>
+                    <div className={`flex items-center gap-2 px-3 py-2 border-b ${accent === 'salary' ? 'border-amber-200' : 'border-[#D8E6F5]'}`}>
+                      <span className={`w-1.5 h-4 rounded-full ${accentCls.bar}`} />
+                      <span className={`text-[11.5px] font-semibold px-2 py-0.5 rounded-md border ${accentCls.badge}`}>{title}</span>
+                    </div>
+                    <div className="px-3 pt-2">
+                      {rows.length === 0 ? (
+                        <div className="text-[10.5px] text-[#bbb] pb-2">{emptyHint}</div>
+                      ) : (
+                        <table className="w-full text-[12px] mb-1">
+                          <thead>
+                            <tr className="text-[10px] text-[#999] uppercase">
+                              <th className="text-left font-medium pb-1.5">Khoản chi phí</th>
+                              <th className="text-right font-medium pb-1.5 w-[120px]">Giá trị</th>
+                              <th className="text-center font-medium pb-1.5 w-[95px]">Bên chi trả</th>
+                              <th className="w-[28px]"></th>
+                            </tr>
+                          </thead>
+                          <tbody>{rows.map(renderRow)}</tbody>
+                        </table>
                       )}
-                      </React.Fragment>);
-                    })}
-                  </tbody>
-                </table>
-                <div className="pt-2 mt-1 border-t border-dashed border-gray-200 flex items-center gap-2">
-                  {(() => {
-                    const available = costCategories.filter(cat => !costs.some(c => c.label === cat.label));
-                    return available.length > 0 ? (
-                      <select
-                        value=""
-                        onChange={e => { if (e.target.value) addCostFromCategory(e.target.value); e.target.value = ''; }}
-                        className="flex-1 text-[11px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none text-[#666]"
-                      >
-                        <option value="">+ Them hang muc chi phi...</option>
-                        {available.map(cat => <option key={cat.id} value={cat.label}>{cat.label}</option>)}
-                      </select>
-                    ) : (
-                      <span className="flex-1 text-[10px] text-[#bbb]">Da them tat ca hang muc</span>
-                    );
-                  })()}
-                  <button onClick={() => setCostSettingsOpen(true)} title="Quan ly hang muc chi phi"
-                    className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
-                    <Settings size={12} />
-                  </button>
+                      <div className="flex items-center justify-between text-[11px] pt-1.5 pb-2 border-t border-dashed border-gray-300">
+                        <span className="text-[#666]">Cộng {title.toLowerCase()}</span>
+                        <span className={`font-semibold ${accentCls.total}`}>{fmtTrieu(subtotal)} đ</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              };
+
+              return (
+                <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                  <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
+                    <div className="text-[12px] font-medium text-[#111]">Chi phí dự án</div>
+                    <div className="flex gap-1.5 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded font-medium bg-[#E6F1FB] text-[#0C447C]">LGV trả</span>
+                      <span className="px-1.5 py-0.5 rounded font-medium bg-[#EAF3DE] text-[#27500A]">CN trả</span>
+                      <span className="px-1.5 py-0.5 rounded font-medium bg-[#F5F4EF] border border-gray-300 text-[#666]">Chung</span>
+                    </div>
+                  </div>
+                  <div className="p-3.5 space-y-4">
+                    {renderTable('Chi phí Lương + BHXH', salaryCosts, r.salaryCost, 'Chưa có khoản lương/BHXH nào — gán nhóm "Lương/BHXH" cho hạng mục trong Quản lý hạng mục.', 'salary')}
+                    {renderTable('Chi phí chung', generalCosts, r.generalCost, 'Chưa có khoản chi phí chung nào.', 'general')}
+                    <div className="pt-1 flex items-center gap-2">
+                      {(() => {
+                        const available = costCategories.filter(cat => !costs.some(c => c.label === cat.label));
+                        return available.length > 0 ? (
+                          <select
+                            value=""
+                            onChange={e => { if (e.target.value) addCostFromCategory(e.target.value); e.target.value = ''; }}
+                            className="flex-1 text-[11px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none text-[#666]"
+                          >
+                            <option value="">+ Them hang muc chi phi...</option>
+                            {available.map(cat => <option key={cat.id} value={cat.label}>{cat.label}</option>)}
+                          </select>
+                        ) : (
+                          <span className="flex-1 text-[10px] text-[#bbb]">Da them tat ca hang muc</span>
+                        );
+                      })()}
+                      <button onClick={() => setCostSettingsOpen(true)} title="Quan ly hang muc chi phi"
+                        className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
+                        <Settings size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="px-3.5 py-2 bg-[#F5F4EF] border-t border-[#E8E7E2] flex items-center justify-between text-[12px] font-medium">
+                    <span>Tổng chi phí</span>
+                    <span className="text-red-600">{fmtTrieu(r.tc)} đ</span>
+                  </div>
                 </div>
-              </div>
-              <div className="px-3.5 py-2 bg-[#F5F4EF] border-t border-[#E8E7E2] flex items-center justify-between text-[12px] font-medium">
-                <span>Tổng chi phí</span>
-                <span className="text-red-600">{fmtTrieu(r.tc)} đ</span>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Row 4: Result */}
             <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
@@ -837,19 +903,30 @@ export default function PnLProjectTab({
                 Kết quả phân chia
               </div>
               <div className="p-3.5">
-                <div className="text-[11px] text-[#666] bg-[#F5F4EF] rounded-lg px-2.5 py-2 mb-3">
+                <div className="text-[11px] text-[#666] bg-[#F5F4EF] rounded-lg px-2.5 py-2 mb-2">
                   DT <strong className="text-[#111]">{fmtTrieu(selected.revenue)}</strong>
-                  {' − '}CP <strong className="text-red-600">{fmtTrieu(r.tc)}</strong>
-                  {' = '}LN <strong className={r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profit)}</strong> đ
-                  {selected.project_type === 'shared' ? ` → Chia ${selected.lg_pct}/${selected.cn_pct}` : " → 100% Let's Go VN"}
+                  {' − '}Lương/BHXH <strong className="text-red-600">{fmtTrieu(r.salaryCost)}</strong>
+                  {' − '}CP chung <strong className="text-red-600">{fmtTrieu(r.generalCost)}</strong>
+                  {' = '}LN trước thuế <strong className={r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profit)}</strong> đ
                   {(selected.total_man_days ?? 0) > 0 && (
                     <span className="ml-2">· <strong className="text-[#111]">{(selected.total_man_days ?? 0).toLocaleString('vi-VN')}</strong> cong</span>
                   )}
                 </div>
+                <div className="flex items-center justify-between text-[11px] text-[#666] bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mb-3">
+                  <span>
+                    Thuế TNDN {r.taxExempt ? '(miễn)' : `(${r.taxPct}%)`}: <strong className="text-amber-700">− {fmtTrieu(r.tax)}</strong>
+                    {' → '}LN sau thuế <strong className={r.profitAfterTax >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profitAfterTax)}</strong> đ
+                    {selected.project_type === 'shared' ? ` → Chia ${selected.lg_pct}/${selected.cn_pct}` : " → 100% Let's Go VN"}
+                  </span>
+                  <button onClick={() => setTaxSettingsOpen(true)} title="Cai dat thue TNDN"
+                    className="p-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition shrink-0">
+                    <Settings size={12} />
+                  </button>
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg p-3 text-center bg-[#F5F4EF] border border-[#E8E7E2]">
-                    <div className="text-[10px] uppercase text-[#999] mb-1">Lợi nhuận dự án</div>
-                    <div className={`text-[20px] font-medium ${r.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtTrieu(r.profit)}</div>
+                    <div className="text-[10px] uppercase text-[#999] mb-1">Lợi nhuận sau thuế</div>
+                    <div className={`text-[20px] font-medium ${r.profitAfterTax >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtTrieu(r.profitAfterTax)}</div>
                     <div className="text-[10px] text-[#999] mt-0.5">đồng</div>
                   </div>
                   <div className="rounded-lg p-3 text-center bg-[#E6F1FB] border border-[#B5D4F4]">
@@ -879,7 +956,7 @@ export default function PnLProjectTab({
 
       {costSettingsOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setCostSettingsOpen(false); }}>
-          <div className="bg-white rounded-xl shadow-2xl p-5 w-[360px]">
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[400px]">
             <div className="flex items-center justify-between mb-4">
               <div className="text-[13px] font-semibold text-[#111]">Quan ly hang muc chi phi</div>
               <button onClick={() => setCostSettingsOpen(false)} className="text-[#aaa] hover:text-[#666]"><XIcon size={15} /></button>
@@ -902,11 +979,32 @@ export default function PnLProjectTab({
                         className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition ${cat.is_default ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 hover:border-blue-400'}`}>
                         {cat.is_default && <Check size={10} />}
                       </button>
-                      <span className="flex-1 text-[12px] text-[#333] py-1.5">{cat.label}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] text-[#333] truncate">{cat.label}</div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <select
+                            value={cat.group_type ?? 'general'}
+                            onChange={e => onSetCategoryGroup(cat.id, e.target.value as CostGroupType)}
+                            title="Nhom chi phi"
+                            className={`text-[10px] px-1.5 py-0.5 rounded border outline-none ${cat.group_type === 'salary' ? 'bg-[#FDF1D6] border-amber-300 text-amber-800' : 'bg-[#F5F4EF] border-gray-300 text-[#666]'}`}
+                          >
+                            <option value="general">Chi phí chung</option>
+                            <option value="salary">Lương/BHXH</option>
+                          </select>
+                          <select
+                            value={cat.default_payer ?? 'lg'}
+                            onChange={e => onSetCategoryPayer(cat.id, e.target.value as CostPayer)}
+                            title="Ben chi tra mac dinh"
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 bg-white outline-none text-[#666]"
+                          >
+                            {Object.entries(PAYER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          </select>
+                        </div>
+                      </div>
                       <button onClick={() => { setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
-                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition"><Pencil size={12} /></button>
+                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition shrink-0"><Pencil size={12} /></button>
                       <button onClick={() => handleDeleteCategory(cat.id)}
-                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition"><Trash2 size={12} /></button>
+                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition shrink-0"><Trash2 size={12} /></button>
                     </>
                   )}
                 </div>
@@ -921,6 +1019,45 @@ export default function PnLProjectTab({
               <button onClick={handleAddCategory} disabled={!newCatLabel.trim()}
                 className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-40 transition">
                 <Plus size={12} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {taxSettingsOpen && selected && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setTaxSettingsOpen(false); }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[340px]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-[13px] font-semibold text-[#111]">Cai dat thue TNDN</div>
+              <button onClick={() => setTaxSettingsOpen(false)} className="text-[#aaa] hover:text-[#666]"><XIcon size={15} /></button>
+            </div>
+            <div className="text-[10.5px] text-[#888] mb-3">
+              Ap dung cho khach hang <strong>{selected.clients?.name || mergedClients.find(x => x.id === selected.client_id)?.name}</strong> — tinh tren loi nhuan truoc thue cua moi thang.
+            </div>
+            <label className="flex items-center gap-2 text-[12px] mb-3 cursor-pointer">
+              <input type="checkbox" checked={taxExemptInput} onChange={e => setTaxExemptInput(e.target.checked)} className="w-3.5 h-3.5" />
+              Mien thue TNDN (0%) cho du an nay
+            </label>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-[12px] text-[#666]">Ty le thue:</span>
+              <div className="relative w-[90px]">
+                <input
+                  type="number" min={0} max={100}
+                  value={taxPctInput}
+                  onChange={e => setTaxPctInput(e.target.value)}
+                  disabled={taxExemptInput}
+                  className="w-full text-[12px] px-2 py-1.5 pr-6 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right disabled:bg-gray-50 disabled:text-gray-400"
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">%</span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={saveTaxSettings} className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
+                Luu
+              </button>
+              <button onClick={() => setTaxSettingsOpen(false)} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
+                Huy
               </button>
             </div>
           </div>

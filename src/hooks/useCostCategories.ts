@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { CostCategory } from '../lib/types';
+import type { CostCategory, CostGroupType, CostPayer } from '../lib/types';
 
 export function useCostCategories() {
   const [categories, setCategories] = useState<CostCategory[]>([]);
@@ -39,5 +39,17 @@ export function useCostCategories() {
     setCategories(prev => prev.map(c => c.id === id ? { ...c, is_default: val } : c));
   };
 
-  return { categories, add, rename, remove, toggleDefault, reload: load };
+  const setGroupType = async (id: string, val: CostGroupType) => {
+    const { error } = await supabase.from('cost_categories').update({ group_type: val }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, group_type: val } : c));
+  };
+
+  const setDefaultPayer = async (id: string, val: CostPayer) => {
+    const { error } = await supabase.from('cost_categories').update({ default_payer: val }).eq('id', id);
+    if (error) throw error;
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, default_payer: val } : c));
+  };
+
+  return { categories, add, rename, remove, toggleDefault, setGroupType, setDefaultPayer, reload: load };
 }

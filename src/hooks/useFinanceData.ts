@@ -166,6 +166,8 @@ export function useFinanceData() {
       pending_lg_pct: current?.pending_lg_pct ?? null,
       pending_cn_pct: current?.pending_cn_pct ?? null,
       pending_until_month: current?.pending_until_month ?? null,
+      tax_pct: current?.tax_pct ?? 20,
+      tax_exempt: current?.tax_exempt ?? false,
       ...fields,
       updated_at: new Date().toISOString(),
     };

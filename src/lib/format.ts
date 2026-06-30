@@ -182,8 +182,9 @@ export function getBranchTypeForMonth(history: BranchTypeHistory[], month: strin
 // P&L calculation shared by the Finance Workspace project tabs.
 export function calcPnl(
   p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number },
-  costs: { value: number; payer: CostPayer }[]
-): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number } {
+  costs: { value: number; payer: CostPayer; label?: string }[],
+  taxOpts?: { categories?: { label: string; group_type?: string }[]; taxPct?: number; taxExempt?: boolean }
+): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number } {
   const tc = costs.reduce((s, c) => s + (Number(c.value) || 0), 0);
   const profit = p.revenue - tc;
   let lgC = 0, cnC = 0, shC = 0;
@@ -193,9 +194,18 @@ export function calcPnl(
     else if (c.payer === 'cn') cnC += v;
     else shC += v;
   }
-  const lgP = p.project_type === 'managed' ? profit : profit * p.lg_pct / 100;
-  const cnP = p.project_type === 'managed' ? 0 : profit * p.cn_pct / 100;
-  return { tc, profit, lgC, cnC, shC, lgP, cnP };
+  let salaryCost = 0;
+  if (taxOpts?.categories) {
+    const salaryLabels = new Set(taxOpts.categories.filter(c => c.group_type === 'salary').map(c => c.label));
+    for (const c of costs) if (c.label && salaryLabels.has(c.label)) salaryCost += Number(c.value) || 0;
+  }
+  const generalCost = tc - salaryCost;
+  const taxPct = taxOpts?.taxExempt ? 0 : (taxOpts?.taxPct ?? 0);
+  const tax = profit > 0 ? profit * taxPct / 100 : 0;
+  const profitAfterTax = profit - tax;
+  const lgP = p.project_type === 'managed' ? profitAfterTax : profitAfterTax * p.lg_pct / 100;
+  const cnP = p.project_type === 'managed' ? 0 : profitAfterTax * p.cn_pct / 100;
+  return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax };
 }
 
 export function statusPill(status: string): { label: string; cls: string } {

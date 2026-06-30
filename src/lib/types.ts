@@ -593,6 +593,8 @@ export interface PnlSplitSettings {
   pending_lg_pct: number | null;
   pending_cn_pct: number | null;
   pending_until_month: string | null;
+  tax_pct: number;
+  tax_exempt: boolean;
   updated_at: string;
 }
 
@@ -647,11 +649,15 @@ export interface BranchZoneCost {
   sort_order: number;
 }
 
+export type CostGroupType = 'salary' | 'general';
+
 export interface CostCategory {
   id: string;
   label: string;
   sort_order: number;
   is_default: boolean;
+  group_type: CostGroupType;
+  default_payer: CostPayer;
 }
 
 export type BranchType = 'contracted' | 'company';
