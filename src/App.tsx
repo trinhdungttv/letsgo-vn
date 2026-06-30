@@ -4,8 +4,6 @@ import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider, canAccess } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
-import { supabase } from './lib/supabase';
-import { logActivity } from './lib/audit';
 import { usePersistedState } from './hooks/usePersistedState';
 import { sortLaborHistory } from './lib/format';
 import { shortId, expandId } from './hooks/useHashSubRoute';
@@ -242,55 +240,6 @@ function AppInner() {
   }, [setDeals, selectedDealId]);
   const handleActivityCreate = useCallback((a: CRMActivity) => setActivities(prev => [a, ...prev]), [setActivities]);
 
-  const handleAddClient = useCallback(async (regionName?: string, managerName?: string) => {
-    const name = prompt('Ten cong ty *:');
-    if (!name) return;
-    const region = prompt('Khu vuc:', regionName || 'Bien Hoa') || regionName || 'Bien Hoa';
-    const manager = prompt('Nguoi quan ly:', managerName || '') || '';
-    const ctEnd = prompt('Ngay het han HD (YYYY-MM-DD):', '2027-06-01') || '';
-
-    // Chọn loại hình dịch vụ: leasing (cho thuê) hoặc recruitment (giới thiệu).
-    const serviceTypeRaw = prompt(
-      'Loai hinh dich vu:\n  1 = Cho thue lao dong (leasing)\n  2 = Gioi thieu lao dong (recruitment)\nNhap 1 hoac 2:',
-      '1'
-    );
-    const serviceType = serviceTypeRaw?.trim() === '2' ? 'recruitment' : 'leasing';
-
-    // Các trường chu kỳ chỉ áp dụng cho leasing.
-    const leasingFields = serviceType === 'leasing'
-      ? { cutoff_day: 25, calc_day: 27, salary_day: 5, payment_start: 5, payment_end: 8 }
-      : { cutoff_day: null, calc_day: null, salary_day: null, payment_start: null, payment_end: null };
-
-    // Thời hạn công nợ chỉ có ý nghĩa với recruitment (mặc định 30 ngày).
-    const paymentTermDays = serviceType === 'recruitment'
-      ? parseInt(prompt('So ngay cong no sau xuat hoa don (mac dinh 30):', '30') || '30', 10) || 30
-      : 30;
-
-    try {
-      const { data, error } = await supabase.from('clients').insert({
-        name,
-        region,
-        manager,
-        contract_end: ctEnd || null,
-        status: 'ok',
-        client_type: 'active',
-        service_type: serviceType,
-        payment_term_days: paymentTermDays,
-        ...leasingFields,
-      }).select().single();
-      if (error) throw error;
-      await loadClients();
-      toast('Da them khach hang moi!');
-      await logActivity({
-        user, action: 'insert', table: 'clients', recordId: data.id,
-        description: `Them khach hang moi "${name}" (${region}) - ${serviceType === 'recruitment' ? 'Gioi thieu lao dong' : 'Cho thue lao dong'}`,
-        newData: data,
-      });
-    } catch (e: unknown) {
-      toast('Loi: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }, [loadClients, toast, user]);
-
   if (authLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#F5F4EF]">
@@ -342,7 +291,6 @@ function AppInner() {
             activeRegion={activeRegion}
             onRegionChange={setActiveRegion}
             onSelectClient={handleSelectClient}
-            onAddClient={handleAddClient}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
             onReload={loadClients}

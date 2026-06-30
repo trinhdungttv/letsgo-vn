@@ -17,6 +17,7 @@ import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import { ChurnBadge } from '../components/clients/ChurnBadge';
+import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
 
@@ -26,7 +27,6 @@ interface ClientsProps {
   activeRegion: string[];
   onRegionChange: (r: string[]) => void;
   onSelectClient: (id: string) => void;
-  onAddClient: (regionName?: string, managerName?: string) => void;
   onClientUpdate: (c: Client) => void;
   onLaborUpdate: (entry: LaborHistoryEntry) => void;
   onReload: () => void;
@@ -51,13 +51,14 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onAddClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
+  onSelectClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [columns, setColumns] = useState(loadColumnSettings);
   const { user } = useAuth();
+  const [addModalOpen, setAddModalOpen] = useState(false);
   const [renewForm, setRenewForm] = useState<RenewForm | null>(null);
   const [isRenewing, setIsRenewing] = useState(false);
   const [activeZones, setActiveZones] = usePersistedState<string[]>('lgvn_clients_activeZones', [ALL_OPTION]);
@@ -235,7 +236,7 @@ export default function Clients({
       }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
-        onAddClient();
+        setAddModalOpen(true);
       }
       if (e.key === 'Escape') {
         setQuickFilter(null);
@@ -244,7 +245,7 @@ export default function Clients({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onAddClient]);
+  }, []);
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
@@ -269,6 +270,7 @@ export default function Clients({
   }, [bulkExtraWeeks]);
 
   const activeClients = clients.filter(c => !c.archived_at && c.cooperation_status !== 'suspended');
+  const incompleteClients = activeClients.filter(c => !c.region || !c.manager || (c.service_type !== 'recruitment' && !c.cutoff_day));
   const suspendedClients = clients.filter(c => !c.archived_at && c.cooperation_status === 'suspended');
   const totalWorkers = activeClients.reduce((s, c) => s + (c.current_workers || 0), 0);
   const expiringCount = activeClients.filter(c => {
@@ -905,7 +907,7 @@ export default function Clients({
             <button onClick={openBulkLabor} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh số lao động cho nhiều công ty">
               <ClipboardList size={13} /> Nhập nhanh LĐ
             </button>
-            <button onClick={() => onAddClient()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+            <button onClick={() => setAddModalOpen(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm KH
             </button>
           </div>
@@ -944,6 +946,15 @@ export default function Clients({
             <span className="text-red-600 font-semibold">⚠ Churn Risk:</span>
             <span className="text-red-700 font-medium">{churnClients.slice(0, 3).map(c => c.name).join(', ')}{churnClients.length > 3 ? ` +${churnClients.length - 3} khác` : ''}</span>
             <span className="text-gray-500">— lao động giảm liên tiếp. Cần xử lý ngay.</span>
+          </div>
+        )}
+
+        {/* Incomplete info banner */}
+        {incompleteClients.length > 0 && (
+          <div className="flex items-center gap-2 px-5 py-2 bg-amber-50 border-b border-amber-200 text-[11.5px]">
+            <span className="text-amber-700 font-semibold">⚠ Thiếu thông tin:</span>
+            <span className="text-amber-800 font-medium">{incompleteClients.slice(0, 3).map(c => c.name).join(', ')}{incompleteClients.length > 3 ? ` +${incompleteClients.length - 3} khác` : ''}</span>
+            <span className="text-gray-500">— chưa có chi nhánh/quản lý/lịch lương. Bổ sung khi rảnh.</span>
           </div>
         )}
 
@@ -1907,6 +1918,18 @@ export default function Clients({
           </div>
         </div>
       )}
+
+      <AddClientModal
+        open={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        onCreated={() => onReload()}
+        branches={branches}
+        managers={managers}
+        allBranchStaffs={allBranchStaffs}
+        marketZones={marketZones}
+        clients={clients}
+        toast={toast}
+      />
     </>
   );
 }
