@@ -97,6 +97,17 @@ export interface Client {
   payroll_staff?: string | null;
 }
 
+// Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
+export interface BranchTarget {
+  id: string;
+  branch_id: string;
+  month: string;
+  revenue_target: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PayrollStaff {
   id: string;
   name: string;
