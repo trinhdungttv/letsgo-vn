@@ -281,12 +281,13 @@ function AppInner() {
   const selectedDeal = selectedDealId ? deals.find(d => d.id === selectedDealId) || null : null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#F1F0EA]">
+    // 100dvh: chiều cao viewport động — tự khớp khi thanh địa chỉ Safari ẩn/hiện; h-screen là fallback cho trình duyệt cũ
+    <div className="flex h-screen overflow-hidden bg-[#F1F0EA]" style={{ height: '100dvh' }}>
       <div className="hidden md:flex shrink-0">
         <Sidebar currentPage={page} onNavigate={navigate} />
       </div>
       <MobileNav currentPage={page} onNavigate={navigate} />
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pb-0">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
         {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
