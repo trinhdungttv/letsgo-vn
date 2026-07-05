@@ -322,6 +322,7 @@ export default function BranchZones({ branchId, branchClients, allClients, manag
       {/* LIST VIEW */}
       {viewMode === 'list' && zones.length > 0 && (
         <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -353,6 +354,7 @@ export default function BranchZones({ branchId, branchClients, allClients, manag
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

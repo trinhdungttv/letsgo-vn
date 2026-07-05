@@ -820,6 +820,7 @@ export default function PnLProjectTab({
                   </div>
                   {lines.length > 0 && (
                     <div className="p-3.5">
+                      <div className="overflow-x-auto">
                       <table className="w-full text-[12px]">
                         <thead>
                           <tr className="text-[10px] text-[#999] uppercase">
@@ -895,6 +896,7 @@ export default function PnLProjectTab({
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1099,6 +1101,7 @@ export default function PnLProjectTab({
                       {rows.length === 0 ? (
                         <div className="text-[10.5px] text-[#bbb] pb-2">{emptyHint}</div>
                       ) : (
+                        <div className="overflow-x-auto">
                         <table className="w-full text-[12px] mb-1">
                           <thead>
                             <tr className="text-[10px] text-[#999] uppercase">
@@ -1111,6 +1114,7 @@ export default function PnLProjectTab({
                           </thead>
                           <tbody>{rows.map(c => renderRow(c, showPeriod))}</tbody>
                         </table>
+                        </div>
                       )}
                       <div className="flex items-center justify-between text-[11px] pt-1.5 pb-2 border-t border-dashed border-gray-300">
                         <span className="text-[#666]">Cộng {title.toLowerCase()}</span>

@@ -134,6 +134,7 @@ export default function History({ toast, onReload }: Props) {
 
         {tab === 'archive' ? (
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr>
@@ -164,6 +165,7 @@ export default function History({ toast, onReload }: Props) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ) : (
         <>
@@ -181,6 +183,7 @@ export default function History({ toast, onReload }: Props) {
         </div>
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead>
               <tr>
@@ -217,6 +220,7 @@ export default function History({ toast, onReload }: Props) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
 
         {hasMore && !loading && (

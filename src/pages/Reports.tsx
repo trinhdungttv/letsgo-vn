@@ -151,13 +151,17 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   // Hoá đơn có ngày (pnl_revenue_lines) của tháng đang chọn + tháng liền trước —
   // nguồn cho biểu đồ doanh thu tích luỹ trong tháng.
   useEffect(() => {
+    let cancelled = false;
     const prevMo = shiftMonth(selMonth, -1);
     const [cy, cm] = selMonth.split('-').map(Number);
     const from = `${prevMo}-01`;
     const to = `${selMonth}-${String(new Date(cy, cm, 0).getDate()).padStart(2, '0')}`;
     supabase.from('pnl_revenue_lines').select('amount, invoice_date')
       .gte('invoice_date', from).lte('invoice_date', to)
-      .then(({ data }) => setRevenueLines((data ?? []) as { amount: number; invoice_date: string }[]));
+      .then(({ data }) => {
+        if (!cancelled) setRevenueLines((data ?? []) as { amount: number; invoice_date: string }[]);
+      });
+    return () => { cancelled = true; };
   }, [selMonth]);
 
   // Tổng chi phí theo pnl_id — tải theo lô để tránh URL quá dài.
@@ -585,17 +589,17 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
             <input type="month" value={selMonth} onChange={e => e.target.value && setSelMonth(e.target.value)}
               className="h-[30px] px-2 text-[12px] border border-[#E8E7E2] rounded-lg bg-white" />
             <button onClick={() => setShowTargets(true)}
-              className="h-[30px] px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5">
-              <Target size={13} />Mục tiêu
+              className="h-[30px] px-2.5 sm:px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5">
+              <Target size={13} /><span className="hidden sm:inline">Mục tiêu</span>
             </button>
             <button onClick={exportExcel} disabled={exporting}
-              className="h-[30px] px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5 disabled:opacity-50">
-              <Download size={13} />{exporting ? 'Đang xuất…' : 'Xuất'}
+              className="h-[30px] px-2.5 sm:px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5 disabled:opacity-50">
+              <Download size={13} /><span className="hidden sm:inline">{exporting ? 'Đang xuất…' : 'Xuất'}</span>
             </button>
           </div>
         }
       />
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-3 md:space-y-4">
 
         {targetsMissing && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-[12px] text-amber-800">
@@ -787,30 +791,55 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
             <div className="text-[12px] text-[#999] py-4 text-center">Chưa có dữ liệu P&L cho kỳ này</div>
           ) : (
             <div className="space-y-1">
-              <div className="grid grid-cols-[24px_1fr_180px_80px_60px] gap-2.5 items-center text-[10.5px] text-[#999] px-1">
+              <div className="hidden sm:grid grid-cols-[24px_1fr_180px_80px_60px] gap-2.5 items-center text-[10.5px] text-[#999] px-1">
                 <span>#</span><span>Chi nhánh</span><span>Tiến độ so mục tiêu</span><span className="text-right">Doanh thu</span><span className="text-right">Xu hướng</span>
               </div>
               {visibleLeaderboard.map(r => {
                 const lag = r.attainment !== null && r.attainment < elapsed * 100 - 8;
                 const isWorstShortcut = !showAllBranches && leaderboard.length > 6 && r.rank === leaderboard.length;
+                const warn = lag || isWorstShortcut;
+                const rankBadge = (
+                  <span className={`w-5 h-5 rounded-full text-[10.5px] font-medium flex items-center justify-center shrink-0 ${r.rank === 1 ? 'bg-amber-100 text-amber-800' : warn ? 'bg-orange-100 text-orange-800' : 'bg-[#F1EFE8] text-[#5F5E5A]'}`}>{r.rank}</span>
+                );
+                const pctColor = r.attainment === null ? '#bbb' : r.attainment >= elapsed * 100 ? C.green : lag ? '#993C1D' : C.blue;
+                const barColor = r.attainment === null ? '#ddd' : r.attainment >= elapsed * 100 ? C.green : lag ? C.coral : C.blue;
                 return (
-                  <div key={r.key} className={`grid grid-cols-[24px_1fr_180px_80px_60px] gap-2.5 items-center px-1 py-1.5 border-t border-[#F0EEE9] text-[12px] ${lag || isWorstShortcut ? 'bg-orange-50/50 rounded-md' : ''}`}>
-                    <span className={`w-5 h-5 rounded-full text-[10.5px] font-medium flex items-center justify-center ${r.rank === 1 ? 'bg-amber-100 text-amber-800' : lag || isWorstShortcut ? 'bg-orange-100 text-orange-800' : 'bg-[#F1EFE8] text-[#5F5E5A]'}`}>{r.rank}</span>
-                    <span className="font-semibold text-[#111] truncate">{r.key}</span>
-                    {r.attainment !== null ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="flex-1 h-1.5 bg-[#F0EEE9] rounded-full overflow-hidden">
-                          <span className="block h-full rounded-full" style={{ width: `${Math.min(100, r.attainment)}%`, background: r.attainment >= elapsed * 100 ? C.green : lag ? C.coral : C.blue }} />
+                  <div key={r.key} className={`border-t border-[#F0EEE9] ${warn ? 'bg-orange-50/50 rounded-md' : ''}`}>
+                    {/* Mobile: hạng + tên/thanh tiến độ + giá trị */}
+                    <div className="flex sm:hidden items-center gap-2.5 px-1 py-2">
+                      {rankBadge}
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-[12px] font-semibold text-[#111] truncate">{r.key}</span>
+                        <span className="block h-1 bg-[#F0EEE9] rounded-full overflow-hidden mt-1.5">
+                          <span className="block h-full rounded-full" style={{ width: `${r.attainment !== null ? Math.min(100, r.attainment) : 0}%`, background: barColor }} />
                         </span>
-                        <span className="text-[11px] font-medium min-w-[32px]" style={{ color: r.attainment >= elapsed * 100 ? C.green : lag ? '#993C1D' : C.blue }}>{Math.round(r.attainment)}%</span>
                       </span>
-                    ) : (
-                      <span className="text-[11px] text-[#bbb]">— chưa có mục tiêu</span>
-                    )}
-                    <span className="text-right text-[#111]">{formatCurrency(r.cur)}</span>
-                    <span className={`text-right text-[11px] ${r.growth === null ? 'text-[#bbb]' : r.growth > 1 ? 'text-emerald-600' : r.growth < -1 ? 'text-red-600' : 'text-[#888]'}`}>
-                      {r.growth === null ? '—' : `${r.growth > 1 ? '▲' : r.growth < -1 ? '▼' : '—'} ${r.growth >= 0 ? '+' : ''}${Math.round(r.growth)}%`}
-                    </span>
+                      <span className="text-right shrink-0">
+                        <span className="block text-[12px] font-semibold text-[#111]">{formatCurrency(r.cur)}</span>
+                        <span className="block text-[10px] font-medium" style={{ color: pctColor }}>
+                          {r.attainment !== null ? `${Math.round(r.attainment)}%` : 'chưa có MT'}
+                        </span>
+                      </span>
+                    </div>
+                    {/* Desktop: giữ nguyên bảng đầy đủ */}
+                    <div className="hidden sm:grid grid-cols-[24px_1fr_180px_80px_60px] gap-2.5 items-center px-1 py-1.5 text-[12px]">
+                      {rankBadge}
+                      <span className="font-semibold text-[#111] truncate">{r.key}</span>
+                      {r.attainment !== null ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="flex-1 h-1.5 bg-[#F0EEE9] rounded-full overflow-hidden">
+                            <span className="block h-full rounded-full" style={{ width: `${Math.min(100, r.attainment)}%`, background: barColor }} />
+                          </span>
+                          <span className="text-[11px] font-medium min-w-[32px]" style={{ color: pctColor }}>{Math.round(r.attainment)}%</span>
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-[#bbb]">— chưa có mục tiêu</span>
+                      )}
+                      <span className="text-right text-[#111]">{formatCurrency(r.cur)}</span>
+                      <span className={`text-right text-[11px] ${r.growth === null ? 'text-[#bbb]' : r.growth > 1 ? 'text-emerald-600' : r.growth < -1 ? 'text-red-600' : 'text-[#888]'}`}>
+                        {r.growth === null ? '—' : `${r.growth > 1 ? '▲' : r.growth < -1 ? '▼' : '—'} ${r.growth >= 0 ? '+' : ''}${Math.round(r.growth)}%`}
+                      </span>
+                    </div>
                   </div>
                 );
               })}

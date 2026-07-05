@@ -391,7 +391,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           </div>
         </div>
       )}
-      <div className="grid grid-cols-2 divide-x divide-[#F0EEE9]">
+      <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#F0EEE9]">
         <div>
           <div className="px-3 py-1.5 text-[10.5px] font-semibold text-[#888] uppercase tracking-wide bg-[#FAFAFA] border-b border-[#F0EEE9]">
             Tái ký hợp đồng

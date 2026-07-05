@@ -173,6 +173,7 @@ export default function PerformanceTab({
                       <div className={`text-[17px] font-medium ${nc >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{workers ? fmtTrieu(nc / workers * 1000) + 'k' : '—'}</div>
                     </div>
                   </div>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead>
                       <tr className="text-[10px] text-[#999] uppercase">
@@ -215,6 +216,7 @@ export default function PerformanceTab({
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </>
               );
             })()}
@@ -228,6 +230,7 @@ export default function PerformanceTab({
           Bảng so sánh tất cả chi nhánh
         </div>
         <div className="p-3.5">
+          <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10px] text-[#999] uppercase">
@@ -278,6 +281,7 @@ export default function PerformanceTab({
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

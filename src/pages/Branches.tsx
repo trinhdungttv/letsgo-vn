@@ -1267,6 +1267,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     {selected.region ? 'Chưa có khách hàng nào trong khu vực này' : 'Chi nhánh chưa gán khu vực — vào tab Hồ sơ để thiết lập'}
                   </div>
                 ) : (
+                  <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead>
                       <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -1449,6 +1450,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       })}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
               {/* Cài đặt khoán chi nhánh */}
@@ -1681,6 +1683,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   ) : branchStaffs.length === 0 ? (
                     <div className="px-4 py-8 text-center text-[12px] text-[#999]">Chua co nhan su. Bam "Them" de bat dau.</div>
                   ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-[12px]">
                       <thead>
                         <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -1785,6 +1788,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1803,6 +1807,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 ) : perfRows.length === 0 ? (
                   <div className="px-3.5 py-8 text-center text-[12px] text-[#999]">Chưa có lịch sử bàn giao quản lý cho "{selected.manager_name}"</div>
                 ) : (
+                  <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead>
                       <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -1823,6 +1828,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             )}
@@ -1850,6 +1856,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   : 'Mỗi dự án sẽ có tỷ lệ riêng. Điều chỉnh nếu cần trước khi xác nhận:'}
               </div>
 
+              <div className="overflow-x-auto">
               <table className="w-full text-[12px] mb-3">
                 <thead>
                   <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -1898,6 +1905,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   })}
                 </tbody>
               </table>
+              </div>
 
               {khoanConfirm.mode === 'common' && khoanConfirm.clients.some(c => c.new_lg !== c.current_lg) && (
                 <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
@@ -2188,6 +2196,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         </div>
       ) : (
         <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -2230,6 +2239,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
       <DeleteBranchModal

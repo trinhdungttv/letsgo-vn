@@ -293,15 +293,15 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-[#E8E7E2] shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 md:px-6 py-3 bg-white border-b border-[#E8E7E2] shrink-0">
         <div>
           <div className="text-[14px] font-semibold text-[#111]">Dashboard</div>
           <div className="text-[11.5px] text-[#888] mt-0.5">{today}</div>
         </div>
 
         {/* Global Filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11.5px] text-[#888] font-medium">Bộ lọc:</span>
+        <div className="flex flex-wrap items-center gap-2 max-w-full">
+          <span className="hidden sm:inline text-[11.5px] text-[#888] font-medium">Bộ lọc:</span>
           {(['all', 'region', 'branch', 'manager'] as ScopeMode[]).map(m => (
             <button
               key={m}
@@ -331,9 +331,9 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-3 md:space-y-4">
         {/* KPI Cards */}
-        <div className="grid grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">
               <div className="text-[11.5px] text-[#888]">Tổng khách hàng</div>
@@ -371,8 +371,8 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
         </div>
 
         {/* Trend + Alerts */}
-        <div className="grid grid-cols-5 gap-2.5">
-          <div className="col-span-2 bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-2.5">
+          <div className="lg:col-span-2 bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap">
               <TrendingUp size={13} className="text-blue-500" />
               <span className="text-[12.5px] font-semibold text-[#111]">Xu hướng lao động T1–T6</span>
@@ -426,7 +426,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
           </div>
 
           {/* Alerts + Tasks */}
-          <div className="col-span-3">
+          <div className="lg:col-span-3">
             <AlertsTasksPanel
               clients={clients}
               regionFilter={scopeMode === 'region' ? selectedScope : null}
@@ -441,7 +441,7 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
         </div>
 
         {/* Labor & Revenue Bar Charts */}
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
           <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
               <div className="flex items-center gap-1.5">

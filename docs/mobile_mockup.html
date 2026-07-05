@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Let's Go VN — Mobile Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.5/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  body { margin: 0; background: #E7E5DE; font-family: 'Inter', -apple-system, sans-serif; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  button { font-family: inherit; }
+  .canvas { padding: 40px 44px 56px; }
+  @media (max-width: 600px) { .canvas { padding: 18px 10px 40px; zoom: 0.82; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+/*
+  ═══ ASSUMPTIONS (Junior pass) ═══
+  1. Bottom nav mặc định: Báo cáo · Dashboard · Khách hàng · Workspace + nút ⋯ (user đã xác nhận muốn tuỳ chỉnh được)
+  2. Số liệu = lấy từ app thật tháng 1/2026 (18.1 tỷ, biên 9.8%, 1.941 LĐ) — shape biểu đồ minh hoạ
+  3. Màu/typography giữ nguyên design system app: navy #0c2340, blue #1D4ED8, nền #F0EFE9, border #E8E7E2, Inter
+  4. Drawer ⋯ = bottom sheet kiểu iOS; Tuỳ chỉnh = màn riêng trong drawer flow, lưu localStorage khi build thật
+*/
+
+const C = {
+  navy: '#0c2340', blue: '#1D4ED8', bg: '#F0EFE9', border: '#E8E7E2',
+  text: '#111', mut: '#888', mut2: '#aaa', green: '#059669', red: '#DC2626',
+  amber: '#B45309', grid: '#F0EEE9',
+};
+
+/* ─── icons: lucide-style stroke SVG ─── */
+const Ic = ({ d, size = 20, sw = 1.8, style }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={style}>
+    {d.map((p, i) => <path key={i} d={p} />)}
+  </svg>
+);
+const icons = {
+  report:   ['M3 3v18h18', 'M8 17V9', 'M13 17V5', 'M18 17v-7'],
+  home:     ['M3 10.5 12 3l9 7.5', 'M5 9.5V21h14V9.5', 'M10 21v-6h4v6'],
+  users:    ['M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8', 'M23 21v-2a4 4 0 0 0-3-3.87', 'M16 3.13a4 4 0 0 1 0 7.75'],
+  work:     ['M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M3 7h18v13H3z', 'M3 12h18'],
+  more:     ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
+  branch:   ['M3 21h18', 'M5 21V7l7-4 7 4v14', 'M9 21v-4h6v4', 'M9 10h.01M15 10h.01M9 14h.01M15 14h.01'],
+  finance:  ['M12 2v20', 'M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'],
+  market:   ['M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z', 'M12 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4'],
+  loan:     ['M3 21h18', 'M4 18h16', 'M6 18V9', 'M10 18V9', 'M14 18V9', 'M18 18V9', 'M2 9l10-6 10 6'],
+  history:  ['M3 12a9 9 0 1 0 3-6.7L3 8', 'M3 3v5h5', 'M12 7v5l3 3'],
+  crm:      ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 17h6', 'M17 14v6'],
+  admin:    ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6', 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.68.28 1.17.95 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'],
+  userMgmt: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8', 'M19 8v6', 'M22 11h-6'],
+  target:   ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20', 'M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12', 'M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4'],
+  download: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3'],
+  x:        ['M18 6 6 18', 'M6 6l12 12'],
+  chevR:    ['M9 18l6-6-6-6'],
+  chevL:    ['M15 18l-6-6 6-6'],
+  grip:     ['M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01'],
+  pin:      ['M12 17v5', 'M9 10.76V7a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3.76a2 2 0 0 0 .59 1.42l1.7 1.7a1 1 0 0 1-.7 1.7H6.41a1 1 0 0 1-.7-1.7l1.7-1.7A2 2 0 0 0 8 10.76z'],
+  minus:    ['M5 12h14'],
+  sliders:  ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'],
+  trendUp:  ['M22 7l-8.5 8.5-5-5L2 17', 'M16 7h6v6'],
+  alert:    ['M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', 'M12 9v4', 'M12 17h.01'],
+};
+
+/* ─── menu registry: đúng các trang trong app thật ─── */
+const MENU = [
+  { id: 'reports',   label: 'Báo cáo',     icon: 'report' },
+  { id: 'dashboard', label: 'Dashboard',   icon: 'home' },
+  { id: 'clients',   label: 'Khách hàng',  icon: 'users' },
+  { id: 'workspace', label: 'Workspace',   icon: 'work' },
+  { id: 'branches',  label: 'Chi nhánh',   icon: 'branch' },
+  { id: 'finance',   label: 'Tài chính',   icon: 'finance' },
+  { id: 'market',    label: 'Thị trường',  icon: 'market' },
+  { id: 'loans',     label: 'Khoản vay',   icon: 'loan' },
+  { id: 'history',   label: 'Lịch sử',     icon: 'history' },
+  { id: 'crm',       label: 'CRM',         icon: 'crm' },
+  { id: 'admin',     label: 'Quản trị',    icon: 'admin' },
+  { id: 'users-mgmt',label: 'Người dùng',  icon: 'userMgmt' },
+];
+const menuOf = id => MENU.find(m => m.id === id);
+const DEFAULT_PINNED = ['reports', 'dashboard', 'clients', 'workspace'];
+
+/* ═══════════ Trang Báo cáo — bản mobile ═══════════ */
+function KpiCard({ label, value, badge, badgeTone, sub, sub2, bar }) {
+  const tones = {
+    blue:  { bg: '#E6F1FB', tx: '#1D4ED8' }, green: { bg: '#E1F5EE', tx: '#065F46' },
+    red:   { bg: '#FCEBEB', tx: '#991B1B' }, purple:{ bg: '#EEEDFE', tx: '#3C3489' },
+  }[badgeTone || 'blue'];
+  return (
+    <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, padding: '12px 13px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 11, color: C.mut, whiteSpace: 'nowrap' }}>{label}</span>
+        {badge && <span style={{ fontSize: 9.5, fontWeight: 600, color: tones.tx, background: tones.bg, padding: '2px 7px', borderRadius: 9, whiteSpace: 'nowrap' }}>{badge}</span>}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4, letterSpacing: '-0.02em' }}>{value}</div>
+      {bar !== undefined && (
+        <div style={{ height: 4, background: C.border, borderRadius: 2, marginTop: 8, overflow: 'hidden' }}>
+          <div style={{ width: `${bar}%`, height: '100%', background: C.blue, borderRadius: 2 }} />
+        </div>
+      )}
+      {sub && <div style={{ fontSize: 10, color: C.mut, marginTop: 5 }}>{sub}</div>}
+      {sub2 && <div style={{ fontSize: 10, color: C.green, marginTop: 2 }}>{sub2}</div>}
+    </div>
+  );
+}
+
+function RevenueChart() {
+  const bars = [42, 48, 51, 55, 54, 62];
+  const profit = [30, 38, 40, 46, 46, 50];
+  const W = 320, H = 130, bw = 26, gap = (W - 6 * bw) / 7;
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H + 22}`}>
+      {[0.25, 0.5, 0.75, 1].map(f => (
+        <line key={f} x1="0" x2={W} y1={H - H * f} y2={H - H * f} stroke={C.grid} strokeWidth="1" />
+      ))}
+      {bars.map((v, i) => {
+        const x = gap + i * (bw + gap);
+        return <rect key={i} x={x} y={H - (v / 70) * H} width={bw} height={(v / 70) * H} rx="4" fill={i === 5 ? C.blue : '#B5D4F4'} />;
+      })}
+      <polyline fill="none" stroke={C.green} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        points={profit.map((v, i) => `${gap + i * (bw + gap) + bw / 2},${H - (v / 70) * H}`).join(' ')} />
+      {profit.map((v, i) => (
+        <circle key={i} cx={gap + i * (bw + gap) + bw / 2} cy={H - (v / 70) * H} r="3" fill={C.green} stroke="#fff" strokeWidth="1.5" />
+      ))}
+      {['T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map((l, i) => (
+        <text key={l} x={gap + i * (bw + gap) + bw / 2} y={H + 16} textAnchor="middle" fontSize="10" fill={C.mut2} fontFamily="Inter">{l}</text>
+      ))}
+    </svg>
+  );
+}
+
+function Card({ title, right, children, pad = true }) {
+  return (
+    <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 14px 0' }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>{title}</div>
+        {right}
+      </div>
+      <div style={{ padding: pad ? '8px 14px 13px' : '8px 0 0' }}>{children}</div>
+    </div>
+  );
+}
+
+function ReportsScreen() {
+  const [period, setPeriod] = React.useState('Tháng');
+  const leaderboard = [
+    { r: 1, name: 'Biên Hoà - Ms Thương', pct: 48, val: '5.0 tỷ', tone: C.green },
+    { r: 2, name: 'LGV - VSIP', pct: 45, val: '3.5 tỷ', tone: C.green },
+    { r: 3, name: 'Giang Điền - Nhơn Trạch', pct: 41, val: '2.2 tỷ', tone: C.blue },
+    { r: 12, name: 'DG - Mr Tâm', pct: 12, val: '58 tr', tone: '#D85A30', lag: true },
+  ];
+  return (
+    <div style={{ background: C.bg, minHeight: '100%' }}>
+      {/* App bar */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'rgba(240,239,233,0.92)', backdropFilter: 'blur(12px)', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px 6px' }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, letterSpacing: '-0.01em' }}>Báo cáo</div>
+            <div style={{ fontSize: 10.5, color: C.mut, marginTop: 1 }}>Tháng 7/2026 · ngày 4/31 · thời gian thực</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['target', 'download'].map(ic => (
+              <button key={ic} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${C.border}`, background: '#fff', color: '#444', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                <Ic d={icons[ic]} size={16} />
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Filter row — cuộn ngang */}
+        <div style={{ display: 'flex', gap: 8, padding: '4px 16px 10px', overflowX: 'auto' }}>
+          <div style={{ display: 'flex', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 9, overflow: 'hidden', flexShrink: 0 }}>
+            {['Tháng', 'Quý', 'Năm'].map(p => (
+              <button key={p} onClick={() => setPeriod(p)} style={{
+                padding: '6px 14px', fontSize: 12, border: 'none', cursor: 'pointer',
+                background: period === p ? C.navy : 'transparent',
+                color: period === p ? '#fff' : '#555', fontWeight: period === p ? 600 : 400,
+                transition: 'all 0.18s',
+              }}>{p}</button>
+            ))}
+          </div>
+          <button style={{ padding: '6px 12px', fontSize: 12, color: '#333', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 9, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer' }}>
+            Tháng 7/2026 ▾
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* KPI 2 cột */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9 }}>
+          <KpiCard label="Doanh thu" value="18.1 tỷ" badge="42% mục tiêu" badgeTone="blue" bar={42} sub="Nhịp nhanh hơn T6 +12%" />
+          <KpiCard label="Lợi nhuận gộp" value="1.8 tỷ" badge="biên 9.8%" badgeTone="green" sub2="↗ +0.8 điểm biên so kỳ trước" />
+          <KpiCard label="Lao động" value="1.941" badge="ròng −35" badgeTone="red" sub="vào 12 · ra 47 (theo KH)" />
+          <KpiCard label="Doanh thu / LĐ" value="9 tr" badge="hiệu suất" badgeTone="purple" sub="bình quân tháng / lao động" />
+        </div>
+
+        {/* Biểu đồ chính */}
+        <Card title="Doanh thu · Lợi nhuận" right={
+          <div style={{ display: 'flex', gap: 10, fontSize: 10, color: '#666' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: C.blue }} />DT</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: C.green }} />LN</span>
+          </div>
+        }>
+          <RevenueChart />
+        </Card>
+
+        {/* Leaderboard rút gọn */}
+        <Card title="Xếp hạng chi nhánh" right={<span style={{ fontSize: 10.5, color: C.mut }}>7/12 đúng tiến độ</span>} pad={false}>
+          {leaderboard.map((b, i) => (
+            <div key={b.r} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+              borderTop: i ? `1px solid ${C.grid}` : 'none',
+              background: b.lag ? '#FEF9F5' : 'transparent',
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 11, fontSize: 10.5, fontWeight: 600, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: b.r === 1 ? '#FAEEDA' : b.lag ? '#FAECE7' : '#F1EFE8',
+                color: b.r === 1 ? '#854F0B' : b.lag ? '#993C1D' : '#5F5E5A',
+              }}>{b.r}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</div>
+                <div style={{ height: 4, background: C.grid, borderRadius: 2, marginTop: 5, overflow: 'hidden' }}>
+                  <div style={{ width: `${b.pct}%`, height: '100%', background: b.tone, borderRadius: 2 }} />
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{b.val}</div>
+                <div style={{ fontSize: 10, color: b.tone, fontWeight: 500 }}>{b.pct}%</div>
+              </div>
+            </div>
+          ))}
+          <button style={{ width: '100%', padding: '10px 14px', fontSize: 11.5, color: C.blue, background: 'none', border: 'none', borderTop: `1px solid ${C.grid}`, textAlign: 'left', cursor: 'pointer', fontWeight: 500 }}>
+            Xem đủ 12 chi nhánh →
+          </button>
+        </Card>
+
+        {/* Radar hợp đồng rút gọn */}
+        <Card title="Radar hợp đồng hết hạn" right={<span style={{ fontSize: 10.5, color: C.mut }}>12 HĐ · 5.3 tỷ/th</span>} pad={false}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, padding: '8px 14px 4px' }}>
+            {[['5', '≤30 ngày', '#FCEBEB', '#791F1F'], ['4', '31–60', '#FAEEDA', '#633806'], ['3', '61–90', '#F1EFE8', '#444441']].map(([n, l, bg, tx]) => (
+              <div key={l} style={{ background: bg, borderRadius: 10, padding: '7px 4px', textAlign: 'center' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: tx }}>{n}</div>
+                <div style={{ fontSize: 9.5, color: tx, opacity: 0.8 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+          {[
+            { n: 'AQUA', d: 'còn 16 ngày', s: 'Chờ duyệt', sc: '#1D4ED8', sb: '#E6F1FB', note: 'Đợi khách check → ký sau, gửi lại LGV' },
+            { n: 'SAKURA', d: 'còn 21 ngày', s: 'Chờ duyệt', sc: '#1D4ED8', sb: '#E6F1FB', note: 'Nhiều điểm thay đổi, đa số có lợi cho LGV' },
+            { n: 'GOODVIEW', d: 'còn 27 ngày', s: 'Chưa xử lý', sc: '#991B1B', sb: '#FCEBEB', note: null },
+          ].map((r, i) => (
+            <div key={r.n} style={{ padding: '9px 14px', borderTop: `1px solid ${C.grid}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{r.n}</span>
+                <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                  <span style={{ fontSize: 9.5, padding: '2px 7px', borderRadius: 8, background: '#FCEBEB', color: '#991B1B' }}>{r.d}</span>
+                  <span style={{ fontSize: 9.5, padding: '2px 7px', borderRadius: 8, background: r.sb, color: r.sc, fontWeight: 600 }}>{r.s}</span>
+                </span>
+              </div>
+              {r.note && <div style={{ fontSize: 10.5, color: '#999', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.note}</div>}
+            </div>
+          ))}
+        </Card>
+
+        {/* Cần hành động */}
+        <div style={{ background: '#FCEBEB', border: '1px solid #F7C1C1', borderRadius: 14, padding: '11px 13px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, color: '#791F1F' }}>
+            <Ic d={icons.alert} size={14} /> HĐ GOODVIEW còn 27 ngày
+          </div>
+          <div style={{ fontSize: 11, color: '#A32D2D', marginTop: 4, lineHeight: 1.5 }}>319 tr/tháng, việc tái ký chưa được xử lý trong Workspace.</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#791F1F', marginTop: 6 }}>Mở hồ sơ khách hàng →</div>
+        </div>
+        <div style={{ height: 4 }} />
+      </div>
+    </div>
+  );
+}
+
+/* ═══ Placeholder cho các tab khác (Giai đoạn 2) ═══ */
+function PlaceholderScreen({ label }) {
+  return (
+    <div style={{ background: C.bg, minHeight: '100%', padding: '14px 16px' }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, padding: '6px 0 12px' }}>{label}</div>
+      {[1, 2, 3].map(i => (
+        <div key={i} style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+          <div style={{ width: `${70 - i * 12}%`, height: 11, background: '#EEECE6', borderRadius: 6 }} />
+          <div style={{ width: `${88 - i * 8}%`, height: 8, background: '#F4F2EC', borderRadius: 5, marginTop: 9 }} />
+          <div style={{ width: `${52 + i * 6}%`, height: 8, background: '#F4F2EC', borderRadius: 5, marginTop: 6 }} />
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: C.mut2, textAlign: 'center', marginTop: 14, fontStyle: 'italic' }}>
+        Màn hình «{label}» sẽ được tối ưu mobile ở Giai đoạn 2
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ Bottom Nav ═══════════ */
+function BottomNav({ pinned, active, onTab, onMore, moreActive }) {
+  return (
+    <div style={{
+      display: 'flex', background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(16px)',
+      borderTop: `1px solid ${C.border}`, padding: '6px 4px 4px', flexShrink: 0,
+    }}>
+      {pinned.map(id => {
+        const m = menuOf(id);
+        const isActive = active === id && !moreActive;
+        return (
+          <button key={id} onClick={() => onTab(id)} style={{
+            flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            padding: '5px 0 4px', background: 'none', border: 'none', cursor: 'pointer',
+            color: isActive ? C.blue : '#8B8A85', transition: 'color 0.15s',
+          }}>
+            <Ic d={icons[m.icon]} size={21} sw={isActive ? 2.1 : 1.7} />
+            <span style={{ fontSize: 9.5, fontWeight: isActive ? 600 : 500 }}>{m.label}</span>
+          </button>
+        );
+      })}
+      <button onClick={onMore} style={{
+        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+        padding: '5px 0 4px', background: 'none', border: 'none', cursor: 'pointer',
+        color: moreActive ? C.blue : '#8B8A85',
+      }}>
+        <Ic d={icons.more} size={21} sw={2.2} />
+        <span style={{ fontSize: 9.5, fontWeight: 500 }}>Thêm</span>
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════ Drawer ⋯ (bottom sheet) ═══════════ */
+function MoreDrawer({ open, pinned, onClose, onNavigate, onCustomize }) {
+  const rest = MENU.filter(m => !pinned.includes(m.id));
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 30,
+      pointerEvents: open ? 'auto' : 'none',
+    }}>
+      <div onClick={onClose} style={{
+        position: 'absolute', inset: 0, background: 'rgba(12,35,64,0.4)',
+        opacity: open ? 1 : 0, transition: 'opacity 0.28s',
+      }} />
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0,
+        background: '#F7F6F2', borderRadius: '22px 22px 0 0',
+        transform: open ? 'translateY(0)' : 'translateY(105%)',
+        transition: 'transform 0.32s cubic-bezier(0.32, 0.72, 0, 1)',
+        boxShadow: '0 -8px 40px rgba(12,35,64,0.18)',
+        paddingBottom: 14,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '9px 0 2px' }}>
+          <div style={{ width: 38, height: 5, borderRadius: 3, background: '#D6D4CC' }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 18px 10px' }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Menu khác</span>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 14, border: 'none', background: '#EAE8E1', color: '#666', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <Ic d={icons.x} size={14} sw={2.2} />
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '0 16px' }}>
+          {rest.map(m => (
+            <button key={m.id} onClick={() => onNavigate(m.id)} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+              padding: '12px 2px 10px', background: '#fff', border: `1px solid ${C.border}`,
+              borderRadius: 14, cursor: 'pointer', color: C.navy,
+            }}>
+              <Ic d={icons[m.icon]} size={21} />
+              <span style={{ fontSize: 10, color: '#444', fontWeight: 500 }}>{m.label}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={onCustomize} style={{
+          display: 'flex', alignItems: 'center', gap: 10, width: 'calc(100% - 32px)',
+          margin: '12px 16px 0', padding: '12px 14px', background: '#fff',
+          border: `1px solid ${C.border}`, borderRadius: 14, cursor: 'pointer',
+        }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, background: '#E6F1FB', color: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Ic d={icons.sliders} size={16} />
+          </span>
+          <span style={{ flex: 1, textAlign: 'left' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Tuỳ chỉnh thanh điều hướng</div>
+            <div style={{ fontSize: 10.5, color: C.mut }}>Chọn 4 mục hay dùng nhất của bạn</div>
+          </span>
+          <span style={{ color: '#bbb' }}><Ic d={icons.chevR} size={16} /></span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ Màn Tuỳ chỉnh bottom nav ═══════════ */
+function CustomizeScreen({ pinned, setPinned, onBack, toast }) {
+  const rest = MENU.filter(m => !pinned.includes(m.id));
+  const unpin = id => setPinned(pinned.filter(p => p !== id));
+  const pin = id => {
+    if (pinned.length >= 4) { toast('Tối đa 4 mục — bỏ ghim một mục trước'); return; }
+    setPinned([...pinned, id]);
+  };
+  return (
+    <div style={{ background: C.bg, minHeight: '100%' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'rgba(240,239,233,0.92)', backdropFilter: 'blur(12px)', borderBottom: `1px solid ${C.border}` }}>
+        <button onClick={onBack} style={{ width: 32, height: 32, borderRadius: 10, border: 'none', background: 'transparent', color: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+          <Ic d={icons.chevL} size={20} sw={2.2} />
+        </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Tuỳ chỉnh điều hướng</div>
+        </div>
+        <button onClick={onBack} style={{ padding: '7px 16px', fontSize: 12.5, fontWeight: 600, color: '#fff', background: C.blue, border: 'none', borderRadius: 10, cursor: 'pointer' }}>Xong</button>
+      </div>
+
+      <div style={{ padding: '14px 16px' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.mut, letterSpacing: '0.04em', marginBottom: 8 }}>
+          ĐANG GHIM · {pinned.length}/4
+        </div>
+        <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', marginBottom: 18 }}>
+          {pinned.map((id, i) => {
+            const m = menuOf(id);
+            return (
+              <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 13px', borderTop: i ? `1px solid ${C.grid}` : 'none' }}>
+                <span style={{ color: '#C9C7BF' }}><Ic d={icons.grip} size={17} /></span>
+                <span style={{ width: 32, height: 32, borderRadius: 10, background: '#E6F1FB', color: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ic d={icons[m.icon]} size={17} />
+                </span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.text }}>{m.label}</span>
+                <button onClick={() => unpin(id)} style={{ width: 26, height: 26, borderRadius: 13, border: 'none', background: '#FCEBEB', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <Ic d={icons.minus} size={14} sw={2.4} />
+                </button>
+              </div>
+            );
+          })}
+          {!pinned.length && <div style={{ padding: 18, fontSize: 12, color: C.mut2, textAlign: 'center' }}>Chưa ghim mục nào</div>}
+        </div>
+
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.mut, letterSpacing: '0.04em', marginBottom: 8 }}>MENU KHÁC</div>
+        <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+          {rest.map((m, i) => (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 13px', borderTop: i ? `1px solid ${C.grid}` : 'none' }}>
+              <span style={{ width: 32, height: 32, borderRadius: 10, background: '#F1EFE8', color: '#5F5E5A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Ic d={icons[m.icon]} size={17} />
+              </span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: C.text }}>{m.label}</span>
+              <button onClick={() => pin(m.id)} style={{
+                display: 'flex', alignItems: 'center', gap: 4, padding: '5px 11px',
+                fontSize: 11, fontWeight: 600, borderRadius: 9, cursor: 'pointer',
+                border: `1px solid ${pinned.length >= 4 ? C.border : '#B5D4F4'}`,
+                background: pinned.length >= 4 ? '#F7F6F2' : '#E6F1FB',
+                color: pinned.length >= 4 ? '#B4B2A9' : C.blue,
+              }}>
+                <Ic d={icons.pin} size={12} /> Ghim
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10.5, color: C.mut2, marginTop: 12, lineHeight: 1.6, textAlign: 'center' }}>
+          Thanh điều hướng cập nhật ngay khi bạn ghim/bỏ ghim.<br />Lưu theo tài khoản — mở máy nào cũng giữ nguyên.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ AppPhone — mỗi máy 1 state machine độc lập ═══════════ */
+function AppPhone({ initialTab = 'reports', initialDrawer = false, initialCustomize = false }) {
+  const [pinned, setPinned] = React.useState(DEFAULT_PINNED);
+  const [tab, setTab] = React.useState(initialTab);
+  const [drawer, setDrawer] = React.useState(initialDrawer);
+  const [customize, setCustomize] = React.useState(initialCustomize);
+  const [toastMsg, setToastMsg] = React.useState('');
+  const toast = msg => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2200); };
+
+  const navigate = id => { setTab(id); setDrawer(false); setCustomize(false); };
+
+  return (
+    <IosFrame time="9:41" battery={82}>
+      <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+          {customize
+            ? <CustomizeScreen pinned={pinned} setPinned={setPinned} onBack={() => setCustomize(false)} toast={toast} />
+            : tab === 'reports'
+              ? <ReportsScreen />
+              : <PlaceholderScreen label={menuOf(tab)?.label || tab} />}
+        </div>
+        {!customize && (
+          <BottomNav pinned={pinned} active={tab} moreActive={drawer}
+            onTab={navigate} onMore={() => setDrawer(true)} />
+        )}
+        <MoreDrawer open={drawer} pinned={pinned} onClose={() => setDrawer(false)}
+          onNavigate={navigate} onCustomize={() => { setDrawer(false); setCustomize(true); }} />
+        {toastMsg && (
+          <div style={{
+            position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+            background: 'rgba(17,17,17,0.92)', color: '#fff', fontSize: 11.5,
+            padding: '9px 16px', borderRadius: 12, whiteSpace: 'nowrap', zIndex: 50,
+          }}>{toastMsg}</div>
+        )}
+      </div>
+    </IosFrame>
+  );
+}
+
+/* ═══════════ Canvas: 3 máy song song ═══════════ */
+function Demo() {
+  const screens = [
+    { label: '① Báo cáo — bản mobile (bấm thử tab, filter)', props: {} },
+    { label: '② Menu «Thêm» — bottom sheet (bấm ⋯ hoặc mục bất kỳ)', props: { initialDrawer: true } },
+    { label: '③ Tuỳ chỉnh thanh điều hướng (ghim / bỏ ghim thật)', props: { initialCustomize: true } },
+  ];
+  return (
+    <div className="canvas">
+      <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ fontSize: 21, fontWeight: 700, color: C.navy, letterSpacing: '-0.01em' }}>Let's Go VN — Demo giao diện mobile</div>
+          <div style={{ fontSize: 13, color: '#77756E', marginTop: 5 }}>
+            Cả 3 máy đều thao tác được thật: chuyển tab, mở menu ⋯, ghim/bỏ ghim điều hướng. Số liệu lấy từ app, shape biểu đồ minh hoạ.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          {screens.map(s => (
+            <div key={s.label}>
+              <div style={{ fontSize: 12.5, color: '#77756E', marginBottom: 10, fontStyle: 'italic' }}>{s.label}</div>
+              <AppPhone {...s.props} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── IosFrame (assets/ios_frame.jsx — iPhone 15 Pro chuẩn) ─── */
+/**
+ * IosFrame — iPhone设备边框
+ *
+ * 参考iPhone 15 Pro（393×852 logical pixels）
+ * 含：灵动岛 + 状态栏（时间/信号/电池）+ Home Indicator + 圆角
+ *
+ * 用法：
+ *   <IosFrame time="9:41" battery={85}>
+ *     <YourAppContent />
+ *   </IosFrame>
+ *
+ * 自定义：
+ *   <IosFrame width={390} height={844} darkMode showKeyboard>
+ *     ...
+ *   </IosFrame>
+ */
+
+const iosFrameStyles = {
+  wrapper: {
+    display: 'inline-block',
+    padding: 12,
+    background: '#000',
+    borderRadius: 60,
+    boxShadow: '0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)',
+    position: 'relative',
+  },
+  screen: {
+    position: 'relative',
+    borderRadius: 48,
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  statusBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 54,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 32px 0 32px',
+    fontSize: 16,
+    fontWeight: 600,
+    fontFamily: '-apple-system, "SF Pro Text", sans-serif',
+    zIndex: 20,
+    pointerEvents: 'none',
+  },
+  dynamicIsland: {
+    position: 'absolute',
+    top: 12,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 124,
+    height: 36,
+    background: '#000',
+    borderRadius: 999,
+    zIndex: 30,
+  },
+  statusIcons: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  signalIcon: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: 2,
+    height: 12,
+  },
+  signalBar: {
+    width: 3,
+    background: 'currentColor',
+    borderRadius: 1,
+  },
+  wifiIcon: {
+    width: 16,
+    height: 12,
+    position: 'relative',
+  },
+  batteryIcon: {
+    width: 26,
+    height: 12,
+    border: '1.5px solid currentColor',
+    borderRadius: 3,
+    padding: 1,
+    position: 'relative',
+    opacity: 0.8,
+  },
+  batteryCap: {
+    position: 'absolute',
+    top: 3,
+    right: -3,
+    width: 2,
+    height: 6,
+    background: 'currentColor',
+    borderRadius: '0 1px 1px 0',
+  },
+  content: {
+    position: 'absolute',
+    top: 54,
+    left: 0,
+    right: 0,
+    bottom: 34,
+    overflow: 'auto',
+  },
+  homeIndicator: {
+    position: 'absolute',
+    bottom: 10,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 140,
+    height: 5,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 999,
+    zIndex: 10,
+  },
+  homeIndicatorDark: {
+    background: 'rgba(255,255,255,0.5)',
+  },
+};
+
+function IosFrame({
+  children,
+  width = 393,
+  height = 852,
+  time = '9:41',
+  battery = 100,
+  darkMode = false,
+  showStatusBar = true,
+  showDynamicIsland = true,
+  showHomeIndicator = true,
+}) {
+  const textColor = darkMode ? '#fff' : '#000';
+
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{
+        ...iosFrameStyles.screen,
+        width,
+        height,
+        background: darkMode ? '#000' : '#fff',
+      }}>
+        {showStatusBar && (
+          <div style={{ ...iosFrameStyles.statusBar, color: textColor }}>
+            <span>{time}</span>
+            <div style={iosFrameStyles.statusIcons}>
+              <div style={iosFrameStyles.signalIcon}>
+                <div style={{ ...iosFrameStyles.signalBar, height: 4 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height: 6 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height: 9 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height: 11 }} />
+              </div>
+              <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color: textColor }}>
+                <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+                <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+                <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+              </svg>
+              <div style={iosFrameStyles.batteryIcon}>
+                <div style={{
+                  width: `${battery}%`,
+                  height: '100%',
+                  background: 'currentColor',
+                  borderRadius: 1,
+                  opacity: 0.9,
+                }} />
+                <div style={iosFrameStyles.batteryCap} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDynamicIsland && <div style={iosFrameStyles.dynamicIsland} />}
+
+        <div style={iosFrameStyles.content}>
+          {children}
+        </div>
+
+        {showHomeIndicator && (
+          <div style={{
+            ...iosFrameStyles.homeIndicator,
+            ...(darkMode ? iosFrameStyles.homeIndicatorDark : {}),
+          }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+if (typeof window !== 'undefined') {
+  window.IosFrame = IosFrame;
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script>
+</body>
+</html>

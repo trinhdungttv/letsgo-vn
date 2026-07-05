@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
+import MobileNav from './components/MobileNav';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider, canAccess } from './lib/auth';
@@ -281,8 +282,11 @@ function AppInner() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F1F0EA]">
-      <Sidebar currentPage={page} onNavigate={navigate} />
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF]">
+      <div className="hidden md:flex shrink-0">
+        <Sidebar currentPage={page} onNavigate={navigate} />
+      </div>
+      <MobileNav currentPage={page} onNavigate={navigate} />
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pb-0">
         {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients

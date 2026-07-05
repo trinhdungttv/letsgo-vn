@@ -99,6 +99,7 @@ export default function OverheadTab({
           <span className="text-[10px] text-[#999]">Trừ 1 lần/tháng · Không phân bổ vào từng DA</span>
         </div>
         <div className="p-3.5">
+          <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10px] text-[#999] uppercase">
@@ -147,6 +148,7 @@ export default function OverheadTab({
               ))}
             </tbody>
           </table>
+          </div>
           <button onClick={addRow} className="w-full text-left text-[11px] text-[#999] hover:text-[#555] pt-2 mt-1 border-t border-dashed border-gray-200 flex items-center gap-1 transition">
             <Plus size={12} /> Thêm khoản
           </button>

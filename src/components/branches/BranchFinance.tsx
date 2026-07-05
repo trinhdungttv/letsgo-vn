@@ -442,6 +442,7 @@ export default function BranchFinance({
       {projectRows.length > 0 && (
         <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
           <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] text-[12px] font-medium text-[#111]">Dự án {monthLabel(month)}</div>
+          <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
@@ -473,6 +474,7 @@ export default function BranchFinance({
               </tr>
             </tfoot>
           </table>
+          </div>
         </div>
       )}
 
