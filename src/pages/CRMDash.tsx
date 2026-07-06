@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Phone, Mail, PenTool, Calendar } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { WinLossSection } from '../components/workspace/WinLossSection';
 import { formatCurrency } from '../lib/format';
 import type { Client, CRMActivity, CRMPipelineEntry, Page } from '../lib/types';
 
@@ -276,6 +277,14 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
             )}
           </div>
         </div>
+      </div>
+
+      {/* Win/Loss Tracker — chuyển từ Workspace sang (dữ liệu bán hàng thuộc khu CRM) */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="px-6 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-900">Win/Loss Tracker</h3>
+        </div>
+        <WinLossSection clients={clients} />
       </div>
     </div>
   );

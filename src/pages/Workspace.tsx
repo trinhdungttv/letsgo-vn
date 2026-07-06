@@ -1,23 +1,29 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useHashTab } from '../hooks/useHashSubRoute';
+// src/pages/Workspace.tsx — «Bàn làm việc»
+// Bố cục theo demo đã duyệt (docs/workspace_mockup.html):
+//   Hero (chào + 4 stat) → quick actions → [Feed «Việc của tôi» | Rail phải]
+//   Rail = HĐ cần xử lý · Cập nhật chi nhánh · KCN cần ghé (+ thẻ theo vai trò)
+//   KCN Grid = accordion dưới cùng. Win/Loss đã dời sang CRM.
+// Mỗi dữ liệu chỉ hiển thị ở MỘT nơi — feed là nguồn việc duy nhất, rail là radar theo dõi.
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  AlertTriangle, FileText, FilePlus, Send, ClipboardList,
-  CalendarClock, TrendingUp, Wallet, CheckCircle2,
-  Settings, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw,
-  History, Search, Pencil, Trash2,
+  FileText, Send, ClipboardList, FileWarning, Phone, MapPin, ChevronDown,
+  Settings, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight,
 } from 'lucide-react';
-import PageHeader from '../components/PageHeader';
-import { WorkspaceModulesTabs } from '../components/workspace/WorkspaceModulesTabs';
-import { WorkTasksCard } from '../components/workspace/WorkTasksCard';
+import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
+import { KCNGridSection } from '../components/workspace/KCNGridSection';
 import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
 import { QuoteModal } from '../components/workspace/QuoteModal';
+import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import type { Client, FinanceRecord, CRMPipelineEntry, Page, WorkTask, TaskStatus, WorkTaskComment } from '../lib/types';
+import { useRegions } from '../hooks/useRegions';
+import { useBranchData } from '../hooks/useBranchData';
+import { usePersistedState } from '../hooks/usePersistedState';
+import type { Client, FinanceRecord, CRMPipelineEntry, Page, KCNSummary, Branch } from '../lib/types';
 import { ROLE_LABELS, CRM_STAGES } from '../lib/constants';
 import { formatDate, daysUntil } from '../lib/format';
-import { usePersistedState } from '../hooks/usePersistedState';
 
 interface WorkspaceProps {
   clients: Client[];
@@ -28,70 +34,23 @@ interface WorkspaceProps {
   toast: (msg: string) => void;
 }
 
-// --- Việc đang treo (bảng workspace_tasks) ----------------------
-interface WorkspaceTask {
-  id: string;
-  title: string;
-  type: 'doc' | 'task' | string;
-  status: 'drafting' | 'pending_approval' | 'pending_sign' | 'done' | 'not_started' | 'overdue' | string;
-  assignee: string | null;
-  deadline: string | null;
-  created_at: string;
-}
-
-const WS_STATUS: Record<string, { label: string; cls: string }> = {
-  drafting:         { label: 'Đang soạn',    cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-  pending_approval: { label: 'Chờ duyệt',    cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  pending_sign:     { label: 'Chờ ký',       cls: 'bg-purple-50 text-purple-700 border-purple-200' },
-  done:             { label: 'Hoàn thành',   cls: 'bg-green-50 text-green-700 border-green-200' },
-  not_started:      { label: 'Chưa bắt đầu', cls: 'bg-slate-100 text-slate-600 border-slate-300' },
-  overdue:          { label: 'Quá hạn',      cls: 'bg-red-50 text-red-700 border-red-200' },
-};
-
-function SectionCard({ title, icon, children, action }: { title: string; icon?: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] bg-[#F9F9F7]">
-        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#333]">
-          {icon}{title}
-        </div>
-        {action}
-      </div>
-      <div className="p-3">{children}</div>
-    </div>
-  );
-}
-
-// --- Workspace layout customization (show/hide sections, font size) ---
-type SectionKey = 'quick_actions' | 'hd_can_xu_ly' | 'cong_viec_chua_ht' | 'cap_nhat_cn' | 'viec_dang_treo' | 'cong_viec_sap_toi' | 'alerts' | 'prospects' | 'lich_su';
+// ---- Tuỳ chỉnh hiển thị ----
+type SectionKey = 'quick_actions' | 'rail_hd' | 'rail_cn' | 'rail_kcn' | 'kcn_grid' | 'lich_su' | 'alerts' | 'prospects';
 
 const SECTION_LABELS: Record<SectionKey, string> = {
   quick_actions: 'Thao tác nhanh',
-  hd_can_xu_ly: 'HĐ cần xử lý',
-  cong_viec_chua_ht: 'Công việc chưa hoàn thành',
-  cap_nhat_cn: 'Cập nhật thông tin CN',
-  viec_dang_treo: 'Việc đang treo',
-  cong_viec_sap_toi: 'Công việc sắp tới',
+  rail_hd: 'HĐ cần xử lý (rail)',
+  rail_cn: 'Cập nhật chi nhánh (rail)',
+  rail_kcn: 'KCN cần ghé thăm (rail)',
+  kcn_grid: 'Bảng KCN Grid',
+  lich_su: 'Lịch sử hoàn thành',
   alerts: 'Thông báo theo vai trò',
   prospects: 'Prospects cần follow-up',
-  lich_su: 'Lịch sử hoàn thành',
 };
 
-const SECTION_GROUPS: { label: string; keys: SectionKey[] }[] = [
-  { label: 'Chung', keys: ['quick_actions'] },
-  { label: 'Ưu tiên hôm nay', keys: ['hd_can_xu_ly', 'cong_viec_chua_ht', 'cap_nhat_cn'] },
-  { label: 'Quản lý công việc', keys: ['viec_dang_treo', 'cong_viec_sap_toi'] },
-  { label: 'Bảng phụ & Lịch sử', keys: ['alerts', 'prospects', 'lich_su'] },
-];
+const DEFAULT_ORDER: SectionKey[] = ['quick_actions', 'rail_hd', 'rail_cn', 'rail_kcn', 'kcn_grid', 'lich_su', 'alerts', 'prospects'];
 
-const DEFAULT_ORDER: SectionKey[] = ['quick_actions', 'hd_can_xu_ly', 'cong_viec_chua_ht', 'cap_nhat_cn', 'viec_dang_treo', 'cong_viec_sap_toi', 'alerts', 'prospects', 'lich_su'];
-
-interface WorkspaceLayout {
-  order: SectionKey[];
-  hidden: SectionKey[];
-  fontScale: number;
-}
-
+interface WorkspaceLayout { order: SectionKey[]; hidden: SectionKey[]; fontScale: number }
 const DEFAULT_LAYOUT: WorkspaceLayout = { order: DEFAULT_ORDER, hidden: [], fontScale: 1 };
 
 function sectionAvailable(key: SectionKey, role: string): boolean {
@@ -100,811 +59,695 @@ function sectionAvailable(key: SectionKey, role: string): boolean {
   return true;
 }
 
-const FONT_MIN = 0.8;
-const FONT_MAX = 1.3;
-const FONT_STEP = 0.05;
+const FONT_MIN = 0.8, FONT_MAX = 1.3, FONT_STEP = 0.05;
+
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+
+function RailCard({ title, icon, count, action, children }: {
+  title: string; icon: React.ReactNode; count?: number; action?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden">
+      <div className="flex items-center justify-between px-3.5 py-2.5">
+        <div className="flex items-center gap-1.5 text-[12px] font-extrabold text-[#0c2340]">
+          {icon}{title}
+          {count !== undefined && count > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-px rounded-full bg-amber-50 text-amber-700 border border-amber-200">{count}</span>
+          )}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 export default function Workspace({ clients, pipeline, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user } = useAuth();
-  const [branchRegion, setBranchRegion] = useState<string | null>(null);
+  const { regions } = useRegions();
+  const { branches, updateBranch } = useBranchData();
 
-  const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout', DEFAULT_LAYOUT);
+  const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout_v2', DEFAULT_LAYOUT);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const WS_TAB_KEYS = ['morning', 'winloss', 'kcn'] as const;
-  const [activeModule, setActiveModule] = useHashTab<'morning' | 'winloss' | 'kcn'>('workspace', WS_TAB_KEYS, 'morning');
+  const hidden = (k: SectionKey) => layout.hidden.includes(k);
 
-  // Merge in any new section keys and drop ones that no longer exist
-  const order = [...layout.order.filter(k => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter(k => !layout.order.includes(k))];
+  // ---- Liên lạc giữa Workspace ↔ feed ----
+  const [feedStats, setFeedStats] = useState<FeedStats>({ overdue: 0, today: 0, doneThisWeek: 0, renewalClientIds: [] });
+  const handleStats = useCallback((s: FeedStats) => setFeedStats(s), []);
+  const renewalIds = useMemo(() => new Set(feedStats.renewalClientIds), [feedStats.renewalClientIds]);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [quickAddSignal, setQuickAddSignal] = useState(0);
 
-  // Quick action modals
+  // ---- Mobile: 2 segment ----
+  const [mobileTab, setMobileTab] = useState<'viec' | 'theodoi'>('viec');
+
+  // ---- Modals thao tác nhanh ----
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
 
-  // Việc đang treo
-  const [wsTasks, setWsTasks] = useState<WorkspaceTask[]>([]);
-  const [wsLoading, setWsLoading] = useState(true);
-  const [taskTab, setTaskTab] = useState<'all' | 'doc' | 'task'>('all');
-  const [showAddWsTask, setShowAddWsTask] = useState(false);
-  const [addWsTitle, setAddWsTitle] = useState('');
-  const [addWsType, setAddWsType] = useState<'task' | 'doc'>('task');
-  const [addWsDeadline, setAddWsDeadline] = useState('');
-  const [addWsAssignee, setAddWsAssignee] = useState('');
-  const [addingWsTask, setAddingWsTask] = useState(false);
-  // Edit workspace task
-  const [editingWsId, setEditingWsId] = useState<string | null>(null);
-  const [editWsTitle, setEditWsTitle] = useState('');
-  const [editWsStatus, setEditWsStatus] = useState('');
-  const [editWsDeadline, setEditWsDeadline] = useState('');
-  const [editWsAssignee, setEditWsAssignee] = useState('');
-  const [savingWsEdit, setSavingWsEdit] = useState(false);
+  // ---- Rail: HĐ cần xử lý ----
+  const [contractThreshold, setContractThreshold] = usePersistedState('lgvn_contract_threshold_days', 17);
+  const [showContractSettings, setShowContractSettings] = useState(false);
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualSearch, setManualSearch] = useState('');
+  const [creatingRenewal, setCreatingRenewal] = useState<string | null>(null);
+  const [selectedContractIds, setSelectedContractIds] = useState<Set<string>>(new Set());
+  const [savingBatch, setSavingBatch] = useState(false);
 
-  // Việc đang treo — lịch sử xong
-  const [doneWsTasks, setDoneWsTasks] = useState<WorkspaceTask[]>([]);
+  // Quy tắc bản cũ: khách đã có việc tái ký đang chạy thì ẨN khỏi danh sách gợi ý
+  const contractSuggests = useMemo(() =>
+    clients
+      .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended' && !renewalIds.has(c.id))
+      .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
+      .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft <= contractThreshold)
+      .sort((a, b) => a.daysLeft - b.daysLeft),
+  [clients, contractThreshold, renewalIds]);
 
-  // Standalone WorkTasksCard state (bottom-right)
-  const [myTasks, setMyTasks] = useState<WorkTask[]>([]);
-  const [doneTasks, setDoneTasks] = useState<WorkTask[]>([]);
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyWeek, setHistoryWeek] = useState<string>('all');
-  const [historyCategory, setHistoryCategory] = useState<string>('all');
-  const [, setTaskComments] = useState<Record<string, WorkTaskComment[]>>({});
+  // Quy tắc bản cũ: hiện đủ danh sách ứng viên ngay khi mở, gõ tìm chỉ để lọc thêm — không bắt buộc gõ mới hiện
+  const manualCandidates = useMemo(() => {
+    const base = clients
+      .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended' && !renewalIds.has(c.id))
+      .filter(c => !contractSuggests.some(s => s.client.id === c.id));
+    const q = manualSearch.trim().toLowerCase();
+    return (q ? base.filter(c => c.name.toLowerCase().includes(q)) : base).slice(0, 8);
+  }, [clients, manualSearch, renewalIds, contractSuggests]);
+
+  function toggleContractSelect(clientId: string) {
+    setSelectedContractIds(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId); else next.add(clientId);
+      return next;
+    });
+  }
+
+  async function createRenewalTask(client: Client) {
+    if (!user || creatingRenewal) return;
+    setCreatingRenewal(client.id);
+    const daysLeft = daysUntil(client.contract_end);
+    const { error } = await supabase.from('work_tasks').insert({
+      user_id: user.id,
+      client_id: client.id,
+      title: `Tái ký HĐ — ${client.name}`,
+      task_type: 'Tái ký HĐ',
+      due_date: todayStr(),
+      priority: daysLeft !== null && daysLeft <= 0 ? 'high' : 'medium',
+      kcn: client.industrial_zones?.[0] || null,
+      status: 'in_progress',
+      doc_status: 'dang_soan',
+    });
+    setCreatingRenewal(null);
+    if (!error) {
+      setRefreshToken(t => t + 1);
+      setShowManualAdd(false);
+      setManualSearch('');
+      toast(`Đã tạo việc tái ký cho ${client.name}`);
+    }
+  }
+
+  // Quy tắc bản cũ (saveSelectedTasks): chọn nhiều khách rồi lưu hàng loạt 1 lần
+  async function saveBatchRenewalTasks() {
+    if (!user || selectedContractIds.size === 0) return;
+    setSavingBatch(true);
+    const today = todayStr();
+    const toInsert = contractSuggests
+      .filter(s => selectedContractIds.has(s.client.id))
+      .map(s => ({
+        user_id: user.id,
+        client_id: s.client.id,
+        title: `Tái ký HĐ — ${s.client.name}`,
+        task_type: 'Tái ký HĐ',
+        due_date: today,
+        priority: s.daysLeft <= 0 ? 'high' : 'medium',
+        kcn: s.client.industrial_zones?.[0] || null,
+        status: 'in_progress',
+        doc_status: 'dang_soan',
+      }));
+    const { error } = await supabase.from('work_tasks').insert(toInsert);
+    setSavingBatch(false);
+    if (!error) {
+      setRefreshToken(t => t + 1);
+      toast(`Đã tạo ${toInsert.length} việc tái ký`);
+      setSelectedContractIds(new Set());
+    }
+  }
+
+  // ---- Rail: Cập nhật chi nhánh ----
+  const [visitThreshold, setVisitThreshold] = usePersistedState('lgvn_visit_threshold_days', 7);
+  const [showVisitSettings, setShowVisitSettings] = useState(false);
+  const [lgvZones, setLgvZones] = useState<{ name: string }[]>([]);
+  const [branchActivity, setBranchActivity] = useState<Record<string, string>>({});
+  const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null);
+  const [panelForm, setPanelForm] = useState<Partial<Branch>>({});
+  const [panelRecordDate, setPanelRecordDate] = useState(todayStr());
+  const [panelSaving, setPanelSaving] = useState(false);
 
   useEffect(() => {
-    if (!user || user.role !== 'bdh') return;
-    (async () => {
-      const { data } = await supabase
-        .from('managers')
-        .select('region')
-        .eq('name', user.full_name)
-        .maybeSingle();
-      setBranchRegion((data as { region: string | null } | null)?.region || null);
-    })();
-  }, [user]);
+    const lgv = branches.find(b => b.short_name === 'LGV');
+    if (!lgv) return;
+    supabase.from('branch_zones').select('name').eq('branch_id', lgv.id).order('created_at')
+      .then(({ data }) => { if (data) setLgvZones(data); });
+  }, [branches]);
 
   useEffect(() => {
-    const since = new Date(Date.now() - 30 * 86400000).toISOString();
-    supabase.from('workspace_tasks').select('*').neq('status', 'done').order('deadline', { ascending: true })
-      .then(({ data, error }) => { if (!error && data) setWsTasks(data as WorkspaceTask[]); setWsLoading(false); });
-    supabase.from('workspace_tasks').select('*').eq('status', 'done').gte('created_at', since).order('created_at', { ascending: false })
-      .then(({ data }) => { if (data) setDoneWsTasks(data as WorkspaceTask[]); });
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    // Load done tasks (last 30 days)
-    const since = new Date(Date.now() - 30 * 86400000).toISOString();
-    supabase.from('work_tasks').select('*')
-      .eq('user_id', user.id).eq('status', 'done')
-      .gte('completed_at', since).order('completed_at', { ascending: false })
-      .then(({ data }) => { if (data) setDoneTasks(data as WorkTask[]); });
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    supabase
-      .from('work_tasks')
-      .select('*')
-      .eq('user_id', user.id)
-      .neq('status', 'done')
-      .order('due_date', { ascending: true })
+    const names = [
+      ...regions.map(r => `Chi nhánh ${r.name}`),
+      ...lgvZones.map(z => `Chi nhánh ${z.name}`),
+    ];
+    if (!names.length) return;
+    supabase.from('morning_priorities').select('target_name, priority_date').in('target_name', names)
+      .order('priority_date', { ascending: false })
       .then(({ data }) => {
         if (!data) return;
-        setMyTasks(data as WorkTask[]);
-        const ids = (data as WorkTask[]).map(t => t.id);
-        if (!ids.length) return;
-        supabase.from('work_task_comments').select('*').in('task_id', ids).order('created_at', { ascending: true })
-          .then(({ data: cData }) => {
-            if (!cData) return;
-            const map: Record<string, WorkTaskComment[]> = {};
-            for (const c of cData as WorkTaskComment[]) {
-              if (!map[c.task_id]) map[c.task_id] = [];
-              map[c.task_id].push(c);
-            }
-            setTaskComments(map);
-          });
+        const today = todayStr();
+        const map: Record<string, string> = {};
+        for (const row of data) {
+          if (!row.target_name || row.priority_date > today) continue;
+          if (!map[row.target_name] || row.priority_date > map[row.target_name]) map[row.target_name] = row.priority_date;
+        }
+        setBranchActivity(map);
       });
+  }, [regions, lgvZones]);
+
+  const visitSuggests = useMemo(() => [
+    ...regions.map(r => r.name),
+    ...lgvZones.map(z => z.name),
+  ].map(name => {
+    const last = branchActivity[`Chi nhánh ${name}`];
+    const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null;
+    return { name, daysSince };
+  }).sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999)),
+  [regions, lgvZones, branchActivity]);
+
+  function visitDotColor(daysSince: number | null) {
+    if (daysSince === null || daysSince > 2 * visitThreshold) return 'bg-red-500';
+    if (daysSince > visitThreshold) return 'bg-amber-400';
+    return 'bg-green-500';
+  }
+
+  function visitColor(daysSince: number | null) {
+    if (daysSince === null || daysSince > 2 * visitThreshold) return 'bg-red-50 text-red-700 border-red-200';
+    if (daysSince > visitThreshold) return 'bg-amber-50 text-amber-700 border-amber-200';
+    return 'bg-green-50 text-green-700 border-green-200';
+  }
+
+  function openBranchProfile(branchName: string) {
+    const branch = branches.find(b => b.region === branchName);
+    if (!branch) { alert(`Chi nhánh "${branchName}" chưa có hồ sơ — vào trang Chi nhánh để tạo`); return; }
+    setOpenBranchPanel(branch);
+    setPanelForm(branch);
+    setPanelRecordDate(todayStr());
+  }
+
+  async function savePanelBranch() {
+    if (!openBranchPanel || !user) return;
+    setPanelSaving(true);
+    const fields = {
+      status_note: panelForm.status_note ?? null,
+      difficulties: panelForm.difficulties ?? null,
+      opportunities: panelForm.opportunities ?? null,
+    };
+    try {
+      await updateBranch(openBranchPanel.id, fields);
+      if (openBranchPanel.region) {
+        await recordBranchUpdateSession(user.id, openBranchPanel.region, fields, panelRecordDate);
+        setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${openBranchPanel.region}`]: panelRecordDate }));
+      }
+      setOpenBranchPanel(null);
+    } catch (e) {
+      alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPanelSaving(false);
+    }
+  }
+
+  // ---- Rail: KCN cần ghé + accordion KCN Grid ----
+  const [kcnSummary, setKcnSummary] = useState<KCNSummary[]>([]);
+  const [kcnOpen, setKcnOpen] = useState(false);
+  const kcnSectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    supabase.from('kcn_summary').select('*').then(({ data }) => { if (data) setKcnSummary(data as KCNSummary[]); });
+  }, [refreshToken]);
+
+  const kcnRail = useMemo(() => kcnSummary
+    .filter(z => z.client_count > 0)
+    .sort((a, b) => (b.days_since_visit ?? 999) - (a.days_since_visit ?? 999))
+    .slice(0, 5),
+  [kcnSummary]);
+
+  function openKcnGrid() {
+    setKcnOpen(true);
+    setMobileTab('theodoi');
+    setTimeout(() => {
+      const el = kcnSectionRef.current;
+      if (el) {
+        const scroller = el.closest('.overflow-y-auto');
+        if (scroller) scroller.scrollTo({ top: el.offsetTop - 20, behavior: 'smooth' });
+      }
+    }, 100);
+  }
+
+  // ---- Thẻ theo vai trò ----
+  const [branchRegion, setBranchRegion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!user || user.role !== 'bdh') return;
+    supabase.from('managers').select('region').eq('name', user.full_name).maybeSingle()
+      .then(({ data }) => setBranchRegion((data as { region: string | null } | null)?.region || null));
   }, [user]);
-
-  const adjustFont = (delta: number) => {
-    setLayout(prev => ({ ...prev, fontScale: Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round((prev.fontScale + delta) * 100) / 100)) }));
-  };
-
-  const resetLayout = () => setLayout(DEFAULT_LAYOUT);
-
-  const toggleHidden = (key: SectionKey) => {
-    setLayout(prev => ({
-      ...prev,
-      hidden: prev.hidden.includes(key) ? prev.hidden.filter(k => k !== key) : [...prev.hidden, key],
-    }));
-  };
-
-  // --- Derived data ---
-  const expiringList = useMemo(() =>
-    clients
-      .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
-      .map(c => ({ c, d: daysUntil(c.contract_end) }))
-      .filter((x): x is { c: Client; d: number } => x.d !== null && x.d >= 0 && x.d <= 30)
-      .sort((a, b) => a.d - b.d)
-      .slice(0, 6),
-  [clients]);
 
   const unpaidClients = useMemo(() => clients.filter(c => c.client_type === 'active' && !c.paid_this_month), [clients]);
   const alertClients = useMemo(() => clients.filter(c => c.client_type === 'active' && (c.status === 'warn' || c.status === 'danger')), [clients]);
-  const branchExpiring = branchRegion ? expiringList.filter(x => x.c.region === branchRegion).map(x => x.c) : [];
   const staleProspects = useMemo(() => pipeline.filter(p => {
     if (p.stage === 'hop-tac') return false;
     const d = daysUntil(p.last_contact);
     return d === null || d > 14;
   }).slice(0, 6), [pipeline]);
+  // Quy tắc bản cũ: cửa sổ cố định 30 ngày, KHÔNG loại trừ khách đã có việc tái ký (khác rail HĐ cần xử lý)
+  const expiringList30 = useMemo(() =>
+    clients
+      .filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended')
+      .map(c => ({ client: c, daysLeft: daysUntil(c.contract_end) }))
+      .filter((x): x is { client: Client; daysLeft: number } => x.daysLeft !== null && x.daysLeft >= 0 && x.daysLeft <= 30)
+      .sort((a, b) => a.daysLeft - b.daysLeft),
+  [clients]);
 
-  const suspendedClientIds = useMemo(
-    () => new Set(clients.filter(c => c.cooperation_status === 'suspended').map(c => c.id)),
-    [clients]
-  );
+  const branchExpiring = useMemo(() =>
+    branchRegion
+      ? expiringList30.filter(x => x.client.region === branchRegion)
+      : [],
+  [expiringList30, branchRegion]);
 
-  const visibleMyTasks = useMemo(
-    () => myTasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id)),
-    [myTasks, suspendedClientIds]
-  );
-
-  const visibleWsTasks = useMemo(() => {
-    if (taskTab === 'doc') return wsTasks.filter(t => t.type === 'doc');
-    if (taskTab === 'task') return wsTasks.filter(t => t.type === 'task');
-    return wsTasks;
-  }, [wsTasks, taskTab]);
-
-  // --- Week label helper ---
-  function getWeekLabel(dateStr: string | null): string {
-    if (!dateStr) return 'Không rõ';
-    const d = new Date(dateStr);
-    const startOfYear = new Date(d.getFullYear(), 0, 1);
-    const week = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-    return `Tuần ${week} (${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })})`;
-  }
-
-  function getWeekKey(dateStr: string | null): string {
-    if (!dateStr) return 'unknown';
-    const d = new Date(dateStr);
-    const startOfYear = new Date(d.getFullYear(), 0, 1);
-    const week = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-    return `${d.getFullYear()}-W${week}`;
-  }
-
-  // --- History category helper ---
-  function getWorkTaskCategory(taskType: string | null): string {
-    if (!taskType) return 'Khác';
-    if (taskType === 'Tái ký HĐ') return 'Hợp đồng';
-    if (taskType === 'Báo giá') return 'Báo giá';
-    if (taskType === 'Thăm quan' || taskType === 'Hỏi thăm CN') return 'Thăm quan / KH';
-    if (taskType === 'Văn phòng') return 'Task nội bộ';
-    return 'Khác';
-  }
-
-  // Combined unified history items
-  interface DoneHistoryItem {
-    id: string; title: string; category: string; source: 'work' | 'ws';
-    doneAt: string | null; notes: string | null; priority: string | null;
-    kcn: string | null; assignee: string | null; taskType: string | null;
-  }
-
-  const allDoneHistory = useMemo((): DoneHistoryItem[] => {
-    const workItems: DoneHistoryItem[] = doneTasks.map(t => ({
-      id: t.id, title: t.title, source: 'work',
-      category: getWorkTaskCategory(t.task_type),
-      doneAt: t.completed_at ?? null,
-      notes: t.notes ?? null, priority: t.priority ?? null,
-      kcn: t.kcn ?? null, assignee: null, taskType: t.task_type ?? null,
-    }));
-    const wsItems: DoneHistoryItem[] = doneWsTasks.map(t => ({
-      id: t.id, title: t.title, source: 'ws',
-      category: t.type === 'doc' ? 'Hồ sơ HĐ' : 'Task nội bộ',
-      doneAt: t.created_at ?? null,
-      notes: null, priority: null,
-      kcn: null, assignee: t.assignee ?? null, taskType: null,
-    }));
-    return [...workItems, ...wsItems].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? ''));
-  }, [doneTasks, doneWsTasks]);
-
-  const HISTORY_CATEGORIES = ['Tất cả', 'Hợp đồng', 'Hồ sơ HĐ', 'Báo giá', 'Thăm quan / KH', 'Task nội bộ', 'Khác'];
-
-  const availableWeeks = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const t of allDoneHistory) {
-      const key = getWeekKey(t.doneAt);
-      if (!map.has(key)) map.set(key, getWeekLabel(t.doneAt));
-    }
-    return Array.from(map.entries()).map(([key, label]) => ({ key, label }));
-  }, [allDoneHistory]);
-
-  const filteredDoneHistory = useMemo(() => {
-    return allDoneHistory.filter(t => {
-      const matchCat = historyCategory === 'Tất cả' || historyCategory === 'all' || t.category === historyCategory;
-      const matchWeek = historyWeek === 'all' || getWeekKey(t.doneAt) === historyWeek;
-      const matchSearch = !historySearch.trim() || t.title.toLowerCase().includes(historySearch.toLowerCase());
-      return matchCat && matchWeek && matchSearch;
-    });
-  }, [allDoneHistory, historyCategory, historyWeek, historySearch]);
-
-
-  // --- Việc đang treo: đánh dấu xong + lưu lịch sử ---
-  async function markWsTaskDone(id: string) {
-    const task = wsTasks.find(t => t.id === id);
-    setWsTasks(prev => prev.filter(t => t.id !== id));
-    await supabase.from('workspace_tasks').update({ status: 'done' }).eq('id', id);
-    if (task) setDoneWsTasks(prev => [{ ...task, status: 'done' }, ...prev]);
-  }
-
-  // --- Việc đang treo: xoá ---
-  async function deleteWsTask(id: string) {
-    setWsTasks(prev => prev.filter(t => t.id !== id));
-    await supabase.from('workspace_tasks').delete().eq('id', id);
-  }
-
-  // --- Việc đang treo: bắt đầu sửa ---
-  function startEditWsTask(t: WorkspaceTask) {
-    setEditingWsId(t.id);
-    setEditWsTitle(t.title);
-    setEditWsStatus(t.status);
-    setEditWsDeadline(t.deadline ?? '');
-    setEditWsAssignee(t.assignee ?? '');
-  }
-
-  // --- Việc đang treo: lưu sửa ---
-  async function saveWsEdit(id: string) {
-    if (!editWsTitle.trim()) return;
-    setSavingWsEdit(true);
-    const patch = { title: editWsTitle.trim(), status: editWsStatus, deadline: editWsDeadline || null, assignee: editWsAssignee.trim() || null };
-    setWsTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
-    setEditingWsId(null);
-    await supabase.from('workspace_tasks').update(patch).eq('id', id);
-    setSavingWsEdit(false);
-  }
-
-  // --- Callback khi MorningPriority đánh dấu task done → xoá khỏi "Công việc sắp tới" ---
-  function handleMorningTaskDone(taskId: string) {
-    setMyTasks(prev => prev.filter(t => t.id !== taskId));
-  }
-
-  // --- Việc đang treo: thêm mới ---
-  async function handleAddWsTask() {
-    if (!addWsTitle.trim()) return;
-    setAddingWsTask(true);
-    const newTask = {
-      title: addWsTitle.trim(),
-      type: addWsType,
-      status: 'not_started' as const,
-      assignee: addWsAssignee.trim() || null,
-      deadline: addWsDeadline || null,
-    };
-    const { data, error } = await supabase.from('workspace_tasks').insert(newTask).select().single();
-    setAddingWsTask(false);
-    if (!error && data) {
-      setWsTasks(prev => [data as WorkspaceTask, ...prev]);
-      setAddWsTitle('');
-      setAddWsType('task');
-      setAddWsDeadline('');
-      setAddWsAssignee('');
-      setShowAddWsTask(false);
-      toast('Đã thêm việc đang treo');
-    }
-  }
-
-  // --- WorkTasksCard (standalone) handlers ---
-  function handleTaskCreated(task: WorkTask) {
-    setMyTasks(prev => [task, ...prev]);
-    setTaskComments(prev => ({ ...prev, [task.id]: [] }));
-  }
-
-  async function handleTaskStatus(id: string, status: TaskStatus) {
-    setMyTasks(prev => status === 'done' ? prev.filter(t => t.id !== id) : prev.map(t => t.id === id ? { ...t, status } : t));
-    await supabase.from('work_tasks').update({
-      status,
-      completed_at: status === 'done' ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', id);
-  }
-  async function handleTaskDelete(id: string) {
-    setMyTasks(prev => prev.filter(t => t.id !== id));
-    await supabase.from('work_tasks').delete().eq('id', id);
-  }
+  const adjustFont = (delta: number) =>
+    setLayout(prev => ({ ...prev, fontScale: Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round((prev.fontScale + delta) * 100) / 100)) }));
+  const toggleHidden = (key: SectionKey) =>
+    setLayout(prev => ({ ...prev, hidden: prev.hidden.includes(key) ? prev.hidden.filter(k => k !== key) : [...prev.hidden, key] }));
 
   if (!user) return null;
 
-  // --- Supplementary role-based sections ---
-  const renderRoleCard = (): React.ReactNode => {
-    if (user.role === 'admin') {
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 11) return 'Chào buổi sáng';
+    if (h < 14) return 'Chào buổi trưa';
+    if (h < 18) return 'Chào buổi chiều';
+    return 'Chào buổi tối';
+  })();
+
+  const roleCard = (): React.ReactNode => {
+    if (hidden('alerts') && hidden('prospects')) return null;
+    if (user.role === 'admin' && !hidden('alerts')) {
+      if (!alertClients.length) return null;
       return (
-        <SectionCard title="Thông báo hợp đồng" icon={<AlertTriangle size={14} className="text-[#888]" />}>
-          {alertClients.length === 0 ? (
-            <div className="text-[12.5px] text-[#999] py-4 text-center">Không có cảnh báo</div>
-          ) : (
-            <div className="space-y-1.5">
-              {alertClients.slice(0, 6).map(c => (
-                <div key={c.id} onClick={() => onNavigate('clients')} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#F9F9F7] cursor-pointer">
+        <RailCard title="Thông báo hợp đồng" icon={<AlertTriangle size={13} className="text-[#888]" />} count={alertClients.length}>
+          <div className="flex flex-col">
+            {alertClients.slice(0, 5).map(c => (
+              <div key={c.id} onClick={() => onNavigate('clients')} className="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold text-[#333] truncate">{c.name}</div>
+                  <div className="text-[10.5px] text-[#999]">HĐ hết: {formatDate(c.contract_end)}</div>
+                </div>
+                <span className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full shrink-0 ${c.status === 'danger' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                  {c.status === 'danger' ? 'Khẩn cấp' : 'Sắp hết'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </RailCard>
+      );
+    }
+    if (user.role === 'ketoan' && !hidden('alerts')) {
+      return (
+        <RailCard title="KH chưa thanh toán tháng này" icon={<Wallet size={13} className="text-[#888]" />} count={unpaidClients.length}>
+          <div className="flex flex-col">
+            {unpaidClients.length === 0 ? (
+              <div className="text-[12px] text-[#999] py-3 text-center border-t border-[#F0EFEB]">Tất cả đã thanh toán</div>
+            ) : unpaidClients.slice(0, 6).map(c => (
+              <div key={c.id} onClick={() => onNavigate('finance')} className="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
+                <div className="text-[12px] font-semibold text-[#333] truncate">{c.name}</div>
+                <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 shrink-0">Chưa TT</span>
+              </div>
+            ))}
+          </div>
+        </RailCard>
+      );
+    }
+    if (user.role === 'bdh' && !hidden('alerts') && branchExpiring.length > 0) {
+      return (
+        <RailCard title="HĐ sắp hết hạn (chi nhánh)" icon={<CalendarClock size={13} className="text-[#888]" />} count={branchExpiring.length}>
+          <div className="flex flex-col">
+            {branchExpiring.slice(0, 6).map(({ client: c, daysLeft }) => (
+              <div key={c.id} className="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB]">
+                <div className="text-[12px] font-semibold text-[#333] truncate">{c.name}</div>
+                <span className="text-[10.5px] text-amber-700 shrink-0">{formatDate(c.contract_end)} ({daysLeft} ngày)</span>
+              </div>
+            ))}
+          </div>
+        </RailCard>
+      );
+    }
+    if (user.role === 'kinhdoanh' && !hidden('prospects')) {
+      if (!staleProspects.length) return null;
+      return (
+        <RailCard title="Prospects cần follow-up" icon={<TrendingUp size={13} className="text-[#888]" />} count={staleProspects.length}
+          action={<button onClick={() => onNavigate('crm-pipeline')} className="text-[10.5px] text-blue-600 hover:underline">Pipeline →</button>}>
+          <div className="flex flex-col">
+            {staleProspects.map(p => {
+              const stageInfo = CRM_STAGES.find(s => s.id === p.stage);
+              return (
+                <div key={p.id} onClick={() => onNavigate('crm-pipeline')} className="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
                   <div className="min-w-0">
-                    <div className="text-[12.5px] font-medium text-[#333] truncate">{c.name}</div>
-                    <div className="text-[11px] text-[#999]">HĐ hết: {formatDate(c.contract_end)}</div>
+                    <div className="text-[12px] font-semibold text-[#333] truncate">{p.company_name}</div>
+                    <div className="text-[10.5px] text-[#999]">LH gần nhất: {p.last_contact ? formatDate(p.last_contact) : 'Chưa'}</div>
                   </div>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${c.status === 'danger' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                    {c.status === 'danger' ? 'Khẩn cấp' : 'Sắp hết HĐ'}
-                  </span>
+                  {stageInfo && <span className={`text-[9.5px] px-2 py-0.5 rounded-full border shrink-0 ${stageInfo.color}`}>{stageInfo.label}</span>}
                 </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-      );
-    }
-    if (user.role === 'ketoan') {
-      return (
-        <SectionCard title="Khách hàng chưa thanh toán tháng này" icon={<Wallet size={14} className="text-[#888]" />}>
-          {unpaidClients.length === 0 ? (
-            <div className="text-[12.5px] text-[#999] py-4 text-center">Tất cả đã thanh toán</div>
-          ) : (
-            <div className="space-y-1.5">
-              {unpaidClients.slice(0, 8).map(c => (
-                <div key={c.id} onClick={() => onNavigate('finance')} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#F9F9F7] cursor-pointer">
-                  <div className="text-[12.5px] font-medium text-[#333] truncate">{c.name}</div>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Chưa TT</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-      );
-    }
-    if (user.role === 'bdh') {
-      return (
-        <SectionCard title="Hợp đồng sắp hết hạn (chi nhánh) — cập nhật thông tin" icon={<CalendarClock size={14} className="text-[#888]" />}>
-          {branchExpiring.length === 0 ? (
-            <div className="text-[12.5px] text-[#999] py-4 text-center">Không có hợp đồng sắp hết hạn</div>
-          ) : (
-            <div className="space-y-1.5">
-              {branchExpiring.slice(0, 8).map(c => (
-                <div key={c.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#F9F9F7]">
-                  <div className="text-[12.5px] font-medium text-[#333] truncate">{c.name}</div>
-                  <div className="text-[11px] text-amber-700">{formatDate(c.contract_end)} ({daysUntil(c.contract_end)} ngày)</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
+              );
+            })}
+          </div>
+        </RailCard>
       );
     }
     return null;
   };
 
-  const renderSection = (key: SectionKey): React.ReactNode => {
-    switch (key) {
-      case 'alerts':
-        return renderRoleCard();
-      case 'prospects':
-        if (user.role !== 'kinhdoanh') return null;
-        return (
-          <SectionCard title="Prospects cần follow-up" icon={<TrendingUp size={14} className="text-[#888]" />} action={
-            <button onClick={() => onNavigate('crm-pipeline')} className="text-[11.5px] text-blue-600 hover:underline">Xem BD Pipeline →</button>
-          }>
-            {staleProspects.length === 0 ? (
-              <div className="text-[12.5px] text-[#999] py-4 text-center">Không có prospect cần follow</div>
-            ) : (
-              <div className="space-y-1.5">
-                {staleProspects.map(p => {
-                  const stageInfo = CRM_STAGES.find(s => s.id === p.stage);
+  return (
+    <>
+      {/* ==== HERO ==== */}
+      <div className="flex items-end justify-between px-4 md:px-6 py-3.5 md:py-4 border-b border-[#E8E7E2] bg-white gap-3 flex-wrap">
+        <div>
+          <h1 className="text-[17px] md:text-[19px] font-extrabold text-[#0c2340]">{greeting}, {user.full_name} 👋</h1>
+          <div className="text-[11.5px] text-[#999] mt-0.5">
+            {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })} · {ROLE_LABELS[user.role] || user.role}
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="grid grid-cols-4 gap-1.5 md:gap-2">
+            {[
+              { label: 'quá hạn', value: feedStats.overdue, color: feedStats.overdue > 0 ? 'text-red-600' : 'text-[#333]' },
+              { label: 'hôm nay', value: feedStats.today, color: 'text-blue-600' },
+              { label: 'HĐ cần xử lý', value: contractSuggests.length, color: 'text-[#333]' },
+              { label: 'xong tuần này', value: feedStats.doneThisWeek, color: 'text-emerald-600' },
+            ].map(s => (
+              <div key={s.label} className="text-right px-2.5 md:px-3.5 py-1.5 rounded-[10px] border border-[#E8E7E2] bg-[#FBFAF7] min-w-[68px] md:min-w-[86px]">
+                <div className={`text-[17px] md:text-[19px] font-bold leading-tight ${s.color}`}>{s.value}</div>
+                <div className="text-[9px] md:text-[10px] text-[#999] whitespace-nowrap">{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => setSettingsOpen(v => !v)}
+            className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition shrink-0 ${settingsOpen ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+          >
+            <Settings size={14} /> Tuỳ chỉnh
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 md:p-5" style={{ zoom: layout.fontScale }}>
+        {/* ==== Cài đặt ==== */}
+        {settingsOpen && (
+          <div className="mb-4 bg-white border border-[#E8E7E2] rounded-[10px] p-4 space-y-4">
+            <div>
+              <div className="text-[12px] font-semibold text-[#333] mb-2">Cỡ chữ / không gian làm việc</div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => adjustFont(-FONT_STEP)} disabled={layout.fontScale <= FONT_MIN} className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition"><ZoomOut size={14} /></button>
+                <span className="text-[12.5px] text-[#555] w-12 text-center">{Math.round(layout.fontScale * 100)}%</span>
+                <button onClick={() => adjustFont(FONT_STEP)} disabled={layout.fontScale >= FONT_MAX} className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition"><ZoomIn size={14} /></button>
+                <button onClick={() => setLayout(DEFAULT_LAYOUT)} className="ml-2 inline-flex items-center gap-1 text-[11.5px] text-[#999] hover:text-blue-600 transition"><RotateCcw size={12} /> Khôi phục mặc định</button>
+              </div>
+            </div>
+            <div>
+              <div className="text-[12px] font-semibold text-[#333] mb-2">Hiển thị / ẩn các mục</div>
+              <div className="space-y-1">
+                {DEFAULT_ORDER.filter(k => sectionAvailable(k, user.role)).map(key => {
+                  const isHidden = hidden(key);
                   return (
-                    <div key={p.id} onClick={() => onNavigate('crm-pipeline')} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#F9F9F7] cursor-pointer">
-                      <div className="min-w-0">
-                        <div className="text-[12.5px] font-medium text-[#333] truncate">{p.company_name}</div>
-                        <div className="text-[11px] text-[#999]">Liên hệ gần nhất: {p.last_contact ? formatDate(p.last_contact) : 'Chưa liên hệ'}</div>
-                      </div>
-                      {stageInfo && <span className={`text-[11px] px-2 py-0.5 rounded-full border ${stageInfo.color}`}>{stageInfo.label}</span>}
+                    <div key={key} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[#F0EFEA] transition ${isHidden ? 'opacity-50 bg-[#fafafa]' : 'bg-[#FAFAF8]'} hover:bg-[#F4F4F1]`}>
+                      <span className="flex-1 text-[12px] text-[#333]">{SECTION_LABELS[key]}</span>
+                      <button onClick={() => toggleHidden(key)} className="text-[#999] hover:text-blue-600 transition shrink-0" title={isHidden ? 'Hiện' : 'Ẩn'}>
+                        {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                   );
                 })}
               </div>
-            )}
-          </SectionCard>
-        );
-      default:
-        return null;
-    }
-  };
-
-  const visibleSections = order.filter(k => sectionAvailable(k, user.role) && !layout.hidden.includes(k));
-  // --- Quick actions ---
-  const quickActions: { label: string; icon: React.ReactNode; onClick: () => void }[] = [
-    { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
-    { label: 'Thêm HĐ', icon: <FilePlus size={14} />, onClick: () => toast('Tính năng sắp ra mắt') },
-    { label: 'Giao việc', icon: <Send size={14} />, onClick: () => setShowGiaoViec(true) },
-    { label: 'Ghi nhận LĐ', icon: <ClipboardList size={14} />, onClick: () => setShowBulkLabor(true) },
-  ];
-
-  return (
-    <>
-      <PageHeader
-        title="Workspace"
-        subtitle={`Xin chào, ${user.full_name} · ${ROLE_LABELS[user.role] || user.role}`}
-        actions={
-          <button
-            onClick={() => setSettingsOpen(v => !v)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${settingsOpen ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-          >
-            <Settings size={14} /> Tuỳ chỉnh
-          </button>
-        }
-      />
-
-      <div className="flex-1 overflow-y-auto p-5" style={{ zoom: layout.fontScale }}>
-        {settingsOpen && (
-          <div className="mb-4 bg-white border border-[#E8E7E2] rounded-[10px] p-4 space-y-4">
-            {/* Font size */}
-            <div>
-              <div className="text-[12px] font-semibold text-[#333] mb-2">Cỡ chữ / không gian làm việc</div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => adjustFont(-FONT_STEP)} disabled={layout.fontScale <= FONT_MIN} className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition">
-                  <ZoomOut size={14} />
-                </button>
-                <span className="text-[12.5px] text-[#555] w-12 text-center">{Math.round(layout.fontScale * 100)}%</span>
-                <button onClick={() => adjustFont(FONT_STEP)} disabled={layout.fontScale >= FONT_MAX} className="w-8 h-8 rounded-lg border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition">
-                  <ZoomIn size={14} />
-                </button>
-                <button onClick={resetLayout} className="ml-2 inline-flex items-center gap-1 text-[11.5px] text-[#999] hover:text-blue-600 transition">
-                  <RotateCcw size={12} /> Khôi phục mặc định
-                </button>
-              </div>
-            </div>
-
-            {/* Show/hide workspace sections */}
-            <div>
-              <div className="text-[12px] font-semibold text-[#333] mb-2">Hiển thị / ẩn các mục</div>
-              {SECTION_GROUPS.map(group => {
-                const groupKeys = group.keys.filter(k => sectionAvailable(k, user.role));
-                if (!groupKeys.length) return null;
-                return (
-                  <div key={group.label} className="mb-2.5">
-                    <div className="text-[10px] font-medium text-[#999] uppercase tracking-wide mb-1">{group.label}</div>
-                    <div className="space-y-1">
-                      {groupKeys.map(key => {
-                        const isHidden = layout.hidden.includes(key);
-                        return (
-                          <div
-                            key={key}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[#F0EFEA] transition ${isHidden ? 'opacity-50 bg-[#fafafa]' : 'bg-[#FAFAF8]'} hover:bg-[#F4F4F1]`}
-                          >
-                            <span className="flex-1 text-[12px] text-[#333]">{SECTION_LABELS[key]}</span>
-                            <button onClick={() => toggleHidden(key)} className="text-[#999] hover:text-blue-600 transition shrink-0" title={isHidden ? 'Hiện' : 'Ẩn'}>
-                              {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
         )}
 
-        {/* 1. QUICK ACTIONS */}
-        {!layout.hidden.includes('quick_actions') && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
-            {quickActions.map(a => (
-              <button
-                key={a.label}
-                onClick={a.onClick}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[#E8E7E2] bg-white text-[12px] font-medium text-[#333] hover:border-blue-300 hover:bg-blue-50 transition-colors"
-              >
+        {/* ==== Segment mobile ==== */}
+        <div className="xl:hidden flex bg-[#EBE9E1] rounded-[10px] p-[3px] mb-3">
+          {([['viec', 'Việc của tôi'], ['theodoi', 'Theo dõi']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setMobileTab(key)}
+              className={`flex-1 text-[12px] py-1.5 rounded-lg transition ${mobileTab === key ? 'bg-white text-[#0c2340] font-extrabold shadow-sm' : 'text-[#666] font-semibold'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* ==== QUICK ACTIONS ==== */}
+        {!hidden('quick_actions') && (
+          <div className={`${mobileTab === 'viec' ? 'grid' : 'hidden'} xl:grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4`}>
+            <button onClick={() => { setQuickAddSignal(s => s + 1); setMobileTab('viec'); }}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 border border-blue-600 text-[12px] font-semibold text-white hover:bg-blue-700 transition-colors">
+              <Plus size={14} /> Thêm việc
+            </button>
+            {[
+              { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
+              { label: 'Giao việc', icon: <Send size={14} />, onClick: () => setShowGiaoViec(true) },
+              { label: 'Ghi nhận LĐ', icon: <ClipboardList size={14} />, onClick: () => setShowBulkLabor(true) },
+            ].map(a => (
+              <button key={a.label} onClick={a.onClick}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[#E8E7E2] bg-white text-[12px] font-medium text-[#333] hover:border-blue-300 hover:bg-blue-50 transition-colors">
                 {a.icon}{a.label}
               </button>
             ))}
           </div>
         )}
 
-        {/* 3. MODULES (Morning Priority, Win/Loss, KCN Grid) */}
-        <div className="mt-4">
-          <WorkspaceModulesTabs clients={clients} onClientUpdate={onClientUpdate} toast={toast} onTabChange={setActiveModule} onTaskDone={handleMorningTaskDone} hiddenSections={layout.hidden} />
-        </div>
+        {/* ==== FEED + RAIL ==== */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4 items-start">
+          {/* Cột chính: feed hợp nhất */}
+          <div className={`${mobileTab === 'viec' ? 'block' : 'hidden'} xl:block min-w-0`}>
+            <MyWorkFeed
+              clients={clients}
+              onClientUpdate={onClientUpdate}
+              toast={toast}
+              onStatsChange={handleStats}
+              refreshToken={refreshToken}
+              quickAddSignal={quickAddSignal}
+              hideHistory={hidden('lich_su')}
+            />
+          </div>
 
-        {/* chỉ hiện khi tab Morning Priority */}
-        {activeModule === 'morning' && <>
-
-        {/* BOTTOM — 2 cột */}
-        {(!layout.hidden.includes('viec_dang_treo') || !layout.hidden.includes('cong_viec_sap_toi')) && (
-        <div className={`grid grid-cols-1 ${!layout.hidden.includes('viec_dang_treo') && !layout.hidden.includes('cong_viec_sap_toi') ? 'lg:grid-cols-[2fr_1fr]' : ''} gap-3 mt-4`}>
-          {/* Left: Việc đang treo (full) */}
-          {!layout.hidden.includes('viec_dang_treo') && <SectionCard
-            title="Việc đang treo"
-            icon={<ClipboardList size={14} className="text-[#888]" />}
-            action={
-              <div className="flex items-center gap-2">
-                {wsTasks.length > 0 && (
-                  <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">{wsTasks.length} mục</span>
-                )}
-                <div className="flex gap-1">
-                  {([['all', 'Tất cả'], ['doc', 'Hồ sơ·HĐ'], ['task', 'Task nội bộ']] as const).map(([key, label]) => (
-                    <button
-                      key={key}
-                      onClick={() => setTaskTab(key)}
-                      className={`text-[10.5px] px-2 py-0.5 rounded-md border transition ${taskTab === key ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setShowAddWsTask(v => !v)}
-                  className="flex items-center gap-1 text-[10.5px] px-2 py-0.5 rounded-md border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
-                >
-                  + Thêm
-                </button>
-              </div>
-            }
-          >
-            {showAddWsTask && (
-              <div className="mb-3 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
-                <input
-                  autoFocus
-                  placeholder="Tên công việc..."
-                  value={addWsTitle}
-                  onChange={e => setAddWsTitle(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddWsTask(); if (e.key === 'Escape') setShowAddWsTask(false); }}
-                  className="text-[12.5px] px-2.5 py-1.5 rounded-md border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400 w-full"
-                />
-                <div className="flex gap-2 flex-wrap">
-                  <select
-                    value={addWsType}
-                    onChange={e => setAddWsType(e.target.value as 'task' | 'doc')}
-                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none"
-                  >
-                    <option value="task">Task nội bộ</option>
-                    <option value="doc">Hồ sơ·HĐ</option>
-                  </select>
-                  <input
-                    type="date"
-                    value={addWsDeadline}
-                    onChange={e => setAddWsDeadline(e.target.value)}
-                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none"
-                    placeholder="Hạn chót"
-                  />
-                  <input
-                    placeholder="Người phụ trách"
-                    value={addWsAssignee}
-                    onChange={e => setAddWsAssignee(e.target.value)}
-                    className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none flex-1 min-w-[100px]"
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={() => setShowAddWsTask(false)}
-                    className="text-[11.5px] px-3 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-white transition"
-                  >
-                    Hủy
-                  </button>
-                  <button
-                    onClick={handleAddWsTask}
-                    disabled={!addWsTitle.trim() || addingWsTask}
-                    className="text-[11.5px] px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition"
-                  >
-                    {addingWsTask ? 'Đang lưu...' : 'Lưu'}
-                  </button>
-                </div>
-              </div>
-            )}
-            {wsLoading ? (
-              <div className="text-[12.5px] text-[#999] py-4 text-center">Đang tải...</div>
-            ) : visibleWsTasks.length === 0 ? (
-              <div className="text-[12.5px] text-[#999] py-4 text-center">Không có việc đang treo</div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-0.5">
-                {visibleWsTasks.map(t => {
-                  const st = WS_STATUS[t.status] || WS_STATUS.not_started;
-                  const overdue = t.deadline ? new Date(t.deadline) < new Date(new Date().toDateString()) : false;
-                  const isEditing = editingWsId === t.id;
-                  return (
-                    <div key={t.id} className="flex flex-col gap-2 p-2.5 rounded-lg border border-[#F0EFEB] bg-[#fafafa]">
-                      {isEditing ? (
-                        <div className="flex flex-col gap-2">
-                          <input
-                            autoFocus
-                            value={editWsTitle}
-                            onChange={e => setEditWsTitle(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') saveWsEdit(t.id); if (e.key === 'Escape') setEditingWsId(null); }}
-                            className="text-[12px] px-2 py-1 border border-blue-300 rounded-md focus:outline-none w-full"
-                          />
-                          <div className="flex gap-2 flex-wrap">
-                            <select
-                              value={editWsStatus}
-                              onChange={e => setEditWsStatus(e.target.value)}
-                              className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none"
-                            >
-                              {Object.entries(WS_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                            </select>
-                            <input type="date" value={editWsDeadline} onChange={e => setEditWsDeadline(e.target.value)} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none" />
-                            <input placeholder="Người phụ trách" value={editWsAssignee} onChange={e => setEditWsAssignee(e.target.value)} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none flex-1 min-w-[80px]" />
-                          </div>
-                          <div className="flex gap-1.5 justify-end">
-                            <button onClick={() => setEditingWsId(null)} className="text-[11px] px-2.5 py-1 border border-[#E8E7E2] rounded-md text-[#666] hover:bg-white">Huỷ</button>
-                            <button onClick={() => saveWsEdit(t.id)} disabled={savingWsEdit} className="text-[11px] px-2.5 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">Lưu</button>
-                          </div>
+          {/* Rail phải: radar theo dõi */}
+          <div className={`${mobileTab === 'theodoi' ? 'flex' : 'hidden'} xl:flex flex-col gap-3`}>
+            {!hidden('rail_hd') && (
+              <RailCard
+                title="HĐ cần xử lý" icon={<FileWarning size={13} className="text-[#888]" />} count={contractSuggests.length}
+                action={
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative">
+                      <button onClick={() => setShowContractSettings(v => !v)} title="Ngưỡng cảnh báo" className="text-[#bbb] hover:text-blue-600 transition-colors"><Settings size={12} /></button>
+                      {showContractSettings && (
+                        <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2.5 w-44">
+                          <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">HĐ còn ≤ (ngày)</label>
+                          <input type="number" min={1} value={contractThreshold}
+                            onChange={e => setContractThreshold(Math.max(1, Number(e.target.value) || 1))}
+                            className="text-[11.5px] border border-[#E8E7E2] rounded-md px-2 py-1 bg-white w-full focus:outline-none focus:border-blue-400" />
+                          <button onClick={() => setShowContractSettings(false)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium w-full">Đóng</button>
                         </div>
-                      ) : (
-                        <div className="flex items-start gap-2">
-                          {t.type === 'doc'
-                            ? <FileText size={14} className="text-[#888] shrink-0 mt-0.5" />
-                            : <ClipboardList size={14} className="text-[#888] shrink-0 mt-0.5" />}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[12.5px] font-semibold text-[#111] truncate">{t.title}</div>
-                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
-                              {t.assignee && <span className="text-[11px] text-[#666]">{t.assignee}</span>}
-                              {t.deadline && (
-                                <span className={`text-[10.5px] ${overdue ? 'text-red-600 font-semibold' : 'text-[#999]'}`}>
-                                  Hạn {formatDate(t.deadline)}{overdue ? ' · quá hạn' : ''}
-                                </span>
-                              )}
+                      )}
+                    </div>
+                    <button onClick={() => { setShowManualAdd(v => !v); setManualSearch(''); }} className="text-[10px] px-1.5 py-0.5 rounded-md border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition">+ Thủ công</button>
+                  </div>
+                }
+              >
+                {showManualAdd && (
+                  <div className="px-3 pb-2">
+                    <input autoFocus placeholder="Tìm công ty..." value={manualSearch} onChange={e => setManualSearch(e.target.value)}
+                      className="w-full text-[11.5px] px-2.5 py-1.5 rounded-md border border-blue-200 bg-blue-50/50 focus:outline-none focus:border-blue-400" />
+                    {manualCandidates.length > 0 ? (
+                      <div className="mt-1 flex flex-col gap-0.5 max-h-36 overflow-y-auto">
+                        {manualCandidates.map(c => (
+                          <button key={c.id} onClick={() => createRenewalTask(c)} disabled={!!creatingRenewal}
+                            className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-white border border-[#E8E7E2] hover:border-blue-300 text-left">
+                            <span className="text-[11.5px] font-medium text-[#111] truncate flex-1">{c.name}</span>
+                            <ArrowRight size={11} className="text-[#bbb] shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-[#bbb] text-center py-2">Không tìm thấy</div>
+                    )}
+                  </div>
+                )}
+                {/* Quy tắc bản cũ: chọn nhiều khách rồi lưu hàng loạt 1 lần */}
+                {selectedContractIds.size > 0 && (
+                  <div className="flex items-center justify-between mx-3 mb-2 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                    <span className="text-[11px] text-blue-700">Đã chọn {selectedContractIds.size}</span>
+                    <button onClick={saveBatchRenewalTasks} disabled={savingBatch}
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40 hover:bg-blue-700 transition">
+                      {savingBatch ? '...' : 'Lưu tất cả'}
+                    </button>
+                  </div>
+                )}
+                <div className="flex flex-col max-h-72 overflow-y-auto">
+                  {contractSuggests.length === 0 ? (
+                    <div className="text-[12px] text-[#999] py-3 text-center border-t border-[#F0EFEB]">Không có HĐ gần hết hạn</div>
+                  ) : contractSuggests.map(({ client: c, daysLeft }) => {
+                    const isSel = selectedContractIds.has(c.id);
+                    return (
+                      <div key={c.id} onClick={() => toggleContractSelect(c.id)}
+                        className={`flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB] cursor-pointer transition-colors ${isSel ? 'bg-blue-50' : 'hover:bg-[#F9F9F7]'}`}>
+                        <div className="min-w-0 flex items-center gap-2">
+                          <input type="checkbox" checked={isSel} onClick={e => e.stopPropagation()} onChange={() => toggleContractSelect(c.id)} className="shrink-0 accent-blue-600" />
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${daysLeft <= 0 ? 'bg-red-500' : daysLeft <= 7 ? 'bg-red-400' : 'bg-amber-400'}`} />
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-semibold text-[#333] truncate">{c.name}</div>
+                            <div className="text-[10.5px] text-[#999]">
+                              {formatDate(c.contract_end)} · {daysLeft <= 0 ? 'đã hết hạn' : `còn ${daysLeft} ngày`}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() => startEditWsTask(t)}
-                              className="p-1 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500 transition"
-                              title="Sửa"
-                            ><Pencil size={12} /></button>
-                            <button
-                              onClick={() => { if (confirm('Xoá công việc này?')) deleteWsTask(t.id); }}
-                              className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
-                              title="Xoá"
-                            ><Trash2 size={12} /></button>
-                            <button
-                              onClick={() => markWsTaskDone(t.id)}
-                              className="flex items-center gap-1 text-[10.5px] px-2 py-1 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-white hover:text-green-600 hover:border-green-300 transition-colors"
-                              title="Đánh dấu hoàn thành"
-                            >
-                              <CheckCircle2 size={12} /> Xong
-                            </button>
-                          </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        <button onClick={e => { e.stopPropagation(); createRenewalTask(c); }} disabled={creatingRenewal === c.id}
+                          className="text-[10px] font-semibold px-2 py-1 rounded-md border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition shrink-0 disabled:opacity-40">
+                          {creatingRenewal === c.id ? '...' : '+ Việc'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </RailCard>
             )}
-          </SectionCard>}
 
-          {/* Right: Công việc sắp tới */}
-          {!layout.hidden.includes('cong_viec_sap_toi') && <WorkTasksCard
-            clients={clients}
-            tasks={visibleMyTasks}
-            onTaskCreated={handleTaskCreated}
-            onStatusChange={handleTaskStatus}
-            onDelete={handleTaskDelete}
-          />}
-        </div>
-        )}
-
-        </>}
-
-        {/* Supplementary role-based sections (settings-controlled) */}
-        {visibleSections.length > 0 && (
-          <div className="space-y-4 mt-4">
-            {visibleSections.map(key => (
-              <div key={key}>{renderSection(key)}</div>
-            ))}
-          </div>
-        )}
-
-        {/* LỊCH SỬ CÔNG VIỆC HOÀN THÀNH — dưới cùng */}
-        {!layout.hidden.includes('lich_su') && <div className="mt-6 bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] bg-[#F9F9F7]">
-            <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#333]">
-              <History size={14} className="text-[#888]" />
-              Lịch sử công việc hoàn thành
-              {allDoneHistory.length > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">{allDoneHistory.length}</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#bbb]" />
-                <input
-                  type="text" value={historySearch} onChange={e => setHistorySearch(e.target.value)}
-                  placeholder="Tìm theo tên..."
-                  className="text-[11px] pl-6 pr-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white w-36"
-                />
-              </div>
-              <select
-                value={historyWeek} onChange={e => setHistoryWeek(e.target.value)}
-                className="text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white"
-              >
-                <option value="all">Tất cả tuần</option>
-                {availableWeeks.map(w => <option key={w.key} value={w.key}>{w.label}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Category tabs */}
-          <div className="flex gap-1 px-4 pt-2.5 pb-0 border-b border-[#F0EFEB] overflow-x-auto">
-            {HISTORY_CATEGORIES.map(cat => {
-              const count = allDoneHistory.filter(t => cat === 'Tất cả' ? true : t.category === cat).length;
-              const isActive = historyCategory === cat || (cat === 'Tất cả' && historyCategory === 'all');
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setHistoryCategory(cat === 'Tất cả' ? 'all' : cat)}
-                  className={`flex items-center gap-1 text-[11px] px-3 py-1.5 rounded-t-md border-b-2 whitespace-nowrap transition-colors shrink-0 ${
-                    isActive ? 'border-blue-500 text-blue-700 font-semibold bg-blue-50/50' : 'border-transparent text-[#666] hover:text-[#333] hover:bg-[#F5F4F0]'
-                  }`}
-                >
-                  {cat}
-                  {count > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{count}</span>}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="p-3">
-            {filteredDoneHistory.length === 0 ? (
-              <div className="text-[12.5px] text-[#999] py-6 text-center">
-                {allDoneHistory.length === 0 ? 'Chưa có công việc nào hoàn thành trong 30 ngày qua' : 'Không có kết quả phù hợp'}
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5 max-h-80 overflow-y-auto pr-0.5">
-                {filteredDoneHistory.map(t => (
-                  <div key={`${t.source}_${t.id}`} className="px-3 py-2.5 border border-[#F0EFEB] bg-[#fafafa] rounded-lg">
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${
-                            t.category === 'Hợp đồng' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                            t.category === 'Hồ sơ HĐ' ? 'bg-violet-50 text-violet-700 border-violet-200' :
-                            t.category === 'Báo giá' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                            t.category === 'Thăm quan / KH' ? 'bg-teal-50 text-teal-700 border-teal-200' :
-                            t.category === 'Task nội bộ' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-                            'bg-gray-100 text-gray-600 border-gray-200'
-                          }`}>{t.category}</span>
-                          {t.source === 'ws' && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-600 border border-orange-200 shrink-0">Việc treo</span>
-                          )}
-                          <span className="text-[12.5px] font-medium text-[#111] truncate">{t.title}</span>
+            {!hidden('rail_cn') && (
+              <RailCard
+                title="Cập nhật chi nhánh" icon={<Phone size={13} className="text-[#888]" />}
+                action={
+                  <div className="relative">
+                    <button onClick={() => setShowVisitSettings(v => !v)} title="Cài đặt ngưỡng cảnh báo" className="text-[#bbb] hover:text-blue-600 transition-colors"><Settings size={12} /></button>
+                    {showVisitSettings && (
+                      <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2.5 w-52">
+                        <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Ngưỡng (số ngày)</label>
+                        <input type="number" min={1} value={visitThreshold}
+                          onChange={e => setVisitThreshold(Math.max(1, Number(e.target.value) || 1))}
+                          className="text-[11.5px] border border-[#E8E7E2] rounded-md px-2 py-1 bg-white text-[#333] focus:outline-none focus:border-blue-400 w-full" />
+                        <div className="text-[10px] text-[#aaa] mt-1.5 leading-relaxed">
+                          ≤ {visitThreshold} ngày: xanh · {visitThreshold}-{2 * visitThreshold} ngày: cam · &gt;{2 * visitThreshold} ngày: đỏ
                         </div>
-                        <div className="text-[11px] text-[#888] mt-0.5">
-                          ✓ Hoàn thành {t.doneAt ? formatDate(t.doneAt.split('T')[0]) : ''}
-                          {t.kcn ? ` · ${t.kcn}` : ''}
-                          {t.assignee ? ` · ${t.assignee}` : ''}
-                          {t.doneAt ? ` · ${getWeekLabel(t.doneAt)}` : ''}
-                        </div>
+                        <button onClick={() => setShowVisitSettings(false)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 w-full">Đóng</button>
                       </div>
-                      {t.priority && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 mt-0.5 ${t.priority === 'high' ? 'bg-red-50 text-red-700 border-red-200' : t.priority === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
-                          {t.priority === 'high' ? 'Cao' : t.priority === 'medium' ? 'TB' : 'Thấp'}
-                        </span>
-                      )}
-                    </div>
-                    {t.notes ? (
-                      <div className="mt-1.5 flex items-start gap-1.5 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1.5">
-                        <span className="text-[10px] text-emerald-600 font-semibold shrink-0 mt-0.5">Kết quả:</span>
-                        <span className="text-[11.5px] text-emerald-800">{t.notes}</span>
-                      </div>
-                    ) : t.source === 'work' ? (
-                      <div className="mt-1.5 text-[11px] text-[#bbb] italic">Chưa có ghi chú kết quả</div>
-                    ) : null}
+                    )}
                   </div>
-                ))}
+                }
+              >
+                <div className="flex flex-col max-h-64 overflow-y-auto">
+                  {visitSuggests.length === 0 ? (
+                    <div className="text-[12px] text-[#999] py-3 text-center border-t border-[#F0EFEB]">Chưa có dữ liệu</div>
+                  ) : visitSuggests.map(s => (
+                    <div key={s.name} onClick={() => openBranchProfile(s.name)}
+                      className="flex items-center gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${visitDotColor(s.daysSince)}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-semibold text-[#333] truncate">Chi nhánh {s.name}</div>
+                        <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1"><Phone size={10} />Gọi điện / nhắn tin hỏi thăm</div>
+                      </div>
+                      <span className={`text-[9.5px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${visitColor(s.daysSince)}`}>
+                        {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày chưa LH`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </RailCard>
+            )}
+
+            {!hidden('rail_kcn') && (
+              <RailCard title="KCN cần ghé thăm" icon={<MapPin size={13} className="text-[#888]" />}
+                action={<button onClick={openKcnGrid} className="text-[10.5px] text-blue-600 hover:underline">Mở KCN Grid →</button>}>
+                <div className="flex flex-col">
+                  {kcnRail.length === 0 ? (
+                    <div className="text-[12px] text-[#999] py-3 text-center border-t border-[#F0EFEB]">Chưa có dữ liệu</div>
+                  ) : kcnRail.map(z => (
+                    <div key={z.id} onClick={openKcnGrid} className="flex items-center justify-between gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
+                      <div className="text-[12px] font-semibold text-[#333] truncate">{z.name}</div>
+                      <span className={`text-[10.5px] font-semibold shrink-0 ${(z.days_since_visit ?? 999) >= 21 ? 'text-red-600' : 'text-amber-600'}`}>
+                        {z.days_since_visit === null ? 'Chưa ghé' : `${z.days_since_visit} ngày`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </RailCard>
+            )}
+
+            {roleCard()}
+          </div>
+        </div>
+
+        {/* ==== KCN GRID — accordion ==== */}
+        {!hidden('kcn_grid') && (
+          <div ref={kcnSectionRef} className={`${mobileTab === 'theodoi' ? 'block' : 'hidden'} xl:block mt-4 bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden`}>
+            <button onClick={() => setKcnOpen(v => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-[#F9F9F7] text-left">
+              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#333]">
+                <MapPin size={14} className="text-[#888]" />
+                KCN Grid — theo dõi khai thác khu công nghiệp
+              </div>
+              <ChevronDown size={15} className={`text-[#999] transition-transform ${kcnOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {kcnOpen && (
+              <div className="border-t border-[#E8E7E2]">
+                <KCNGridSection toast={toast} />
               </div>
             )}
           </div>
-        </div>}
+        )}
       </div>
-      {/* Quick action modals */}
+
+      {/* FAB mobile: thêm việc nhanh */}
+      <button
+        onClick={() => { setMobileTab('viec'); setQuickAddSignal(s => s + 1); }}
+        className="md:hidden fixed right-4 bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_8px_20px_rgba(29,78,216,0.4)] flex items-center justify-center active:scale-95 transition-transform"
+        title="Thêm việc"
+      >
+        <Plus size={22} />
+      </button>
+
+      {/* ==== Panel hồ sơ chi nhánh ==== */}
+      {openBranchPanel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-end z-50" onClick={() => setOpenBranchPanel(null)}>
+          <div className="bg-white h-full w-full max-w-md shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white border-b border-[#E8E7E2] px-4 py-3 flex items-center gap-2 z-10">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-[#111] truncate">Chi nhánh {openBranchPanel.region || openBranchPanel.name}</div>
+                <div className="text-[11px] text-[#888] mt-0.5">
+                  {openBranchPanel.manager_name && `Quản lý: ${openBranchPanel.manager_name}`}
+                  {openBranchPanel.phone && ` · ${openBranchPanel.phone}`}
+                </div>
+              </div>
+              <button onClick={() => setOpenBranchPanel(null)} className="text-[#999] hover:text-[#333] transition-colors shrink-0"><X size={18} /></button>
+            </div>
+            <div className="p-4">
+              <BranchHistoryFields branch={panelForm as Branch} onChange={fields => setPanelForm(prev => ({ ...prev, ...fields }))} recordDate={panelRecordDate} onRecordDateChange={setPanelRecordDate} />
+              <button onClick={savePanelBranch} disabled={panelSaving}
+                className="mt-3 w-full text-[12px] px-3 py-2 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40 hover:bg-blue-700 transition-colors">
+                {panelSaving ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==== Modals thao tác nhanh ==== */}
       {showQuoteModal && <QuoteModal toast={toast} onClose={() => setShowQuoteModal(false)} />}
       {showGiaoViec && (
         <GiaoViecModal
           clients={clients}
           toast={toast}
           onClose={() => setShowGiaoViec(false)}
-          onCreated={handleTaskCreated}
+          onCreated={() => setRefreshToken(t => t + 1)}
         />
       )}
       {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}

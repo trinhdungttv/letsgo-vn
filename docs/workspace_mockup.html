@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo — Workspace redesign "Bàn làm việc"</title>
+<!--
+  DEMO WORKSPACE REDESIGN — Let's Go VN
+  Assumptions (đã chốt với GĐ 05/07/2026):
+  1. Khung chung cho mọi vai trò — nội dung đổi theo role (demo này render góc nhìn admin/GĐ)
+  2. Hợp nhất 3 danh sách việc (work_tasks + workspace_tasks) thành MỘT feed "Việc của tôi"
+     nhóm: Quá hạn → Hôm nay → Tuần này → Sau đó. Data giữ nguyên 2 bảng, chỉ gộp UI.
+  3. Win/Loss Tracker dời về CRM — Workspace còn: Việc của tôi + rail phải + KCN (thu gọn)
+  4. Desktop + mobile song song. Palette giữ nguyên hệ hiện tại (cream/navy/blue).
+  Dữ liệu trong demo lấy từ dữ liệu thật trên app (SINTAI, SOVI, HEMPEL, AQUA, các chi nhánh, KCN).
+-->
+<style>
+  :root {
+    --cream: #F5F4EF; --card: #FFFFFF; --border: #E8E7E2; --border-soft: #F0EFEB;
+    --navy: #0c2340; --blue: #1D4ED8; --ink: #111111; --sub: #666; --mut: #999;
+    --red: #DC2626; --amber: #B45309; --green: #047857;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#E9E7E0; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color:var(--ink); padding:40px 24px 80px; }
+  .intro { max-width:1160px; margin:0 auto 28px; }
+  .intro h1 { font-size:22px; color:var(--navy); }
+  .intro p { font-size:13px; color:var(--sub); margin-top:6px; line-height:1.6; max-width:820px; }
+  .frame-label { max-width:1160px; margin:36px auto 10px; font-size:12px; font-weight:700; letter-spacing:.08em; color:#8a887f; text-transform:uppercase; }
+
+  /* ===== Desktop frame ===== */
+  .desktop { max-width:1160px; margin:0 auto; background:var(--cream); border-radius:14px; box-shadow:0 20px 60px rgba(12,35,64,.14); overflow:hidden; border:1px solid #dedcd4; }
+  .d-head { display:flex; align-items:flex-end; justify-content:space-between; padding:22px 28px 18px; background:var(--card); border-bottom:1px solid var(--border); }
+  .d-head .hi { font-size:19px; font-weight:800; color:var(--navy); }
+  .d-head .hi small { display:block; font-size:12px; font-weight:500; color:var(--mut); margin-top:3px; }
+  .stat-strip { display:flex; gap:10px; }
+  .stat { text-align:right; padding:6px 14px; border-radius:10px; border:1px solid var(--border); background:#FBFAF7; min-width:96px; }
+  .stat b { display:block; font-size:20px; line-height:1.1; }
+  .stat span { font-size:10.5px; color:var(--mut); }
+  .stat.red b { color:var(--red); } .stat.blue b { color:var(--blue); } .stat.green b { color:var(--green); }
+
+  .d-body { display:grid; grid-template-columns: 1fr 340px; gap:16px; padding:18px 28px 28px; }
+
+  /* Quick bar */
+  .quickbar { grid-column:1/-1; display:flex; gap:8px; align-items:center; }
+  .qbtn { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:8px 14px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:#333; cursor:pointer; }
+  .qbtn.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .qbtn svg { width:13px; height:13px; }
+
+  /* My tasks feed */
+  .feed { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .feed-head { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .feed-head h2 { font-size:13.5px; font-weight:800; color:var(--navy); }
+  .feed-head .filters { display:flex; gap:6px; }
+  .chip { font-size:10.5px; padding:3px 10px; border-radius:99px; border:1px solid var(--border); color:var(--sub); background:#fff; cursor:pointer; }
+  .chip.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .quickadd { display:flex; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border-soft); background:#FBFAF7; }
+  .quickadd input { flex:1; font-size:12.5px; padding:7px 12px; border-radius:9px; border:1px dashed #d6d3c8; background:#fff; color:var(--mut); }
+  .group-label { display:flex; align-items:center; gap:8px; padding:12px 16px 6px; font-size:10.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+  .group-label .n { font-size:10px; padding:1px 7px; border-radius:99px; }
+  .g-red { color:var(--red);} .g-red .n { background:#FEE2E2; color:var(--red);}
+  .g-ink { color:var(--navy);} .g-ink .n { background:#DBEAFE; color:var(--blue);}
+  .g-mut { color:#8a887f;} .g-mut .n { background:#EFEDE6; color:#8a887f;}
+  .task { display:flex; align-items:center; gap:11px; padding:9px 16px; border-top:1px solid var(--border-soft); }
+  .task:hover { background:#FBFAF7; }
+  .tick { width:19px; height:19px; border-radius:50%; border:1.8px solid #cfccc2; flex-shrink:0; cursor:pointer; }
+  .task.overdue .tick { border-color:#fca5a5; }
+  .t-main { flex:1; min-width:0; }
+  .t-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .t-meta { display:flex; gap:6px; margin-top:3px; align-items:center; flex-wrap:wrap; }
+  .tag { font-size:9.5px; font-weight:600; padding:2px 7px; border-radius:6px; border:1px solid; }
+  .tag.hd { background:#EFF6FF; color:var(--blue); border-color:#BFDBFE; }
+  .tag.bg { background:#FFFBEB; color:var(--amber); border-color:#FDE68A; }
+  .tag.hs { background:#F5F3FF; color:#6D28D9; border-color:#DDD6FE; }
+  .tag.nb { background:#F1F5F9; color:#475569; border-color:#E2E8F0; }
+  .t-kcn { font-size:10.5px; color:var(--mut); }
+  .t-due { font-size:11px; color:var(--mut); white-space:nowrap; }
+  .t-due.late { color:var(--red); font-weight:700; }
+  .t-cmt { font-size:10.5px; color:var(--mut); display:flex; align-items:center; gap:3px; }
+  .avatar { width:20px; height:20px; border-radius:50%; background:var(--navy); color:#fff; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .feed-foot { padding:10px 16px; font-size:11.5px; color:var(--blue); border-top:1px solid var(--border-soft); cursor:pointer; }
+
+  /* Right rail */
+  .rail { display:flex; flex-direction:column; gap:14px; }
+  .rcard { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .rcard-head { display:flex; justify-content:space-between; align-items:center; padding:11px 14px 9px; }
+  .rcard-head h3 { font-size:12px; font-weight:800; color:var(--navy); display:flex; gap:6px; align-items:center; }
+  .rcard-head .cnt { font-size:10px; font-weight:700; padding:1px 8px; border-radius:99px; background:#FEF3C7; color:var(--amber); }
+  .rcard-head a { font-size:10.5px; color:var(--blue); text-decoration:none; }
+  .r-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px; border-top:1px solid var(--border-soft); }
+  .r-item .nm { font-size:12px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .r-item .sb { font-size:10.5px; color:var(--mut); margin-top:1px; }
+  .pill { font-size:9.5px; font-weight:700; padding:2.5px 8px; border-radius:99px; white-space:nowrap; flex-shrink:0; }
+  .pill.warn { background:#FEF3C7; color:var(--amber); }
+  .pill.danger { background:#FEE2E2; color:var(--red); }
+  .pill.ok { background:#D1FAE5; color:var(--green); }
+  .callbtns { display:flex; gap:5px; flex-shrink:0; }
+  .cbtn { width:26px; height:26px; border-radius:8px; border:1px solid var(--border); background:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; }
+  .kcn-row { display:flex; justify-content:space-between; padding:8px 14px; border-top:1px solid var(--border-soft); font-size:12px; }
+  .kcn-row b { font-weight:600; } .kcn-row span { color:var(--red); font-size:11px; font-weight:600; }
+
+  /* Bottom: history accordion */
+  .bottom { grid-column:1/-1; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; }
+  .bottom .l { font-size:12.5px; font-weight:700; color:var(--sub); display:flex; gap:8px; align-items:center; }
+  .bottom .n { font-size:10px; padding:1px 8px; border-radius:99px; background:#D1FAE5; color:var(--green); font-weight:700; }
+  .bottom .r { font-size:11px; color:var(--mut); }
+
+  /* ===== Mobile frames ===== */
+  .phones { display:flex; gap:36px; justify-content:center; flex-wrap:wrap; margin:0 auto; max-width:1160px; }
+  .phone-wrap { text-align:center; }
+  .phone-wrap .cap { font-size:12px; color:#8a887f; font-style:italic; margin-bottom:10px; }
+  .phone { width:340px; height:700px; background:var(--cream); border-radius:44px; border:10px solid #1a1a1a; box-shadow:0 24px 60px rgba(0,0,0,.25); overflow:hidden; position:relative; text-align:left; }
+  .p-status { height:38px; display:flex; align-items:center; justify-content:space-between; padding:0 26px; font-size:12px; font-weight:700; color:var(--navy); }
+  .p-scroll { height:calc(100% - 38px - 56px); overflow:hidden; padding:4px 14px 0; }
+  .p-hero { padding:6px 4px 12px; }
+  .p-hero .hi { font-size:17px; font-weight:800; color:var(--navy); }
+  .p-hero .dt { font-size:11px; color:var(--mut); margin-top:2px; }
+  .p-stats { display:flex; gap:8px; margin-top:10px; }
+  .p-stat { flex:1; background:#fff; border:1px solid var(--border); border-radius:12px; padding:8px 10px; }
+  .p-stat b { font-size:18px; display:block; }
+  .p-stat span { font-size:9.5px; color:var(--mut); }
+  .p-seg { display:flex; background:#EBE9E1; border-radius:10px; padding:3px; margin:2px 4px 10px; }
+  .p-seg div { flex:1; text-align:center; font-size:11.5px; font-weight:600; padding:6px 0; border-radius:8px; color:var(--sub); }
+  .p-seg .on { background:#fff; color:var(--navy); font-weight:800; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .p-card { background:#fff; border:1px solid var(--border); border-radius:14px; margin:0 4px 10px; overflow:hidden; }
+  .p-glabel { padding:10px 14px 4px; font-size:9.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+  .p-task { display:flex; gap:10px; align-items:center; padding:9px 14px; border-top:1px solid var(--border-soft); }
+  .p-task .tick { width:21px; height:21px; }
+  .p-task .tt { font-size:12.5px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .p-task .tm { display:flex; gap:5px; margin-top:2px; align-items:center; }
+  .p-rail-scroll { display:flex; gap:9px; overflow:hidden; padding:0 4px 10px; }
+  .mini { min-width:200px; background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; }
+  .mini h4 { font-size:10.5px; font-weight:800; color:var(--navy); display:flex; justify-content:space-between; }
+  .mini .row { display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:11.5px; font-weight:600; }
+  .p-nav { position:absolute; bottom:0; left:0; right:0; height:56px; background:rgba(255,255,255,.96); border-top:1px solid var(--border); display:flex; align-items:flex-start; padding-top:7px; }
+  .p-nav div { flex:1; text-align:center; font-size:8.5px; font-weight:600; color:#8B8A85; }
+  .p-nav .on { color:var(--blue); }
+  .p-nav .ic { font-size:17px; line-height:1.2; }
+  .fab { position:absolute; right:16px; bottom:70px; width:48px; height:48px; border-radius:50%; background:var(--blue); color:#fff; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 20px rgba(29,78,216,.4); }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Demo — Workspace mới: «Bàn làm việc»</h1>
+  <p>Một danh sách việc duy nhất nhóm theo thời gian (Quá hạn → Hôm nay → Tuần này), rail phải cho HĐ cần xử lý + gọi chi nhánh + KCN. Win/Loss dời về CRM. Khung chung mọi vai trò — rail đổi nội dung theo role. Demo render góc nhìn Giám đốc/Admin với dữ liệu thật.</p>
+</div>
+
+<div class="frame-label">① Desktop — màn hình chính</div>
+<div class="desktop">
+  <div class="d-head">
+    <div class="hi">Chào buổi sáng, Dũng 👋<small>Chủ nhật, 05/07/2026 · Quản trị viên</small></div>
+    <div class="stat-strip">
+      <div class="stat red"><b>2</b><span>việc quá hạn</span></div>
+      <div class="stat blue"><b>5</b><span>việc hôm nay</span></div>
+      <div class="stat"><b>4</b><span>HĐ cần xử lý</span></div>
+      <div class="stat green"><b>9</b><span>xong tuần này</span></div>
+    </div>
+  </div>
+
+  <div class="d-body">
+    <div class="quickbar">
+      <button class="qbtn primary">＋ Thêm việc</button>
+      <button class="qbtn">📄 Tạo báo giá</button>
+      <button class="qbtn">📤 Giao việc</button>
+      <button class="qbtn">📋 Ghi nhận LĐ</button>
+    </div>
+
+    <!-- MAIN: unified task feed -->
+    <div class="feed">
+      <div class="feed-head">
+        <h2>Việc của tôi</h2>
+        <div class="filters">
+          <span class="chip on">Tất cả</span><span class="chip">Hợp đồng</span><span class="chip">Báo giá</span><span class="chip">Hồ sơ</span><span class="chip">Nội bộ</span>
+        </div>
+      </div>
+      <div class="quickadd"><input placeholder="＋ Gõ việc mới rồi Enter — vd: Gọi lại SOVI xác nhận phụ lục, thứ 3"></div>
+
+      <div class="group-label g-red">Quá hạn <span class="n">2</span></div>
+      <div class="task overdue"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Tái ký HĐ — SINTAI (GIỚI THIỆU)</div>
+          <div class="t-meta"><span class="tag hd">Tái ký HĐ</span><span class="t-kcn">KCN Mỹ Phước 3</span><span class="t-cmt">💬 2</span></div></div>
+        <span class="t-due late">Trễ 21 ngày</span><div class="avatar">D</div></div>
+      <div class="task overdue"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Soạn HĐ Ampacs — chờ ký</div>
+          <div class="t-meta"><span class="tag hs">Hồ sơ HĐ</span><span class="t-cmt">💬 1</span></div></div>
+        <span class="t-due late">Trễ 3 ngày</span><div class="avatar">T</div></div>
+
+      <div class="group-label g-ink">Hôm nay <span class="n">3</span></div>
+      <div class="task"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Gọi lại SOVI BIÊN HOÀ — xác nhận số lượng tăng ca T7</div>
+          <div class="t-meta"><span class="tag hd">Tái ký HĐ</span><span class="t-kcn">KCN Biên Hoà 2</span></div></div>
+        <span class="t-due">Hôm nay</span><div class="avatar">D</div></div>
+      <div class="task"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Báo giá dịch vụ bốc xếp — HEMPEL</div>
+          <div class="t-meta"><span class="tag bg">Báo giá</span><span class="t-kcn">KCN Long Thành</span></div></div>
+        <span class="t-due">Hôm nay</span><div class="avatar">D</div></div>
+      <div class="task"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Duyệt đề xuất tăng đơn giá — CN Biên Hoà</div>
+          <div class="t-meta"><span class="tag nb">Nội bộ</span><span class="t-cmt">💬 4</span></div></div>
+        <span class="t-due">Hôm nay</span><div class="avatar">D</div></div>
+
+      <div class="group-label g-mut">Tuần này <span class="n">4</span></div>
+      <div class="task"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Tái ký HĐ — AQUA</div>
+          <div class="t-meta"><span class="tag hd">Tái ký HĐ</span><span class="t-kcn">KCN Biên Hoà 2</span></div></div>
+        <span class="t-due">Thứ 5 · 09/07</span><div class="avatar">D</div></div>
+      <div class="task"><div class="tick"></div>
+        <div class="t-main"><div class="t-title">Thăm quan KCN Bàu Bàng — khảo sát 2 xưởng mới</div>
+          <div class="t-meta"><span class="tag nb">Thăm quan</span><span class="t-kcn">Bình Dương</span></div></div>
+        <span class="t-due">Thứ 6 · 10/07</span><div class="avatar">H</div></div>
+
+      <div class="feed-foot">Xem thêm 2 việc sau tuần này ↓</div>
+    </div>
+
+    <!-- RIGHT RAIL -->
+    <div class="rail">
+      <div class="rcard">
+        <div class="rcard-head"><h3>📑 HĐ cần xử lý <span class="cnt">4</span></h3><a href="#">Tất cả →</a></div>
+        <div class="r-item"><div><div class="nm">SINTAI (GIỚI THIỆU)</div><div class="sb">Hết hạn 14/06 · đã quá hạn</div></div><span class="pill danger">Quá hạn</span></div>
+        <div class="r-item"><div><div class="nm">SOVI BIÊN HOÀ</div><div class="sb">Hết hạn 16/07 · còn 11 ngày</div></div><span class="pill warn">Sắp hết</span></div>
+        <div class="r-item"><div><div class="nm">HEMPEL</div><div class="sb">Hết hạn 18/07 · còn 13 ngày</div></div><span class="pill warn">Sắp hết</span></div>
+        <div class="r-item"><div><div class="nm">AQUA</div><div class="sb">Hết hạn 24/07 · đang đàm phán</div></div><span class="pill ok">Đang tái ký</span></div>
+      </div>
+
+      <div class="rcard">
+        <div class="rcard-head"><h3>📞 Cập nhật chi nhánh <span class="cnt">5</span></h3><a href="#">Lịch sử →</a></div>
+        <div class="r-item"><div><div class="nm">CN Biên Hoà — Ms Thương</div><div class="sb">Chưa liên hệ tuần này</div></div><div class="callbtns"><div class="cbtn">📞</div><div class="cbtn">💬</div></div></div>
+        <div class="r-item"><div><div class="nm">CN LGV — Cú Chỉ</div><div class="sb">Chưa liên hệ tuần này</div></div><div class="callbtns"><div class="cbtn">📞</div><div class="cbtn">💬</div></div></div>
+        <div class="r-item"><div><div class="nm">CN MP — Ms Oanh</div><div class="sb">Gọi lần cuối 28/06</div></div><div class="callbtns"><div class="cbtn">📞</div><div class="cbtn">💬</div></div></div>
+      </div>
+
+      <div class="rcard">
+        <div class="rcard-head"><h3>🗺️ KCN cần ghé thăm <span class="cnt">19</span></h3><a href="#">Mở KCN Grid →</a></div>
+        <div class="kcn-row"><b>KCN Biên Hoà 2</b><span>42 ngày chưa ghé</span></div>
+        <div class="kcn-row"><b>KCN Bàu Bàng</b><span>35 ngày chưa ghé</span></div>
+        <div class="kcn-row"><b>KCN Nhơn Trạch</b><span>28 ngày chưa ghé</span></div>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="l">🗂 Lịch sử hoàn thành — 30 ngày <span class="n">9 việc</span></div>
+      <div class="r">Bấm để mở rộng · tìm kiếm, lọc theo tuần & phân loại ▾</div>
+    </div>
+  </div>
+</div>
+
+<div class="frame-label">② Mobile — 2 màn hình chính</div>
+<div class="phones">
+  <div class="phone-wrap">
+    <div class="cap">Màn chính — Việc của tôi</div>
+    <div class="phone">
+      <div class="p-status"><span>9:41</span><span>🔋</span></div>
+      <div class="p-scroll">
+        <div class="p-hero">
+          <div class="hi">Chào buổi sáng, Dũng 👋</div>
+          <div class="dt">Chủ nhật, 05/07 · Quản trị viên</div>
+          <div class="p-stats">
+            <div class="p-stat"><b style="color:var(--red)">2</b><span>Quá hạn</span></div>
+            <div class="p-stat"><b style="color:var(--blue)">5</b><span>Hôm nay</span></div>
+            <div class="p-stat"><b style="color:var(--green)">9</b><span>Xong tuần này</span></div>
+          </div>
+        </div>
+        <div class="p-seg"><div class="on">Việc của tôi</div><div>Theo dõi</div><div>Lịch sử</div></div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:var(--red)">QUÁ HẠN · 2</div>
+          <div class="p-task"><div class="tick" style="border-color:#fca5a5"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Tái ký HĐ — SINTAI</div>
+            <div class="tm"><span class="tag hd">Tái ký</span><span class="t-due late">Trễ 21 ngày</span></div></div></div>
+          <div class="p-task"><div class="tick" style="border-color:#fca5a5"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Soạn HĐ Ampacs — chờ ký</div>
+            <div class="tm"><span class="tag hs">Hồ sơ</span><span class="t-due late">Trễ 3 ngày</span></div></div></div>
+        </div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:var(--navy)">HÔM NAY · 3</div>
+          <div class="p-task"><div class="tick"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Gọi lại SOVI BIÊN HOÀ</div>
+            <div class="tm"><span class="tag hd">Tái ký</span><span class="t-kcn">Biên Hoà 2</span></div></div></div>
+          <div class="p-task"><div class="tick"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Báo giá bốc xếp — HEMPEL</div>
+            <div class="tm"><span class="tag bg">Báo giá</span><span class="t-kcn">Long Thành</span></div></div></div>
+          <div class="p-task"><div class="tick"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Duyệt tăng đơn giá — CN BH</div>
+            <div class="tm"><span class="tag nb">Nội bộ</span><span class="t-cmt">💬 4</span></div></div></div>
+        </div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:#8a887f">TUẦN NÀY · 4</div>
+          <div class="p-task"><div class="tick"></div>
+            <div style="min-width:0;flex:1"><div class="tt">Tái ký HĐ — AQUA</div>
+            <div class="tm"><span class="tag hd">Tái ký</span><span class="t-due">Thứ 5</span></div></div></div>
+        </div>
+      </div>
+      <div class="fab">＋</div>
+      <div class="p-nav">
+        <div class="on"><div class="ic">💼</div>Workspace</div>
+        <div><div class="ic">📊</div>Báo cáo</div>
+        <div><div class="ic">🏠</div>Dashboard</div>
+        <div><div class="ic">🏢</div>Khách hàng</div>
+        <div><div class="ic">⋯</div>Thêm</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phone-wrap">
+    <div class="cap">Tab «Theo dõi» — HĐ, chi nhánh, KCN</div>
+    <div class="phone">
+      <div class="p-status"><span>9:41</span><span>🔋</span></div>
+      <div class="p-scroll">
+        <div class="p-hero"><div class="hi">Theo dõi</div><div class="dt">HĐ sắp hết hạn · chi nhánh · KCN</div></div>
+        <div class="p-seg"><div>Việc của tôi</div><div class="on">Theo dõi</div><div>Lịch sử</div></div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:var(--navy)">HĐ CẦN XỬ LÝ · 4</div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">SINTAI (GIỚI THIỆU)</div>
+            <div class="tm"><span class="t-due late">Hết hạn 14/06 · quá hạn</span></div></div><span class="pill danger">Quá hạn</span></div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">SOVI BIÊN HOÀ</div>
+            <div class="tm"><span class="t-due">Còn 11 ngày</span></div></div><span class="pill warn">Sắp hết</span></div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">HEMPEL</div>
+            <div class="tm"><span class="t-due">Còn 13 ngày</span></div></div><span class="pill warn">Sắp hết</span></div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">AQUA</div>
+            <div class="tm"><span class="t-due">Đang đàm phán</span></div></div><span class="pill ok">Tái ký</span></div>
+        </div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:var(--navy)">GỌI CHI NHÁNH · 5</div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">CN Biên Hoà — Ms Thương</div>
+            <div class="tm"><span class="t-due">Chưa liên hệ tuần này</span></div></div>
+            <div class="callbtns"><div class="cbtn">📞</div><div class="cbtn">💬</div></div></div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">CN LGV — Cú Chỉ</div>
+            <div class="tm"><span class="t-due">Chưa liên hệ tuần này</span></div></div>
+            <div class="callbtns"><div class="cbtn">📞</div><div class="cbtn">💬</div></div></div>
+        </div>
+
+        <div class="p-card">
+          <div class="p-glabel" style="color:var(--navy)">KCN CẦN GHÉ · 19</div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">KCN Biên Hoà 2</div></div><span class="t-due late">42 ngày</span></div>
+          <div class="p-task"><div style="min-width:0;flex:1"><div class="tt">KCN Bàu Bàng</div></div><span class="t-due late">35 ngày</span></div>
+        </div>
+      </div>
+      <div class="p-nav">
+        <div class="on"><div class="ic">💼</div>Workspace</div>
+        <div><div class="ic">📊</div>Báo cáo</div>
+        <div><div class="ic">🏠</div>Dashboard</div>
+        <div><div class="ic">🏢</div>Khách hàng</div>
+        <div><div class="ic">⋯</div>Thêm</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
