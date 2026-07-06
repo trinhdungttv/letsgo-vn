@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo v2 — «Việc của tôi» nâng cấp</title>
+<!--
+  DEMO v2 — mockup TÍCH HỢP: toàn bộ tiện ích đặt đúng vị trí trong khung "Việc của tôi"
+  như khi dùng thật, kèm callout số ①-⑤ chú giải. GĐ duyệt mục nào thì code mục đó.
+  Badge trạng thái + quy tắc ẩn sau 1 ngày ĐÃ CODE THẬT rồi — demo này chỉ còn phần tiện ích.
+-->
+<style>
+  :root {
+    --cream:#F5F4EF; --card:#fff; --border:#E8E7E2; --bsoft:#F0EFEB;
+    --navy:#0c2340; --blue:#1D4ED8; --ink:#111; --sub:#666; --mut:#999;
+    --red:#DC2626; --amber:#B45309; --green:#047857; --violet:#6D28D9;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#E9E7E0; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink); padding:36px 20px 90px; }
+  .wrap { max-width:900px; margin:0 auto; }
+  .intro h1 { font-size:20px; color:var(--navy); }
+  .intro p { font-size:13px; color:var(--sub); margin-top:6px; line-height:1.65; }
+
+  /* callout marker */
+  .co { position:absolute; width:24px; height:24px; border-radius:50%; background:var(--red); color:#fff; font-size:12.5px; font-weight:800; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 10px rgba(220,38,38,.45); z-index:5; }
+
+  .st { font-size:9.5px; font-weight:700; padding:2.5px 8px; border-radius:99px; border:1px solid; white-space:nowrap; }
+  .st-ds { background:#DBEAFE; color:#1D4ED8; border-color:#93C5FD; }
+  .st-cd { background:#FEF3C7; color:#B45309; border-color:#FCD34D; }
+  .st-ck { background:#EDE9FE; color:#6D28D9; border-color:#C4B5FD; }
+  .st-cs { background:#F3F4F6; color:#4B5563; border-color:#D1D5DB; }
+  .tag { font-size:9.5px; font-weight:600; padding:2px 7px; border-radius:6px; border:1px solid #BFDBFE; background:#EFF6FF; color:var(--blue); }
+
+  /* ===== mockup feed ===== */
+  .feed { position:relative; background:var(--card); border:1px solid var(--border); border-radius:14px; margin-top:26px; box-shadow:0 16px 50px rgba(12,35,64,.10); }
+  .feed-head { display:flex; align-items:center; justify-content:space-between; padding:14px 18px 10px; }
+  .feed-head h2 { font-size:14px; font-weight:800; color:var(--navy); }
+
+  /* ① radar 7 ngày */
+  .radar { position:relative; display:flex; gap:6px; padding:4px 18px 12px; }
+  .day { flex:1; text-align:center; padding:7px 4px 6px; border-radius:10px; border:1px solid var(--border); background:#FBFAF7; cursor:pointer; }
+  .day.today { border-color:var(--blue); background:#EFF6FF; }
+  .day.overload { border-color:#FCA5A5; background:#FEF2F2; }
+  .day .dw { font-size:9.5px; font-weight:700; color:var(--mut); text-transform:uppercase; }
+  .day.today .dw { color:var(--blue); }
+  .day .dn { font-size:14px; font-weight:800; color:var(--navy); margin-top:1px; }
+  .day .ct { font-size:9.5px; font-weight:700; margin-top:2px; }
+  .day .ct.red { color:var(--red); } .day .ct.blu { color:var(--blue); } .day .ct.dim { color:#c9c7bf; }
+
+  /* ⑤ toolbar: search + tập trung */
+  .toolbar { position:relative; display:flex; gap:8px; padding:0 18px 12px; align-items:center; flex-wrap:wrap; }
+  .search { flex:1; min-width:200px; display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--border); border-radius:9px; padding:7px 11px; font-size:12px; color:var(--mut); }
+  .focus-toggle { display:flex; align-items:center; gap:7px; font-size:11.5px; font-weight:700; color:var(--navy); background:#FBFAF7; border:1px solid var(--border); padding:7px 12px; border-radius:9px; }
+  .switch { width:32px; height:18px; border-radius:99px; background:var(--blue); position:relative; }
+  .switch::after { content:''; position:absolute; right:2px; top:2px; width:14px; height:14px; border-radius:50%; background:#fff; }
+
+  /* ② thẻ nên làm trước */
+  .hero-task { position:relative; margin:0 18px 12px; border:1.5px solid #FDE68A; background:linear-gradient(135deg,#FFFBEB,#FEF9EF); border-radius:12px; padding:12px 14px; display:flex; align-items:center; gap:12px; }
+  .hero-task .flame { font-size:20px; }
+  .hero-task .t { font-size:13px; font-weight:800; color:var(--navy); }
+  .hero-task .why { font-size:11px; color:var(--amber); margin-top:2px; font-weight:600; }
+  .hero-task .go { margin-left:auto; font-size:11.5px; font-weight:700; color:#fff; background:var(--navy); padding:7px 14px; border-radius:9px; white-space:nowrap; }
+
+  .glabel { display:flex; align-items:center; gap:8px; padding:8px 18px 5px; font-size:10.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--red); }
+  .glabel .n { font-size:10px; font-weight:700; padding:1px 7px; border-radius:99px; background:#FEE2E2; color:var(--red); }
+
+  .row { position:relative; display:flex; align-items:center; gap:10px; padding:10px 18px; border-top:1px solid var(--bsoft); }
+  .row.hovered { background:#F4F7FF; }
+  .tick { width:19px; height:19px; border-radius:50%; border:1.8px solid #fca5a5; flex-shrink:0; }
+  .main { flex:1; min-width:0; }
+  .title { font-size:13px; font-weight:600; }
+  .meta { display:flex; gap:6px; margin-top:4px; align-items:center; flex-wrap:wrap; }
+  .kcn { font-size:10.5px; color:var(--mut); }
+  .due { font-size:11px; color:var(--red); font-weight:700; white-space:nowrap; }
+
+  /* ③ chờ ai */
+  .wait { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+  .wait .who { font-size:10px; font-weight:700; padding:2px 8px; border-radius:99px; }
+  .who.kh { background:#EDE9FE; color:var(--violet); }
+  .who.nb { background:#FEF3C7; color:var(--amber); }
+  .who.me { background:#D1FAE5; color:var(--green); }
+  .wait .remind { font-size:10px; font-weight:700; color:var(--blue); border:1px solid #BFDBFE; background:#EFF6FF; padding:2px 9px; border-radius:99px; cursor:pointer; }
+
+  /* ④ hover quick actions */
+  .qa { position:absolute; right:14px; top:50%; transform:translateY(-50%); display:flex; gap:5px; background:#fff; border:1px solid var(--border); border-radius:10px; padding:4px 6px; box-shadow:0 6px 18px rgba(12,35,64,.14); }
+  .qa span { font-size:10.5px; font-weight:700; padding:4px 9px; border-radius:7px; cursor:pointer; white-space:nowrap; }
+  .qa .done { background:#D1FAE5; color:var(--green); }
+  .qa .snz { background:#FBFAF7; color:var(--sub); border:1px solid var(--bsoft); }
+  .qa .call { background:#EFF6FF; color:var(--blue); }
+
+  /* ===== chú giải ===== */
+  .legend { margin-top:30px; }
+  .legend h2 { font-size:15px; color:var(--navy); margin-bottom:14px; }
+  .litem { display:flex; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:13px 15px; margin-bottom:10px; }
+  .litem .num { width:24px; height:24px; border-radius:50%; background:var(--red); color:#fff; font-size:12.5px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .litem b { font-size:13px; color:var(--navy); }
+  .litem p { font-size:12px; color:var(--sub); line-height:1.6; margin-top:3px; }
+  .done-note { margin-top:26px; background:#D1FAE5; border:1px solid #6EE7B7; border-radius:12px; padding:13px 16px; font-size:12.5px; color:#065F46; line-height:1.65; }
+  .choice-hint { text-align:center; font-size:12.5px; color:#8a887f; margin-top:34px; padding-top:16px; border-top:1px dashed #d6d3c8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="intro">
+    <h1>Demo v2 — Khung «Việc của tôi» nâng cấp cho công việc điều hành</h1>
+    <p>Lần này mọi tiện ích được đặt <b>đúng vị trí thật</b> trong khung làm việc để bạn hình dung khi dùng hằng ngày. Các chấm đỏ ①–⑤ là 5 tiện ích mới — chú giải chi tiết bên dưới.</p>
+  </div>
+
+  <!-- ===== MOCKUP ===== -->
+  <div class="feed">
+    <div class="feed-head"><h2>Việc của tôi</h2><span style="font-size:11px;color:var(--mut)">Thứ Hai, 06/07</span></div>
+
+    <!-- ① radar 7 ngày -->
+    <div class="radar">
+      <div class="co" style="left:-10px; top:-4px;">1</div>
+      <div class="day overload"><div class="dw">T2</div><div class="dn">6</div><div class="ct red">9 việc</div></div>
+      <div class="day today"><div class="dw">Hôm nay</div><div class="dn">7</div><div class="ct blu">1 việc</div></div>
+      <div class="day"><div class="dw">T4</div><div class="dn">8</div><div class="ct dim">—</div></div>
+      <div class="day"><div class="dw">T5</div><div class="dn">9</div><div class="ct blu">2 việc</div></div>
+      <div class="day"><div class="dw">T6</div><div class="dn">10</div><div class="ct blu">1 việc</div></div>
+      <div class="day"><div class="dw">T7</div><div class="dn">11</div><div class="ct dim">—</div></div>
+      <div class="day"><div class="dw">CN</div><div class="dn">12</div><div class="ct dim">—</div></div>
+    </div>
+
+    <!-- ⑤ toolbar -->
+    <div class="toolbar">
+      <div class="co" style="left:-10px; top:4px;">5</div>
+      <div class="search">🔍 Tìm nhanh — gõ "sovi", "hempel"...</div>
+      <div class="focus-toggle">🎯 Tập trung <div class="switch"></div></div>
+    </div>
+
+    <!-- ② nên làm trước -->
+    <div class="hero-task">
+      <div class="co" style="left:-10px; top:-10px;">2</div>
+      <div class="flame">🔥</div>
+      <div>
+        <div class="t">Tái ký HĐ — SOVI BIÊN HOÀ</div>
+        <div class="why">Trễ nặng nhất (20 ngày) · khách đang chờ ký — chốt sớm tránh gián đoạn cung ứng LĐ</div>
+      </div>
+      <div class="go">Xử lý ngay →</div>
+    </div>
+
+    <div class="glabel">Quá hạn <span class="n">9</span></div>
+
+    <!-- row với "chờ ai" -->
+    <div class="row">
+      <div class="co" style="right:-10px; left:auto; top:14px;">3</div>
+      <div class="tick"></div>
+      <div class="main">
+        <div class="title">Tái ký HĐ — HEMPEL</div>
+        <div class="meta"><span class="tag">Hợp đồng</span><span class="st st-ck">Chờ KH ký</span><span class="kcn">KCN Long Thành</span></div>
+      </div>
+      <div class="wait">
+        <span class="who kh">⏳ Chờ khách · 5 ngày</span>
+        <span class="remind">Nhắc lại →</span>
+      </div>
+      <span class="due">Trễ 20 ngày</span>
+    </div>
+
+    <div class="row">
+      <div class="tick"></div>
+      <div class="main">
+        <div class="title">Tái ký HĐ — AQUA</div>
+        <div class="meta"><span class="tag">Hợp đồng</span><span class="st st-cd">Chờ duyệt</span><span class="kcn">KCN Biên Hoà 2</span></div>
+      </div>
+      <div class="wait">
+        <span class="who nb">⏳ Chờ duyệt nội bộ · 2 ngày</span>
+        <span class="remind">Nhắc lại →</span>
+      </div>
+      <span class="due">Trễ 18 ngày</span>
+    </div>
+
+    <!-- row hover quick actions -->
+    <div class="row hovered">
+      <div class="co" style="right:-10px; left:auto; top:14px;">4</div>
+      <div class="tick"></div>
+      <div class="main">
+        <div class="title">Tái ký HĐ — ROCHDALE</div>
+        <div class="meta"><span class="tag">Hợp đồng</span><span class="st st-ds">Đang soạn</span><span class="who me" style="font-size:10px;padding:2px 8px;border-radius:99px;">🙋 Đến lượt bạn</span></div>
+      </div>
+      <div class="qa">
+        <span class="done">✓ Xong</span>
+        <span class="snz">+1 ngày</span>
+        <span class="snz">+1 tuần</span>
+        <span class="call">📞 Gọi</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="tick"></div>
+      <div class="main">
+        <div class="title">Tái ký HĐ — CICOR</div>
+        <div class="meta"><span class="tag">Hợp đồng</span><span class="st st-cs">Chưa soạn</span><span class="kcn">KCN Vsip 1</span><span class="who me" style="font-size:10px;padding:2px 8px;border-radius:99px;">🙋 Đến lượt bạn</span></div>
+      </div>
+      <span class="due">Trễ 11 ngày</span>
+    </div>
+  </div>
+
+  <!-- ===== CHÚ GIẢI ===== -->
+  <div class="legend">
+    <h2>Chú giải 5 tiện ích</h2>
+
+    <div class="litem"><div class="num">1</div><div>
+      <b>Radar 7 ngày — nhìn cả tuần trong 1 giây</b>
+      <p>Dải ngày ngay đầu khung: ngày nào dồn việc sẽ đỏ lên (T2 đang gánh 9 việc quá hạn). Bấm vào một ngày → feed lọc đúng việc của ngày đó. Hết cảnh cuộn dài để đoán tuần này nặng chỗ nào.</p>
+    </div></div>
+
+    <div class="litem"><div class="num">2</div><div>
+      <b>«Nên làm trước» — hệ thống chọn giúp 1 việc mỗi ngày</b>
+      <p>Tự chấm điểm mọi việc (trễ bao lâu × ưu tiên × trạng thái hồ sơ) rồi đề cử đúng 1 việc đáng xử lý nhất, kèm lý do. Mở app buổi sáng là biết bắt đầu từ đâu — không phải tự cân nhắc giữa 9 việc đỏ.</p>
+    </div></div>
+
+    <div class="litem"><div class="num">3</div><div>
+      <b>«Chờ ai?» — tách việc mình làm và việc đang chờ người khác</b>
+      <p>Dựa vào trạng thái hồ sơ có sẵn: Chưa soạn/Đang soạn = 🙋 đến lượt bạn; Chờ duyệt = ⏳ chờ nội bộ; Chờ KH ký = ⏳ chờ khách — kèm số ngày đã chờ. Nút <b>«Nhắc lại»</b> ghi 1 bình luận "Đã nhắc ngày..." vào việc để lưu vết đôn đốc. Bạn biết ngay: 9 việc đỏ nhưng thực ra chỉ 3 việc cần tay bạn, 6 việc là đi đòi người khác.</p>
+    </div></div>
+
+    <div class="litem"><div class="num">4</div><div>
+      <b>Thao tác nhanh khi rê chuột — xử lý không cần mở dòng</b>
+      <p>Rê chuột vào dòng → hiện 4 nút: ✓ Xong · +1 ngày · +1 tuần · 📞 Gọi (lấy số điện thoại từ hồ sơ khách, trên iPhone bấm là gọi luôn). Trên điện thoại: các nút này hiện khi mở rộng dòng.</p>
+    </div></div>
+
+    <div class="litem"><div class="num">5</div><div>
+      <b>Tìm nhanh + chế độ Tập trung</b>
+      <p>Ô tìm lọc tức thì theo tên khách/công ty. Công tắc 🎯 Tập trung: bật lên chỉ còn Quá hạn + Hôm nay — dọn sạch nhiễu khi cần dồn lực xử lý việc gấp.</p>
+    </div></div>
+  </div>
+
+  <div class="done-note">
+    ✅ <b>Đã code xong, đang chạy thật trên app</b> (không cần duyệt lại): badge trạng thái hồ sơ hiện ngay dòng thu gọn · việc chọn «Hoàn tất»/«Ngưng HĐ» còn hiện đúng 1 ngày rồi tự ẩn khỏi danh sách.
+  </div>
+
+  <div class="choice-hint">Duyệt mục nào (①–⑤) thì báo tôi — có thể chọn vài mục, không cần lấy hết. Duyệt xong tôi code vào app thật.</div>
+</div>
+</body>
+</html>

@@ -173,27 +173,92 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     [clients]
   )
   const visibleWork = useMemo(
-    () => myTasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id)),
+    () => myTasks.filter(t => {
+      if (t.client_id && suspendedClientIds.has(t.client_id)) return false
+      // Quy tắc GĐ: hồ sơ đã "Hoàn tất" / "Ngưng HĐ" còn hiện thêm 1 ngày (kể từ lúc chọn) rồi tự ẩn
+      if ((t.doc_status === 'hoan_tat' || t.doc_status === 'ngung_hd') && t.updated_at
+        && Date.now() - new Date(t.updated_at).getTime() > 86400000) return false
+      return true
+    }),
     [myTasks, suspendedClientIds]
   )
 
   // ---- Gộp + nhóm theo thời gian ----
   const [filter, setFilter] = useState<'Tất cả' | Category>('Tất cả')
+  const [search, setSearch] = useState('')
+  const [focusMode, setFocusMode] = useState(false)
+  // 'overdue' hoặc 'YYYY-MM-DD' — bấm ô radar để lọc theo ngày
+  const [dayFilter, setDayFilter] = useState<string | null>(null)
 
+  const allItems = useMemo((): FeedItem[] => [
+    ...visibleWork.map((t): FeedItem => ({
+      key: `work_${t.id}`, source: 'work', id: t.id, title: t.title,
+      due: t.due_date || null, category: workCategory(t.task_type), work: t,
+    })),
+    ...wsTasks.map((t): FeedItem => ({
+      key: `ws_${t.id}`, source: 'ws', id: t.id, title: t.title,
+      due: t.deadline, category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ', ws: t,
+    })),
+  ], [visibleWork, wsTasks])
+
+  // Việc còn "sống" — loại việc đã Hoàn tất/Ngưng HĐ đang trong ngày ân hạn
+  const isDocFinished = (it: FeedItem) => !!it.work && (it.work.doc_status === 'hoan_tat' || it.work.doc_status === 'ngung_hd')
+
+  // ---- ① Radar 7 ngày: ô Quá hạn + hôm nay → +5 ngày ----
+  const radar = useMemo(() => {
+    const active = allItems.filter(it => !isDocFinished(it))
+    const today = todayStr()
+    const overdue = active.filter(it => it.due && it.due < today).length
+    const DW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+    const days = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date()
+      d.setDate(d.getDate() + i)
+      const ds = d.toISOString().split('T')[0]
+      return {
+        date: ds,
+        dw: i === 0 ? 'Hôm nay' : DW[d.getDay()],
+        dn: d.getDate(),
+        count: active.filter(it => it.due === ds).length,
+      }
+    })
+    return { overdue, days }
+  }, [allItems])
+
+  // ---- ② «Nên làm trước»: chấm điểm trễ × ưu tiên × trạng thái hồ sơ ----
+  const topSuggest = useMemo(() => {
+    const today = todayStr()
+    let best: { it: FeedItem; score: number; reason: string } | null = null
+    for (const it of allItems) {
+      if (isDocFinished(it) || !it.due || it.due > today) continue
+      const late = Math.max(0, Math.floor((Date.now() - new Date(it.due).getTime()) / 86400000))
+      let score = late * 2
+      const reasons: string[] = [late > 0 ? `Trễ ${late} ngày` : 'Đến hạn hôm nay']
+      const w = it.work
+      if (w) {
+        score += w.priority === 'high' ? 6 : w.priority === 'medium' ? 3 : 0
+        if (w.priority === 'high') reasons.push('ưu tiên cao')
+        if (w.doc_status === 'cho_kh_ky') { score += 4; reasons.push('khách đang chờ ký — chốt sớm') }
+        else if (w.doc_status === 'cho_duyet') { score += 3; reasons.push('hồ sơ chờ duyệt nội bộ') }
+        else if (w.doc_status === 'dang_soan') score += 2
+      }
+      if (!best || score > best.score) best = { it, score, reason: reasons.join(' · ') }
+    }
+    return best
+  }, [allItems])
+
+  // ---- ⑤ Lọc: chip phân loại + tìm nhanh + radar ngày + chế độ Tập trung ----
   const groups = useMemo(() => {
-    const items: FeedItem[] = [
-      ...visibleWork.map((t): FeedItem => ({
-        key: `work_${t.id}`, source: 'work', id: t.id, title: t.title,
-        due: t.due_date || null, category: workCategory(t.task_type), work: t,
-      })),
-      ...wsTasks.map((t): FeedItem => ({
-        key: `ws_${t.id}`, source: 'ws', id: t.id, title: t.title,
-        due: t.deadline, category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ', ws: t,
-      })),
-    ].filter(it => filter === 'Tất cả' || it.category === filter)
-
+    const q = search.trim().toLowerCase()
     const today = todayStr()
     const eow = endOfWeekStr()
+    const items = allItems.filter(it => {
+      if (filter !== 'Tất cả' && it.category !== filter) return false
+      if (q && !(it.title.toLowerCase().includes(q) || (it.work?.kcn ?? '').toLowerCase().includes(q))) return false
+      if (dayFilter === 'overdue') { if (!it.due || it.due >= today) return false }
+      else if (dayFilter) { if (it.due !== dayFilter) return false }
+      return true
+    })
+
     const g: Record<GroupKey, FeedItem[]> = { overdue: [], today: [], week: [], later: [] }
     for (const it of items) {
       if (!it.due) g.later.push(it)
@@ -202,10 +267,12 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       else if (it.due <= eow) g.week.push(it)
       else g.later.push(it)
     }
+    // Tập trung: chỉ còn Quá hạn + Hôm nay (bỏ qua khi đang lọc theo 1 ngày cụ thể)
+    if (focusMode && !dayFilter) { g.week = []; g.later = [] }
     const byDue = (a: FeedItem, b: FeedItem) => (a.due ?? '9999').localeCompare(b.due ?? '9999')
     for (const k of Object.keys(g) as GroupKey[]) g[k].sort(byDue)
     return g
-  }, [visibleWork, wsTasks, filter])
+  }, [allItems, filter, search, dayFilter, focusMode])
 
   const totalVisible = groups.overdue.length + groups.today.length + groups.week.length + groups.later.length
 
@@ -216,11 +283,13 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     const monday = new Date()
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
     monday.setHours(0, 0, 0, 0)
+    // Việc đã Hoàn tất/Ngưng HĐ (đang trong 1 ngày ân hạn trước khi ẩn) không đếm vào quá hạn/hôm nay
+    const stillActive = visibleWork.filter(t => t.doc_status !== 'hoan_tat' && t.doc_status !== 'ngung_hd')
     const overdue =
-      visibleWork.filter(t => t.due_date && t.due_date < today).length +
+      stillActive.filter(t => t.due_date && t.due_date < today).length +
       wsTasks.filter(t => t.deadline && t.deadline < today).length
     const todayCount =
-      visibleWork.filter(t => t.due_date === today).length +
+      stillActive.filter(t => t.due_date === today).length +
       wsTasks.filter(t => t.deadline === today).length
     const doneThisWeek =
       doneWork.filter(t => t.completed_at && new Date(t.completed_at) >= monday).length +
@@ -367,15 +436,17 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
   }
 
   async function changeDocStatus(t: WorkTask, step: typeof DOC_STATUS_STEPS[number]) {
+    const now = new Date().toISOString()
     if (step.key === 'ngung_hd') { setSuspendTask(t); setSuspendReason(''); return }
     if (step.key === 'hoan_tat') {
-      await supabase.from('work_tasks').update({ doc_status: step.key }).eq('id', t.id)
-      setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key } : x))
+      // updated_at = mốc bắt đầu 1 ngày ân hạn trước khi ẩn khỏi feed
+      await supabase.from('work_tasks').update({ doc_status: step.key, updated_at: now }).eq('id', t.id)
+      setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key, updated_at: now } : x))
       startWorkDone(t)
       return
     }
-    setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key, status: 'in_progress' } : x))
-    await supabase.from('work_tasks').update({ doc_status: step.key, status: 'in_progress' }).eq('id', t.id)
+    setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key, status: 'in_progress', updated_at: now } : x))
+    await supabase.from('work_tasks').update({ doc_status: step.key, status: 'in_progress', updated_at: now }).eq('id', t.id)
   }
 
   async function submitSuspend() {
@@ -394,6 +465,10 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
         reason: suspendReason.trim(), status: 'pending',
       })
     }
+    // Đánh dấu task Ngưng HĐ — còn hiện 1 ngày (badge đỏ) rồi tự ẩn theo quy tắc ân hạn
+    const now2 = new Date().toISOString()
+    await supabase.from('work_tasks').update({ doc_status: 'ngung_hd', status: 'ngung_hd', updated_at: now2 }).eq('id', suspendTask.id)
+    setMyTasks(prev => prev.map(x => x.id === suspendTask.id ? { ...x, doc_status: 'ngung_hd', status: 'ngung_hd' as TaskStatus, updated_at: now2 } : x))
     setSuspendTask(null)
     setSuspendSaving(false)
     toast(isAdmin ? `Đã ngưng hợp tác với "${client.name}"` : 'Đã gửi yêu cầu ngưng HĐ — chờ Quản trị viên duyệt')
@@ -403,6 +478,50 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     setMyTasks(prev => prev.filter(t => t.id !== id))
     await supabase.from('work_tasks').delete().eq('id', id)
   }
+
+  // ---- ③ «Chờ ai?»: suy từ trạng thái hồ sơ — Chưa/Đang soạn = đến lượt mình, Chờ duyệt = nội bộ, Chờ KH ký = khách ----
+  function waitInfo(w: WorkTask): { kind: 'me' | 'internal' | 'client'; cls: string; label: string } | null {
+    if (w.task_type !== 'Tái ký HĐ') return null
+    const ds = (w.doc_status as DocStatus | null) ?? 'chua_soan'
+    if (ds === 'hoan_tat' || ds === 'ngung_hd') return null
+    const days = w.updated_at ? Math.max(0, Math.floor((Date.now() - new Date(w.updated_at).getTime()) / 86400000)) : 0
+    const wait = days > 0 ? ` · ${days} ngày` : ''
+    if (ds === 'cho_kh_ky') return { kind: 'client', cls: 'bg-violet-50 text-violet-700 border-violet-200', label: `⏳ Chờ khách${wait}` }
+    if (ds === 'cho_duyet') return { kind: 'internal', cls: 'bg-amber-50 text-amber-700 border-amber-200', label: `⏳ Chờ nội bộ${wait}` }
+    return { kind: 'me', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: '🙋 Đến lượt bạn' }
+  }
+
+  // «Nhắc lại»: lưu vết đôn đốc bằng 1 bình luận vào việc
+  async function remindTask(w: WorkTask) {
+    if (!user) return
+    const what = w.doc_status === 'cho_kh_ky' ? 'khách ký hợp đồng' : 'duyệt hồ sơ nội bộ'
+    const content = `📣 Đã nhắc ${what} — ${new Date().toLocaleDateString('vi-VN')}`
+    const { data, error } = await supabase.from('work_task_comments').insert({
+      task_id: w.id, user_id: user.id, user_name: user.full_name || user.username || 'Người dùng', content,
+    }).select().single()
+    if (!error && data) {
+      setComments(prev => ({ ...prev, [w.id]: [...(prev[w.id] ?? []), data as WorkTaskComment] }))
+      toast('Đã ghi nhắc vào việc')
+    }
+  }
+
+  // ---- ④ Hoãn nhanh: dời hạn sang ngày mai / tuần sau (tính từ hôm nay) ----
+  async function snoozeItem(it: FeedItem, days: number) {
+    const d = new Date()
+    d.setDate(d.getDate() + days)
+    const nd = d.toISOString().split('T')[0]
+    if (it.work) {
+      setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, due_date: nd } : x))
+      await supabase.from('work_tasks').update({ due_date: nd }).eq('id', it.id)
+    } else if (it.ws) {
+      setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, deadline: nd } : x))
+      await supabase.from('workspace_tasks').update({ deadline: nd }).eq('id', it.id)
+    }
+    toast(days === 1 ? 'Đã hoãn sang ngày mai' : 'Đã hoãn 1 tuần')
+  }
+
+  const phoneOf = (clientId: string | null) =>
+    clientId ? (clients.find(c => c.id === clientId)?.phone ?? null) : null
 
   // ---- Sửa / xoá việc chung ----
   const [editWsId, setEditWsId] = useState<string | null>(null)
@@ -489,10 +608,12 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     const cmts = it.source === 'work' ? (comments[it.id] ?? []) : []
     const wsSt = it.ws ? (WS_STATUS[it.ws.status] || WS_STATUS.not_started) : null
     const isEditingWs = it.source === 'ws' && editWsId === it.id
+    const wi = it.work ? waitInfo(it.work) : null
+    const phone = it.work ? phoneOf(it.work.client_id) : null
 
     return (
       <div key={it.key} className="border-t border-[#F0EFEB]">
-        <div className="flex items-center gap-2.5 px-4 py-2 hover:bg-[#FBFAF7] cursor-pointer" onClick={() => setExpandedKey(expanded ? null : it.key)}>
+        <div className="group relative flex items-center gap-2.5 px-4 py-2 hover:bg-[#FBFAF7] cursor-pointer" onClick={() => setExpandedKey(expanded ? null : it.key)}>
           <button
             onClick={e => { e.stopPropagation(); it.source === 'ws' ? markWsDone(it.ws!) : startWorkDone(it.work!) }}
             title="Đánh dấu hoàn thành"
@@ -504,6 +625,26 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             <div className="text-[12.5px] font-semibold text-[#111] truncate">{it.title}</div>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[it.category]}`}>{it.category}</span>
+              {/* Badge trạng thái hồ sơ luôn hiện (yêu cầu GĐ) — chỉ với việc Tái ký HĐ */}
+              {it.work?.task_type === 'Tái ký HĐ' && (() => {
+                const key = (it.work!.doc_status as DocStatus | null) ?? 'chua_soan'
+                const step = DOC_STATUS_STEPS.find(s => s.key === key)
+                return step ? (
+                  <span className={`text-[9.5px] font-bold px-2 py-px rounded-full border ${DOC_STATUS_BTN[key] ?? 'bg-gray-100 text-gray-600 border-gray-300'}`}>{step.label}</span>
+                ) : null
+              })()}
+              {/* ③ «Chờ ai?» + nút Nhắc lưu vết đôn đốc */}
+              {wi && (
+                <span className={`text-[9.5px] font-bold px-2 py-px rounded-full border ${wi.cls}`}>{wi.label}</span>
+              )}
+              {wi && wi.kind !== 'me' && (
+                <button
+                  onClick={e => { e.stopPropagation(); remindTask(it.work!) }}
+                  className="text-[9.5px] font-bold px-2 py-px rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
+                >
+                  Nhắc lại →
+                </button>
+              )}
               {it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>}
               {wsSt && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${wsSt.cls}`}>{wsSt.label}</span>}
               {it.ws?.assignee && <span className="text-[10.5px] text-[#888]">{it.ws.assignee}</span>}
@@ -513,6 +654,23 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
           </div>
           <span className={`text-[11px] whitespace-nowrap shrink-0 ${isOverdue ? 'text-red-600 font-bold' : 'text-[#999]'}`}>{dueLabel(it.due, group)}</span>
           <ChevronDown size={13} className={`text-[#bbb] shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+
+          {/* ④ Thao tác nhanh khi rê chuột (desktop) */}
+          <div
+            className="absolute right-10 top-1/2 -translate-y-1/2 hidden lg:group-hover:flex items-center gap-1 bg-white border border-[#E8E7E2] rounded-[10px] px-1.5 py-1 shadow-[0_6px_18px_rgba(12,35,64,0.14)] z-10"
+            onClick={e => e.stopPropagation()}
+          >
+            <button onClick={() => it.source === 'ws' ? markWsDone(it.ws!) : startWorkDone(it.work!)}
+              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition">✓ Xong</button>
+            <button onClick={() => snoozeItem(it, 1)}
+              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB] hover:border-blue-300 transition">+1 ngày</button>
+            <button onClick={() => snoozeItem(it, 7)}
+              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB] hover:border-blue-300 transition">+1 tuần</button>
+            {phone && (
+              <a href={`tel:${phone}`} onClick={e => e.stopPropagation()}
+                className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-blue-50 text-blue-600 hover:bg-blue-100 transition whitespace-nowrap">📞 Gọi</a>
+            )}
+          </div>
         </div>
 
         {expanded && (
@@ -557,6 +715,15 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
                   className="ml-auto p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
                   title="Xoá"
                 ><Trash2 size={13} /></button>
+              </div>
+            )}
+
+            {/* ④ Hoãn nhanh + gọi — hiện trong phần mở rộng để thao tác được trên điện thoại */}
+            {!isEditingWs && (
+              <div className="flex items-center gap-1.5 flex-wrap lg:hidden">
+                <button onClick={() => snoozeItem(it, 1)} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB]">⏰ +1 ngày</button>
+                <button onClick={() => snoozeItem(it, 7)} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB]">⏰ +1 tuần</button>
+                {phone && <a href={`tel:${phone}`} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-blue-50 text-blue-600 border border-blue-200">📞 Gọi {phone}</a>}
               </div>
             )}
 
@@ -666,6 +833,69 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             ))}
           </div>
         </div>
+
+        {/* ① Radar 7 ngày */}
+        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto">
+          <button
+            onClick={() => setDayFilter(v => v === 'overdue' ? null : 'overdue')}
+            className={`flex-1 min-w-[52px] text-center py-1.5 rounded-[10px] border transition ${dayFilter === 'overdue' ? 'border-red-500 ring-1 ring-red-300 bg-red-50' : radar.overdue > 0 ? 'border-red-200 bg-red-50/60 hover:border-red-400' : 'border-[#E8E7E2] bg-[#FBFAF7]'}`}
+          >
+            <div className="text-[9px] font-bold uppercase text-red-500">Quá hạn</div>
+            <div className={`text-[14px] font-extrabold leading-tight ${radar.overdue > 0 ? 'text-red-600' : 'text-[#c9c7bf]'}`}>{radar.overdue}</div>
+          </button>
+          {radar.days.map(d => {
+            const active = dayFilter === d.date
+            return (
+              <button
+                key={d.date}
+                onClick={() => setDayFilter(v => v === d.date ? null : d.date)}
+                className={`flex-1 min-w-[52px] text-center py-1.5 rounded-[10px] border transition ${active ? 'border-blue-500 ring-1 ring-blue-300 bg-blue-50' : d.dw === 'Hôm nay' ? 'border-blue-200 bg-blue-50/50 hover:border-blue-400' : 'border-[#E8E7E2] bg-[#FBFAF7] hover:border-blue-300'}`}
+              >
+                <div className={`text-[9px] font-bold uppercase ${d.dw === 'Hôm nay' ? 'text-blue-600' : 'text-[#999]'}`}>{d.dw}</div>
+                <div className="text-[13px] font-extrabold text-[#0c2340] leading-tight">{d.dn}</div>
+                <div className={`text-[9px] font-bold ${d.count > 0 ? 'text-blue-600' : 'text-[#c9c7bf]'}`}>{d.count > 0 ? `${d.count} việc` : '—'}</div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* ⑤ Tìm nhanh + Tập trung */}
+        <div className="flex gap-2 px-4 pb-2.5 items-center">
+          <div className="flex-1 flex items-center gap-1.5 border border-[#E8E7E2] rounded-[9px] px-2.5 py-1.5 bg-white focus-within:border-blue-400">
+            <Search size={12} className="text-[#bbb] shrink-0" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm nhanh theo tên khách, KCN..."
+              className="flex-1 text-[12px] focus:outline-none placeholder:text-[#ccc] bg-transparent min-w-0"
+            />
+            {search && <button onClick={() => setSearch('')} className="text-[#bbb] hover:text-[#666]"><X size={12} /></button>}
+          </div>
+          <button
+            onClick={() => setFocusMode(v => !v)}
+            className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-[9px] border transition shrink-0 ${focusMode ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-[#FBFAF7] text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
+            title="Chỉ hiện Quá hạn + Hôm nay"
+          >
+            🎯 Tập trung
+          </button>
+        </div>
+
+        {/* ② «Nên làm trước» */}
+        {topSuggest && (
+          <div className="mx-4 mb-2.5 flex items-center gap-3 rounded-[12px] border border-amber-200 bg-gradient-to-br from-amber-50 to-[#FEF9EF] px-3.5 py-2.5">
+            <span className="text-[18px]">🔥</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-extrabold text-[#0c2340] truncate">{topSuggest.it.title}</div>
+              <div className="text-[10.5px] font-semibold text-amber-700 mt-0.5">{topSuggest.reason}</div>
+            </div>
+            <button
+              onClick={() => { setFilter('Tất cả'); setSearch(''); setDayFilter(null); setExpandedKey(topSuggest.it.key) }}
+              className="text-[11px] font-bold text-white bg-[#0c2340] px-3 py-1.5 rounded-[9px] shrink-0 hover:bg-[#16345c] transition"
+            >
+              Xử lý ngay →
+            </button>
+          </div>
+        )}
 
         {/* Thêm việc nhanh + form đầy đủ */}
         <div className="px-4 py-2 border-t border-[#F0EFEB] bg-[#FBFAF7]">
