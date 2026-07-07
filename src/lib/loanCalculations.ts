@@ -32,7 +32,7 @@ export function calcEMI(principal: number, ratePercent: number, termMonths: numb
 // Format tien VND ngan gon
 export function fmtVND(amount: number): string {
   if (Math.abs(amount) >= 1_000_000_000) {
-    return (amount / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + ' ty';
+    return (amount / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + ' tỷ';
   }
   if (Math.abs(amount) >= 1_000_000) {
     return (amount / 1_000_000).toFixed(0) + 'M';

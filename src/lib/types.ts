@@ -954,6 +954,10 @@ export interface Loan {
   proxy_account: string | null;
   status: LoanStatus;
   notes: string | null;
+  // v2: an han goc — so thang dau chi tra lai (vay dai han)
+  grace_months: number;
+  // v2: khoan cong ty — giai ngan phai cung cap hoa don cho NH
+  requires_invoice: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1014,7 +1018,8 @@ export interface LoanPaymentHistory {
   created_at: string;
 }
 
-export type LoanRenewalStatus = 'pending' | 'contacted' | 'approved' | 'completed' | 'rejected';
+// Flow dao han thuc te: chua xu ly -> da lien he NH -> da nop tien dao -> NH giai ngan lai (co the sang nguoi khac) -> hoan tat
+export type LoanRenewalStatus = 'pending' | 'contacted' | 'deposited' | 'redisbursed' | 'completed' | 'rejected';
 
 export interface LoanRenewal {
   id: string;
@@ -1023,12 +1028,32 @@ export interface LoanRenewal {
   contacted_date: string | null;
   approval_date: string | null;
   renewal_date: string | null;
+  deposit_date: string | null;       // ngay nop tien vao TK de dao
+  redisbursed_date: string | null;   // ngay NH giai ngan lai
+  new_borrower_name: string | null;  // giai ngan sang nguoi dung ten moi (neu doi)
   new_principal: number | null;
   new_rate: number | null;
   new_term_months: number | null;
   status: LoanRenewalStatus;
   checklist: { label: string; done: boolean }[];
   worst_case_note: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Giai ngan theo hoa don (khoan cong ty): cho hoa don -> da gui NH -> NH da giai ngan cho NCC
+export type LoanDisbursementStatus = 'pending' | 'submitted' | 'disbursed';
+
+export interface LoanDisbursement {
+  id: string;
+  loan_id: string;
+  invoice_no: string | null;
+  supplier_name: string | null;
+  amount: number;
+  request_date: string | null;
+  disbursed_date: string | null;
+  status: LoanDisbursementStatus;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1061,28 +1086,35 @@ export interface LoanAuditLog {
 }
 
 export const BORROWER_TYPE_LABELS: Record<LoanBorrowerType, string> = {
-  bank: 'Ngan hang',
-  proxy: 'Vay ho (Bac Kiem)',
-  personal: 'Ca nhan',
+  bank: 'Ngân hàng',
+  proxy: 'Vay hộ',
+  personal: 'Cá nhân',
 };
 
 export const LOAN_STATUS_LABELS: Record<LoanStatus, string> = {
-  active: 'Dang vay',
-  closed: 'Da tat toan',
-  restructured: 'Tai co cau',
+  active: 'Đang vay',
+  closed: 'Đã tất toán',
+  restructured: 'Tái cơ cấu',
 };
 
 export const CONFIRMATION_STATUS_LABELS: Record<LoanConfirmationStatus, string> = {
-  pending: 'Chua xac nhan',
-  confirmed: 'Da xac nhan',
-  paid: 'Da dong',
-  overdue: 'Qua han',
+  pending: 'Chưa xác nhận',
+  confirmed: 'Đã xác nhận',
+  paid: 'Đã nộp',
+  overdue: 'Trễ hạn',
 };
 
 export const RENEWAL_STATUS_LABELS: Record<LoanRenewalStatus, string> = {
-  pending: 'Chua lien he',
-  contacted: 'Da lien he NH',
-  approved: 'NH duyet',
-  completed: 'Hoan tat',
-  rejected: 'Tu choi',
+  pending: 'Chưa xử lý',
+  contacted: 'Đã liên hệ NH',
+  deposited: 'Đã nộp tiền đáo',
+  redisbursed: 'NH đã giải ngân lại',
+  completed: 'Hoàn tất',
+  rejected: 'NH từ chối',
+};
+
+export const DISBURSEMENT_STATUS_LABELS: Record<LoanDisbursementStatus, string> = {
+  pending: 'Chờ hoá đơn',
+  submitted: 'Đã gửi NH',
+  disbursed: 'Đã giải ngân cho NCC',
 };

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Loan, LoanMonthlyConfirmation, LoanRateHistory, LoanPaymentHistory, LoanRenewal, ProxyLedgerEntry } from '../lib/types';
+import type { Loan, LoanMonthlyConfirmation, LoanRateHistory, LoanPaymentHistory, LoanRenewal, LoanDisbursement, ProxyLedgerEntry } from '../lib/types';
 
 export function useLoanData() {
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -8,6 +8,7 @@ export function useLoanData() {
   const [rateHistory, setRateHistory] = useState<LoanRateHistory[]>([]);
   const [payments, setPayments] = useState<LoanPaymentHistory[]>([]);
   const [renewals, setRenewals] = useState<LoanRenewal[]>([]);
+  const [disbursements, setDisbursements] = useState<LoanDisbursement[]>([]);
   const [proxyLedger, setProxyLedger] = useState<ProxyLedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -47,11 +48,16 @@ export function useLoanData() {
     if (data) setProxyLedger(data as ProxyLedgerEntry[]);
   }, []);
 
+  const loadDisbursements = useCallback(async () => {
+    const { data } = await supabase.from('loan_disbursements').select('*').order('created_at', { ascending: false });
+    if (data) setDisbursements(data as LoanDisbursement[]);
+  }, []);
+
   const reload = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadLoans(), loadConfirmations(), loadRateHistory(), loadPayments(), loadRenewals(), loadProxyLedger()]);
+    await Promise.all([loadLoans(), loadConfirmations(), loadRateHistory(), loadPayments(), loadRenewals(), loadProxyLedger(), loadDisbursements()]);
     setLoading(false);
-  }, [loadLoans, loadConfirmations, loadRateHistory, loadPayments, loadRenewals, loadProxyLedger]);
+  }, [loadLoans, loadConfirmations, loadRateHistory, loadPayments, loadRenewals, loadProxyLedger, loadDisbursements]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -61,6 +67,7 @@ export function useLoanData() {
     rateHistory, setRateHistory,
     payments, setPayments,
     renewals, setRenewals,
+    disbursements, setDisbursements,
     proxyLedger, setProxyLedger,
     loading,
     reload,
@@ -70,5 +77,6 @@ export function useLoanData() {
     loadPayments,
     loadRenewals,
     loadProxyLedger,
+    loadDisbursements,
   };
 }

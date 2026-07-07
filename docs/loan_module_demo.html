@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo — Module Khoản Vay hoàn chỉnh (8 màn hình)</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!--
+  DEMO duyệt trước khi code — module Quản lý Khoản Vay LGVN.
+  Số liệu đúng bối cảnh thật theo spec: 13 khoản ~68.3 tỷ, lãi tính ngày thực/365.
+  Chart.js CDN chỉ dùng cho demo; bản React sẽ dùng react-chartjs-2 có sẵn trong app.
+  Hôm nay giả định: Thứ Ba 07/07/2026.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --bd:#e5e7eb; --tx:#111827; --tx2:#6b7280; --tx3:#9ca3af;
+    --teal:#0d9488; --red:#dc2626; --amber:#d97706; --green:#059669; --blue:#2563eb; --purple:#7c3aed; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); font-family:-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--tx); font-size:13px; }
+  .top { background:#fff; border-bottom:1px solid var(--bd); padding:14px 22px 0; position:sticky; top:0; z-index:20; }
+  .top h1 { font-size:16px; display:flex; align-items:center; gap:8px; }
+  .top .sub { font-size:11px; color:var(--tx3); margin:2px 0 10px; }
+  .demo-note { font-size:10.5px; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; padding:2px 10px; border-radius:99px; font-weight:700; }
+  .tabs { display:flex; gap:0; overflow-x:auto; }
+  .tab { padding:9px 14px; font-size:12px; font-weight:600; color:var(--tx3); border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap; }
+  .tab:hover { color:var(--tx2); }
+  .tab.on { color:var(--tx); border-bottom-color:var(--teal); }
+  .wrap { max-width:1180px; margin:0 auto; padding:18px 22px 80px; }
+  .pane { display:none; } .pane.on { display:block; }
+
+  .kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:14px; }
+  .kpi { background:var(--card); border:1px solid var(--bd); border-top:3px solid var(--teal); border-radius:12px; padding:11px 13px; }
+  .kpi .l { font-size:9.5px; font-weight:700; color:var(--tx3); text-transform:uppercase; letter-spacing:.05em; }
+  .kpi .v { font-size:20px; font-weight:700; margin:3px 0 1px; }
+  .kpi .s { font-size:10px; color:var(--tx3); }
+  .kpi .d { font-size:10px; font-weight:700; margin-top:3px; }
+
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card h3 { font-size:12.5px; font-weight:700; margin-bottom:10px; display:flex; align-items:center; gap:6px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .chartbox { position:relative; height:190px; }
+
+  table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  th { text-align:left; font-size:10px; font-weight:700; color:var(--tx3); text-transform:uppercase; letter-spacing:.04em; padding:7px 9px; background:#f9fafb; border-bottom:1px solid var(--bd); }
+  td { padding:8px 9px; border-bottom:1px solid #f3f4f6; }
+  tr:last-child td { border-bottom:none; }
+  .r { text-align:right; } th.r { text-align:right; }
+  .b { font-weight:700; }
+  .chip { display:inline-block; font-size:10px; font-weight:700; padding:2px 9px; border-radius:99px; border:1px solid; }
+  .c-red { background:#fef2f2; color:var(--red); border-color:#fecaca; }
+  .c-amber { background:#fffbeb; color:var(--amber); border-color:#fde68a; }
+  .c-green { background:#ecfdf5; color:var(--green); border-color:#a7f3d0; }
+  .c-blue { background:#eff6ff; color:var(--blue); border-color:#bfdbfe; }
+  .c-gray { background:#f9fafb; color:var(--tx2); border-color:var(--bd); }
+  .c-purple { background:#f5f3ff; color:var(--purple); border-color:#ddd6fe; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+
+  .alert-banner { display:flex; gap:12px; align-items:flex-start; background:#fef2f2; border:1.5px solid #fecaca; border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  .alert-banner .ic { font-size:18px; }
+  .alert-banner b { color:var(--red); }
+  .alert-banner p { font-size:11.5px; color:#7f1d1d; line-height:1.55; margin-top:2px; }
+
+  /* calendar */
+  .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .cal .h { text-align:center; font-size:10px; font-weight:700; color:var(--tx3); padding:4px 0; }
+  .day { min-height:64px; background:#fff; border:1px solid var(--bd); border-radius:8px; padding:4px 6px; font-size:10.5px; cursor:pointer; }
+  .day.dim { opacity:.35; }
+  .day.today { border-color:var(--teal); border-width:1.5px; background:#f0fdfa; }
+  .day.sel { border-color:var(--blue); border-width:1.5px; }
+  .day .n { font-weight:700; font-size:11px; }
+  .ev { display:block; font-size:9px; font-weight:700; padding:1px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ev.pay { background:#fffbeb; color:var(--amber); }
+  .ev.mat { background:#fef2f2; color:var(--red); }
+  .ev.proxy { background:#f5f3ff; color:var(--purple); }
+
+  /* workflow steps */
+  .steps { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .step { flex:1; min-width:150px; background:#fff; border:1px solid var(--bd); border-radius:10px; padding:8px 10px; font-size:10.5px; }
+  .step .t { font-weight:800; color:var(--teal); font-size:10px; }
+  input.mini { width:100px; padding:4px 7px; border:1px solid var(--bd); border-radius:7px; font-size:11.5px; text-align:right; }
+
+  /* kanban */
+  .kanban { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .kcol { background:#f3f4f6; border-radius:12px; padding:9px; }
+  .kcol .kh { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--tx2); padding:0 3px 8px; display:flex; justify-content:space-between; }
+  .kcard { background:#fff; border:1px solid var(--bd); border-radius:10px; padding:9px 11px; margin-bottom:8px; }
+  .kcard .t { font-size:12px; font-weight:700; }
+  .kcard .m { font-size:10.5px; color:var(--tx2); margin-top:2px; }
+  .kcard .cl { margin-top:6px; font-size:10.5px; color:var(--tx2); line-height:1.7; }
+  .kcard .cl .ok { color:var(--green); }
+
+  .score-ring { width:110px; height:110px; border-radius:50%; background:conic-gradient(var(--green) 0 346deg, #e5e7eb 346deg 360deg); display:flex; align-items:center; justify-content:center; margin:0 auto; }
+  .score-ring .in { width:84px; height:84px; border-radius:50%; background:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .bar-track { height:8px; background:#f3f4f6; border-radius:99px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:99px; }
+
+  .legend-note { font-size:10.5px; color:var(--tx3); margin-top:8px; line-height:1.6; }
+  .pos { color:var(--green); font-weight:700; } .neg { color:var(--red); font-weight:700; }
+  @media (max-width:800px){ .kpis{grid-template-columns:repeat(2,1fr)} .grid2,.grid3,.kanban{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>📊 Quản lý Khoản Vay <span class="demo-note">DEMO DUYỆT — chưa phải app thật</span></h1>
+  <div class="sub">Tổng quan danh mục · Thứ Ba 07/07/2026 · số liệu đúng bối cảnh thật để duyệt</div>
+  <div class="tabs" id="tabs">
+    <div class="tab on" data-p="dash">📊 Dashboard</div>
+    <div class="tab" data-p="cal">📅 Lịch</div>
+    <div class="tab" data-p="list">📋 Danh sách</div>
+    <div class="tab" data-p="input">✏️ Nhập lãi</div>
+    <div class="tab" data-p="renew">🔄 Đáo hạn & Tái vay</div>
+    <div class="tab" data-p="risk">🛡️ Rủi ro & CIC</div>
+    <div class="tab" data-p="proxy">🤝 Bác Kiệm</div>
+    <div class="tab" data-p="cash">💧 Dòng tiền</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- ═══════════ DASHBOARD ═══════════ -->
+<div class="pane on" id="p-dash">
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card" style="border:1.5px solid #fecaca;">
+    <h3 style="color:var(--red)">⚠️ Cần xử lý ngay</h3>
+    <table>
+      <thead><tr><th>Việc</th><th>Khoản vay</th><th>Hạn chót</th><th class="r">Số tiền liên quan</th><th>Trạng thái</th></tr></thead>
+      <tbody>
+        <tr><td class="b">🔄 Liên hệ NH chuẩn bị tái vay</td><td>Lô B1 — Sacombank</td><td class="b" style="color:var(--red)">Đáo hạn 18/07 · còn 11 ngày</td><td class="r b">5,5 tỷ</td><td><span class="chip c-red">Chưa liên hệ</span></td></tr>
+        <tr><td class="b">✏️ Hỏi NH lãi chính xác (B1)</td><td>3 khoản Sacombank — đóng ngày 10</td><td class="b" style="color:var(--amber)">Còn 3 ngày</td><td class="r b">~126 tr</td><td><span class="chip c-amber">Chưa xác nhận</span></td></tr>
+        <tr><td class="b">🔄 Theo dõi hồ sơ tái vay</td><td>Sổ Bác Kiệm 1 — Vietinbank</td><td>Đáo hạn 19/07 · còn 12 ngày</td><td class="r b">1,6 tỷ</td><td><span class="chip c-blue">Đã liên hệ NH</span></td></tr>
+        <tr><td class="b">🔄 Nhắc tự động 14 ngày</td><td>Lô D5 — VIB (Linh)</td><td>Đáo hạn 21/07 · còn 14 ngày</td><td class="r b">3,6 tỷ</td><td><span class="chip c-red">Chưa liên hệ</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h3>Dư nợ theo nguồn vay</h3><div class="chartbox"><canvas id="ch1"></canvas></div></div>
+    <div class="card"><h3>Dư nợ theo người đứng tên <span class="chip c-amber" style="margin-left:4px">Chị Tâm 74% ⚠</span></h3><div class="chartbox"><canvas id="ch2"></canvas></div></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>Lãi đã trả 6 tháng (thực nộp vs ước tính)</h3><div class="chartbox"><canvas id="ch3"></canvas></div></div>
+    <div class="card"><h3>Thang đáo hạn — dư nợ đến hạn theo tháng</h3><div class="chartbox"><canvas id="ch4"></canvas></div></div>
+  </div>
+  <div class="grid3">
+    <div class="card"><h3>Thả nổi vs cố định</h3><div class="chartbox" style="height:160px"><canvas id="ch5"></canvas></div></div>
+    <div class="card"><h3>Chi phí vốn BQ (WACC) 6 tháng</h3><div class="chartbox" style="height:160px"><canvas id="ch6"></canvas></div></div>
+    <div class="card"><h3>Đóng lãi tháng 7</h3><div class="chartbox" style="height:160px"><canvas id="ch7"></canvas></div></div>
+  </div>
+</div>
+
+<!-- ═══════════ LỊCH ═══════════ -->
+<div class="pane" id="p-cal">
+  <div class="card">
+    <h3>📅 Tháng 7/2026 — bấm vào ngày để xem việc</h3>
+    <div class="cal" id="cal"></div>
+    <div class="legend-note">🟡 đóng lãi &nbsp;·&nbsp; 🔴 đáo hạn gốc &nbsp;·&nbsp; 🟣 chốt sổ Bác Kiệm ngày 20 &nbsp;·&nbsp; Ô viền xanh = hôm nay</div>
+  </div>
+  <div class="card" id="calDetail"></div>
+</div>
+
+<!-- ═══════════ DANH SÁCH ═══════════ -->
+<div class="pane" id="p-list">
+  <div class="card">
+    <h3>📋 Danh mục 13 khoản đang theo dõi — tổng <span id="listTotal"></span></h3>
+    <div style="overflow-x:auto"><table id="loanTable">
+      <thead><tr><th>Khoản vay</th><th>Nguồn</th><th>Người đứng tên</th><th class="r">Dư nợ</th><th class="r">Lãi suất</th><th class="r">Lãi/tháng</th><th>Ngày đóng</th><th>Đáo hạn</th><th>Hình thức</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="legend-note">TN = thả nổi · Lãi/tháng tính theo <b>ngày thực/365</b> (tháng 7 = 31 ngày). Bản app thật giữ nguyên nút Sửa / Tái vay / Tất toán / Xoá (chặn xoá khi đã có lịch sử đóng tiền).</div>
+  </div>
+</div>
+
+<!-- ═══════════ NHẬP LÃI ═══════════ -->
+<div class="pane" id="p-input">
+  <div class="steps">
+    <div class="step"><div class="t">B1 · TRƯỚC HẠN ~1 TUẦN</div>Gọi NH hỏi lãi chính xác</div>
+    <div class="step"><div class="t">B2 · CHỐT SỐ NỘP</div>Lãi NH + đệm 1–2tr</div>
+    <div class="step"><div class="t">B3 · CHUẨN BỊ TIỀN</div>Xem tab Dòng tiền</div>
+    <div class="step"><div class="t">B4 · NỘP ĐÚNG NGÀY/TK</div>Trễ &gt;10 ngày → dính CIC</div>
+    <div class="step"><div class="t">B5 · CẬP NHẬT SỔ</div>Không đụng sổ kế toán chính</div>
+  </div>
+  <div class="card">
+    <h3>✏️ Nhập lãi tháng 7/2026 &nbsp;<span class="chip c-blue">Đã xác nhận 5/13</span> <span class="chip c-green">Đã nộp 2/13</span></h3>
+    <table id="inputTable">
+      <thead><tr><th>Khoản vay</th><th>Hạn nộp</th><th class="r">Lãi ước tính</th><th class="r">Lãi NH xác nhận</th><th class="r">Đệm</th><th class="r">Phải nộp</th><th>Trạng thái</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="legend-note">Gõ số vào ô «Lãi NH xác nhận» → cột «Phải nộp» tự cộng đệm (demo tương tác được). Nộp xong bấm trạng thái → chuyển «Đã nộp», quá hạn tự thành «Trễ hạn» đỏ + gắn cờ CIC.</div>
+  </div>
+</div>
+
+<!-- ═══════════ ĐÁO HẠN ═══════════ -->
+<div class="pane" id="p-renew">
+  <div class="alert-banner">
+    <div class="ic">🚨</div>
+    <div><b>Kịch bản xấu — Lô B1 (5,5 tỷ, đáo 18/07):</b>
+    <p>Nếu Sacombank không duyệt tái vay kịp → phải có <b>5,5 tỷ tiền mặt ngày 18/07</b>. Phương án dự phòng: ① xin gia hạn 10 ngày · ② dùng hạn mức BIDV còn 1,5 tỷ + vay nóng Bà Lan 4 tỷ · ③ xấu nhất: trễ → <b>nhảy nhóm CIC của Chị Tâm, ảnh hưởng cả 5 khoản còn lại đứng tên chị</b>. Đây là lý do phải liên hệ NH ngay hôm nay.</p></div>
+  </div>
+  <div class="kanban">
+    <div class="kcol"><div class="kh">Chưa liên hệ <span>2</span></div>
+      <div class="kcard" style="border-color:#fecaca">
+        <div class="t">🔴 Lô B1 — Sacombank</div><div class="m">5,5 tỷ · đáo 18/07 · <b style="color:var(--red)">còn 11 ngày</b></div>
+        <div class="cl">☐ Gọi CV tín dụng<br>☐ Chuẩn bị hồ sơ tái vay<br>☐ Xác nhận lãi suất kỳ mới</div>
+      </div>
+      <div class="kcard">
+        <div class="t">Lô D5 — VIB (Linh)</div><div class="m">3,6 tỷ · đáo 21/07 · còn 14 ngày</div>
+        <div class="cl">☐ Gọi CV tín dụng</div>
+      </div>
+    </div>
+    <div class="kcol"><div class="kh">Đã liên hệ <span>1</span></div>
+      <div class="kcard">
+        <div class="t">Sổ Bác Kiệm 1 — Vietinbank</div><div class="m">1,6 tỷ · đáo 19/07 · còn 12 ngày</div>
+        <div class="cl"><span class="ok">☑ Gọi CV tín dụng (03/07)</span><br><span class="ok">☑ Nộp hồ sơ</span><br>☐ Chờ báo lãi suất kỳ mới</div>
+      </div>
+    </div>
+    <div class="kcol"><div class="kh">Chờ duyệt <span>1</span></div>
+      <div class="kcard">
+        <div class="t">Lô C3 — VIB</div><div class="m">3,2 tỷ · đáo 25/07 · còn 18 ngày</div>
+        <div class="cl"><span class="ok">☑ Hồ sơ đầy đủ</span><br>☐ NH hẹn trả lời 10/07<br><span style="color:var(--amber)">Lãi kỳ mới dự kiến 12,4% (+0,2%)</span></div>
+      </div>
+    </div>
+    <div class="kcol"><div class="kh">Đã tái vay T7 <span>1</span></div>
+      <div class="kcard" style="border-color:#a7f3d0">
+        <div class="t">✅ Kho Tân Uyên — MB</div><div class="m">2,9 tỷ · tái vay xong 01/07</div>
+        <div class="cl"><span class="ok">☑ Khoản cũ tự tất toán</span><br><span class="ok">☑ Khoản mới 3 tháng · 11,8%</span><br><span class="ok">☑ Link lịch sử loan_renewals</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend-note" style="margin-top:10px">Kéo thẻ giữa các cột trong app thật. «Tái vay» tạo khoản mới kế thừa + tự tất toán khoản cũ — <b>không phải Thêm mới</b>, giữ nguyên chuỗi lịch sử.</div>
+</div>
+
+<!-- ═══════════ RỦI RO & CIC ═══════════ -->
+<div class="pane" id="p-risk">
+  <div class="grid3">
+    <div class="card" style="text-align:center">
+      <h3 style="justify-content:center">🛡️ Điểm kỷ luật thanh toán</h3>
+      <div class="score-ring"><div class="in"><div style="font-size:24px;font-weight:800;color:var(--green)">96</div><div style="font-size:9px;color:var(--tx3)">/100</div></div></div>
+      <div class="legend-note" style="text-align:center">11/12 tháng gần nhất nộp đúng hạn 100%.<br>1 lần nộp trễ 2 ngày (T3/2026 — Lô E2), chưa chạm ngưỡng CIC 10 ngày.</div>
+    </div>
+    <div class="card">
+      <h3>Tập trung rủi ro theo người đứng tên</h3>
+      <div style="display:flex;flex-direction:column;gap:9px" id="concBars"></div>
+      <div class="legend-note">⚠ <b>74% dư nợ dồn vào CIC của Chị Tâm</b> — 1 lần trễ của bất kỳ khoản nào đứng tên chị sẽ ảnh hưởng việc tái vay của cả 50,4 tỷ. Khuyến nghị: khoản vay mới cân nhắc người đứng tên khác.</div>
+    </div>
+    <div class="card">
+      <h3>Phơi nhiễm lãi suất thả nổi</h3>
+      <div style="font-size:26px;font-weight:800;color:var(--amber)">86%</div>
+      <div class="legend-note" style="margin-top:2px">58,9 / 68,3 tỷ đang chịu lãi thả nổi.</div>
+      <table style="margin-top:8px"><tbody>
+        <tr><td>Nếu lãi +0,5%</td><td class="r neg">+24,5 tr/tháng</td></tr>
+        <tr><td>Nếu lãi +1,0%</td><td class="r neg">+49,1 tr/tháng</td></tr>
+        <tr><td>Nếu lãi +2,0%</td><td class="r neg">+98,2 tr/tháng</td></tr>
+      </tbody></table>
+      <div class="legend-note">Đổi lãi suất trong app = tạo dòng <b>lịch sử lãi mới</b> theo ngày hiệu lực, không đè số cũ.</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Nhóm nợ CIC theo người đứng tên</h3>
+    <table>
+      <thead><tr><th>Người đứng tên</th><th class="r">Dư nợ</th><th class="r">Số khoản</th><th>Nhóm CIC hiện tại</th><th>Sự kiện gần nhất</th></tr></thead>
+      <tbody>
+        <tr><td class="b">Chị Tâm</td><td class="r">50,4 tỷ</td><td class="r">5</td><td><span class="chip c-green">Nhóm 1 — Đủ chuẩn</span></td><td class="legend-note" style="margin:0">Không có nợ quá hạn</td></tr>
+        <tr><td class="b">Linh</td><td class="r">6,0 tỷ</td><td class="r">2</td><td><span class="chip c-green">Nhóm 1 — Đủ chuẩn</span></td><td class="legend-note" style="margin:0">Không có nợ quá hạn</td></tr>
+        <tr><td class="b">Dũng</td><td class="r">2,8 tỷ</td><td class="r">1</td><td><span class="chip c-green">Nhóm 1 — Đủ chuẩn</span></td><td class="legend-note" style="margin:0">Nộp trễ 2 ngày T3/2026 (chưa chạm CIC)</td></tr>
+        <tr><td class="b">Công ty</td><td class="r">4,5 tỷ</td><td class="r">2</td><td><span class="chip c-green">Nhóm 1 — Đủ chuẩn</span></td><td class="legend-note" style="margin:0">—</td></tr>
+        <tr><td class="b">Bác Kiệm (vay hộ)</td><td class="r">2,7 tỷ</td><td class="r">2</td><td><span class="chip c-green">Nhóm 1 — Đủ chuẩn</span></td><td class="legend-note" style="margin:0">Đối soát ngày 20 đều đặn</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ BÁC KIỆM ═══════════ -->
+<div class="pane" id="p-proxy">
+  <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+    <div class="kpi" style="border-top-color:var(--purple)"><div class="l">Số dư hiện tại (mình gửi bác)</div><div class="v pos">+4,8 tr</div><div class="s">Dư → trừ vào kỳ nộp 20/07</div></div>
+    <div class="kpi" style="border-top-color:var(--purple)"><div class="l">Kỳ chốt tiếp theo</div><div class="v">20/07</div><div class="s">Lãi 2 khoản ước ~25,2 tr</div></div>
+    <div class="kpi" style="border-top-color:var(--purple)"><div class="l">Cần chuyển kỳ này</div><div class="v">~20,4 tr</div><div class="s">= 25,2 ước − 4,8 dư kỳ trước</div></div>
+  </div>
+  <div class="card">
+    <h3>🤝 Sổ chạy đối soát — nộp vào TK Bác Kiệm, chốt ngày 20 hằng tháng</h3>
+    <table>
+      <thead><tr><th>Ngày</th><th>Diễn giải</th><th class="r">Mình chuyển vào (+)</th><th class="r">Lãi NH trừ (−)</th><th class="r">Số dư chạy</th></tr></thead>
+      <tbody>
+        <tr><td>20/04</td><td>Chuyển lãi kỳ T4 (2 khoản)</td><td class="r pos">+26.000.000</td><td class="r">—</td><td class="r">+26.000.000</td></tr>
+        <tr><td>21/04</td><td>NH thu lãi Sổ BK1 + BK2</td><td class="r">—</td><td class="r neg">−25.150.000</td><td class="r">+850.000</td></tr>
+        <tr><td>20/05</td><td>Chuyển lãi kỳ T5</td><td class="r pos">+25.000.000</td><td class="r">—</td><td class="r">+25.850.000</td></tr>
+        <tr><td>21/05</td><td>NH thu lãi 2 khoản</td><td class="r">—</td><td class="r neg">−25.420.000</td><td class="r">+430.000</td></tr>
+        <tr><td>20/06</td><td>Chuyển lãi kỳ T6 (cộng bù thiếu hụt dự phòng)</td><td class="r pos">+30.000.000</td><td class="r">—</td><td class="r">+30.430.000</td></tr>
+        <tr><td>21/06</td><td>NH thu lãi 2 khoản</td><td class="r">—</td><td class="r neg">−25.630.000</td><td class="r b pos">+4.800.000</td></tr>
+        <tr style="background:#f5f3ff"><td class="b">20/07</td><td class="b">Kỳ tới — cần chuyển ~20,4 tr (đã trừ dư)</td><td class="r" colspan="2"><span class="chip c-purple">Sắp tới · còn 13 ngày</span></td><td class="r b">dự kiến ~0</td></tr>
+      </tbody>
+    </table>
+    <div class="legend-note">Quy tắc cảnh báo: số dư <b class="neg">âm</b> = mình nộp thiếu, bác đang ứng → đỏ, xử lý ngay. Dư <b>&gt; 15 tr</b> kéo dài = chôn vốn không cần thiết → nhắc cân lại. Mỗi dòng gắn với khoản vay cụ thể để truy ngược.</div>
+  </div>
+</div>
+
+<!-- ═══════════ DÒNG TIỀN ═══════════ -->
+<div class="pane" id="p-cash">
+  <div class="card">
+    <h3>💧 Nhu cầu tiền mặt 30 ngày tới (08/07 → 06/08)</h3>
+    <div class="chartbox" style="height:220px"><canvas id="ch8"></canvas></div>
+    <div class="legend-note">Cột đỏ 18/07 là <b>kịch bản xấu</b>: 5,5 tỷ gốc Lô B1 nếu tái vay thất bại — tái vay thành công thì về ~0. Đây chính là lý do tab Đáo hạn phải xử lý trước 18/07.</div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Điểm căng thanh khoản</h3>
+      <table>
+        <thead><tr><th>Ngày</th><th>Khoản phải chi</th><th class="r">Số tiền</th><th>Mức độ</th></tr></thead>
+        <tbody>
+          <tr><td class="b">10/07</td><td>Lãi 3 khoản Sacombank</td><td class="r b">126,4 tr</td><td><span class="chip c-amber">Trung bình</span></td></tr>
+          <tr><td class="b">15/07</td><td>Lãi 2 khoản VIB</td><td class="r b">70,5 tr</td><td><span class="chip c-green">Nhẹ</span></td></tr>
+          <tr><td class="b">18/07</td><td>Gốc Lô B1 (nếu tái vay fail)</td><td class="r b" style="color:var(--red)">5,5 tỷ</td><td><span class="chip c-red">Nguy hiểm</span></td></tr>
+          <tr><td class="b">20/07</td><td>Lãi MB + cá nhân + chốt Bác Kiệm</td><td class="r b">115,8 tr</td><td><span class="chip c-amber">Trung bình</span></td></tr>
+          <tr><td class="b">05/08</td><td>Kỳ Nhà 40 ACB (gốc + lãi)</td><td class="r b">540,3 tr</td><td><span class="chip c-amber">Trung bình</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Tổng nhu cầu theo tuần</h3>
+      <div style="display:flex;flex-direction:column;gap:10px" id="weekBars"></div>
+      <div class="legend-note">Chưa gồm kịch bản xấu B1. App thật sẽ cho nhập «số dư tiền mặt hiện có» để tô đỏ tuần nào hụt.</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+// ═══ Dữ liệu 13 khoản — đúng bối cảnh thật ═══
+const LOANS = [
+  { name:'Nhà 40', bank:'ACB', who:'Chị Tâm', type:'bank', bal:34000, rate:8.9, float:true, day:5,  mat:'2033-04-05', repay:'Dư nợ giảm dần · 120 th' },
+  { name:'Lô B1', bank:'Sacombank', who:'Chị Tâm', type:'bank', bal:5500, rate:11.5, float:true, day:10, mat:'2026-07-18', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Lô B2', bank:'Sacombank', who:'Chị Tâm', type:'bank', bal:4800, rate:11.5, float:true, day:10, mat:'2026-08-02', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Lô C3', bank:'VIB', who:'Chị Tâm', type:'bank', bal:3200, rate:12.2, float:true, day:15, mat:'2026-07-25', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Kho Tân Uyên', bank:'MB', who:'Chị Tâm', type:'bank', bal:2900, rate:11.8, float:true, day:20, mat:'2026-10-01', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Lô D5', bank:'VIB', who:'Linh', type:'bank', bal:3600, rate:12.0, float:true, day:15, mat:'2026-07-21', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Nhà xưởng P.Long', bank:'Agribank', who:'Linh', type:'bank', bal:2400, rate:10.9, float:true, day:25, mat:'2026-08-28', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Lô E2', bank:'Sacombank', who:'Dũng', type:'bank', bal:2800, rate:11.5, float:true, day:10, mat:'2026-08-15', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'VLĐ Công ty', bank:'BIDV', who:'Công ty', type:'bank', bal:3000, rate:9.8, float:true, day:18, mat:'2026-10-12', repay:'Lãi hàng kỳ · 6 th' },
+  { name:'Hạn mức CT', bank:'BIDV', who:'Công ty', type:'bank', bal:1500, rate:9.5, float:true, day:18, mat:'2026-11-05', repay:'Lãi hàng kỳ · 6 th' },
+  { name:'Sổ Bác Kiệm 1', bank:'Vietinbank', who:'Bác Kiệm', type:'proxy', bal:1600, rate:11.2, float:true, day:20, mat:'2026-07-19', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Sổ Bác Kiệm 2', bank:'Vietinbank', who:'Bác Kiệm', type:'proxy', bal:1100, rate:11.2, float:true, day:20, mat:'2026-09-26', repay:'Lãi hàng kỳ · 3 th' },
+  { name:'Vay Mẹ Huệ', bank:'Cá nhân', who:'Dũng', type:'personal', bal:1900, rate:15.0, float:false, day:20, mat:null, repay:'Lãi hàng kỳ · xoay vòng' },
+];
+const TODAY = new Date('2026-07-07');
+const fmt = n => n>=1000 ? (n/1000).toFixed(1).replace('.0','')+' tỷ' : Math.round(n)+' tr';
+const mInt = l => l.bal * (l.rate/100/365) * 31; // triệu VND, tháng 7 = 31 ngày
+const daysTo = d => Math.ceil((new Date(d) - TODAY) / 86400000);
+
+const total = LOANS.reduce((s,l)=>s+l.bal,0);
+const totInt = LOANS.reduce((s,l)=>s+mInt(l),0);
+const wacc = LOANS.reduce((s,l)=>s+l.rate*l.bal,0)/total;
+
+// KPIs
+document.getElementById('kpis').innerHTML = [
+  { l:'Tổng dư nợ', v:fmt(total), s:'13 khoản đang theo dõi', c:'var(--red)', d:'' },
+  { l:'Lãi tháng này', v:Math.round(totInt)+' tr', s:'ngày thực/365 · tháng 31 ngày', c:'var(--amber)', d:'' },
+  { l:'Đã đóng T7', v:'2/13', s:'5 đã xác nhận NH', c:'var(--teal)', d:'' },
+  { l:'Chi phí vốn BQ', v:wacc.toFixed(2)+'%', s:'WACC toàn danh mục', c:'var(--blue)', d:'' },
+  { l:'CIC Risk', v:'0', s:'Toàn bộ Nhóm 1 · An toàn', c:'var(--green)', d:'' },
+].map(k=>`<div class="kpi" style="border-top-color:${k.c}"><div class="l">${k.l}</div><div class="v">${k.v}</div><div class="s">${k.s}</div></div>`).join('');
+
+// Charts
+Chart.defaults.font.size = 10; Chart.defaults.color = '#6b7280';
+const P = { red:'#dc2626', amber:'#d97706', green:'#059669', blue:'#2563eb', purple:'#7c3aed', teal:'#0d9488', gray:'#9ca3af' };
+
+const bySrc = { 'Ngân hàng':0, 'Vay hộ (Bác Kiệm)':0, 'Cá nhân':0 };
+LOANS.forEach(l => bySrc[l.type==='bank'?'Ngân hàng':l.type==='proxy'?'Vay hộ (Bác Kiệm)':'Cá nhân'] += l.bal);
+new Chart(ch1, { type:'doughnut', data:{ labels:Object.keys(bySrc), datasets:[{ data:Object.values(bySrc), backgroundColor:[P.blue,P.purple,P.amber], borderWidth:2 }] },
+  options:{ maintainAspectRatio:false, plugins:{ legend:{ position:'right' }, tooltip:{ callbacks:{ label: c => ' '+c.label+': '+fmt(c.raw)+' ('+(c.raw/total*100).toFixed(0)+'%)' } } } } });
+
+const byWho = {}; LOANS.forEach(l => byWho[l.who]=(byWho[l.who]||0)+l.bal);
+const whoE = Object.entries(byWho).sort((a,b)=>b[1]-a[1]);
+new Chart(ch2, { type:'bar', data:{ labels:whoE.map(e=>e[0]), datasets:[{ data:whoE.map(e=>e[1]), backgroundColor:[P.red,P.blue,P.teal,P.purple,P.amber], borderRadius:5 }] },
+  options:{ indexAxis:'y', maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c=>' '+fmt(c.raw) } } }, scales:{ x:{ ticks:{ callback:v=>fmt(v) } } } } });
+
+new Chart(ch3, { type:'bar', data:{ labels:['T2','T3','T4','T5','T6','T7'],
+  datasets:[ { label:'Thực nộp', data:[598,612,604,621,633,118], backgroundColor:P.teal, borderRadius:4 },
+             { label:'Ước tính', data:[602,608,610,618,630,Math.round(totInt)], backgroundColor:'#cbd5e1', borderRadius:4 } ] },
+  options:{ maintainAspectRatio:false, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ ticks:{ callback:v=>v+' tr' } } } } });
+
+new Chart(ch4, { type:'bar', data:{ labels:['T7/26','T8/26','T9/26','T10/26','T11/26','2027+'],
+  datasets:[{ data:[13900, 10000, 1100, 5900, 1500, 34000], backgroundColor:[P.red,P.amber,P.teal,P.teal,P.teal,P.gray], borderRadius:5 }] },
+  options:{ maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>' Đến hạn: '+fmt(c.raw) } } }, scales:{ y:{ ticks:{ callback:v=>fmt(v) } } } } });
+
+const floatBal = LOANS.filter(l=>l.float).reduce((s,l)=>s+l.bal,0);
+new Chart(ch5, { type:'doughnut', data:{ labels:['Thả nổi','Cố định'], datasets:[{ data:[floatBal,total-floatBal], backgroundColor:[P.amber,P.teal], borderWidth:2 }] },
+  options:{ maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ position:'bottom' } } } });
+
+new Chart(ch6, { type:'line', data:{ labels:['T2','T3','T4','T5','T6','T7'], datasets:[{ data:[10.32,10.32,10.41,10.38,10.45,+wacc.toFixed(2)], borderColor:P.blue, backgroundColor:'rgba(37,99,235,.08)', fill:true, tension:.35, pointRadius:3 }] },
+  options:{ maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ ticks:{ callback:v=>(+v).toFixed(1)+'%' } } } } });
+
+new Chart(ch7, { type:'doughnut', data:{ labels:['Đã nộp','Đã xác nhận','Chưa xác nhận'], datasets:[{ data:[2,3,8], backgroundColor:[P.green,P.blue,'#e5e7eb'], borderWidth:2 }] },
+  options:{ maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ position:'bottom' } } } });
+
+// ═══ Danh sách ═══
+document.getElementById('listTotal').textContent = fmt(total) + ' · lãi ~' + Math.round(totInt) + ' tr/tháng';
+document.querySelector('#loanTable tbody').innerHTML = LOANS.map(l => {
+  const d = l.mat ? daysTo(l.mat) : null;
+  const matCls = d===null?'':d<=14?'style="color:var(--red);font-weight:700"':d<=30?'style="color:var(--amber);font-weight:700"':'';
+  const matTxt = l.mat ? new Date(l.mat).toLocaleDateString('vi-VN') + (d<=30?` (${d} ng)`:'') : '— xoay vòng';
+  const src = l.type==='bank'?'<span class="chip c-blue">NH</span>':l.type==='proxy'?'<span class="chip c-purple">Vay hộ</span>':'<span class="chip c-amber">Cá nhân</span>';
+  return `<tr><td class="b">${l.name}<div style="font-size:10px;color:var(--tx3);font-weight:400">${l.bank}</div></td><td>${src}</td><td>${l.who}</td><td class="r b">${fmt(l.bal)}</td><td class="r">${l.rate}% ${l.float?'<span style="font-size:9px;color:var(--tx3)">TN</span>':''}</td><td class="r" style="color:var(--amber);font-weight:600">${mInt(l).toFixed(1)} tr</td><td>Ngày ${l.day}</td><td ${matCls}>${matTxt}</td><td style="font-size:10.5px;color:var(--tx2)">${l.repay}</td></tr>`;
+}).join('');
+
+// ═══ Nhập lãi ═══
+const ST = { paid:'<span class="chip c-green">Đã nộp ✓</span>', conf:'<span class="chip c-blue">Đã xác nhận</span>', pend:'<span class="chip c-gray">Chờ xác nhận</span>', urgent:'<span class="chip c-amber">Cần gọi NH</span>' };
+const statusOf = l => { if (l.day===5) return 'paid'; if (l.name==='Lô E2') return 'paid'; if (l.day===10) return 'urgent'; if (l.day===15) return 'conf'; return 'pend'; };
+document.querySelector('#inputTable tbody').innerHTML = LOANS.map((l,i) => {
+  const est = mInt(l), st = statusOf(l);
+  const conf = st==='paid'||st==='conf' ? (est*1.002).toFixed(1) : '';
+  return `<tr><td class="b">${l.name} <span style="font-size:10px;color:var(--tx3)">${l.bank}</span></td><td>10–${String(l.day).padStart(2,'0')}/07</td><td class="r">${est.toFixed(1)} tr</td>
+  <td class="r"><input class="mini" data-i="${i}" value="${conf}" placeholder="chờ NH..."></td><td class="r">2,0 tr</td><td class="r b" id="pay-${i}">${conf?(+conf+2).toFixed(1)+' tr':'—'}</td><td>${ST[st]}</td></tr>`;
+}).join('');
+document.querySelectorAll('.mini').forEach(inp => inp.addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  document.getElementById('pay-'+e.target.dataset.i).textContent = isNaN(v)?'—':(v+2).toFixed(1)+' tr';
+}));
+
+// ═══ Lịch tháng 7 ═══
+const EVENTS = {
+  5:[['pay','Nhà 40 · 540tr']], 10:[['pay','Sacombank ×3 · 126tr']], 15:[['pay','VIB ×2 · 70tr']],
+  18:[['pay','BIDV ×2 · 37tr'],['mat','🔴 GỐC Lô B1 · 5,5 tỷ']], 19:[['mat','🔴 Gốc Sổ BK1 · 1,6 tỷ']],
+  20:[['pay','MB + Mẹ Huệ · 53tr'],['proxy','🟣 Chốt sổ Bác Kiệm']], 21:[['mat','🔴 Gốc Lô D5 · 3,6 tỷ']],
+  25:[['pay','Agribank · 22tr'],['mat','🔴 Gốc Lô C3 · 3,2 tỷ']],
+};
+const DETAILS = {
+  10:['<b>Thứ Sáu 10/07 — tổng phải nộp ~126,4 tr</b>','• Lô B1 (Sacombank): lãi ~53,7 tr — <span class="chip c-amber">chưa xác nhận NH</span>','• Lô B2 (Sacombank): lãi ~46,9 tr — <span class="chip c-amber">chưa xác nhận NH</span>','• Lô E2 (Sacombank): lãi ~27,4 tr — <span class="chip c-green">đã nộp sớm ✓</span>','<span style="color:var(--amber)">⚠ Còn 3 ngày — gọi CV Sacombank xác nhận số chính xác (bước B1) trước 09/07.</span>'],
+  18:['<b>Thứ Bảy 18/07 — NGÀY RỦI RO CAO NHẤT THÁNG</b>','• Lãi BIDV ×2: ~37,4 tr','• <b style="color:var(--red)">Đáo hạn gốc Lô B1: 5,5 tỷ</b> — nếu tái vay chưa duyệt xong phải có đủ tiền mặt','• Xem phương án dự phòng trong tab Đáo hạn & Tái vay'],
+};
+let calHtml = ['CN','T2','T3','T4','T5','T6','T7'].map(d=>`<div class="h">${d}</div>`).join('');
+for (let i=0;i<3;i++) calHtml += `<div class="day dim"><div class="n">${28+i}</div></div>`;
+for (let d=1;d<=31;d++) {
+  const evs = (EVENTS[d]||[]).map(([c,t])=>`<span class="ev ${c}">${t}</span>`).join('');
+  calHtml += `<div class="day${d===7?' today':''}${d===10?' sel':''}" data-d="${d}"><div class="n">${d}</div>${evs}</div>`;
+}
+document.getElementById('cal').innerHTML = calHtml;
+const showDay = d => {
+  const det = DETAILS[d] || (EVENTS[d] ? ['<b>Ngày '+d+'/07</b>', ...EVENTS[d].map(e=>'• '+e[1])] : ['<b>Ngày '+d+'/07</b>','Không có việc khoản vay.']);
+  document.getElementById('calDetail').innerHTML = '<h3>📌 Việc trong ngày</h3><div style="font-size:12px;line-height:2">'+det.join('<br>')+'</div>';
+};
+showDay(10);
+document.querySelectorAll('.day[data-d]').forEach(el => el.addEventListener('click', () => {
+  document.querySelectorAll('.day.sel').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel'); showDay(+el.dataset.d);
+}));
+
+// ═══ Rủi ro: concentration bars ═══
+document.getElementById('concBars').innerHTML = whoE.map(([w,b],i) => {
+  const pct = (b/total*100).toFixed(0);
+  const col = pct>50?'var(--red)':pct>25?'var(--amber)':'var(--teal)';
+  return `<div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span class="b">${w}</span><span>${fmt(b)} · ${pct}%</span></div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div></div>`;
+}).join('');
+
+// ═══ Dòng tiền ═══
+const days30 = [], needs = [];
+for (let i=1;i<=30;i++) {
+  const dt = new Date(TODAY); dt.setDate(dt.getDate()+i);
+  const dd = dt.getDate(), mm = dt.getMonth()+1;
+  days30.push(dd+'/'+mm);
+  let n = 0;
+  LOANS.forEach(l => { if (l.day===dd && !(mm===8&&dd>6)) n += mInt(l); });
+  if (mm===7&&dd===18) n += 5500; // kịch bản xấu B1
+  if (mm===8&&dd===5) n += 540;   // kỳ Nhà 40 gốc+lãi
+  needs.push(Math.round(n));
+}
+new Chart(ch8, { type:'bar', data:{ labels:days30, datasets:[{ data:needs, backgroundColor:needs.map(n=>n>1000?P.red:n>100?P.amber:P.teal), borderRadius:3 }] },
+  options:{ maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>' Cần: '+fmt(c.raw) } } }, scales:{ y:{ type:'logarithmic', ticks:{ callback:v=>[10,100,1000,10000].includes(v)?fmt(v):'' } }, x:{ ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:10 } } } } });
+
+document.getElementById('weekBars').innerHTML = [
+  ['08–14/07', 126, 'var(--amber)'], ['15–21/07', 240, 'var(--amber)'], ['22–28/07', 22, 'var(--teal)'], ['29/07–06/08', 583, 'var(--red)'],
+].map(([w,v,c]) => `<div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span class="b">${w}</span><span>${v} tr</span></div><div class="bar-track"><div class="bar-fill" style="width:${Math.min(v/6,100)}%;background:${c}"></div></div></div>`).join('');
+
+// ═══ Tab switching ═══
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on');
+  document.getElementById('p-'+t.dataset.p).classList.add('on');
+}));
+</script>
+</body>
+</html>
