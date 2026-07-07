@@ -4,7 +4,7 @@ import { useLoanData } from '../hooks/useLoanData';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { logActivity } from '../lib/audit';
-import type { Loan } from '../lib/types';
+import type { Loan, LoanBorrower, LoanCollateral } from '../lib/types';
 import { LoanDashboardTab } from '../components/loans/LoanDashboardTab';
 import { LoanCalendarTab } from '../components/loans/LoanCalendarTab';
 import { LoanListTab } from '../components/loans/LoanListTab';
@@ -31,8 +31,8 @@ interface Props {
 
 // ── Form mac dinh ────────────────────────────────────────────────
 const emptyForm: Omit<Loan, 'id' | 'created_at' | 'updated_at'> = {
-  label: '', bank_name: '', borrower_name: '', borrower_type: 'bank',
-  collateral: null, principal: 0, interest_rate: 0, rate_type: 'floating',
+  label: '', bank_name: '', borrower_id: null, borrower_name: '', borrower_type: 'bank',
+  collateral_id: null, collateral: null, principal: 0, interest_rate: 0, rate_type: 'floating',
   base_rate: null, margin: null, repayment_type: 'interest_only',
   term_months: 3, payment_day: 20, disbursement_date: null, maturity_date: null,
   proxy_account: null, status: 'active', notes: null,
@@ -42,7 +42,7 @@ const emptyForm: Omit<Loan, 'id' | 'created_at' | 'updated_at'> = {
 export default function Loans({ toast }: Props) {
   const { user, token } = useAuth();
   const data = useLoanData();
-  const { loans, confirmations, rateHistory, payments, renewals, disbursements, loading, reload } = data;
+  const { loans, confirmations, rateHistory, payments, renewals, disbursements, borrowers, collaterals, loading, reload, loadBorrowers, loadCollaterals } = data;
   const [tab, setTab] = useState<LoanTab>('dashboard');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -62,15 +62,15 @@ export default function Loans({ toast }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.label.trim() || !form.bank_name.trim() || !form.borrower_name.trim()) {
+    if (!form.label.trim() || !form.bank_name.trim() || !form.borrower_id) {
       toast('Vui lòng nhập đủ tên khoản vay, ngân hàng, người đứng tên');
       return;
     }
     if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
     setSaving(true);
     const payload: Record<string, unknown> = {
-      label: form.label, bank_name: form.bank_name, borrower_name: form.borrower_name,
-      borrower_type: form.borrower_type, collateral: form.collateral,
+      label: form.label, bank_name: form.bank_name, borrower_id: form.borrower_id,
+      borrower_type: form.borrower_type, collateral_id: form.collateral_id,
       principal: Number(form.principal) || 0, interest_rate: Number(form.interest_rate) || 0,
       rate_type: form.rate_type,
       base_rate: form.base_rate != null ? Number(form.base_rate) : null,
@@ -180,6 +180,9 @@ export default function Loans({ toast }: Props) {
           form={form} setForm={setForm}
           editingId={editingId} saving={saving}
           onSave={handleSave} onClose={() => setFormOpen(false)}
+          borrowers={borrowers} collaterals={collaterals}
+          onBorrowersChanged={loadBorrowers} onCollateralsChanged={loadCollaterals}
+          token={token} toast={toast}
         />
       )}
     </div>
@@ -189,16 +192,42 @@ export default function Loans({ toast }: Props) {
 // ══════════════════════════════════════════════════════════════════════
 // Loan form modal
 // ══════════════════════════════════════════════════════════════════════
-function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose }: {
+function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose, borrowers, collaterals, onBorrowersChanged, onCollateralsChanged, token, toast }: {
   form: Omit<Loan, 'id' | 'created_at' | 'updated_at'>;
   setForm: React.Dispatch<React.SetStateAction<typeof form>>;
   editingId: string | null;
   saving: boolean;
   onSave: () => void;
   onClose: () => void;
+  borrowers: LoanBorrower[];
+  collaterals: LoanCollateral[];
+  onBorrowersChanged: () => Promise<void>;
+  onCollateralsChanged: () => Promise<void>;
+  token: string | null;
+  toast: (msg: string) => void;
 }) {
   const setF = (field: string, value: string | number | boolean | null) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  const addBorrower = async (name: string, type: 'personal' | 'company') => {
+    if (!token) { toast('Phiên đăng nhập hết hạn'); return null; }
+    const { data: id, error } = await supabase.rpc('admin_upsert_borrower', {
+      p_token: token, p_id: null, p_name: name.trim(), p_type: type, p_note: null,
+    });
+    if (error) { toast('Lỗi: ' + error.message); return null; }
+    await onBorrowersChanged();
+    return id as string;
+  };
+
+  const addCollateral = async (name: string) => {
+    if (!token) { toast('Phiên đăng nhập hết hạn'); return null; }
+    const { data: id, error } = await supabase.rpc('admin_upsert_collateral', {
+      p_token: token, p_id: null, p_name: name.trim(), p_note: null,
+    });
+    if (error) { toast('Lỗi: ' + error.message); return null; }
+    await onCollateralsChanged();
+    return id as string;
+  };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 pt-[5vh] overflow-y-auto" onClick={onClose}>
@@ -211,7 +240,9 @@ function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose }: {
         <div className="px-5 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
           <Field label="Tên khoản vay *" value={form.label} onChange={v => setF('label', v)} placeholder="VD: Lô B1, Nhà 40..." />
           <Field label="Ngân hàng / Nguồn vay *" value={form.bank_name} onChange={v => setF('bank_name', v)} placeholder="VD: Sacombank, ACB..." />
-          <Field label="Người đứng tên vay *" value={form.borrower_name} onChange={v => setF('borrower_name', v)} placeholder="VD: Chị Tâm, Bác Kiệm, Công ty..." />
+          <BorrowerSelect value={form.borrower_id} borrowers={borrowers}
+            onChange={(id, name) => { setF('borrower_id', id); setF('borrower_name', name); }}
+            onAddNew={addBorrower} />
 
           <div className="grid grid-cols-2 gap-3">
             <SelectField label="Nguồn vay" value={form.borrower_type} onChange={v => setF('borrower_type', v)} options={[
@@ -226,7 +257,9 @@ function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose }: {
             ]} />
           </div>
 
-          <Field label="Tài sản đảm bảo (sổ đỏ)" value={form.collateral || ''} onChange={v => setF('collateral', v || null)} />
+          <CollateralSelect value={form.collateral_id} collaterals={collaterals}
+            onChange={(id, name) => { setF('collateral_id', id); setF('collateral', name); }}
+            onAddNew={addCollateral} />
 
           <div className="grid grid-cols-3 gap-3">
             <Field label="Dư nợ gốc (VND)" value={String(form.principal)} onChange={v => setF('principal', Number(v) || 0)} type="number" />
@@ -312,6 +345,113 @@ function Field({ label, value, onChange, type = 'text', placeholder }: {
         placeholder={placeholder}
         className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-[12px] focus:ring-1 focus:ring-blue-300 focus:border-blue-300 outline-none"
       />
+    </div>
+  );
+}
+
+const ADD_NEW = '__add_new__';
+
+function BorrowerSelect({ value, borrowers, onChange, onAddNew }: {
+  value: string | null;
+  borrowers: LoanBorrower[];
+  onChange: (id: string, name: string) => void;
+  onAddNew: (name: string, type: 'personal' | 'company') => Promise<string | null>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState<'personal' | 'company'>('personal');
+
+  const handleSelect = (v: string) => {
+    if (v === ADD_NEW) { setAdding(true); setNewName(''); return; }
+    const b = borrowers.find(b => b.id === v);
+    if (b) onChange(b.id, b.name);
+  };
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    const id = await onAddNew(newName, newType);
+    if (id) { onChange(id, newName.trim()); setAdding(false); }
+  };
+
+  if (adding) {
+    return (
+      <div>
+        <label className="block text-[11px] text-gray-500 mb-1">Người đứng tên vay *</label>
+        <div className="flex gap-2">
+          <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="VD: Chị Tâm, Bác Kiệm, Công ty..."
+            className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-[12px] focus:ring-1 focus:ring-blue-300 focus:border-blue-300 outline-none" />
+          <select value={newType} onChange={e => setNewType(e.target.value as 'personal' | 'company')}
+            className="px-2 py-1.5 border border-gray-200 rounded-lg text-[12px] bg-white outline-none">
+            <option value="personal">Cá nhân</option>
+            <option value="company">Công ty</option>
+          </select>
+          <button type="button" onClick={handleAdd} className="px-3 py-1.5 bg-blue-600 text-white text-[12px] rounded-lg">Lưu</button>
+          <button type="button" onClick={() => setAdding(false)} className="px-2 py-1.5 text-gray-400 text-[12px]">Huỷ</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-[11px] text-gray-500 mb-1">Người đứng tên vay *</label>
+      <select value={value || ''} onChange={e => handleSelect(e.target.value)}
+        className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-[12px] focus:ring-1 focus:ring-blue-300 focus:border-blue-300 outline-none bg-white">
+        <option value="" disabled>Chọn người đứng tên vay...</option>
+        {borrowers.map(b => <option key={b.id} value={b.id}>{b.name}{b.borrower_type === 'company' ? ' (Công ty)' : ''}</option>)}
+        <option value={ADD_NEW}>+ Thêm người đứng tên mới…</option>
+      </select>
+    </div>
+  );
+}
+
+function CollateralSelect({ value, collaterals, onChange, onAddNew }: {
+  value: string | null;
+  collaterals: LoanCollateral[];
+  onChange: (id: string | null, name: string | null) => void;
+  onAddNew: (name: string) => Promise<string | null>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const handleSelect = (v: string) => {
+    if (v === ADD_NEW) { setAdding(true); setNewName(''); return; }
+    if (v === '') { onChange(null, null); return; }
+    const c = collaterals.find(c => c.id === v);
+    if (c) onChange(c.id, c.name);
+  };
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    const id = await onAddNew(newName);
+    if (id) { onChange(id, newName.trim()); setAdding(false); }
+  };
+
+  if (adding) {
+    return (
+      <div>
+        <label className="block text-[11px] text-gray-500 mb-1">Tài sản đảm bảo (sổ đỏ)</label>
+        <div className="flex gap-2">
+          <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="VD: Nhà 40, Lô B1..."
+            className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-[12px] focus:ring-1 focus:ring-blue-300 focus:border-blue-300 outline-none" />
+          <button type="button" onClick={handleAdd} className="px-3 py-1.5 bg-blue-600 text-white text-[12px] rounded-lg">Lưu</button>
+          <button type="button" onClick={() => setAdding(false)} className="px-2 py-1.5 text-gray-400 text-[12px]">Huỷ</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-[11px] text-gray-500 mb-1">Tài sản đảm bảo (sổ đỏ)</label>
+      <select value={value || ''} onChange={e => handleSelect(e.target.value)}
+        className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-[12px] focus:ring-1 focus:ring-blue-300 focus:border-blue-300 outline-none bg-white">
+        <option value="">— Không có —</option>
+        {collaterals.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        <option value={ADD_NEW}>+ Thêm tài sản mới…</option>
+      </select>
     </div>
   );
 }

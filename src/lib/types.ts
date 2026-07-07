@@ -934,12 +934,29 @@ export type LoanRateType = 'fixed' | 'floating';
 export type LoanRepaymentType = 'interest_only' | 'reducing' | 'emi';
 export type LoanStatus = 'active' | 'closed' | 'restructured';
 
+export interface LoanBorrower {
+  id: string;
+  name: string;
+  borrower_type: 'personal' | 'company';
+  note: string | null;
+  created_at: string;
+}
+
+export interface LoanCollateral {
+  id: string;
+  name: string;
+  note: string | null;
+  created_at: string;
+}
+
 export interface Loan {
   id: string;
   label: string;
   bank_name: string;
+  borrower_id: string | null;
   borrower_name: string;
   borrower_type: LoanBorrowerType;
+  collateral_id: string | null;
   collateral: string | null;
   principal: number;
   interest_rate: number;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Loan, LoanMonthlyConfirmation, LoanRateHistory, LoanPaymentHistory, LoanRenewal, LoanDisbursement, ProxyLedgerEntry } from '../lib/types';
+import type { Loan, LoanMonthlyConfirmation, LoanRateHistory, LoanPaymentHistory, LoanRenewal, LoanDisbursement, ProxyLedgerEntry, LoanBorrower, LoanCollateral } from '../lib/types';
 
 export function useLoanData() {
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -10,6 +10,8 @@ export function useLoanData() {
   const [renewals, setRenewals] = useState<LoanRenewal[]>([]);
   const [disbursements, setDisbursements] = useState<LoanDisbursement[]>([]);
   const [proxyLedger, setProxyLedger] = useState<ProxyLedgerEntry[]>([]);
+  const [borrowers, setBorrowers] = useState<LoanBorrower[]>([]);
+  const [collaterals, setCollaterals] = useState<LoanCollateral[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadLoans = useCallback(async () => {
@@ -53,11 +55,21 @@ export function useLoanData() {
     if (data) setDisbursements(data as LoanDisbursement[]);
   }, []);
 
+  const loadBorrowers = useCallback(async () => {
+    const { data } = await supabase.from('loan_borrowers').select('*').order('name', { ascending: true });
+    if (data) setBorrowers(data as LoanBorrower[]);
+  }, []);
+
+  const loadCollaterals = useCallback(async () => {
+    const { data } = await supabase.from('loan_collaterals').select('*').order('name', { ascending: true });
+    if (data) setCollaterals(data as LoanCollateral[]);
+  }, []);
+
   const reload = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadLoans(), loadConfirmations(), loadRateHistory(), loadPayments(), loadRenewals(), loadProxyLedger(), loadDisbursements()]);
+    await Promise.all([loadLoans(), loadConfirmations(), loadRateHistory(), loadPayments(), loadRenewals(), loadProxyLedger(), loadDisbursements(), loadBorrowers(), loadCollaterals()]);
     setLoading(false);
-  }, [loadLoans, loadConfirmations, loadRateHistory, loadPayments, loadRenewals, loadProxyLedger, loadDisbursements]);
+  }, [loadLoans, loadConfirmations, loadRateHistory, loadPayments, loadRenewals, loadProxyLedger, loadDisbursements, loadBorrowers, loadCollaterals]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -69,6 +81,8 @@ export function useLoanData() {
     renewals, setRenewals,
     disbursements, setDisbursements,
     proxyLedger, setProxyLedger,
+    borrowers, setBorrowers,
+    collaterals, setCollaterals,
     loading,
     reload,
     loadLoans,
@@ -78,5 +92,7 @@ export function useLoanData() {
     loadRenewals,
     loadProxyLedger,
     loadDisbursements,
+    loadBorrowers,
+    loadCollaterals,
   };
 }
