@@ -1,7 +1,7 @@
 // Thanh ket noi Google Tasks + Google Calendar — hien trong feed "Viec cua toi".
 // Chua ket noi: nut "Ket noi Google". Da ket noi: email + chon lich Calendar + Dong bo ngay / Ngat.
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Link2, Unlink, CalendarDays } from 'lucide-react'
+import { RefreshCw, Link2, Unlink, CalendarDays, Settings } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import {
   getGoogleSyncStatus, startGoogleConnect, disconnectGoogle, syncGoogleNow, pulledChanges,
@@ -159,12 +159,21 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
                 <option key={c.id} value={c.id}>{c.summary}{c.primary ? ' (lịch chính)' : ''}</option>
               ))}
             </select>
+          ) : status.calendarSummary ? (
+            <div className="flex items-center gap-1 text-[10.5px] text-[#777]">
+              <CalendarDays size={11} />
+              <span className="truncate max-w-[150px]">Lịch: {status.calendarSummary}</span>
+              <button onClick={openCalendarPicker} disabled={busy || calLoading} title="Đổi lịch Google Calendar"
+                className="flex items-center justify-center w-5 h-5 rounded-md border border-[#E8E7E2] bg-white text-[#999] hover:text-[#0c2340] hover:border-blue-300 transition disabled:opacity-40">
+                <Settings size={10} className={calLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
           ) : (
             <button onClick={openCalendarPicker} disabled={busy || calLoading}
               title="Chọn lịch Google Calendar để hiện việc"
               className="flex items-center gap-1 text-[10.5px] font-bold px-2.5 py-1 rounded-md border border-[#E8E7E2] bg-white text-[#0c2340] hover:border-blue-300 transition disabled:opacity-40 max-w-[190px]">
               <CalendarDays size={11} className={calLoading ? 'animate-pulse' : ''} />
-              <span className="truncate">{status.calendarSummary ? `Lịch: ${status.calendarSummary}` : 'Chọn lịch Calendar'}</span>
+              <span className="truncate">Chọn lịch Calendar</span>
             </button>
           )}
           <button onClick={handleSyncNow} disabled={busy}

@@ -73,7 +73,7 @@ function nextDayStr(day: string): string {
 function toEventBody(t: WorkTaskRow): GoogleEventBody {
   const day = t.due_date || new Date().toISOString().slice(0, 10);
   return {
-    summary: `${DONE_STATUSES.has(t.status) ? '✅ ' : ''}${t.title || '(Không tiêu đề)'}`,
+    summary: `${DONE_STATUSES.has(t.status) ? '🎯 ' : ''}${t.title || '(Không tiêu đề)'}`,
     description: t.notes || '',
     start: { date: day },
     end: { date: nextDayStr(day) },
