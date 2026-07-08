@@ -18,6 +18,7 @@ import { QuoteModal } from '../components/workspace/QuoteModal';
 import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
+import { queueGoogleSync } from '../lib/googleSync';
 import { useRegions } from '../hooks/useRegions';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -83,7 +84,7 @@ function RailCard({ title, icon, count, action, children }: {
 }
 
 export default function Workspace({ clients, pipeline, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { regions } = useRegions();
   const { branches, updateBranch } = useBranchData();
 
@@ -162,6 +163,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
       setShowManualAdd(false);
       setManualSearch('');
       toast(`Đã tạo việc tái ký cho ${client.name}`);
+      queueGoogleSync(token);
     }
   }
 
@@ -189,6 +191,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
       setRefreshToken(t => t + 1);
       toast(`Đã tạo ${toInsert.length} việc tái ký`);
       setSelectedContractIds(new Set());
+      queueGoogleSync(token);
     }
   }
 

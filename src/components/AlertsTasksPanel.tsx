@@ -4,6 +4,8 @@ import type { Client, CooperationSuspensionRequest, WorkTask, WorkTaskComment } 
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS, type DocStatus, type TaskStatus as WTaskStatus } from '../lib/types';
 import { daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import { queueGoogleSync } from '../lib/googleSync';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done';
 
@@ -45,6 +47,7 @@ interface Props {
 }
 
 export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate, clientToBranch }: Props) {
+  const { token } = useAuth();
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
@@ -234,6 +237,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     if (detailTask?.id === task.id) setDetailTask(null);
     setDeleteConfirm(null);
     setDeleting(false);
+    queueGoogleSync(token);
   };
 
   const openDetail = async (task: DashboardTask) => {

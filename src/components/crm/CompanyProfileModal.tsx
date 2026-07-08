@@ -10,6 +10,7 @@ import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, Pipeli
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
+import { queueGoogleSync } from '../../lib/googleSync';
 import { logActivity } from '../../lib/audit';
 import ContactsTab from '../ContactsTab';
 
@@ -103,7 +104,7 @@ export interface CompanyProfileModalProps {
 }
 
 export function CompanyProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange }: CompanyProfileModalProps) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
@@ -400,6 +401,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
     const { error } = await supabase.from('work_tasks').update({ status, updated_at: updatedAt, completed_at: null }).eq('id', id);
     if (error) { toast('Lỗi: ' + error.message); return; }
     setWorkTasks(prev => prev.map(t => t.id === id ? { ...t, status, completed_at: null } : t));
+    queueGoogleSync(token);
   };
 
   const confirmTaskDone = async () => {
@@ -422,6 +424,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
       const { error } = await supabase.from('work_tasks').update({ status: 'done', notes: note, completed_at: updatedAt, updated_at: updatedAt }).eq('id', reportTarget.id);
       if (error) { toast('Lỗi: ' + error.message); return; }
       setWorkTasks(prev => prev.map(t => t.id === reportTarget.id ? { ...t, status: 'done', notes: note, completed_at: updatedAt } : t));
+      queueGoogleSync(token);
     }
     setReportTarget(null);
     setReportNote('');

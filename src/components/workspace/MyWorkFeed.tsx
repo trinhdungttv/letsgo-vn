@@ -13,6 +13,8 @@ import { useAuth } from '../../lib/auth'
 import type { Client, WorkTask, TaskStatus, WorkTaskComment } from '../../lib/types'
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
+import { queueGoogleSync, syncGoogleNow, pulledChanges } from '../../lib/googleSync'
+import { GoogleSyncCard } from './GoogleSyncCard'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -126,8 +128,27 @@ interface Props {
 }
 
 export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const isAdmin = user?.role === 'admin'
+
+  // ---- Đồng bộ Google Tasks ----
+  // googleReload tăng khi sync kéo VỀ thay đổi từ Google -> effect tải data chạy lại.
+  const [googleReload, setGoogleReload] = useState(0)
+  const onGooglePulled = () => setGoogleReload(v => v + 1)
+  // Gọi sau mỗi thao tác tạo/sửa/xoá work_tasks: đẩy thay đổi lên Google (gom 2.5s, fire-and-forget).
+  const pingGoogle = () => queueGoogleSync(token, onGooglePulled)
+  // Poll chiều Google -> web: khi vào trang + mỗi 5 phút (Google Tasks không có webhook).
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const pull = async () => {
+      const res = await syncGoogleNow(token)
+      if (!cancelled && pulledChanges(res?.summary) > 0) setGoogleReload(v => v + 1)
+    }
+    pull()
+    const timer = setInterval(pull, 5 * 60 * 1000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [token])
 
   // ---- Data ----
   const [myTasks, setMyTasks] = useState<WorkTask[]>([])
@@ -165,7 +186,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       }
     })()
     return () => { cancelled = true }
-  }, [user, refreshToken])
+  }, [user, refreshToken, googleReload])
 
   // ---- Ẩn việc gắn KH đã ngưng hợp tác ----
   const suspendedClientIds = useMemo(
@@ -322,7 +343,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
         user_id: user.id, client_id: null, title: qTitle.trim(), task_type: 'Văn phòng',
         due_date: qDue || todayStr(), priority: 'medium', kcn: null, notes: null, status: 'pending',
       }).select().single()
-      if (!error && data) setMyTasks(prev => [data as WorkTask, ...prev])
+      if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]); pingGoogle() }
     } else {
       const { data, error } = await supabase.from('workspace_tasks').insert({
         title: qTitle.trim(), type: qKind === 'ws_doc' ? 'doc' : 'task',
@@ -382,6 +403,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       resetFullForm()
       setFullForm(false)
       toast('Đã lưu công việc')
+      pingGoogle()
     }
   }
 
@@ -417,6 +439,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     setDoneWork(prev => [{ ...t, ...patch } as WorkTask, ...prev])
     setReportItem(null)
     await supabase.from('work_tasks').update(patch).eq('id', t.id)
+    pingGoogle()
     if (t.task_type === 'Tái ký HĐ' && newContractEnd && t.client_id) {
       await supabase.from('clients').update({ contract_end: newContractEnd }).eq('id', t.client_id)
       const client = clients.find(c => c.id === t.client_id)
@@ -433,6 +456,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     if (status === 'done') { startWorkDone(t); return }
     setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, status } : x))
     await supabase.from('work_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', t.id)
+    pingGoogle()
   }
 
   async function changeDocStatus(t: WorkTask, step: typeof DOC_STATUS_STEPS[number]) {
@@ -447,6 +471,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     }
     setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key, status: 'in_progress', updated_at: now } : x))
     await supabase.from('work_tasks').update({ doc_status: step.key, status: 'in_progress', updated_at: now }).eq('id', t.id)
+    pingGoogle()
   }
 
   async function submitSuspend() {
@@ -468,6 +493,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     // Đánh dấu task Ngưng HĐ — còn hiện 1 ngày (badge đỏ) rồi tự ẩn theo quy tắc ân hạn
     const now2 = new Date().toISOString()
     await supabase.from('work_tasks').update({ doc_status: 'ngung_hd', status: 'ngung_hd', updated_at: now2 }).eq('id', suspendTask.id)
+    pingGoogle()
     setMyTasks(prev => prev.map(x => x.id === suspendTask.id ? { ...x, doc_status: 'ngung_hd', status: 'ngung_hd' as TaskStatus, updated_at: now2 } : x))
     setSuspendTask(null)
     setSuspendSaving(false)
@@ -477,6 +503,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
   async function deleteWork(id: string) {
     setMyTasks(prev => prev.filter(t => t.id !== id))
     await supabase.from('work_tasks').delete().eq('id', id)
+    pingGoogle()
   }
 
   // ---- ③ «Chờ ai?»: suy từ trạng thái hồ sơ — Chưa/Đang soạn = đến lượt mình, Chờ duyệt = nội bộ, Chờ KH ký = khách ----
@@ -511,8 +538,10 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     d.setDate(d.getDate() + days)
     const nd = d.toISOString().split('T')[0]
     if (it.work) {
-      setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, due_date: nd } : x))
-      await supabase.from('work_tasks').update({ due_date: nd }).eq('id', it.id)
+      const now = new Date().toISOString()
+      setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, due_date: nd, updated_at: now } : x))
+      await supabase.from('work_tasks').update({ due_date: nd, updated_at: now }).eq('id', it.id)
+      pingGoogle()
     } else if (it.ws) {
       setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, deadline: nd } : x))
       await supabase.from('workspace_tasks').update({ deadline: nd }).eq('id', it.id)
@@ -833,6 +862,9 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             ))}
           </div>
         </div>
+
+        {/* Đồng bộ Google Tasks */}
+        <GoogleSyncCard toast={toast} onPulled={onGooglePulled} />
 
         {/* ① Radar 7 ngày */}
         <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto">
