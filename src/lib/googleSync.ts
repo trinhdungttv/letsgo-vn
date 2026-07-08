@@ -1,4 +1,4 @@
-// Client goi cac endpoint /api/google/* (Vercel Function) de dong bo work_tasks <-> Google Tasks.
+// Client goi cac endpoint /api/google/* (Vercel Function) de dong bo work_tasks <-> Google Calendar event.
 // Luu y: /api chi ton tai khi deploy Vercel (giong gemini) — chay `vite dev` thuan se khong co,
 // moi ham deu nuot loi mang de khong anh huong luong chinh.
 
@@ -14,11 +14,7 @@ export interface GoogleSyncSummary {
   pushedCreated: number;
   pushedUpdated: number;
   pushedDeleted: number;
-  pulledCreated: number;
   pulledUpdated: number;
-  pulledDeleted: number;
-  calendarUpserted: number;
-  calendarDeleted: number;
   calendarError?: string;
 }
 
@@ -73,10 +69,10 @@ export async function startGoogleConnect(token: string): Promise<string | null> 
   return res?.error || 'Không gọi được máy chủ đồng bộ (chỉ hoạt động trên bản deploy Vercel)';
 }
 
-// Tong so thay doi keo VE web — neu > 0 thi nen reload danh sach task.
+// Tong so thay doi keo VE web (Calendar -> web) — neu > 0 thi nen reload danh sach task.
 export function pulledChanges(s: GoogleSyncSummary | undefined | null): number {
   if (!s) return 0;
-  return s.pulledCreated + s.pulledUpdated + s.pulledDeleted;
+  return s.pulledUpdated;
 }
 
 export async function syncGoogleNow(token: string): Promise<{ connected: boolean; summary?: GoogleSyncSummary } | null> {

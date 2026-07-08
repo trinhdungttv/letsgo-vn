@@ -1,4 +1,4 @@
-// Thanh ket noi Google Tasks + Google Calendar — hien trong feed "Viec cua toi".
+// Thanh ket noi Google Calendar (mirror 2 chieu, khong dung Google Tasks) — hien trong feed "Viec cua toi".
 // Chua ket noi: nut "Ket noi Google". Da ket noi: email + chon lich Calendar + Dong bo ngay / Ngat.
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Link2, Unlink, CalendarDays, Settings } from 'lucide-react'
@@ -43,7 +43,7 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
     const qs = params.toString()
     window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`)
     if (result === 'connected') {
-      toast('Đã kết nối Google Tasks — đang đồng bộ lần đầu...')
+      toast('Đã kết nối Google Calendar — đang đồng bộ lần đầu...')
       refresh()
       if (token) syncGoogleNow(token).then(res => {
         const n = pulledChanges(res?.summary)
@@ -51,7 +51,7 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
         refresh()
       })
     } else if (result === 'denied') {
-      toast('Bạn đã từ chối cấp quyền Google Tasks')
+      toast('Bạn đã từ chối cấp quyền Google Calendar')
     } else if (result === 'expired') {
       toast('Phiên kết nối hết hạn — vui lòng thử lại')
     } else {
@@ -73,7 +73,7 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
     const res = await syncGoogleNow(token)
     setBusy(false)
     if (!res) { toast('Không gọi được máy chủ đồng bộ'); return }
-    if (!res.connected) { toast('Chưa kết nối Google Tasks'); refresh(); return }
+    if (!res.connected) { toast('Chưa kết nối Google Calendar'); refresh(); return }
     const s = res.summary
     const n = pulledChanges(s)
     if (n > 0) onPulled?.(n)
@@ -122,11 +122,11 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
 
   async function handleDisconnect() {
     if (!token || busy) return
-    if (!window.confirm('Ngắt kết nối Google Tasks? Task hai bên giữ nguyên, chỉ ngừng đồng bộ.')) return
+    if (!window.confirm('Ngắt kết nối Google Calendar? Task hai bên giữ nguyên, chỉ ngừng đồng bộ.')) return
     setBusy(true)
     const ok = await disconnectGoogle(token)
     setBusy(false)
-    toast(ok ? 'Đã ngắt kết nối Google Tasks' : 'Ngắt kết nối thất bại')
+    toast(ok ? 'Đã ngắt kết nối Google Calendar' : 'Ngắt kết nối thất bại')
     refresh()
   }
 
@@ -139,7 +139,7 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
       {status?.connected ? (
         <>
           <div className="min-w-0 flex-1 text-[11px] text-[#555]">
-            <span className="font-bold text-[#0c2340]">Google Tasks + Calendar</span>
+            <span className="font-bold text-[#0c2340]">Google Calendar</span>
             <span className="mx-1 text-[#bbb]">·</span>
             <span className="truncate">{status.email || 'đã kết nối'}</span>
             {status.lastSyncedAt && (
@@ -188,7 +188,7 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
       ) : (
         <>
           <div className="min-w-0 flex-1 text-[11px] text-[#777]">
-            Đồng bộ việc với <span className="font-bold text-[#0c2340]">Google Tasks + Calendar</span> — tạo/sửa/hoàn thành 2 chiều, hiện trên lịch bạn chọn
+            Đồng bộ việc với <span className="font-bold text-[#0c2340]">Google Calendar</span> — tạo/sửa/xoá 2 chiều, hiện trên lịch bạn chọn
           </div>
           <button onClick={handleConnect} disabled={busy}
             className="flex items-center gap-1.5 text-[10.5px] font-bold px-3 py-1 rounded-md bg-[#0c2340] text-white hover:bg-[#16345c] transition disabled:opacity-40">

@@ -1,9 +1,9 @@
 // GET tu Google sau khi user dong y: doi code lay refresh token, luu (ma hoa) vao google_connections,
-// tao/tim tasklist "LetsGo", roi redirect ve trang chu voi ?google=connected|error.
+// roi redirect ve trang chu voi ?google=connected|error.
 
 import {
   json, validateSession, decryptText, encryptText, redirectUri,
-  exchangeCode, emailFromIdToken, refreshAccessToken, ensureTasklist,
+  exchangeCode, emailFromIdToken,
   sbInsert, getConnection, sbUpdate,
 } from './_shared';
 
@@ -39,18 +39,16 @@ export default async function handler(req: Request): Promise<Response> {
 
     const email = emailFromIdToken(tokens.id_token);
     const refreshEnc = await encryptText(tokens.refresh_token);
-    const accessToken = tokens.access_token || await refreshAccessToken(tokens.refresh_token);
     const existing = await getConnection(userId);
-    const tasklistId = await ensureTasklist(accessToken, existing?.tasklist_id || null);
 
     if (existing) {
       await sbUpdate('google_connections', `id=eq.${existing.id}`, {
-        google_email: email, refresh_token_enc: refreshEnc, tasklist_id: tasklistId,
+        google_email: email, refresh_token_enc: refreshEnc,
         sync_enabled: true, updated_at: new Date().toISOString(),
       });
     } else {
       await sbInsert('google_connections', {
-        user_id: userId, google_email: email, refresh_token_enc: refreshEnc, tasklist_id: tasklistId,
+        user_id: userId, google_email: email, refresh_token_enc: refreshEnc,
       });
     }
     return backToApp(req, 'connected');

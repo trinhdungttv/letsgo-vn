@@ -1,13 +1,13 @@
-// Engine reconcile 2 chieu work_tasks <-> Google Tasks cho 1 user + mirror sang Google Calendar.
-// Nguyen tac Tasks: so updated_at (web) va .updated (Google) voi moc luu trong google_task_links;
-// ben nao doi moi hon thi thang (last-write-wins). Xoa ben nay -> xoa ben kia.
-// Calendar: MIRROR 1 chieu web -> lich user da chon (event ca ngay theo due_date, xong thi them ✅).
+// Engine reconcile 2 chieu work_tasks <-> Google Calendar event (KHONG dung Google Tasks).
+// Web thay doi (tao/sua/xoa) -> day len event tren lich user chon. Calendar doi ngay/gio/tieu de/ghi chu
+// -> keo ve web. Xoa event tren Calendar KHONG anh huong web — lan sync sau se tu tao lai (mirror tu healing).
+// Event duoc danh dau extendedProperties.private.letsgo=1 khi tao, va CHI reconcile cac event co dau nay
+// (xem listMirroredEvents trong _shared.ts) — khong dung toi event ca nhan khac cua user tren cung lich.
 // File bat dau bang "_" nen KHONG duoc deploy thanh endpoint.
 
 import {
-  GoogleTask, GoogleConnection, GoogleEventBody,
-  decryptText, refreshAccessToken, ensureTasklist, listGoogleTasks,
-  insertGoogleTask, patchGoogleTask, deleteGoogleTask,
+  GoogleConnection, GoogleEventBody, GoogleCalendarEventFull,
+  decryptText, refreshAccessToken, listMirroredEvents,
   insertCalendarEvent, patchCalendarEvent, deleteCalendarEvent,
   sbSelect, sbInsert, sbUpdate, sbDelete,
 } from './_shared';
@@ -26,41 +26,27 @@ interface WorkTaskRow {
 interface LinkRow {
   id: string;
   work_task_id: string;
-  google_task_id: string;
   google_event_id: string | null;
   web_updated_at: string | null;
   google_updated_at: string | null;
 }
 
 export interface SyncSummary {
-  pushedCreated: number;   // web -> Google Tasks: task moi
-  pushedUpdated: number;   // web -> Google Tasks: cap nhat
-  pushedDeleted: number;   // web xoa -> xoa ben Google
-  pulledCreated: number;   // Google -> web: task moi
-  pulledUpdated: number;   // Google -> web: cap nhat
-  pulledDeleted: number;   // Google xoa -> xoa ben web
-  calendarUpserted: number; // event Calendar tao/cap nhat
-  calendarDeleted: number;  // event Calendar xoa
-  calendarError?: string;   // loi Calendar (vd: thieu quyen -> can ket noi lai); Tasks van chay binh thuong
+  pushedCreated: number;   // web -> Calendar: event moi (bao gom tao lai event bi xoa tay tren Calendar)
+  pushedUpdated: number;   // web -> Calendar: cap nhat
+  pushedDeleted: number;   // web xoa -> xoa event ben Calendar
+  pulledUpdated: number;   // Calendar -> web: cap nhat ngay/tieu de/ghi chu
+  calendarError?: string;  // loi Calendar (vd: thieu quyen -> can ket noi lai)
 }
 
 const DONE_STATUSES = new Set(['done', 'ngung_hd']);
-// Chi day len Google: task chua xong, hoac xong trong 14 ngay gan day (tranh do ca lich su cu len).
+// Chi day len Calendar: task chua xong, hoac xong trong 14 ngay gan day (tranh do ca lich su cu len).
 const PUSH_DONE_WINDOW_MS = 14 * 24 * 3600 * 1000;
 
-// Danh dau task den tu web app (LetsGo) de phan biet voi task/su kien ca nhan khac cua user tren Google.
+// Danh dau task den tu web app (LetsGo) de phan biet voi viec ca nhan khac cua user tren Google.
 const ORIGIN_ICON = '🎯 ';
-function stripOriginIcon(title: string): string {
-  return title.replace(/^🎯\s*/, '');
-}
-
-function toGoogleBody(t: WorkTaskRow): Partial<GoogleTask> {
-  return {
-    title: `${ORIGIN_ICON}${t.title || '(Không tiêu đề)'}`,
-    notes: t.notes || '',
-    due: t.due_date ? `${t.due_date}T00:00:00.000Z` : undefined,
-    status: DONE_STATUSES.has(t.status) ? 'completed' : 'needsAction',
-  };
+function stripOriginIcon(s: string): string {
+  return s.replace(/^🎯\s*/, '').replace(/^✅\s*/, '').trim();
 }
 
 function shouldPushNew(t: WorkTaskRow): boolean {
@@ -83,187 +69,130 @@ function toEventBody(t: WorkTaskRow): GoogleEventBody {
     description: t.notes || '',
     start: { date: day },
     end: { date: nextDayStr(day) },
+    extendedProperties: { private: { letsgo: '1' } },
   };
 }
 
-// Google -> web: patch cac truong Google quan ly; giu nguyen in_progress neu web dang lam do va Google chua xong.
-function toWebPatch(g: GoogleTask, current: WorkTaskRow): Partial<WorkTaskRow> & { updated_at: string } {
+// Calendar -> web: chi keo ve tieu de/ghi chu/ngay — khong co khai niem hoan thanh tren Calendar event.
+function toWebPatchFromEvent(ev: GoogleCalendarEventFull, current: WorkTaskRow): Partial<WorkTaskRow> & { updated_at: string } {
   const now = new Date().toISOString();
   const patch: Partial<WorkTaskRow> & { updated_at: string } = { updated_at: now };
-  const gTitle = stripOriginIcon((g.title || '').trim()).trim();
-  if (gTitle && gTitle !== current.title) patch.title = gTitle;
-  const gNotes = (g.notes || '').trim() || null;
-  if (gNotes !== (current.notes || null)) patch.notes = gNotes;
-  if (g.due) {
-    const d = g.due.slice(0, 10);
-    if (d !== current.due_date) patch.due_date = d;
-  }
-  if (g.status === 'completed' && !DONE_STATUSES.has(current.status)) {
-    patch.status = 'done';
-    patch.completed_at = g.completed || now;
-  } else if (g.status === 'needsAction' && current.status === 'done') {
-    // Bo tich ben Google -> mo lai tren web. Rieng ngung_hd la trang thai nghiep vu, khong tu mo lai.
-    patch.status = 'pending';
-    patch.completed_at = null;
-  }
+  const evTitle = stripOriginIcon(ev.summary || '');
+  if (evTitle && evTitle !== current.title) patch.title = evTitle;
+  const evNotes = (ev.description || '').trim() || null;
+  if (evNotes !== (current.notes || null)) patch.notes = evNotes;
+  const d = ev.start?.date;
+  if (d && d !== current.due_date) patch.due_date = d;
   return patch;
 }
 
 export async function reconcile(conn: GoogleConnection): Promise<SyncSummary> {
-  const summary: SyncSummary = {
-    pushedCreated: 0, pushedUpdated: 0, pushedDeleted: 0,
-    pulledCreated: 0, pulledUpdated: 0, pulledDeleted: 0,
-    calendarUpserted: 0, calendarDeleted: 0,
-  };
+  const summary: SyncSummary = { pushedCreated: 0, pushedUpdated: 0, pushedDeleted: 0, pulledUpdated: 0 };
 
-  const accessToken = await refreshAccessToken(await decryptText(conn.refresh_token_enc));
-  const tasklistId = await ensureTasklist(accessToken, conn.tasklist_id);
-  if (tasklistId !== conn.tasklist_id) {
-    await sbUpdate('google_connections', `id=eq.${conn.id}`, { tasklist_id: tasklistId, updated_at: new Date().toISOString() });
+  if (!conn.calendar_id) {
+    // Chua chon lich -> khong co gi de dong bo, chi cap nhat moc thoi gian.
+    await sbUpdate('google_connections', `id=eq.${conn.id}`, {
+      last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    return summary;
   }
 
-  // ── Mirror Calendar: loi (vd thieu quyen vi ket noi truoc khi nang cap scope) chi tat phan Calendar,
-  //    khong lam hong dong bo Tasks.
+  const accessToken = await refreshAccessToken(await decryptText(conn.refresh_token_enc));
   const calId = conn.calendar_id;
-  let calOk = !!calId;
-  const calFail = (e: unknown) => {
-    calOk = false;
-    summary.calendarError = e instanceof Error ? e.message : String(e);
-  };
-  const calDelete = async (eventId: string | null) => {
-    if (!calOk || !eventId) return;
-    try {
-      await deleteCalendarEvent(accessToken, calId!, eventId);
-      summary.calendarDeleted++;
-    } catch (e) { calFail(e); }
-  };
-  const calUpsert = async (linkId: string, eventId: string | null, t: WorkTaskRow) => {
-    if (!calOk) return;
-    try {
-      const body = toEventBody(t);
-      if (eventId && await patchCalendarEvent(accessToken, calId!, eventId, body)) {
-        summary.calendarUpserted++;
-        return;
-      }
-      // Chua co event (hoac bi xoa tay tren Calendar) -> tao moi
-      const created = await insertCalendarEvent(accessToken, calId!, body);
-      await sbUpdate('google_task_links', `id=eq.${linkId}`, { google_event_id: created.id });
-      summary.calendarUpserted++;
-    } catch (e) { calFail(e); }
-  };
 
-  const [webTasks, links, gTasks] = await Promise.all([
+  let events: GoogleCalendarEventFull[];
+  try {
+    events = await listMirroredEvents(accessToken, calId);
+  } catch (e) {
+    summary.calendarError = e instanceof Error ? e.message : String(e);
+    return summary;
+  }
+
+  const [webTasks, links] = await Promise.all([
     sbSelect<WorkTaskRow>('work_tasks', `user_id=eq.${conn.user_id}&select=id,user_id,title,due_date,notes,status,completed_at,updated_at`),
-    sbSelect<LinkRow>('google_task_links', `user_id=eq.${conn.user_id}&select=id,work_task_id,google_task_id,google_event_id,web_updated_at,google_updated_at`),
-    listGoogleTasks(accessToken, tasklistId),
+    sbSelect<LinkRow>('google_task_links', `user_id=eq.${conn.user_id}&select=id,work_task_id,google_event_id,web_updated_at,google_updated_at`),
   ]);
 
   const webById = new Map(webTasks.map(t => [t.id, t]));
-  const gById = new Map(gTasks.map(t => [t.id, t]));
+  const evById = new Map(events.map(e => [e.id, e]));
   const linkedWebIds = new Set(links.map(l => l.work_task_id));
-  const linkedGoogleIds = new Set(links.map(l => l.google_task_id));
+
+  const fail = (e: unknown) => { summary.calendarError = e instanceof Error ? e.message : String(e); };
 
   // ── 1. Cac cap da lien ket ──
   for (const link of links) {
     const web = webById.get(link.work_task_id);
-    const g = gById.get(link.google_task_id);
-    const gAlive = g && !g.deleted;
+    const ev = link.google_event_id ? evById.get(link.google_event_id) : undefined;
+    const evAlive = !!ev && ev.status !== 'cancelled';
 
-    if (!web && !gAlive) {                    // ca 2 ben deu mat -> don link + event
-      await calDelete(link.google_event_id);
+    if (!web) {
+      // Web xoa -> xoa event (neu con) + xoa link.
+      if (evAlive) {
+        try {
+          await deleteCalendarEvent(accessToken, calId, link.google_event_id!);
+          summary.pushedDeleted++;
+        } catch (e) { fail(e); }
+      }
       await sbDelete('google_task_links', `id=eq.${link.id}`);
       continue;
     }
-    if (!web && gAlive) {                     // web xoa -> xoa Google task + event
-      await deleteGoogleTask(accessToken, tasklistId, link.google_task_id);
-      await calDelete(link.google_event_id);
-      await sbDelete('google_task_links', `id=eq.${link.id}`);
-      summary.pushedDeleted++;
-      continue;
-    }
-    if (web && !gAlive) {                     // Google xoa -> xoa web + event
-      await sbDelete('work_tasks', `id=eq.${web.id}`);
-      await calDelete(link.google_event_id);
-      await sbDelete('google_task_links', `id=eq.${link.id}`);
-      summary.pulledDeleted++;
+
+    if (!evAlive) {
+      // Event bi xoa/mat tren Calendar -> KHONG dung toi web, tu tao lai (mirror tu healing).
+      if (shouldPushNew(web)) {
+        try {
+          const created = await insertCalendarEvent(accessToken, calId, toEventBody(web));
+          await sbUpdate('google_task_links', `id=eq.${link.id}`, {
+            google_event_id: created.id, web_updated_at: web.updated_at,
+            google_updated_at: new Date().toISOString(),
+          });
+          summary.pushedCreated++;
+        } catch (e) { fail(e); }
+      }
       continue;
     }
 
     // Ca 2 con song: xet ben nao doi so voi lan sync truoc.
-    const webChanged = !link.web_updated_at || new Date(web!.updated_at) > new Date(link.web_updated_at);
-    const gChanged = !link.google_updated_at || new Date(g!.updated || 0) > new Date(link.google_updated_at);
+    const webChanged = !link.web_updated_at || new Date(web.updated_at) > new Date(link.web_updated_at);
+    const gChanged = !link.google_updated_at || new Date(ev!.updated || 0) > new Date(link.google_updated_at);
+    if (!webChanged && !gChanged) continue;
 
-    if (!webChanged && !gChanged) {
-      // Khong doi gi — chi backfill event neu user vua chon lich (link cu chua co event).
-      if (calId && !link.google_event_id && shouldPushNew(web!)) {
-        await calUpsert(link.id, null, web!);
-      }
-      continue;
-    }
-
-    const webWins = webChanged && (!gChanged || new Date(web!.updated_at) >= new Date(g!.updated || 0));
+    const webWins = webChanged && (!gChanged || new Date(web.updated_at) >= new Date(ev!.updated || 0));
     if (webWins) {
-      const patched = await patchGoogleTask(accessToken, tasklistId, g!.id, toGoogleBody(web!));
-      summary.pushedUpdated++;
-      await sbUpdate('google_task_links', `id=eq.${link.id}`, {
-        web_updated_at: web!.updated_at, google_updated_at: patched.updated || new Date().toISOString(),
-      });
-      await calUpsert(link.id, link.google_event_id, web!);
+      try {
+        await patchCalendarEvent(accessToken, calId, link.google_event_id!, toEventBody(web));
+        summary.pushedUpdated++;
+        await sbUpdate('google_task_links', `id=eq.${link.id}`, {
+          web_updated_at: web.updated_at, google_updated_at: new Date().toISOString(),
+        });
+      } catch (e) { fail(e); }
     } else {
-      const patch = toWebPatch(g!, web!);
-      if (Object.keys(patch).length > 1) {    // co thay doi thuc su (ngoai updated_at)
-        await sbUpdate('work_tasks', `id=eq.${web!.id}`, patch);
+      const patch = toWebPatchFromEvent(ev!, web);
+      if (Object.keys(patch).length > 1) {
+        await sbUpdate('work_tasks', `id=eq.${web.id}`, patch);
         summary.pulledUpdated++;
         await sbUpdate('google_task_links', `id=eq.${link.id}`, {
-          web_updated_at: patch.updated_at, google_updated_at: g!.updated || new Date().toISOString(),
+          web_updated_at: patch.updated_at, google_updated_at: ev!.updated || new Date().toISOString(),
         });
-        await calUpsert(link.id, link.google_event_id, { ...web!, ...patch } as WorkTaskRow);
-      } else {                                // khong doi gi dang ke, chi cap moc de khoi xet lai
+      } else {
         await sbUpdate('google_task_links', `id=eq.${link.id}`, {
-          web_updated_at: web!.updated_at, google_updated_at: g!.updated || new Date().toISOString(),
+          web_updated_at: web.updated_at, google_updated_at: ev!.updated || new Date().toISOString(),
         });
-        if (calId && !link.google_event_id && shouldPushNew(web!)) {
-          await calUpsert(link.id, null, web!);
-        }
       }
     }
   }
 
-  // ── 2. Task web chua co link -> tao ben Google (Tasks + event Calendar) ──
+  // ── 2. Task web chua co link -> tao event moi tren Calendar ──
   for (const t of webTasks) {
     if (linkedWebIds.has(t.id) || !shouldPushNew(t)) continue;
-    const created = await insertGoogleTask(accessToken, tasklistId, toGoogleBody(t));
-    summary.pushedCreated++;
-    const linkRows = await sbInsert<LinkRow>('google_task_links', {
-      user_id: conn.user_id, work_task_id: t.id, google_task_id: created.id,
-      web_updated_at: t.updated_at, google_updated_at: created.updated || new Date().toISOString(),
-    });
-    await calUpsert(linkRows[0].id, null, t);
-  }
-
-  // ── 3. Task Google chua co link (tao truc tiep trong Google Tasks) -> tao tren web ──
-  for (const g of gTasks) {
-    if (linkedGoogleIds.has(g.id) || g.deleted) continue;
-    if (!(g.title || '').trim()) continue;    // Google hay de lai task rong khi go phim — bo qua
-    const now = new Date().toISOString();
-    const rows = await sbInsert<WorkTaskRow>('work_tasks', {
-      user_id: conn.user_id,
-      client_id: null,
-      title: stripOriginIcon((g.title || '').trim()).trim(),
-      task_type: 'Văn phòng',
-      due_date: g.due ? g.due.slice(0, 10) : now.slice(0, 10),
-      priority: 'medium',
-      kcn: null,
-      notes: (g.notes || '').trim() || null,
-      status: g.status === 'completed' ? 'done' : 'pending',
-      completed_at: g.status === 'completed' ? (g.completed || now) : null,
-    });
-    summary.pulledCreated++;
-    const linkRows = await sbInsert<LinkRow>('google_task_links', {
-      user_id: conn.user_id, work_task_id: rows[0].id, google_task_id: g.id,
-      web_updated_at: rows[0].updated_at || now, google_updated_at: g.updated || now,
-    });
-    await calUpsert(linkRows[0].id, null, rows[0]);
+    try {
+      const created = await insertCalendarEvent(accessToken, calId, toEventBody(t));
+      summary.pushedCreated++;
+      await sbInsert('google_task_links', {
+        user_id: conn.user_id, work_task_id: t.id, google_event_id: created.id,
+        web_updated_at: t.updated_at, google_updated_at: new Date().toISOString(),
+      });
+    } catch (e) { fail(e); }
   }
 
   await sbUpdate('google_connections', `id=eq.${conn.id}`, {

@@ -1,4 +1,4 @@
-// Helper dung chung cho cac Vercel Edge Function /api/google/* (dong bo work_tasks <-> Google Tasks).
+// Helper dung chung cho cac Vercel Edge Function /api/google/* (dong bo work_tasks <-> Google Calendar event).
 // File bat dau bang "_" nen KHONG duoc deploy thanh endpoint.
 //
 // Env bat buoc (Vercel > Settings > Environment Variables, KHONG tien to VITE_):
@@ -108,15 +108,13 @@ export async function validateSession(token: string | null | undefined): Promise
   return s.user_id;
 }
 
-// ── Google OAuth + Tasks API ────────────────────────────────────────────────
+// ── Google OAuth + Calendar API ─────────────────────────────────────────────
 
 export const GOOGLE_SCOPES = [
-  'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/calendar.events',    // tao/sua/xoa event tren lich user chon
   'https://www.googleapis.com/auth/calendar.readonly',  // liet ke danh sach lich de user chon
   'openid', 'email',
 ].join(' ');
-const TASKS_BASE = 'https://tasks.googleapis.com/tasks/v1';
 const CAL_BASE = 'https://www.googleapis.com/calendar/v3';
 
 interface TokenResponse { access_token: string; refresh_token?: string; id_token?: string; error?: string; error_description?: string }
@@ -161,84 +159,6 @@ export function emailFromIdToken(idToken: string | undefined): string | null {
   } catch { return null; }
 }
 
-export interface GoogleTask {
-  id: string;
-  title?: string;
-  notes?: string;
-  due?: string;       // RFC3339, Google chi giu phan ngay
-  status?: 'needsAction' | 'completed';
-  updated?: string;
-  completed?: string;
-  deleted?: boolean;
-}
-
-async function gFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${TASKS_BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
-}
-
-export async function ensureTasklist(accessToken: string, existingId: string | null): Promise<string> {
-  if (existingId) {
-    const res = await gFetch(accessToken, `/users/@me/lists/${existingId}`);
-    if (res.ok) return existingId;
-  }
-  // Tim theo ten truoc (tranh tao trung khi tasklist_id bi mat), khong co thi tao moi.
-  const listRes = await gFetch(accessToken, '/users/@me/lists?maxResults=100');
-  if (listRes.ok) {
-    const data = await listRes.json();
-    const found = (data.items || []).find((l: { id: string; title: string }) => l.title === 'LetsGo');
-    if (found) return found.id;
-  }
-  const createRes = await gFetch(accessToken, '/users/@me/lists', {
-    method: 'POST', body: JSON.stringify({ title: 'LetsGo' }),
-  });
-  if (!createRes.ok) throw new Error(`Khong tao duoc tasklist: ${createRes.status} ${await createRes.text()}`);
-  return (await createRes.json()).id;
-}
-
-export async function listGoogleTasks(accessToken: string, tasklistId: string): Promise<GoogleTask[]> {
-  const out: GoogleTask[] = [];
-  let pageToken = '';
-  do {
-    const qs = new URLSearchParams({
-      maxResults: '100', showCompleted: 'true', showHidden: 'true', showDeleted: 'true',
-    });
-    if (pageToken) qs.set('pageToken', pageToken);
-    const res = await gFetch(accessToken, `/lists/${tasklistId}/tasks?${qs}`);
-    if (!res.ok) throw new Error(`Google tasks.list loi: ${res.status} ${await res.text()}`);
-    const data = await res.json();
-    out.push(...(data.items || []));
-    pageToken = data.nextPageToken || '';
-  } while (pageToken);
-  return out;
-}
-
-export async function insertGoogleTask(accessToken: string, tasklistId: string, body: Partial<GoogleTask>): Promise<GoogleTask> {
-  const res = await gFetch(accessToken, `/lists/${tasklistId}/tasks`, { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Google tasks.insert loi: ${res.status} ${await res.text()}`);
-  return res.json();
-}
-
-export async function patchGoogleTask(accessToken: string, tasklistId: string, taskId: string, body: Partial<GoogleTask>): Promise<GoogleTask> {
-  const res = await gFetch(accessToken, `/lists/${tasklistId}/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Google tasks.patch loi: ${res.status} ${await res.text()}`);
-  return res.json();
-}
-
-export async function deleteGoogleTask(accessToken: string, tasklistId: string, taskId: string): Promise<void> {
-  const res = await gFetch(accessToken, `/lists/${tasklistId}/tasks/${taskId}`, { method: 'DELETE' });
-  // 404/410: task da bi xoa tu truoc — coi nhu thanh cong.
-  if (!res.ok && res.status !== 404 && res.status !== 410) {
-    throw new Error(`Google tasks.delete loi: ${res.status} ${await res.text()}`);
-  }
-}
-
 // ── Google Calendar API ─────────────────────────────────────────────────────
 
 export interface GoogleCalendarInfo {
@@ -253,6 +173,18 @@ export interface GoogleEventBody {
   description?: string;
   start: { date: string };   // event ca ngay (all-day)
   end: { date: string };     // exclusive: ngay hom sau cua due_date
+  extendedProperties?: { private?: Record<string, string> };
+}
+
+// Event tra ve tu events.list — chi doc, dung de reconcile (Calendar -> web).
+export interface GoogleCalendarEventFull {
+  id: string;
+  status?: string;           // 'confirmed' | 'cancelled' (bi xoa, chi con id+status khi showDeleted)
+  summary?: string;
+  description?: string;
+  start?: { date?: string };
+  end?: { date?: string };
+  updated?: string;
 }
 
 async function calFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
@@ -279,6 +211,27 @@ export async function listCalendars(accessToken: string): Promise<GoogleCalendar
     for (const c of data.items || []) {
       out.push({ id: c.id, summary: c.summaryOverride || c.summary, primary: c.primary, accessRole: c.accessRole });
     }
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+  return out;
+}
+
+// Liet ke CHI cac event do chinh app nay tao (danh dau qua extendedProperties.private.letsgo=1),
+// khong dung toi event ca nhan khac cua user tren cung lich. showDeleted=true de phat hien event
+// bi xoa tay tren Calendar (status='cancelled') ma van con link trong DB.
+export async function listMirroredEvents(accessToken: string, calendarId: string): Promise<GoogleCalendarEventFull[]> {
+  const out: GoogleCalendarEventFull[] = [];
+  let pageToken = '';
+  do {
+    const qs = new URLSearchParams({
+      maxResults: '250', singleEvents: 'true', showDeleted: 'true',
+      privateExtendedProperty: 'letsgo=1',
+    });
+    if (pageToken) qs.set('pageToken', pageToken);
+    const res = await calFetch(accessToken, `/calendars/${encodeURIComponent(calendarId)}/events?${qs}`);
+    if (!res.ok) throw new Error(`Google events.list loi: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    out.push(...(data.items || []));
     pageToken = data.nextPageToken || '';
   } while (pageToken);
   return out;
@@ -319,7 +272,6 @@ export interface GoogleConnection {
   user_id: string;
   google_email: string | null;
   refresh_token_enc: string;
-  tasklist_id: string | null;
   calendar_id: string | null;       // lich Google user chon de mirror task (NULL = tat)
   calendar_summary: string | null;
   sync_enabled: boolean;

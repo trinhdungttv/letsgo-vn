@@ -131,14 +131,14 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
   const { user, token } = useAuth()
   const isAdmin = user?.role === 'admin'
 
-  // ---- Đồng bộ Google Tasks ----
+  // ---- Đồng bộ Google Calendar ----
   // googleReload tăng khi sync kéo VỀ thay đổi từ Google -> effect tải data chạy lại.
   const [googleReload, setGoogleReload] = useState(0)
   const onGooglePulled = () => setGoogleReload(v => v + 1)
   // Gọi sau mỗi thao tác tạo/sửa/xoá work_tasks: đẩy thay đổi lên Google (gom 2.5s, fire-and-forget).
   const pingGoogle = () => queueGoogleSync(token, onGooglePulled)
   // Poll chiều Google -> web: khi vào trang + mỗi 30s + ngay khi quay lại tab
-  // (Google Tasks API không có webhook nên không thể tức thời thật sự, đây là mức nhanh nhất hợp lý).
+  // (Calendar API không có webhook nên không thể tức thời thật sự, đây là mức nhanh nhất hợp lý).
   useEffect(() => {
     if (!token) return
     let cancelled = false
@@ -872,7 +872,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
           </div>
         </div>
 
-        {/* Đồng bộ Google Tasks */}
+        {/* Đồng bộ Google Calendar */}
         <GoogleSyncCard toast={toast} onPulled={onGooglePulled} />
 
         {/* ① Radar 7 ngày */}

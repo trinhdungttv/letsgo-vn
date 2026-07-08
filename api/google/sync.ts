@@ -1,4 +1,4 @@
-// POST { token } -> chay reconcile 2 chieu work_tasks <-> Google Tasks cho user cua phien nay.
+// POST { token } -> chay reconcile 2 chieu work_tasks <-> Google Calendar event cho user cua phien nay.
 // Tra ve tong ket so luong thay doi de client biet co can reload danh sach task khong.
 
 import { json, validateSession, getConnection } from './_shared';
