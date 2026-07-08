@@ -426,6 +426,19 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export type DataHistoryAction = 'INSERT' | 'UPDATE' | 'DELETE';
+
+export interface DataHistoryEntry {
+  id: number;
+  happened_at: string;
+  table_name: string;
+  record_id: string;
+  action: DataHistoryAction;
+  old_data: Record<string, any> | null;
+  new_data: Record<string, any> | null;
+  changed_fields: string[] | null;
+}
+
 export type PermissionAction = 'view' | 'edit' | 'delete' | 'export';
 export type PermissionStatus = 'pending' | 'approved' | 'rejected';
 

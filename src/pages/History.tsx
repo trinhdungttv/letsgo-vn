@@ -1,38 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RotateCcw, Archive } from 'lucide-react';
+import { RotateCcw, Archive, Database, Clock, HardDriveDownload, ListChecks } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { undoActivity, logActivity } from '../lib/audit';
+import { tableLabel, TABLE_LABELS } from '../lib/historyTables';
+import DataHistoryTab from '../components/history/DataHistoryTab';
+import TimeMachineTab from '../components/history/TimeMachineTab';
+import BackupTab from '../components/history/BackupTab';
 import type { AuditLogEntry, AuditAction, Client } from '../lib/types';
 
 interface Props {
   toast: (msg: string) => void;
   onReload: () => void;
 }
-
-const TABLE_LABELS: Record<string, string> = {
-  clients: 'Khách hàng',
-  client_labor_history: 'Lao động',
-  finance_records: 'Tài chính',
-  market_surveys: 'Lương thị trường',
-  competitors: 'Đối thủ',
-  market_zones: 'Khu vực',
-  market_leads: 'Công ty/Dự án',
-  quotes: 'Báo giá',
-  crm_pipeline: 'CRM Pipeline',
-  crm_interactions: 'CRM Tương tác',
-  crm_gifts: 'CRM Quà tặng',
-  crm_pipeline_tasks: 'CRM Công việc',
-  crm_leads: 'CRM Lead',
-  crm_deals: 'CRM Deal',
-  crm_products: 'Sản phẩm',
-  crm_activities: 'CRM Hoạt động',
-  contacts: 'Liên hệ',
-  app_users: 'Người dùng',
-  branches: 'Chi nhánh',
-  regions: 'Khu vực phụ trách',
-};
 
 const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {
   insert: { label: 'Thêm', cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200' },
@@ -42,9 +23,11 @@ const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {
 
 const PAGE_SIZE = 50;
 
+type Tab = 'activity' | 'db' | 'timemachine' | 'backup' | 'archive';
+
 export default function History({ toast, onReload }: Props) {
   const { user } = useAuth();
-  const [tab, setTab] = useState<'history' | 'archive'>('history');
+  const [tab, setTab] = useState<Tab>('activity');
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -119,20 +102,31 @@ export default function History({ toast, onReload }: Props) {
     reload();
   };
 
+  const TABS: { key: Tab; label: string; icon: any }[] = [
+    { key: 'activity', label: 'Lịch sử thao tác', icon: ListChecks },
+    { key: 'db', label: 'Nhật ký Database', icon: Database },
+    { key: 'timemachine', label: 'Cỗ máy thời gian', icon: Clock },
+    { key: 'backup', label: 'Sao lưu', icon: HardDriveDownload },
+    { key: 'archive', label: `Lưu trữ${archivedClients.length > 0 ? ` (${archivedClients.length})` : ''}`, icon: Archive },
+  ];
+
   return (
     <>
-      <PageHeader title="Lịch sử hoạt động" subtitle="Theo dõi thêm/sửa/xóa trên toàn hệ thống" />
+      <PageHeader title="Lịch sử & An toàn dữ liệu" subtitle="Theo dõi mọi thay đổi, khôi phục dữ liệu và sao lưu định kỳ" />
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        <div className="flex gap-2">
-          <button onClick={() => setTab('history')} className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === 'history' ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
-            Lịch sử hoạt động
-          </button>
-          <button onClick={() => setTab('archive')} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === 'archive' ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
-            <Archive size={13} /> Lưu trữ {archivedClients.length > 0 && `(${archivedClients.length})`}
-          </button>
+        <div className="flex gap-2 flex-wrap">
+          {TABS.map(({ key, label, icon: Icon }) => (
+            <button key={key} onClick={() => setTab(key)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+              <Icon size={13} /> {label}
+            </button>
+          ))}
         </div>
 
-        {tab === 'archive' ? (
+        {tab === 'db' && <DataHistoryTab toast={toast} onReload={onReload} />}
+        {tab === 'timemachine' && <TimeMachineTab toast={toast} onReload={onReload} />}
+        {tab === 'backup' && <BackupTab toast={toast} />}
+
+        {tab === 'archive' && (
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
@@ -167,8 +161,13 @@ export default function History({ toast, onReload }: Props) {
             </table>
             </div>
           </div>
-        ) : (
+        )}
+
+        {tab === 'activity' && (
         <>
+        <div className="bg-gray-50 border border-gray-200 rounded-[10px] px-4 py-2.5 text-[12px] text-gray-500">
+          Lịch sử này do <b>giao diện app</b> ghi lại khi bạn thao tác — dễ đọc, có tên người dùng. Để xem <b>mọi</b> thay đổi kể cả do code/script gây ra, dùng tab <b>Nhật ký Database</b>.
+        </div>
         <div className="flex gap-2 flex-wrap">
           <select value={tableFilter} onChange={e => setTableFilter(e.target.value)} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
             <option value="all">Tất cả đối tượng</option>
@@ -204,7 +203,7 @@ export default function History({ toast, onReload }: Props) {
                     <td className="px-3 py-2 text-[#888] whitespace-nowrap">{new Date(log.created_at).toLocaleString('vi-VN')}</td>
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{log.user_name || '—'}</td>
                     <td className="px-3 py-2"><span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${a.cls}`}>{a.label}</span></td>
-                    <td className="px-3 py-2 whitespace-nowrap">{TABLE_LABELS[log.table_name] || log.table_name}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{tableLabel(log.table_name)}</td>
                     <td className="px-3 py-2">{log.description || '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {log.undone ? (
