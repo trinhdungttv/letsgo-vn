@@ -6,8 +6,6 @@ export interface GoogleSyncStatus {
   connected: boolean;
   email: string | null;
   lastSyncedAt: string | null;
-  calendarId: string | null;
-  calendarSummary: string | null;
 }
 
 export interface GoogleSyncSummary {
@@ -17,15 +15,6 @@ export interface GoogleSyncSummary {
   pulledCreated: number;
   pulledUpdated: number;
   pulledDeleted: number;
-  calendarUpserted: number;
-  calendarDeleted: number;
-  calendarError?: string;
-}
-
-export interface GoogleCalendarOption {
-  id: string;
-  summary: string;
-  primary?: boolean;
 }
 
 async function post<T>(path: string, body: unknown): Promise<T | null> {
@@ -48,18 +37,6 @@ export async function getGoogleSyncStatus(token: string): Promise<GoogleSyncStat
 
 export async function disconnectGoogle(token: string): Promise<boolean> {
   const res = await post<{ ok: boolean }>('account', { token, action: 'disconnect' });
-  return !!res?.ok;
-}
-
-// Liet ke cac lich Google co quyen ghi de user chon lich do viec vao.
-export async function listGoogleCalendars(token: string): Promise<GoogleCalendarOption[] | null> {
-  const res = await post<{ calendars?: GoogleCalendarOption[] }>('account', { token, action: 'calendars' });
-  return res?.calendars || null;
-}
-
-// calendarId rong = tat mirror Calendar (event o lich cu se duoc don).
-export async function setGoogleCalendar(token: string, calendarId: string, calendarSummary: string): Promise<boolean> {
-  const res = await post<{ ok: boolean }>('account', { token, action: 'set-calendar', calendarId, calendarSummary });
   return !!res?.ok;
 }
 

@@ -110,14 +110,10 @@ export async function validateSession(token: string | null | undefined): Promise
 
 // ── Google OAuth + Tasks API ────────────────────────────────────────────────
 
-export const GOOGLE_SCOPES = [
-  'https://www.googleapis.com/auth/tasks',
-  'https://www.googleapis.com/auth/calendar.events',    // tao/sua/xoa event tren lich user chon
-  'https://www.googleapis.com/auth/calendar.readonly',  // liet ke danh sach lich de user chon
-  'openid', 'email',
-].join(' ');
+// Chi can scope Tasks: Google Calendar tu hien Google Tasks kem nut tick hoan thanh
+// (bat "Tasks" trong sidebar Calendar) — khong can quyen Calendar rieng.
+export const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/tasks openid email';
 const TASKS_BASE = 'https://tasks.googleapis.com/tasks/v1';
-const CAL_BASE = 'https://www.googleapis.com/calendar/v3';
 
 interface TokenResponse { access_token: string; refresh_token?: string; id_token?: string; error?: string; error_description?: string }
 
@@ -239,79 +235,6 @@ export async function deleteGoogleTask(accessToken: string, tasklistId: string, 
   }
 }
 
-// ── Google Calendar API ─────────────────────────────────────────────────────
-
-export interface GoogleCalendarInfo {
-  id: string;
-  summary: string;
-  primary?: boolean;
-  accessRole?: string;
-}
-
-export interface GoogleEventBody {
-  summary: string;
-  description?: string;
-  start: { date: string };   // event ca ngay (all-day)
-  end: { date: string };     // exclusive: ngay hom sau cua due_date
-}
-
-async function calFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${CAL_BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
-}
-
-// Liet ke cac lich user co quyen GHI (de do event vao).
-export async function listCalendars(accessToken: string): Promise<GoogleCalendarInfo[]> {
-  const out: GoogleCalendarInfo[] = [];
-  let pageToken = '';
-  do {
-    const qs = new URLSearchParams({ minAccessRole: 'writer', maxResults: '100' });
-    if (pageToken) qs.set('pageToken', pageToken);
-    const res = await calFetch(accessToken, `/users/me/calendarList?${qs}`);
-    if (!res.ok) throw new Error(`Google calendarList loi: ${res.status} ${await res.text()}`);
-    const data = await res.json();
-    for (const c of data.items || []) {
-      out.push({ id: c.id, summary: c.summaryOverride || c.summary, primary: c.primary, accessRole: c.accessRole });
-    }
-    pageToken = data.nextPageToken || '';
-  } while (pageToken);
-  return out;
-}
-
-export async function insertCalendarEvent(accessToken: string, calendarId: string, body: GoogleEventBody): Promise<{ id: string }> {
-  const res = await calFetch(accessToken, `/calendars/${encodeURIComponent(calendarId)}/events`, {
-    method: 'POST', body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Google events.insert loi: ${res.status} ${await res.text()}`);
-  return res.json();
-}
-
-// Tra ve false neu event khong con ton tai (404/410) — caller nen tao lai.
-export async function patchCalendarEvent(accessToken: string, calendarId: string, eventId: string, body: GoogleEventBody): Promise<boolean> {
-  const res = await calFetch(accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
-    method: 'PATCH', body: JSON.stringify(body),
-  });
-  if (res.status === 404 || res.status === 410) return false;
-  if (!res.ok) throw new Error(`Google events.patch loi: ${res.status} ${await res.text()}`);
-  return true;
-}
-
-export async function deleteCalendarEvent(accessToken: string, calendarId: string, eventId: string): Promise<void> {
-  const res = await calFetch(accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
-    method: 'DELETE',
-  });
-  // 404/410: event da bi xoa tu truoc — coi nhu thanh cong.
-  if (!res.ok && res.status !== 404 && res.status !== 410) {
-    throw new Error(`Google events.delete loi: ${res.status} ${await res.text()}`);
-  }
-}
-
 // ── Bang ket noi ────────────────────────────────────────────────────────────
 
 export interface GoogleConnection {
@@ -320,8 +243,6 @@ export interface GoogleConnection {
   google_email: string | null;
   refresh_token_enc: string;
   tasklist_id: string | null;
-  calendar_id: string | null;       // lich Google user chon de mirror task (NULL = tat)
-  calendar_summary: string | null;
   sync_enabled: boolean;
   last_synced_at: string | null;
 }

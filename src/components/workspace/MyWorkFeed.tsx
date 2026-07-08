@@ -137,7 +137,8 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
   const onGooglePulled = () => setGoogleReload(v => v + 1)
   // Gọi sau mỗi thao tác tạo/sửa/xoá work_tasks: đẩy thay đổi lên Google (gom 2.5s, fire-and-forget).
   const pingGoogle = () => queueGoogleSync(token, onGooglePulled)
-  // Poll chiều Google -> web: khi vào trang + mỗi 5 phút (Google Tasks không có webhook).
+  // Poll chiều Google -> web: khi vào trang + mỗi 30s + ngay khi quay lại tab
+  // (Google Tasks API không có webhook nên không thể tức thời thật sự, đây là mức nhanh nhất hợp lý).
   useEffect(() => {
     if (!token) return
     let cancelled = false
@@ -146,8 +147,16 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       if (!cancelled && pulledChanges(res?.summary) > 0) setGoogleReload(v => v + 1)
     }
     pull()
-    const timer = setInterval(pull, 5 * 60 * 1000)
-    return () => { cancelled = true; clearInterval(timer) }
+    const timer = setInterval(pull, 30 * 1000)
+    const onVisible = () => { if (document.visibilityState === 'visible') pull() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', pull)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', pull)
+    }
   }, [token])
 
   // ---- Data ----
