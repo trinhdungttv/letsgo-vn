@@ -1,13 +1,12 @@
-// Thanh ket noi Google Tasks — hien trong feed "Viec cua toi".
-// Chua ket noi: nut "Ket noi Google Tasks". Da ket noi: email + lan sync cuoi + nut Dong bo ngay / Ngat.
-// Luu y: Google Calendar tu hien Google Tasks kem nut tick hoan thanh (bat "Tasks" trong sidebar Calendar)
-// nen khong can tao rieng event/lich — chi can dong bo Google Tasks la du hien tren ca Calendar.
+// Thanh ket noi Google Tasks + Google Calendar — hien trong feed "Viec cua toi".
+// Chua ket noi: nut "Ket noi Google". Da ket noi: email + chon lich Calendar + Dong bo ngay / Ngat.
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Link2, Unlink } from 'lucide-react'
+import { RefreshCw, Link2, Unlink, CalendarDays } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import {
   getGoogleSyncStatus, startGoogleConnect, disconnectGoogle, syncGoogleNow, pulledChanges,
-  type GoogleSyncStatus,
+  listGoogleCalendars, setGoogleCalendar,
+  type GoogleSyncStatus, type GoogleCalendarOption,
 } from '../../lib/googleSync'
 
 interface Props {
@@ -21,6 +20,10 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
   const [status, setStatus] = useState<GoogleSyncStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [checked, setChecked] = useState(false)
+  // Chon lich Google Calendar de do viec vao
+  const [calOptions, setCalOptions] = useState<GoogleCalendarOption[] | null>(null)
+  const [calLoading, setCalLoading] = useState(false)
+  const [calPicking, setCalPicking] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!token) return
@@ -74,9 +77,47 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
     const s = res.summary
     const n = pulledChanges(s)
     if (n > 0) onPulled?.(n)
-    const pushed = (s?.pushedCreated || 0) + (s?.pushedUpdated || 0) + (s?.pushedDeleted || 0)
-    toast(pushed + n > 0 ? `Đồng bộ xong: đẩy ${pushed}, nhận ${n} thay đổi` : 'Đồng bộ xong — không có thay đổi')
+    if (s?.calendarError) {
+      toast('Lỗi Google Calendar — thử Ngắt kết nối rồi kết nối lại để cấp thêm quyền lịch')
+    } else {
+      const pushed = (s?.pushedCreated || 0) + (s?.pushedUpdated || 0) + (s?.pushedDeleted || 0)
+      toast(pushed + n > 0 ? `Đồng bộ xong: đẩy ${pushed}, nhận ${n} thay đổi` : 'Đồng bộ xong — không có thay đổi')
+    }
     refresh()
+  }
+
+  // Mo khung chon lich: tai danh sach lich tu Google roi hien <select>
+  async function openCalendarPicker() {
+    if (!token || calLoading) return
+    setCalPicking(true)
+    if (!calOptions) {
+      setCalLoading(true)
+      const cals = await listGoogleCalendars(token)
+      setCalLoading(false)
+      if (!cals) {
+        toast('Không tải được danh sách lịch — thử Ngắt kết nối rồi kết nối lại để cấp quyền lịch')
+        setCalPicking(false)
+        return
+      }
+      setCalOptions(cals)
+    }
+  }
+
+  async function handlePickCalendar(calId: string) {
+    if (!token || busy) return
+    const cal = (calOptions || []).find(c => c.id === calId)
+    setBusy(true)
+    const ok = await setGoogleCalendar(token, calId, cal?.summary || '')
+    setBusy(false)
+    setCalPicking(false)
+    if (!ok) { toast('Lưu lựa chọn lịch thất bại'); return }
+    if (calId) {
+      toast(`Việc sẽ hiện trên lịch "${cal?.summary || calId}" — đang đồng bộ...`)
+      handleSyncNow()   // day event len lich moi ngay
+    } else {
+      toast('Đã tắt hiển thị việc trên Google Calendar')
+      refresh()
+    }
   }
 
   async function handleDisconnect() {
@@ -98,13 +139,34 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
       {status?.connected ? (
         <>
           <div className="min-w-0 flex-1 text-[11px] text-[#555]">
-            <span className="font-bold text-[#0c2340]">Google Tasks</span>
+            <span className="font-bold text-[#0c2340]">Google Tasks + Calendar</span>
             <span className="mx-1 text-[#bbb]">·</span>
             <span className="truncate">{status.email || 'đã kết nối'}</span>
             {status.lastSyncedAt && (
               <span className="text-[#999]"> — sync {new Date(status.lastSyncedAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</span>
             )}
           </div>
+          {calPicking && calOptions ? (
+            <select
+              autoFocus
+              defaultValue={status.calendarId || ''}
+              onChange={e => handlePickCalendar(e.target.value)}
+              onBlur={() => setCalPicking(false)}
+              className="text-[10.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white text-[#0c2340] focus:outline-none focus:border-blue-400 max-w-[220px]"
+            >
+              <option value="">— Không hiện trên Calendar —</option>
+              {calOptions.map(c => (
+                <option key={c.id} value={c.id}>{c.summary}{c.primary ? ' (lịch chính)' : ''}</option>
+              ))}
+            </select>
+          ) : (
+            <button onClick={openCalendarPicker} disabled={busy || calLoading}
+              title="Chọn lịch Google Calendar để hiện việc"
+              className="flex items-center gap-1 text-[10.5px] font-bold px-2.5 py-1 rounded-md border border-[#E8E7E2] bg-white text-[#0c2340] hover:border-blue-300 transition disabled:opacity-40 max-w-[190px]">
+              <CalendarDays size={11} className={calLoading ? 'animate-pulse' : ''} />
+              <span className="truncate">{status.calendarSummary ? `Lịch: ${status.calendarSummary}` : 'Chọn lịch Calendar'}</span>
+            </button>
+          )}
           <button onClick={handleSyncNow} disabled={busy}
             className="flex items-center gap-1 text-[10.5px] font-bold px-2.5 py-1 rounded-md border border-[#E8E7E2] bg-white text-[#0c2340] hover:border-blue-300 transition disabled:opacity-40">
             <RefreshCw size={11} className={busy ? 'animate-spin' : ''} /> Đồng bộ ngay
@@ -117,11 +179,11 @@ export function GoogleSyncCard({ toast, onPulled }: Props) {
       ) : (
         <>
           <div className="min-w-0 flex-1 text-[11px] text-[#777]">
-            Đồng bộ việc với <span className="font-bold text-[#0c2340]">Google Tasks</span> — tạo/sửa/hoàn thành 2 chiều, tự hiện trên Google Calendar
+            Đồng bộ việc với <span className="font-bold text-[#0c2340]">Google Tasks + Calendar</span> — tạo/sửa/hoàn thành 2 chiều, hiện trên lịch bạn chọn
           </div>
           <button onClick={handleConnect} disabled={busy}
             className="flex items-center gap-1.5 text-[10.5px] font-bold px-3 py-1 rounded-md bg-[#0c2340] text-white hover:bg-[#16345c] transition disabled:opacity-40">
-            <Link2 size={11} /> Kết nối Google Tasks
+            <Link2 size={11} /> Kết nối Google
           </button>
         </>
       )}
