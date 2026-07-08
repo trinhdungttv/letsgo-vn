@@ -185,14 +185,30 @@ export async function reconcile(conn: GoogleConnection): Promise<SyncSummary> {
   // ── 2. Task web chua co link -> tao event moi tren Calendar ──
   for (const t of webTasks) {
     if (linkedWebIds.has(t.id) || !shouldPushNew(t)) continue;
+    // Giu cho truoc bang link rong (UNIQUE(work_task_id) lam khoa) — neu 2 lan sync chay dong thoi
+    // cho cung 1 task (vd poll 30s trung luc debounce push), chi 1 tien trinh giu cho thanh cong,
+    // tien trinh kia insert loi 409 va bo qua -> tranh tao doi event tren Calendar.
+    let claimed: LinkRow[];
+    try {
+      claimed = await sbInsert<LinkRow>('google_task_links', {
+        user_id: conn.user_id, work_task_id: t.id, google_event_id: null,
+        web_updated_at: t.updated_at, google_updated_at: null,
+      });
+    } catch (e) {
+      if (!(e instanceof Error && e.message.includes('409'))) fail(e);
+      continue;
+    }
     try {
       const created = await insertCalendarEvent(accessToken, calId, toEventBody(t));
       summary.pushedCreated++;
-      await sbInsert('google_task_links', {
-        user_id: conn.user_id, work_task_id: t.id, google_event_id: created.id,
-        web_updated_at: t.updated_at, google_updated_at: new Date().toISOString(),
+      await sbUpdate('google_task_links', `id=eq.${claimed[0].id}`, {
+        google_event_id: created.id, google_updated_at: new Date().toISOString(),
       });
-    } catch (e) { fail(e); }
+    } catch (e) {
+      fail(e);
+      // Da giu cho nhung tao event that bai -> xoa cho de lan sync sau thu lai.
+      await sbDelete('google_task_links', `id=eq.${claimed[0].id}`).catch(() => {});
+    }
   }
 
   await sbUpdate('google_connections', `id=eq.${conn.id}`, {
