@@ -48,9 +48,15 @@ const DONE_STATUSES = new Set(['done', 'ngung_hd']);
 // Chi day len Google: task chua xong, hoac xong trong 14 ngay gan day (tranh do ca lich su cu len).
 const PUSH_DONE_WINDOW_MS = 14 * 24 * 3600 * 1000;
 
+// Danh dau task den tu web app (LetsGo) de phan biet voi task/su kien ca nhan khac cua user tren Google.
+const ORIGIN_ICON = '🎯 ';
+function stripOriginIcon(title: string): string {
+  return title.replace(/^🎯\s*/, '');
+}
+
 function toGoogleBody(t: WorkTaskRow): Partial<GoogleTask> {
   return {
-    title: t.title || '(Không tiêu đề)',
+    title: `${ORIGIN_ICON}${t.title || '(Không tiêu đề)'}`,
     notes: t.notes || '',
     due: t.due_date ? `${t.due_date}T00:00:00.000Z` : undefined,
     status: DONE_STATUSES.has(t.status) ? 'completed' : 'needsAction',
@@ -73,7 +79,7 @@ function nextDayStr(day: string): string {
 function toEventBody(t: WorkTaskRow): GoogleEventBody {
   const day = t.due_date || new Date().toISOString().slice(0, 10);
   return {
-    summary: `${DONE_STATUSES.has(t.status) ? '🎯 ' : ''}${t.title || '(Không tiêu đề)'}`,
+    summary: `${ORIGIN_ICON}${DONE_STATUSES.has(t.status) ? '✅ ' : ''}${t.title || '(Không tiêu đề)'}`,
     description: t.notes || '',
     start: { date: day },
     end: { date: nextDayStr(day) },
@@ -84,7 +90,7 @@ function toEventBody(t: WorkTaskRow): GoogleEventBody {
 function toWebPatch(g: GoogleTask, current: WorkTaskRow): Partial<WorkTaskRow> & { updated_at: string } {
   const now = new Date().toISOString();
   const patch: Partial<WorkTaskRow> & { updated_at: string } = { updated_at: now };
-  const gTitle = (g.title || '').trim();
+  const gTitle = stripOriginIcon((g.title || '').trim()).trim();
   if (gTitle && gTitle !== current.title) patch.title = gTitle;
   const gNotes = (g.notes || '').trim() || null;
   if (gNotes !== (current.notes || null)) patch.notes = gNotes;
@@ -243,7 +249,7 @@ export async function reconcile(conn: GoogleConnection): Promise<SyncSummary> {
     const rows = await sbInsert<WorkTaskRow>('work_tasks', {
       user_id: conn.user_id,
       client_id: null,
-      title: (g.title || '').trim(),
+      title: stripOriginIcon((g.title || '').trim()).trim(),
       task_type: 'Văn phòng',
       due_date: g.due ? g.due.slice(0, 10) : now.slice(0, 10),
       priority: 'medium',
