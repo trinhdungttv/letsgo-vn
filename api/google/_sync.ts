@@ -8,7 +8,7 @@
 import {
   GoogleConnection, GoogleEventBody, GoogleCalendarEventFull,
   decryptText, refreshAccessToken, listMirroredEvents,
-  insertCalendarEvent, patchCalendarEvent, deleteCalendarEvent,
+  insertCalendarEvent, patchCalendarEvent, deleteCalendarEvent, getCalendarEvent,
   sbSelect, sbInsert, sbUpdate, sbDelete,
 } from './_shared';
 
@@ -36,12 +36,16 @@ export interface SyncSummary {
   pushedUpdated: number;   // web -> Calendar: cap nhat
   pushedDeleted: number;   // web xoa -> xoa event ben Calendar
   pulledUpdated: number;   // Calendar -> web: cap nhat ngay/tieu de/ghi chu
+  prunedDuplicates: number; // don event mo coi (trung do sync chay dong thoi tu nhieu tab/thiet bi)
   calendarError?: string;  // loi Calendar (vd: thieu quyen -> can ket noi lai)
 }
 
 const DONE_STATUSES = new Set(['done', 'ngung_hd']);
 // Chi day len Calendar: task chua xong, hoac xong trong 14 ngay gan day (tranh do ca lich su cu len).
 const PUSH_DONE_WINDOW_MS = 14 * 24 * 3600 * 1000;
+// Chi don event mo coi da ton tai qua 5 phut — tranh xoa nham event vua duoc 1 tien trinh sync khac tao
+// (link cua no chua kip ghi vao DB khi tien trinh nay doc snapshot links).
+const ORPHAN_GRACE_MS = 5 * 60 * 1000;
 
 // Danh dau task den tu web app (LetsGo) de phan biet voi viec ca nhan khac cua user tren Google.
 const ORIGIN_ICON = '🎯 ';
@@ -87,7 +91,7 @@ function toWebPatchFromEvent(ev: GoogleCalendarEventFull, current: WorkTaskRow):
 }
 
 export async function reconcile(conn: GoogleConnection): Promise<SyncSummary> {
-  const summary: SyncSummary = { pushedCreated: 0, pushedUpdated: 0, pushedDeleted: 0, pulledUpdated: 0 };
+  const summary: SyncSummary = { pushedCreated: 0, pushedUpdated: 0, pushedDeleted: 0, pulledUpdated: 0, prunedDuplicates: 0 };
 
   if (!conn.calendar_id) {
     // Chua chon lich -> khong co gi de dong bo, chi cap nhat moc thoi gian.
@@ -119,11 +123,35 @@ export async function reconcile(conn: GoogleConnection): Promise<SyncSummary> {
 
   const fail = (e: unknown) => { summary.calendarError = e instanceof Error ? e.message : String(e); };
 
+  // ── 0. Don event mo coi: tag letsgo=1 nhung khong co link nao dang tro toi, va da ton tai du lau
+  // (tranh xoa nham event 1 tien trinh sync khac vua tao nhung chua kip ghi link vao DB). Day la luoi
+  // an toan cho truong hop nhieu lan sync chay gan nhau tung tao ra event trung cho cung 1 task.
+  const keepEventIds = new Set(links.map(l => l.google_event_id).filter((id): id is string => !!id));
+  for (const ev of events) {
+    if (ev.status === 'cancelled' || keepEventIds.has(ev.id)) continue;
+    const createdAt = ev.created ? new Date(ev.created).getTime() : 0;
+    if (!createdAt || Date.now() - createdAt < ORPHAN_GRACE_MS) continue;
+    try {
+      await deleteCalendarEvent(accessToken, calId, ev.id);
+      summary.prunedDuplicates++;
+      evById.delete(ev.id);
+    } catch (e) { fail(e); }
+  }
+
   // ── 1. Cac cap da lien ket ──
   for (const link of links) {
     const web = webById.get(link.work_task_id);
-    const ev = link.google_event_id ? evById.get(link.google_event_id) : undefined;
-    const evAlive = !!ev && ev.status !== 'cancelled';
+    let ev = link.google_event_id ? evById.get(link.google_event_id) : undefined;
+    let evAlive = !!ev && ev.status !== 'cancelled';
+    if (!evAlive && link.google_event_id && !ev) {
+      // Khong thay trong danh sach (co the list chua kip cap nhat, KHONG chac chan da bi xoa) -> xac
+      // nhan truc tiep qua events.get truoc khi tu tao lai, tranh tao event trung khi event that ra
+      // van con song (nguyen nhan chinh gay nhan ban event khi nhieu tab/thiet bi sync gan nhau).
+      try {
+        const direct = await getCalendarEvent(accessToken, calId, link.google_event_id);
+        if (direct && direct.status !== 'cancelled') { ev = direct; evAlive = true; }
+      } catch (e) { fail(e); }
+    }
 
     if (!web) {
       // Web xoa -> xoa event (neu con) + xoa link.

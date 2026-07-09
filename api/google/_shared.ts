@@ -185,6 +185,7 @@ export interface GoogleCalendarEventFull {
   start?: { date?: string };
   end?: { date?: string };
   updated?: string;
+  created?: string;
 }
 
 async function calFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
@@ -235,6 +236,15 @@ export async function listMirroredEvents(accessToken: string, calendarId: string
     pageToken = data.nextPageToken || '';
   } while (pageToken);
   return out;
+}
+
+// Doc truc tiep 1 event theo id — dung de xac nhan that su bi xoa truoc khi tu tao lai (event.list co the
+// tam thoi thieu event con song neu nhieu lan sync chay gan nhau, dan toi tao nham event trung).
+export async function getCalendarEvent(accessToken: string, calendarId: string, eventId: string): Promise<GoogleCalendarEventFull | null> {
+  const res = await calFetch(accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`);
+  if (res.status === 404 || res.status === 410) return null;
+  if (!res.ok) throw new Error(`Google events.get loi: ${res.status} ${await res.text()}`);
+  return res.json();
 }
 
 export async function insertCalendarEvent(accessToken: string, calendarId: string, body: GoogleEventBody): Promise<{ id: string }> {
