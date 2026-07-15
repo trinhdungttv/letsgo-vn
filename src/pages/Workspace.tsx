@@ -19,7 +19,6 @@ import { BranchHistoryFields, recordBranchUpdateSession } from '../components/wo
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { queueGoogleSync } from '../lib/googleSync';
-import { useRegions } from '../hooks/useRegions';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
 import type { Client, FinanceRecord, CRMPipelineEntry, Page, KCNSummary, Branch } from '../lib/types';
@@ -85,7 +84,6 @@ function RailCard({ title, icon, count, action, children }: {
 
 export default function Workspace({ clients, pipeline, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user, token } = useAuth();
-  const { regions } = useRegions();
   const { branches, updateBranch } = useBranchData();
 
   const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout_v2', DEFAULT_LAYOUT);
@@ -198,25 +196,17 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
   // ---- Rail: Cập nhật chi nhánh ----
   const [visitThreshold, setVisitThreshold] = usePersistedState('lgvn_visit_threshold_days', 7);
   const [showVisitSettings, setShowVisitSettings] = useState(false);
-  const [lgvZones, setLgvZones] = useState<{ name: string }[]>([]);
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({});
   const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null);
   const [panelForm, setPanelForm] = useState<Partial<Branch>>({});
   const [panelRecordDate, setPanelRecordDate] = useState(todayStr());
   const [panelSaving, setPanelSaving] = useState(false);
 
-  useEffect(() => {
-    const lgv = branches.find(b => b.short_name === 'LGV');
-    if (!lgv) return;
-    supabase.from('branch_zones').select('name').eq('branch_id', lgv.id).order('created_at')
-      .then(({ data }) => { if (data) setLgvZones(data); });
-  }, [branches]);
+  // Lịch sử phiên được lưu với target_name = `Chi nhánh ${region}`; fallback sang name khi chưa có region
+  const branchKey = (b: Branch) => b.region || b.name;
 
   useEffect(() => {
-    const names = [
-      ...regions.map(r => `Chi nhánh ${r.name}`),
-      ...lgvZones.map(z => `Chi nhánh ${z.name}`),
-    ];
+    const names = branches.map(b => `Chi nhánh ${branchKey(b)}`);
     if (!names.length) return;
     supabase.from('morning_priorities').select('target_name, priority_date').in('target_name', names)
       .order('priority_date', { ascending: false })
@@ -230,17 +220,14 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
         }
         setBranchActivity(map);
       });
-  }, [regions, lgvZones]);
+  }, [branches]);
 
-  const visitSuggests = useMemo(() => [
-    ...regions.map(r => r.name),
-    ...lgvZones.map(z => z.name),
-  ].map(name => {
-    const last = branchActivity[`Chi nhánh ${name}`];
+  const visitSuggests = useMemo(() => branches.map(b => {
+    const last = branchActivity[`Chi nhánh ${branchKey(b)}`];
     const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null;
-    return { name, daysSince };
+    return { branch: b, daysSince };
   }).sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999)),
-  [regions, lgvZones, branchActivity]);
+  [branches, branchActivity]);
 
   function visitDotColor(daysSince: number | null) {
     if (daysSince === null || daysSince > 2 * visitThreshold) return 'bg-red-500';
@@ -254,9 +241,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     return 'bg-green-50 text-green-700 border-green-200';
   }
 
-  function openBranchProfile(branchName: string) {
-    const branch = branches.find(b => b.region === branchName);
-    if (!branch) { alert(`Chi nhánh "${branchName}" chưa có hồ sơ — vào trang Chi nhánh để tạo`); return; }
+  function openBranchProfile(branch: Branch) {
     setOpenBranchPanel(branch);
     setPanelForm(branch);
     setPanelRecordDate(todayStr());
@@ -272,10 +257,9 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
     };
     try {
       await updateBranch(openBranchPanel.id, fields);
-      if (openBranchPanel.region) {
-        await recordBranchUpdateSession(user.id, openBranchPanel.region, fields, panelRecordDate);
-        setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${openBranchPanel.region}`]: panelRecordDate }));
-      }
+      const key = branchKey(openBranchPanel);
+      await recordBranchUpdateSession(user.id, key, fields, panelRecordDate);
+      setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${key}`]: panelRecordDate }));
       setOpenBranchPanel(null);
     } catch (e) {
       alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)));
@@ -652,11 +636,11 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
                   {visitSuggests.length === 0 ? (
                     <div className="text-[12px] text-[#999] py-3 text-center border-t border-[#F0EFEB]">Chưa có dữ liệu</div>
                   ) : visitSuggests.map(s => (
-                    <div key={s.name} onClick={() => openBranchProfile(s.name)}
+                    <div key={s.branch.id} onClick={() => openBranchProfile(s.branch)}
                       className="flex items-center gap-2 px-3.5 py-2 border-t border-[#F0EFEB] hover:bg-[#F9F9F7] cursor-pointer">
                       <span className={`w-2 h-2 rounded-full shrink-0 ${visitDotColor(s.daysSince)}`} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-semibold text-[#333] truncate">Chi nhánh {s.name}</div>
+                        <div className="text-[12px] font-semibold text-[#333] truncate">{s.branch.name}</div>
                         <div className="text-[10px] text-[#888] mt-0.5 flex items-center gap-1"><Phone size={10} />Gọi điện / nhắn tin hỏi thăm</div>
                       </div>
                       <span className={`text-[9.5px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${visitColor(s.daysSince)}`}>
@@ -724,7 +708,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
           <div className="bg-white h-full w-full max-w-md shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="sticky top-0 bg-white border-b border-[#E8E7E2] px-4 py-3 flex items-center gap-2 z-10">
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-[#111] truncate">Chi nhánh {openBranchPanel.region || openBranchPanel.name}</div>
+                <div className="text-[13px] font-semibold text-[#111] truncate">{openBranchPanel.name}</div>
                 <div className="text-[11px] text-[#888] mt-0.5">
                   {openBranchPanel.manager_name && `Quản lý: ${openBranchPanel.manager_name}`}
                   {openBranchPanel.phone && ` · ${openBranchPanel.phone}`}

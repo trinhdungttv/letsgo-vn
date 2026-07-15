@@ -111,8 +111,11 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const [saving, setSaving] = useState(false)
   const { user } = useAuth()
 
+  // Lịch sử phiên keyed theo region; chi nhánh mới chưa sync region thì dùng name
+  const regionKey = branch.region || branch.name
+
   // Auto-save draft to localStorage
-  const draftKey = branch.region ? `lgvn_branch_draft_${branch.region}` : null
+  const draftKey = regionKey ? `lgvn_branch_draft_${regionKey}` : null
   const draftLoaded = useRef(false)
 
   useEffect(() => {
@@ -147,10 +150,10 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const hasContent = !!(branch.status_note?.trim() || branch.difficulties?.trim() || branch.opportunities?.trim())
 
   async function handleSaveSession() {
-    if (!user || !branch.region || !hasContent) return
+    if (!user || !regionKey || !hasContent) return
     setSaving(true)
     try {
-      await recordBranchUpdateSession(user.id, branch.region, {
+      await recordBranchUpdateSession(user.id, regionKey, {
         status_note: branch.status_note ?? null,
         difficulties: branch.difficulties ?? null,
         opportunities: branch.opportunities ?? null,
@@ -159,7 +162,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
       const { data } = await supabase
         .from('morning_priorities')
         .select('*')
-        .eq('target_name', `Chi nhánh ${branch.region}`)
+        .eq('target_name', `Chi nhánh ${regionKey}`)
         .order('priority_date', { ascending: false })
         .limit(30)
       if (data) setHistory(data as MorningPriority[])
@@ -174,15 +177,15 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   }
 
   useEffect(() => {
-    if (!branch.region) { setHistory([]); return }
+    if (!regionKey) { setHistory([]); return }
     supabase
       .from('morning_priorities')
       .select('*')
-      .eq('target_name', `Chi nhánh ${branch.region}`)
+      .eq('target_name', `Chi nhánh ${regionKey}`)
       .order('priority_date', { ascending: false })
       .limit(30)
       .then(({ data }) => setHistory((data || []) as MorningPriority[]))
-  }, [branch.region, refreshKey])
+  }, [regionKey, refreshKey])
 
   const monthGrid = useMemo(buildMonthGrid, [])
   const sessionDates = useMemo(() => new Set(history.map(h => h.priority_date)), [history])
@@ -346,10 +349,8 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Top row: Mini calendar + Input form side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-3">
-        {/* Mini calendar */}
-        <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
+      {/* 1. Mini calendar (top) */}
+      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">
               T{new Date().getMonth() + 1}/{new Date().getFullYear()}
@@ -393,113 +394,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
           )}
         </div>
 
-        {/* Input form for new session */}
-        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
-          <div
-            className="flex items-center justify-between px-3 py-2 bg-[#FAFAF8] border-b border-[#E8E7E2] cursor-pointer"
-            onClick={() => setShowInputForm(v => !v)}
-          >
-            <div className="flex items-center gap-2">
-              <Plus size={12} className="text-[#7C3AED]" />
-              <span className="text-[10.5px] font-semibold text-[#555] uppercase tracking-wide">Ghi nhận phiên mới</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#999]">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}</span>
-              {showInputForm ? <ChevronUp size={12} className="text-[#bbb]" /> : <ChevronDown size={12} className="text-[#bbb]" />}
-            </div>
-          </div>
-          {showInputForm && (
-            <div className="p-3 grid grid-cols-1 lg:grid-cols-3 gap-2.5">
-              <div>
-                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
-                  <Activity size={11} className="text-blue-500" />
-                  Tình trạng hiện tại
-                </label>
-                <textarea
-                  value={branch.status_note || ''}
-                  onChange={e => onChange({ status_note: e.target.value })}
-                  placeholder="Tình trạng hoạt động..."
-                  className={inputCls}
-                />
-                {pastSuggestions.status.length > 0 && !branch.status_note && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {pastSuggestions.status.map((s, i) => (
-                      <button key={i} type="button" onClick={() => onChange({ status_note: s })}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition truncate max-w-[140px] border border-blue-100">
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div>
-                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
-                  <AlertTriangle size={11} className="text-amber-500" />
-                  Khó khăn
-                </label>
-                <textarea
-                  value={branch.difficulties || ''}
-                  onChange={e => onChange({ difficulties: e.target.value })}
-                  placeholder="Khó khăn đang gặp..."
-                  className={inputCls}
-                />
-                {pastSuggestions.difficulties.length > 0 && !branch.difficulties && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {pastSuggestions.difficulties.map((s, i) => (
-                      <button key={i} type="button" onClick={() => onChange({ difficulties: s })}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 hover:bg-amber-100 transition truncate max-w-[140px] border border-amber-100">
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div>
-                <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
-                  <TrendingUp size={11} className="text-emerald-500" />
-                  Cơ hội
-                </label>
-                <textarea
-                  value={branch.opportunities || ''}
-                  onChange={e => onChange({ opportunities: e.target.value })}
-                  placeholder="Cơ hội phát triển..."
-                  className={inputCls}
-                />
-                {pastSuggestions.opportunities.length > 0 && !branch.opportunities && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {pastSuggestions.opportunities.map((s, i) => (
-                      <button key={i} type="button" onClick={() => onChange({ opportunities: s })}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition truncate max-w-[140px] border border-emerald-100">
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* Save button */}
-              <div className="lg:col-span-3 flex items-center justify-between pt-1">
-                {draftKey && hasContent && (
-                  <span className="text-[9px] text-[#bbb] flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                    Bản nháp đã lưu tự động
-                  </span>
-                )}
-                {!hasContent && <span />}
-                <button
-                  onClick={handleSaveSession}
-                  disabled={saving || !hasContent}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11.5px] font-medium bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-40 transition shadow-sm"
-                >
-                  <Send size={12} />
-                  {saving ? 'Đang lưu...' : 'Lưu phiên ghi nhận'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Session history list */}
+      {/* 2. Session history (moved up so operators read past exchanges first) */}
       <div>
         <div className="flex items-center gap-1.5 mb-2">
           <History size={12} className="text-[#888]" />
@@ -508,11 +403,118 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
         </div>
         {history.length === 0 ? (
           <div className="text-[11px] text-[#bbb] py-4 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
-            Chưa có lịch sử trao đổi — ghi nhận phiên đầu tiên ở trên
+            Chưa có lịch sử trao đổi — ghi nhận phiên đầu tiên ở bên dưới
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto pr-0.5">
+          <div className="flex flex-col gap-1.5 max-h-[320px] overflow-y-auto pr-0.5">
             {history.map(h => renderEntry(h))}
+          </div>
+        )}
+      </div>
+
+      {/* 3. New session form (bottom, vertical layout) */}
+      <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+        <div
+          className="flex items-center justify-between px-3 py-2 bg-[#FAFAF8] border-b border-[#E8E7E2] cursor-pointer"
+          onClick={() => setShowInputForm(v => !v)}
+        >
+          <div className="flex items-center gap-2">
+            <Plus size={12} className="text-[#7C3AED]" />
+            <span className="text-[10.5px] font-semibold text-[#555] uppercase tracking-wide">Ghi nhận phiên mới</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[#999]">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}</span>
+            {showInputForm ? <ChevronUp size={12} className="text-[#bbb]" /> : <ChevronDown size={12} className="text-[#bbb]" />}
+          </div>
+        </div>
+        {showInputForm && (
+          <div className="p-3 flex flex-col gap-3">
+            <div>
+              <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                <Activity size={11} className="text-blue-500" />
+                Tình trạng hiện tại
+              </label>
+              <textarea
+                value={branch.status_note || ''}
+                onChange={e => onChange({ status_note: e.target.value })}
+                placeholder="Nhập tình trạng hoạt động..."
+                rows={3}
+                className={inputCls}
+              />
+              {pastSuggestions.status.length > 0 && !branch.status_note && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {pastSuggestions.status.map((s, i) => (
+                    <button key={i} type="button" onClick={() => onChange({ status_note: s })}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition truncate max-w-[140px] border border-blue-100">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                <AlertTriangle size={11} className="text-amber-500" />
+                Khó khăn
+              </label>
+              <textarea
+                value={branch.difficulties || ''}
+                onChange={e => onChange({ difficulties: e.target.value })}
+                placeholder="Nhập khó khăn đang gặp..."
+                rows={3}
+                className={inputCls}
+              />
+              {pastSuggestions.difficulties.length > 0 && !branch.difficulties && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {pastSuggestions.difficulties.map((s, i) => (
+                    <button key={i} type="button" onClick={() => onChange({ difficulties: s })}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 hover:bg-amber-100 transition truncate max-w-[140px] border border-amber-100">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="flex items-center gap-1 text-[9.5px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+                <TrendingUp size={11} className="text-emerald-500" />
+                Cơ hội
+              </label>
+              <textarea
+                value={branch.opportunities || ''}
+                onChange={e => onChange({ opportunities: e.target.value })}
+                placeholder="Nhập cơ hội phát triển..."
+                rows={3}
+                className={inputCls}
+              />
+              {pastSuggestions.opportunities.length > 0 && !branch.opportunities && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {pastSuggestions.opportunities.map((s, i) => (
+                    <button key={i} type="button" onClick={() => onChange({ opportunities: s })}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition truncate max-w-[140px] border border-emerald-100">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Save button */}
+            <div className="flex flex-col gap-1.5 pt-0.5">
+              <button
+                onClick={handleSaveSession}
+                disabled={saving || !hasContent}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[12.5px] font-semibold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-40 transition shadow-sm"
+              >
+                <Send size={13} />
+                {saving ? 'Đang lưu...' : 'Lưu phiên ghi nhận'}
+              </button>
+              {draftKey && hasContent && (
+                <span className="text-[9px] text-[#bbb] flex items-center justify-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                  Bản nháp đã lưu tự động
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>
