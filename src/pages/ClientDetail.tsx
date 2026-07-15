@@ -20,6 +20,7 @@ import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 import PaymentHistory from '../components/clients/PaymentHistory';
+import ExportMdModal from '../components/clients/ExportMdModal';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -160,6 +161,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [savingGift, setSavingGift] = useState(false);
   const [editingDealTitle, setEditingDealTitle] = useState(false);
   const [dealTitleInput, setDealTitleInput] = useState('');
+  const [showExportMd, setShowExportMd] = useState(false);
 
   useEffect(() => {
     if (activeTab !== 'crm') return;
@@ -658,11 +660,15 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             <option value="leasing">Cho thue lao dong</option>
             <option value="recruitment">Gioi thieu lao dong</option>
           </select>
+          <button onClick={() => setShowExportMd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-emerald-500 text-emerald-700 hover:bg-emerald-50 transition">
+            <Download size={13} /> Xuất MD
+          </button>
           <button onClick={() => setEditing(!editing)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition">
             {editing ? <><X size={13} /> Hủy</> : <><Edit2 size={13} /> Sửa thông tin</>}
           </button>
         </div>
       </div>
+      {showExportMd && <ExportMdModal client={client} onClose={() => setShowExportMd(false)} toast={toast} />}
 
       {/* Tab bar */}
       <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-6">
