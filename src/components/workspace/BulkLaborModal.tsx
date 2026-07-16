@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import FilterDropdown, { ALL_OPTION } from '../FilterDropdown'
-import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../../lib/format'
+import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull } from '../../lib/format'
 import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
 
@@ -129,7 +129,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
             <select value={bulkWeek} onChange={e => handleWeekChange(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
               {bulkWeekGroups.map(g => (
                 <optgroup key={g.month} label={g.month}>
-                  {g.labels.map(l => <option key={l} value={l}>{l}</option>)}
+                  {g.labels.map(l => <option key={l} value={l}>{weekLabelFull(l)}</option>)}
                 </optgroup>
               ))}
             </select>

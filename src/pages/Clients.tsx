@@ -9,7 +9,7 @@ import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekDateRange, weekLabelsForMonth } from '../lib/format';
+import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -1645,7 +1645,7 @@ export default function Clients({
                 <select value={bulkWeek} onChange={e => handleBulkWeekChange(e.target.value)} className="text-[12px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500">
                   {bulkWeekGroups.map(g => (
                     <optgroup key={g.month} label={g.month}>
-                      {g.labels.map(l => <option key={l} value={l}>{l} ({weekDateRange(l)})</option>)}
+                      {g.labels.map(l => <option key={l} value={l}>{weekLabelFull(l)}</option>)}
                     </optgroup>
                   ))}
                 </select>

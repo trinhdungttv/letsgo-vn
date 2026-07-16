@@ -65,45 +65,108 @@ export function sortLaborHistory<T extends { week_label: string; created_at: str
   return [...entries].sort((a, b) => sortKey(a.week_label) - sortKey(b.week_label) || a.created_at.localeCompare(b.created_at));
 }
 
+// ---------------------------------------------------------------------------
+// TUẦN LỊCH THẬT (chuẩn hoá 16/07/2026):
+//   - Tuần chạy Thứ 2 → CN; hiển thị Thứ 2 → Thứ 7 (CN nghỉ, không tính công).
+//   - Tuần được phép vắt qua 2 tháng (ví dụ 29/6–4/7).
+//   - Tuần thuộc THÁNG CHỨA NGÀY THỨ 5 của tuần đó (chuẩn ISO) — tức tháng
+//     chiếm đa số ngày làm việc. Ví dụ 29/6–4/7 → T7W1.
+//   - Nhãn giữ nguyên format TmWn để tương thích dữ liệu client_labor_history.
+// ---------------------------------------------------------------------------
+
+// Thứ 2 của tuần chứa ngày d (00:00 local).
+function mondayOf(d: Date): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // getDay: CN=0 → Mon=0..Sun=6
+  return x;
+}
+
+// Ngày Thứ 5 đầu tiên của tháng — mốc xác định tuần W1.
+function firstThursday(year: number, month: number): Date {
+  const d = new Date(year, month - 1, 1);
+  d.setDate(1 + ((4 - d.getDay() + 7) % 7));
+  return d;
+}
+
+// Thông tin tuần lịch thật chứa ngày `d`.
+export function weekInfoOf(d: Date): { year: number; month: number; week: number; label: string } {
+  const thu = mondayOf(d);
+  thu.setDate(thu.getDate() + 3);
+  const year = thu.getFullYear();
+  const month = thu.getMonth() + 1;
+  const week = Math.floor((thu.getDate() - firstThursday(year, month).getDate()) / 7) + 1;
+  return { year, month, week, label: `T${month}W${week}` };
+}
+
 export function getCurrentWeekLabel(): string {
-  const now = new Date();
-  const weekNum = Math.ceil(now.getDate() / 7);
-  return `T${now.getMonth() + 1}W${weekNum}`;
+  return weekInfoOf(new Date()).label;
 }
 
 // Returns the week labels (TmWn) that actually exist in a given month, ascending (W1 first).
+// Tháng có đúng 4 hoặc 5 tuần thật (đếm theo số ngày Thứ 5 trong tháng).
 export function weekLabelsForMonth(year: number, month: number): string[] {
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const maxWeek = Math.ceil(daysInMonth / 7);
+  const first = firstThursday(year, month);
   const labels: string[] = [];
-  for (let w = 1; w <= maxWeek; w++) labels.push(`T${month}W${w}`);
+  const d = new Date(first);
+  while (d.getMonth() === first.getMonth()) {
+    labels.push(`T${month}W${labels.length + 1}`);
+    d.setDate(d.getDate() + 7);
+  }
   return labels;
 }
 
+// Số tuần tính từ đầu năm (chuẩn ISO — đánh số theo ngày Thứ 5, khớp với quy tắc
+// gán tháng ở trên). Ví dụ T7W3/2026 → 29.
+export function weekOfYear(label: string, year?: number): number {
+  const y = year ?? new Date().getFullYear();
+  const wIdx = label.indexOf('W');
+  if (wIdx < 0) return 0;
+  const m = parseInt(label.slice(1, wIdx), 10);
+  const w = parseInt(label.slice(wIdx + 1), 10);
+  const thu = firstThursday(y, m);
+  thu.setDate(thu.getDate() + (w - 1) * 7);
+  const doy = Math.round((thu.getTime() - new Date(thu.getFullYear(), 0, 1).getTime()) / 86400000) + 1;
+  return Math.ceil(doy / 7);
+}
+
+// Nhãn tuần đầy đủ cho dropdown: "T7W3 - W29 (13/7-18/7)".
+export function weekLabelFull(label: string, year?: number): string {
+  return `${label} - W${weekOfYear(label, year)} (${weekDateRange(label, year)})`;
+}
+
+// Khoảng ngày làm việc Thứ 2 → Thứ 7 của tuần; ghi kèm tháng ở cả 2 đầu vì tuần
+// có thể vắt qua 2 tháng (ví dụ "29/6-4/7").
 export function weekDateRange(label: string, year?: number): string {
   const y = year ?? new Date().getFullYear();
   const wIdx = label.indexOf('W');
   if (wIdx < 0) return '';
   const m = parseInt(label.slice(1, wIdx), 10);
   const w = parseInt(label.slice(wIdx + 1), 10);
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const from = (w - 1) * 7 + 1;
-  const to = Math.min(w * 7, daysInMonth);
-  return `${from}-${to}/${m}`;
+  const mon = firstThursday(y, m);
+  mon.setDate(mon.getDate() + (w - 1) * 7 - 3);
+  const sat = new Date(mon);
+  sat.setDate(sat.getDate() + 5);
+  return `${mon.getDate()}/${mon.getMonth() + 1}-${sat.getDate()}/${sat.getMonth() + 1}`;
 }
 
 // Returns week labels (TmWn) grouped by month for the past `monthsBack` months (incl. current),
 // newest first. Current month only includes weeks up to the current week (no future weeks).
 export function recentWeekLabels(monthsBack = 6): { month: string; labels: string[] }[] {
-  const now = new Date();
+  const nowInfo = weekInfoOf(new Date());
+  const curMonday = mondayOf(new Date()).getTime();
   const groups: { month: string; labels: string[] }[] = [];
   for (let i = 0; i < monthsBack; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const d = new Date(nowInfo.year, nowInfo.month - 1 - i, 1);
     const m = d.getMonth() + 1;
     const y = d.getFullYear();
-    const isCurrent = i === 0;
-    const all = weekLabelsForMonth(y, m);
-    const labels = (isCurrent ? all.slice(0, Math.ceil(now.getDate() / 7)) : all).slice().reverse();
+    // Chỉ giữ các tuần đã bắt đầu (Thứ 2 của tuần ≤ Thứ 2 tuần hiện tại).
+    const labels = weekLabelsForMonth(y, m)
+      .filter((_, idx) => {
+        const mon = firstThursday(y, m);
+        mon.setDate(mon.getDate() + idx * 7 - 3);
+        return mon.getTime() <= curMonday;
+      })
+      .reverse();
     groups.push({ month: `Tháng ${m}/${y}`, labels });
   }
   return groups;
@@ -115,20 +178,13 @@ export function recentWeekLabels(monthsBack = 6): { month: string; labels: strin
 // thêm từng tuần một (kể cả khi cần sang tháng mới), thay vì tạo nguyên 1 tháng.
 export function nextWeekLabels(n: number): { month: string; labels: string[] }[] {
   if (n <= 0) return [];
-  const now = new Date();
-  let month = now.getMonth() + 1;
-  let year = now.getFullYear();
-  let week = Math.ceil(now.getDate() / 7);
+  const mon = mondayOf(new Date());
   const flat: { groupKey: string; label: string }[] = [];
-  for (let i = 0; i < n; i++) {
-    const maxWeek = weekLabelsForMonth(year, month).length;
-    week++;
-    if (week > maxWeek) {
-      week = 1;
-      month++;
-      if (month > 12) { month = 1; year++; }
-    }
-    flat.push({ groupKey: `Tháng ${month}/${year}`, label: `T${month}W${week}` });
+  for (let i = 1; i <= n; i++) {
+    const d = new Date(mon);
+    d.setDate(d.getDate() + i * 7);
+    const info = weekInfoOf(d);
+    flat.push({ groupKey: `Tháng ${info.month}/${info.year}`, label: info.label });
   }
   const groups: { month: string; labels: string[] }[] = [];
   for (const { groupKey, label } of flat) {
