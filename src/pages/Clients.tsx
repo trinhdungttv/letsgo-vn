@@ -181,11 +181,28 @@ export default function Clients({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const { branches, deleteBranch } = useBranchData();
+
+  // Filter chi nhánh hiển thị theo tên chuẩn (branches.name), nhưng client.region
+  // vẫn lưu key cũ (branches.region) — mở rộng lựa chọn ra cả 2 giá trị để khớp.
+  const acceptedRegions = useCallback((selected: string[]) => {
+    const set = new Set(selected);
+    for (const b of branches) {
+      if (selected.includes(b.name) || (b.region && selected.includes(b.region))) {
+        set.add(b.name);
+        if (b.region) set.add(b.region);
+      }
+    }
+    return set;
+  }, [branches]);
+
+  const activeRegionSet = useMemo(() => acceptedRegions(activeRegion), [acceptedRegions, activeRegion]);
+
   const filtered = clients.filter(c => {
     if (c.archived_at) return false;
     if (quickFilter === 'suspended') return c.cooperation_status === 'suspended';
     if (c.cooperation_status === 'suspended') return false;
-    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegion.includes(c.region || '');
+    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegionSet.has(c.region || '');
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
@@ -249,21 +266,21 @@ export default function Clients({
 
   const { regions, add: addRegion, update: updateRegion, remove: removeRegion } = useRegions();
   const { managers, add: addManager, update: updateManager, remove: removeManager } = useManagers();
-  const { branches, deleteBranch } = useBranchData();
   const { staffs: allBranchStaffs } = useAllBranchStaffs();
   const { payrollStaffs } = usePayrollStaffs();
 
-  const regionNames = [ALL_OPTION, ...branches.map(b => b.region || b.name)];
+  const regionNames = [ALL_OPTION, ...branches.map(b => b.name)];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
   const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
 
   const bulkClients = useMemo(() => {
+    const regionSet = acceptedRegions(bulkRegions);
     return clients
       .filter(c => !c.archived_at)
-      .filter(c => bulkRegions.includes(ALL_OPTION) || bulkRegions.includes(c.region || ''))
+      .filter(c => bulkRegions.includes(ALL_OPTION) || regionSet.has(c.region || ''))
       .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase()))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [clients, bulkSearch, bulkRegions]);
+  }, [clients, bulkSearch, bulkRegions, acceptedRegions]);
 
   const bulkWeekGroups = useMemo(() => {
     return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)];
@@ -700,11 +717,12 @@ export default function Clients({
         updates.cutoff_day = null; updates.calc_day = null; updates.salary_day = null;
         updates.payment_start = null; updates.payment_end = null;
       }
-      if (field === 'service_type' && newVal === 'leasing') {
-        updates.cutoff_day = updates.cutoff_day ?? 25;
-        updates.payment_start = updates.payment_start ?? 1;
-        updates.payment_end = updates.payment_end ?? 10;
-        updates.salary_day = updates.salary_day ?? 5;
+      if (field === 'service_type' && (newVal === 'leasing' || newVal === 'hoh')) {
+        // Giữ chu kỳ hiện có nếu đã thiết lập, chỉ điền mặc định khi còn trống.
+        updates.cutoff_day = c.cutoff_day ?? 25;
+        updates.payment_start = c.payment_start ?? 1;
+        updates.payment_end = c.payment_end ?? 10;
+        updates.salary_day = c.salary_day ?? 5;
       }
       const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
       if (error) throw error;
@@ -1136,6 +1154,7 @@ export default function Clients({
                                 >
                                   <option value="leasing">Cho thue lao dong</option>
                                   <option value="recruitment">Gioi thieu lao dong</option>
+                                  <option value="hoh">HOH</option>
                                 </select>
                               ) : c.service_type === 'recruitment' ? (
                                 <span
@@ -1144,6 +1163,14 @@ export default function Clients({
                                   className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium cursor-pointer select-none bg-purple-50 text-purple-600 border-purple-200"
                                 >
                                   GT
+                                </span>
+                              ) : c.service_type === 'hoh' ? (
+                                <span
+                                  onDoubleClick={e => startEdit(e, c, 'service_type')}
+                                  title="HOH — nhan doi de doi loai hinh"
+                                  className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium cursor-pointer select-none bg-orange-50 text-orange-600 border-orange-200"
+                                >
+                                  HOH
                                 </span>
                               ) : null}
                               <ChurnBadge level={churnLevel} />

@@ -57,6 +57,11 @@ export default function PnLProjectTab({
   const [lgInput, setLgInput] = useState('');
   const [cnInput, setCnInput] = useState('');
   const [pendingSplit, setPendingSplit] = useState<{ lg: number; cn: number } | null>(null);
+  // Khoán Theo Công: đơn giá vnd/công của tháng đang chọn.
+  const [rateInput, setRateInput] = useState('');
+  const [rateEditOpen, setRateEditOpen] = useState(false);
+  const [pendingRate, setPendingRate] = useState<number | null>(null);
+  const [rateSaveAsDefault, setRateSaveAsDefault] = useState(true);
 
   type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
@@ -168,8 +173,9 @@ export default function PnLProjectTab({
     if (selected) {
       setLgInput(String(selected.lg_pct));
       setCnInput(String(selected.cn_pct));
+      setRateInput(String(selected.manday_rate || ''));
     }
-  }, [selId, selected?.lg_pct, selected?.cn_pct]);
+  }, [selId, selected?.lg_pct, selected?.cn_pct, selected?.manday_rate]);
 
   const taxOptsFor = useCallback((clientId: string) => {
     const s = splitSettings[clientId];
@@ -309,6 +315,14 @@ export default function PnLProjectTab({
           .sort((a, b) => b.month.localeCompare(a.month))[0] || null;
         const prevCosts = prevEntry ? (pnlCosts[prevEntry.id] || []) : [];
 
+        // Khoán Theo Công: kế thừa loại + đơn giá từ tháng trước (trừ khi chi nhánh
+        // đã chuyển thành chi nhánh công ty — 'company' giữ ưu tiên managed).
+        let mandayRate = settings?.manday_rate ?? 0;
+        if (branchKhoan?.type !== 'company' && prevEntry?.project_type === 'per_manday') {
+          clientProjectType = 'per_manday';
+          mandayRate = prevEntry.manday_rate || mandayRate;
+        }
+
         const created = await onAddProject({
           client_id: clientId,
           month,
@@ -318,6 +332,7 @@ export default function PnLProjectTab({
           cn_pct: cnPct,
           revenue: 0,
           total_man_days: 0,
+          manday_rate: mandayRate,
           created_by: currentUser || null,
           split_temp_until: splitTempUntil,
           split_reverted: splitReverted,
@@ -387,6 +402,39 @@ export default function PnLProjectTab({
     }
     setPendingSplit(null);
     setSplitEditOpen(false);
+  };
+
+  // Khoán Theo Công: blur ô đơn giá → hỏi lưu làm mặc định KH hay chỉ tháng này.
+  const onRateBlur = () => {
+    if (!selected) return;
+    const rate = Math.max(0, Math.round(+rateInput || 0));
+    if (rate === (selected.manday_rate || 0)) return;
+    setPendingRate(rate);
+    setRateSaveAsDefault(true);
+    setRateEditOpen(true);
+  };
+
+  const applyRateEdit = async () => {
+    if (!selected || pendingRate === null) return;
+    try {
+      await onUpdateProject(selected.id, { manday_rate: pendingRate });
+      if (rateSaveAsDefault) {
+        await onSaveSplitSettings(selected.client_id, { manday_rate: pendingRate });
+        toast('Đã lưu đơn giá khoán làm mặc định cho khách hàng');
+      } else {
+        toast('Đã áp dụng đơn giá cho riêng tháng này');
+      }
+    } catch (e) {
+      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)));
+    }
+    setPendingRate(null);
+    setRateEditOpen(false);
+  };
+
+  const cancelRateEdit = () => {
+    if (selected) setRateInput(String(selected.manday_rate || ''));
+    setPendingRate(null);
+    setRateEditOpen(false);
   };
 
   const [taxSettingsOpen, setTaxSettingsOpen] = useState(false);
@@ -615,8 +663,8 @@ export default function PnLProjectTab({
                 <div className="text-[12px] font-medium text-[#111] truncate">{p.clients?.name || mergedClients.find(x => x.id === p.client_id)?.name || '—'}</div>
                 <div className="text-[10px] text-[#999] mb-1">{p.branch_manager || '—'}</div>
                 <div className="flex items-center justify-between">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${p.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
-                    {p.project_type === 'managed' ? 'Nhận lương' : `${p.lg_pct}/${p.cn_pct}`}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${p.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : p.project_type === 'per_manday' ? 'bg-[#FFF3E0] text-[#9A4E00]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
+                    {p.project_type === 'managed' ? 'Nhận lương' : p.project_type === 'per_manday' ? `${(p.manday_rate || 0).toLocaleString('vi-VN')}đ/công` : `${p.lg_pct}/${p.cn_pct}`}
                   </span>
                   <span className={`text-[11px] font-medium ${rr.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>LN: {fmtTrieu(rr.profit)}</span>
                 </div>
@@ -643,8 +691,8 @@ export default function PnLProjectTab({
                 <div className="text-[14px] font-medium text-[#111] flex-1 truncate">
                   {selected.clients?.name || clients.find(x => x.id === selected.client_id)?.name}
                 </div>
-                <span className={`text-[10px] px-2 py-1 rounded font-medium ${selected.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
-                  {selected.project_type === 'managed' ? 'Không Khoán - Nhận Lương' : 'Đã Nhận Khoán'}
+                <span className={`text-[10px] px-2 py-1 rounded font-medium ${selected.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : selected.project_type === 'per_manday' ? 'bg-[#FFF3E0] text-[#9A4E00]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
+                  {selected.project_type === 'managed' ? 'Không Khoán - Nhận Lương' : selected.project_type === 'per_manday' ? 'Khoán Theo Công' : 'Đã Nhận Khoán'}
                 </span>
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden text-[10px] font-medium shrink-0">
                   <button
@@ -922,6 +970,15 @@ export default function PnLProjectTab({
                   >
                     Đã Nhận Khoán
                   </button>
+                  <button
+                    onClick={() => guard(() => updateField({
+                      project_type: 'per_manday' as ProjectPnlType,
+                      manday_rate: selected.manday_rate || splitSettings[selected.client_id]?.manday_rate || 0,
+                    }))}
+                    className={`flex-1 py-1.5 text-[11.5px] font-medium transition border-l border-gray-300 ${selected.project_type === 'per_manday' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
+                  >
+                    Khoán Theo Công
+                  </button>
                 </div>
                 {selected.project_type === 'shared' ? (
                   <div className="space-y-2">
@@ -989,6 +1046,60 @@ export default function PnLProjectTab({
                             Áp dụng
                           </button>
                           <button onClick={cancelSplitEdit} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
+                            Hủy
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : selected.project_type === 'per_manday' ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="text-[12px] text-[#666]">Đơn giá khoán:</span>
+                      <div className="relative w-[130px]">
+                        <input
+                          type="number" min={0} step={1000}
+                          value={rateInput}
+                          onChange={e => setRateInput(e.target.value)}
+                          onBlur={onRateBlur}
+                          placeholder="35000"
+                          className="w-full text-[12px] px-2 py-1.5 pr-12 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">đ/công</span>
+                      </div>
+                      <span className="text-[12px] text-[#666]">
+                        × <strong className="text-[#111]">{(selected.total_man_days ?? 0).toLocaleString('vi-VN')}</strong> công
+                        {' = '}
+                        <strong className="text-emerald-700">{fmtTrieu((selected.manday_rate || 0) * (selected.total_man_days || 0))}</strong> đ cho chi nhánh
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[#999]">
+                      Chi nhánh nhận đơn giá × tổng số công (đảm bảo đủ kể cả khi dự án lỗ). Let's Go VN nhận phần LN sau thuế còn lại.
+                    </div>
+                    {(selected.total_man_days ?? 0) === 0 && (
+                      <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 inline-block">
+                        ⚠ Chưa nhập "Tổng số công" — tiền khoán chi nhánh đang là 0. Nhập số công ở ô trên header dự án.
+                      </div>
+                    )}
+
+                    {rateEditOpen && pendingRate !== null && (
+                      <div className="border border-gray-200 rounded-lg p-3 space-y-2.5 max-w-[420px] bg-[#FAFAF8]">
+                        <div className="text-[12px] font-medium text-[#111]">
+                          Đơn giá {pendingRate.toLocaleString('vi-VN')} đ/công. Áp dụng như thế nào?
+                        </div>
+                        <label className="flex items-center gap-2 text-[12px] cursor-pointer">
+                          <input type="radio" checked={rateSaveAsDefault} onChange={() => setRateSaveAsDefault(true)} />
+                          Lưu làm đơn giá mặc định của khách hàng — các tháng sau tự dùng
+                        </label>
+                        <label className="flex items-center gap-2 text-[12px] cursor-pointer">
+                          <input type="radio" checked={!rateSaveAsDefault} onChange={() => setRateSaveAsDefault(false)} />
+                          Chỉ áp dụng riêng tháng này
+                        </label>
+                        <div className="flex gap-2">
+                          <button onClick={applyRateEdit} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
+                            Áp dụng
+                          </button>
+                          <button onClick={cancelRateEdit} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
                             Hủy
                           </button>
                         </div>
@@ -1251,7 +1362,11 @@ export default function PnLProjectTab({
                   <span>
                     Thuế TNDN {r.taxExempt ? '(miễn)' : `(${r.taxPct}%)`}: <strong className="text-amber-700">− {fmtTrieu(r.tax)}</strong>
                     {' → '}LN sau thuế <strong className={r.profitAfterTax >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtTrieu(r.profitAfterTax)}</strong> đ
-                    {selected.project_type === 'shared' ? ` → Chia ${selected.lg_pct}/${selected.cn_pct}` : " → 100% Let's Go VN"}
+                    {selected.project_type === 'shared'
+                      ? ` → Chia ${selected.lg_pct}/${selected.cn_pct}`
+                      : selected.project_type === 'per_manday'
+                        ? ` → CN nhận ${(selected.manday_rate || 0).toLocaleString('vi-VN')}đ × ${(selected.total_man_days || 0).toLocaleString('vi-VN')} công`
+                        : " → 100% Let's Go VN"}
                   </span>
                   <button onClick={() => setTaxSettingsOpen(true)} title="Cai dat thue TNDN"
                     className="p-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition shrink-0">
@@ -1266,13 +1381,13 @@ export default function PnLProjectTab({
                   </div>
                   <div className="rounded-lg p-3 text-center bg-[#E6F1FB] border border-[#B5D4F4]">
                     <div className="text-[10px] uppercase text-[#0C447C] mb-1">Let's Go VN</div>
-                    <div className="text-[20px] font-medium text-[#185FA5]">{fmtTrieu(r.lgP)}</div>
-                    <div className="text-[10px] text-[#378ADD] mt-0.5">{selected.project_type === 'shared' ? `${selected.lg_pct}% LN` : '100% (khoán)'}</div>
+                    <div className={`text-[20px] font-medium ${r.lgP >= 0 ? 'text-[#185FA5]' : 'text-red-600'}`}>{fmtTrieu(r.lgP)}</div>
+                    <div className="text-[10px] text-[#378ADD] mt-0.5">{selected.project_type === 'shared' ? `${selected.lg_pct}% LN` : selected.project_type === 'per_manday' ? 'LN còn lại sau khoán công' : '100% (khoán)'}</div>
                   </div>
                   <div className="rounded-lg p-3 text-center bg-[#EAF3DE] border border-[#C0DD97]">
                     <div className="text-[10px] uppercase text-[#27500A] mb-1">Chi nhánh</div>
                     <div className="text-[20px] font-medium text-emerald-700">{fmtTrieu(r.cnP)}</div>
-                    <div className="text-[10px] text-emerald-600 mt-0.5">{selected.project_type === 'shared' ? `${selected.cn_pct}% LN` : 'Nhận lương CĐ'}</div>
+                    <div className="text-[10px] text-emerald-600 mt-0.5">{selected.project_type === 'shared' ? `${selected.cn_pct}% LN` : selected.project_type === 'per_manday' ? `${(selected.manday_rate || 0).toLocaleString('vi-VN')}đ/công × ${(selected.total_man_days || 0).toLocaleString('vi-VN')} công` : 'Nhận lương CĐ'}</div>
                   </div>
                 </div>
                 {selected.project_type === 'shared' && (

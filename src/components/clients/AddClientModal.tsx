@@ -138,7 +138,7 @@ export default function AddClientModal({
     }
     setSubmitting(true);
     try {
-      const leasingFields = serviceType === 'leasing'
+      const leasingFields = serviceType !== 'recruitment'
         ? {
             cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
             calc_day: calc.start, calc_day_end: calc.end,
@@ -171,14 +171,14 @@ export default function AddClientModal({
       onCreated(created);
       await logActivity({
         user, action: 'insert', table: 'clients', recordId: created.id,
-        description: `Thêm khách hàng mới "${trimmed}"${region ? ` (${region})` : ''} - ${serviceType === 'recruitment' ? 'Giới thiệu lao động' : 'Cho thuê lao động'}`,
+        description: `Thêm khách hàng mới "${trimmed}"${region ? ` (${region})` : ''} - ${serviceType === 'recruitment' ? 'Giới thiệu lao động' : serviceType === 'hoh' ? 'HOH' : 'Cho thuê lao động'}`,
         newData: created,
       });
 
       const missing: string[] = [];
       if (!region) missing.push('chi nhánh');
       if (!manager) missing.push('người quản lý');
-      if (serviceType === 'leasing' && !cutoff.start) missing.push('lịch chốt công');
+      if (serviceType !== 'recruitment' && !cutoff.start) missing.push('lịch chốt công');
       setResult({ ok: missing.length === 0, missing, name: trimmed });
       toast(`Đã thêm khách hàng "${trimmed}"`);
     } catch (e) {
@@ -289,9 +289,13 @@ export default function AddClientModal({
                 className={`flex-1 py-1.5 text-[11.5px] font-medium transition border-l border-gray-300 ${serviceType === 'recruitment' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
                 Giới thiệu LĐ
               </button>
+              <button type="button" onClick={() => setServiceType('hoh')}
+                className={`flex-1 py-1.5 text-[11.5px] font-medium transition border-l border-gray-300 ${serviceType === 'hoh' ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
+                HOH
+              </button>
             </div>
 
-            {serviceType === 'leasing' ? (
+            {serviceType !== 'recruitment' ? (
               <div className="space-y-2.5">
                 <DayRangeField label="Chốt công" dot="bg-orange-400" value={cutoff} onChange={setCutoff} />
                 <DayRangeField label="Tính lương" dot="bg-blue-400" value={calc} onChange={setCalc} />

@@ -3,7 +3,7 @@ import { useHashTab } from '../hooks/useHashSubRoute';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
 import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekDateRange, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
@@ -641,7 +641,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           <select
             value={form.service_type}
             onChange={async e => {
-              const newType = e.target.value as 'leasing' | 'recruitment';
+              const newType = e.target.value as ServiceType;
               setForm(f => ({ ...f, service_type: newType }));
               const extra = newType === 'recruitment'
                 ? { cutoff_day: null, calc_day: null, salary_day: null, payment_start: null, payment_end: null }
@@ -659,6 +659,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           >
             <option value="leasing">Cho thue lao dong</option>
             <option value="recruitment">Gioi thieu lao dong</option>
+            <option value="hoh">HOH</option>
           </select>
           <button onClick={() => setShowExportMd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-emerald-500 text-emerald-700 hover:bg-emerald-50 transition">
             <Download size={13} /> Xuất MD
@@ -1181,11 +1182,12 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       <label className="text-[12px] text-[#666] font-medium">Loai hinh dich vu</label>
                       <select
                         value={form.service_type}
-                        onChange={e => setForm({ ...form, service_type: e.target.value as 'leasing' | 'recruitment' })}
+                        onChange={e => setForm({ ...form, service_type: e.target.value as ServiceType })}
                         className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
                       >
                         <option value="leasing">Cho thue lao dong (mac dinh)</option>
                         <option value="recruitment">Gioi thieu lao dong</option>
+                        <option value="hoh">HOH</option>
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">

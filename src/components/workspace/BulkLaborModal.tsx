@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import FilterDropdown, { ALL_OPTION } from '../FilterDropdown'
 import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels } from '../../lib/format'
+import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
 
 interface Props {
@@ -27,10 +28,22 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
     [clients]
   )
 
-  const regionNames = useMemo(() => {
-    const names = [...new Set(activeClients.map(c => c.region).filter(Boolean) as string[])]
-    return [ALL_OPTION, ...names.sort()]
-  }, [activeClients])
+  const { branches } = useBranchData()
+
+  // Hiển thị tên chi nhánh chuẩn (branches.name); client.region vẫn lưu key cũ
+  // (branches.region) nên khi lọc phải chấp nhận cả 2 giá trị.
+  const regionNames = useMemo(() => [ALL_OPTION, ...branches.map(b => b.name)], [branches])
+
+  const bulkRegionSet = useMemo(() => {
+    const set = new Set(bulkRegions)
+    for (const b of branches) {
+      if (bulkRegions.includes(b.name) || (b.region && bulkRegions.includes(b.region))) {
+        set.add(b.name)
+        if (b.region) set.add(b.region)
+      }
+    }
+    return set
+  }, [branches, bulkRegions])
 
   const bulkWeekGroups = useMemo(() => {
     return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)]
@@ -38,9 +51,9 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
 
   const filteredClients = useMemo(() =>
     activeClients
-      .filter(c => bulkRegions.includes(ALL_OPTION) || bulkRegions.includes(c.region || ''))
+      .filter(c => bulkRegions.includes(ALL_OPTION) || bulkRegionSet.has(c.region || ''))
       .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase())),
-    [activeClients, bulkRegions, bulkSearch]
+    [activeClients, bulkRegions, bulkRegionSet, bulkSearch]
   )
 
   async function loadWeekData(week: string) {

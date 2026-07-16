@@ -25,7 +25,8 @@ export interface Manager {
 // Loại hình dịch vụ:
 //   'leasing'     - Cho thuê lao động: chu kỳ tháng cố định, các trường ngày bắt buộc.
 //   'recruitment' - Giới thiệu lao động: xuất HĐ theo sự kiện, thanh toán theo công nợ.
-export type ServiceType = 'leasing' | 'recruitment';
+//   'hoh'         - HOH: vận hành theo chu kỳ tháng như leasing, badge riêng màu cam.
+export type ServiceType = 'leasing' | 'recruitment' | 'hoh';
 
 export interface Client {
   id: string;
@@ -588,7 +589,11 @@ export interface PnlRevenueLine {
   man_days: number;
 }
 
-export type ProjectPnlType = 'shared' | 'managed';
+// 'shared'     - Đã Nhận Khoán: chia LN sau thuế theo % lg_pct/cn_pct.
+// 'managed'    - Không Khoán - Nhận Lương: LGV nhận 100% LN, CN nhận lương cố định.
+// 'per_manday' - Khoán Theo Công: CN nhận manday_rate × total_man_days (đảm bảo đủ
+//                kể cả khi lỗ), LGV nhận phần LN sau thuế còn lại (có thể âm).
+export type ProjectPnlType = 'shared' | 'managed' | 'per_manday';
 export type CostPayer = 'lg' | 'cn' | 'ch';
 export type OverheadCostType = 'Cố định' | 'Biến đổi';
 export type PnlInvoiceMode = 'single' | 'periodic';
@@ -603,6 +608,7 @@ export interface ProjectPnl {
   cn_pct: number;
   revenue: number;
   total_man_days: number;
+  manday_rate: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -621,6 +627,7 @@ export interface PnlSplitSettings {
   pending_lg_pct: number | null;
   pending_cn_pct: number | null;
   pending_until_month: string | null;
+  manday_rate: number;
   tax_pct: number;
   tax_exempt: boolean;
   updated_at: string;

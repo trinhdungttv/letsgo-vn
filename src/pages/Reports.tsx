@@ -242,7 +242,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   const laborNet = laborGains - laborLosses;
 
   // ==== Tỷ lệ đáp ứng cam kết ====
-  const commitRows = laborByClient.filter(r => r.client.service_type === 'leasing' && (r.client.min_workers || 0) > 0);
+  const commitRows = laborByClient.filter(r => r.client.service_type !== 'recruitment' && (r.client.min_workers || 0) > 0);
   const committed = commitRows.reduce((s, r) => s + r.client.min_workers, 0);
   const actualVsCommit = commitRows.reduce((s, r) => s + (r.cur || 0), 0);
   const fillRate = committed > 0 ? (actualVsCommit / committed) * 100 : null;

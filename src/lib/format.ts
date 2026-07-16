@@ -181,7 +181,7 @@ export function getBranchTypeForMonth(history: BranchTypeHistory[], month: strin
 
 // P&L calculation shared by the Finance Workspace project tabs.
 export function calcPnl(
-  p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number },
+  p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number; manday_rate?: number; total_man_days?: number },
   costs: { value: number; payer: CostPayer; label?: string }[],
   taxOpts?: { categories?: { label: string; group_type?: string }[]; taxPct?: number; taxExempt?: boolean }
 ): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number } {
@@ -203,8 +203,17 @@ export function calcPnl(
   const taxPct = taxOpts?.taxExempt ? 0 : (taxOpts?.taxPct ?? 0);
   const tax = profit > 0 ? profit * taxPct / 100 : 0;
   const profitAfterTax = profit - tax;
-  const lgP = p.project_type === 'managed' ? profitAfterTax : profitAfterTax * p.lg_pct / 100;
-  const cnP = p.project_type === 'managed' ? 0 : profitAfterTax * p.cn_pct / 100;
+  // per_manday: CN nhận đơn giá × công (đảm bảo đủ kể cả khi lỗ), LGV nhận phần còn lại (có thể âm).
+  let lgP: number, cnP: number;
+  if (p.project_type === 'managed') {
+    lgP = profitAfterTax; cnP = 0;
+  } else if (p.project_type === 'per_manday') {
+    cnP = (Number(p.manday_rate) || 0) * (Number(p.total_man_days) || 0);
+    lgP = profitAfterTax - cnP;
+  } else {
+    lgP = profitAfterTax * p.lg_pct / 100;
+    cnP = profitAfterTax * p.cn_pct / 100;
+  }
   return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax };
 }
 

@@ -264,7 +264,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
   L.push(`|---|---|`);
   L.push(`| Ngày xuất | ${exportDate} |`);
   L.push(`| Kỳ dữ liệu | ${monthLabel(opts.fromMonth)} → ${monthLabel(opts.toMonth)} (${months.length} tháng) |`);
-  L.push(`| Loại hình dịch vụ | ${client.service_type === 'recruitment' ? 'Giới thiệu lao động' : 'Cho thuê lao động'} |`);
+  L.push(`| Loại hình dịch vụ | ${client.service_type === 'recruitment' ? 'Giới thiệu lao động' : client.service_type === 'hoh' ? 'HOH' : 'Cho thuê lao động'} |`);
   L.push(`| Loại dự án | ${client.project_type === 'managed' ? 'Công ty tự vận hành (managed)' : `Khoán chi nhánh (LG ${client.default_lg_pct}% / CN ${client.default_cn_pct}%)`} |`);
   L.push(`| Trạng thái hợp tác | ${client.cooperation_status === 'suspended' ? `TẠM NGƯNG${client.suspension_reason ? ` — lý do: ${client.suspension_reason}` : ''}` : 'Đang hợp tác'} |`);
   L.push('');
@@ -382,7 +382,9 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
       const hasCosts = (costsByPnl.get(c.pnl.id) || []).length > 0;
       const costCell = hasCosts ? vnd(c.tc) : `${MISSING} chi phí`;
       const margin = c.pnl.revenue ? pct((c.profitAfterTax / c.pnl.revenue) * 100) : '—';
-      const split = c.pnl.project_type === 'managed' ? 'Công ty vận hành' : `${c.pnl.lg_pct}% / ${c.pnl.cn_pct}%`;
+      const split = c.pnl.project_type === 'managed' ? 'Công ty vận hành'
+        : c.pnl.project_type === 'per_manday' ? `Khoán ${(c.pnl.manday_rate || 0).toLocaleString('vi-VN')}đ/công`
+        : `${c.pnl.lg_pct}% / ${c.pnl.cn_pct}%`;
       L.push(`| ${monthLabel(m)} | ${vnd(c.pnl.revenue)} | ${costCell} | ${hasCosts ? vnd(c.profit) : '—'} | ${hasCosts ? vnd(c.tax) : '—'} | ${hasCosts ? vnd(c.profitAfterTax) : '—'} | ${hasCosts ? margin : '—'} | ${split} | ${hasCosts ? vnd(c.lgP) : '—'} | ${hasCosts ? vnd(c.cnP) : '—'} |`);
     }
     L.push('');
