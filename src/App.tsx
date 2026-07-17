@@ -288,7 +288,7 @@ function AppInner() {
       </div>
       <MobileNav currentPage={page} onNavigate={navigate} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
-        {page === 'dashboard' && <Dashboard clients={clients} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onClientUpdate={handleClientUpdate} />}
+        {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
             clients={clients}

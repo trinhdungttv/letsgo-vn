@@ -9,7 +9,7 @@ import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
-import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth } from '../lib/format';
+import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth, prevWeekLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -329,20 +329,8 @@ export default function Clients({
   });
   const avgHealth = allScores.length > 0 ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
 
-  function getPrevWeekLabel(week: string): string | null {
-    const wIdx = week.indexOf('W');
-    if (wIdx < 0) return null;
-    const m = parseInt(week.slice(1, wIdx), 10);
-    const w = parseInt(week.slice(wIdx + 1), 10);
-    if (w > 1) return `T${m}W${w - 1}`;
-    const prevMonth = m > 1 ? m - 1 : 12;
-    const daysInPrev = new Date(new Date().getFullYear(), prevMonth, 0).getDate();
-    const maxWeek = Math.ceil(daysInPrev / 7);
-    return `T${prevMonth}W${maxWeek}`;
-  }
-
   const loadBulkWeekData = async (week: string) => {
-    const prevWeek = getPrevWeekLabel(week);
+    const prevWeek = prevWeekLabel(week);
     const [{ data: curData }, { data: prevData }] = await Promise.all([
       supabase.from('client_labor_history').select('client_id, count').eq('week_label', week),
       prevWeek ? supabase.from('client_labor_history').select('client_id, count').eq('week_label', prevWeek) : Promise.resolve({ data: null }),

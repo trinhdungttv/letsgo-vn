@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import FilterDropdown, { ALL_OPTION } from '../FilterDropdown'
-import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull } from '../../lib/format'
+import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, prevWeekLabel } from '../../lib/format'
 import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
 
@@ -18,6 +18,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
   const [bulkWeek, setBulkWeek] = useState(getCurrentWeekLabel())
   const [bulkExtraWeeks, setBulkExtraWeeks] = useState(0)
   const [bulkValues, setBulkValues] = useState<Record<string, string>>({})
+  const [bulkPrevValues, setBulkPrevValues] = useState<Record<string, number>>({})
   const [bulkSearch, setBulkSearch] = useState('')
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION])
   const [bulkSaving, setBulkSaving] = useState(false)
@@ -58,9 +59,13 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
 
   async function loadWeekData(week: string) {
     setWeekDataLoaded(false)
-    const { data } = await supabase.from('client_labor_history')
-      .select('client_id, count')
-      .eq('week_label', week)
+    const prevWeek = prevWeekLabel(week)
+    const [{ data }, { data: prevData }] = await Promise.all([
+      supabase.from('client_labor_history').select('client_id, count').eq('week_label', week),
+      prevWeek
+        ? supabase.from('client_labor_history').select('client_id, count').eq('week_label', prevWeek)
+        : Promise.resolve({ data: null }),
+    ])
     const prefilled: Record<string, string> = {}
     if (data) {
       for (const row of data as { client_id: string; count: number }[]) {
@@ -68,6 +73,13 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
       }
     }
     setBulkValues(prefilled)
+    const prev: Record<string, number> = {}
+    if (prevData) {
+      for (const row of prevData as { client_id: string; count: number }[]) {
+        prev[row.client_id] = row.count
+      }
+    }
+    setBulkPrevValues(prev)
     setWeekDataLoaded(true)
   }
 
@@ -105,7 +117,8 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
         success++
       }
       toast(`Da luu LD tuan ${bulkWeek} cho ${success} cong ty`)
-      onClose()
+      // Giữ cửa sổ mở để nhập tiếp tuần/chi nhánh khác — chỉ tải lại số liệu tuần này.
+      await loadWeekData(bulkWeek)
     } catch {
       toast('Co loi khi luu, vui long thu lai')
     } finally {
@@ -152,19 +165,45 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-2 divide-y divide-gray-100">
-          {filteredClients.map(c => (
-            <div key={c.id} className="flex items-center justify-between py-1.5 gap-3">
-              <span className="text-[12.5px] text-gray-800 truncate">{c.name}</span>
-              <input
-                type="number" min={0}
-                placeholder={String(c.current_workers ?? 0)}
-                value={bulkValues[c.id] ?? ''}
-                onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
-                className="w-20 text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
-              />
+        {(() => {
+          const totalCur = filteredClients.reduce((s, c) => s + (parseInt(bulkValues[c.id] || '0') || 0), 0)
+          const totalPrev = filteredClients.reduce((s, c) => s + (bulkPrevValues[c.id] ?? 0), 0)
+          const diff = totalCur - totalPrev
+          const hasPrev = Object.keys(bulkPrevValues).length > 0
+          return (
+            <div className="px-5 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+              <div className="text-[12px] text-gray-600">Tổng: <span className="text-[15px] font-bold text-gray-900">{totalCur.toLocaleString('vi-VN')}</span> lao động</div>
+              {hasPrev && <div className={`text-[12px] font-semibold ${diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}`}>{diff > 0 ? `+${diff.toLocaleString('vi-VN')}` : diff.toLocaleString('vi-VN')} so với tuần trước</div>}
             </div>
-          ))}
+          )
+        })()}
+
+        <div className="flex-1 overflow-y-auto px-5 py-2 divide-y divide-gray-100">
+          {filteredClients.map(c => {
+            const hasData = bulkValues[c.id] !== undefined && bulkValues[c.id] !== ''
+            const prevVal = bulkPrevValues[c.id]
+            const showPrevHint = prevVal !== undefined && !hasData
+            return (
+              <div key={c.id} className="flex items-center justify-between py-1.5 gap-2">
+                <span className="text-[12.5px] text-gray-800 truncate flex-1">{c.name}</span>
+                {showPrevHint && (
+                  <button
+                    type="button"
+                    onClick={() => setBulkValues(prev => ({ ...prev, [c.id]: String(prevVal) }))}
+                    title={`Tuần trước: ${prevVal} — bấm để điền nhanh`}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition whitespace-nowrap"
+                  >{prevVal}</button>
+                )}
+                <input
+                  type="number" min={0}
+                  placeholder={String(c.current_workers ?? 0)}
+                  value={bulkValues[c.id] ?? ''}
+                  onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
+                  className="w-20 text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
+                />
+              </div>
+            )
+          })}
           {filteredClients.length === 0 && (
             <div className="text-center py-6 text-[12px] text-gray-400">Không tìm thấy công ty</div>
           )}

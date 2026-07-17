@@ -134,6 +134,18 @@ export function weekLabelFull(label: string, year?: number): string {
   return `${label} - W${weekOfYear(label, year)} (${weekDateRange(label, year)})`;
 }
 
+// Nhãn tuần liền trước (theo tuần lịch thật — lùi Thứ 2 đi 7 ngày).
+export function prevWeekLabel(label: string, year?: number): string | null {
+  const y = year ?? new Date().getFullYear();
+  const wIdx = label.indexOf('W');
+  if (wIdx < 0) return null;
+  const m = parseInt(label.slice(1, wIdx), 10);
+  const w = parseInt(label.slice(wIdx + 1), 10);
+  const mon = firstThursday(y, m);
+  mon.setDate(mon.getDate() + (w - 1) * 7 - 3 - 7);
+  return weekInfoOf(mon).label;
+}
+
 // Khoảng ngày làm việc Thứ 2 → Thứ 7 của tuần; ghi kèm tháng ở cả 2 đầu vì tuần
 // có thể vắt qua 2 tháng (ví dụ "29/6-4/7").
 export function weekDateRange(label: string, year?: number): string {

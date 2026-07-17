@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import AlertsTasksPanel from '../components/AlertsTasksPanel';
 import { Bar, Line } from 'react-chartjs-2';
 import {
@@ -8,12 +8,13 @@ import {
 } from 'chart.js';
 import {
   AlertCircle, TrendingUp, Users, BarChart2, Target,
-  ChevronDown, X, Phone, Mail,
+  ChevronDown, X, Phone, Mail, SlidersHorizontal,
 } from 'lucide-react';
-import type { Client, ProjectPnl, FinanceRecord, Branch, MarketZone, Manager } from '../lib/types';
-import { statusPill, formatCurrency, formatDate } from '../lib/format';
+import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry } from '../lib/types';
+import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler, Legend);
 
@@ -46,6 +47,7 @@ ChartJS.register(targetLinePlugin);
 
 interface DashboardProps {
   clients: Client[];
+  laborHistory: Record<string, LaborHistoryEntry[]>;
   onOpenBranch?: (region: string) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
@@ -54,6 +56,49 @@ interface DashboardProps {
 
 type ScopeMode = 'all' | 'region' | 'branch' | 'manager';
 // Grouping always by branch
+
+// Nút bộ lọc của biểu đồ: giấu các điều khiển trong popover, bấm mới hiện.
+// Các lựa chọn bên trong được lưu (usePersistedState) làm mặc định hiển thị.
+function ChartFilterButton({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Bộ lọc & cài đặt hiển thị"
+        className={`p-1.5 rounded-md border transition ${open ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-500'}`}
+      >
+        <SlidersHorizontal size={13} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-[250px] space-y-2.5">
+          {children}
+          <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-100">
+            Lựa chọn được lưu làm mặc định hiển thị cho các lần sau.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Hàng label + control trong popover bộ lọc.
+function FilterRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[11px] text-gray-500 shrink-0">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 interface GroupRow {
   key: string;
@@ -69,7 +114,7 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenPipelineEntry, onClientUpdate }: DashboardProps) {
+export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenClient, onOpenPipelineEntry, onClientUpdate }: DashboardProps) {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === 'admin';
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
@@ -237,23 +282,141 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
     setEditingTarget(false);
   };
 
-  // Bar chart data
-  const barLabels = groups.map(g => g.key.length > 12 ? g.key.slice(0, 12) + '…' : g.key);
-  const workerBarData = {
-    labels: barLabels,
+  // ---- Tháng dữ liệu cho 2 biểu đồ (Số công & Doanh thu/LN) — chọn được tháng cũ ----
+  const [pnlMonth, setPnlMonth] = useState(curMonth);
+  const pnlMonthNum = parseInt(pnlMonth.split('-')[1], 10);
+  const monthOptions = useMemo(() => Array.from({ length: 12 }, (_, i) => shiftMonth(curMonth, -i)), [curMonth]);
+
+  // P&L + chi phí dự án + cài đặt thuế của tháng đang chọn — để tính LN đúng như trang Tài chính.
+  const [monthPnl, setMonthPnl] = useState<ProjectPnl[]>([]);
+  const [monthPnlCosts, setMonthPnlCosts] = useState<Record<string, ProjectPnlCost[]>>({});
+  const [splitSettingsMap, setSplitSettingsMap] = useState<Record<string, PnlSplitSettings>>({});
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('projects_pnl').select('*').eq('month', pnlMonth);
+      const rows = (data || []) as ProjectPnl[];
+      setMonthPnl(rows);
+      if (rows.length) {
+        const { data: cData } = await supabase.from('projects_pnl_costs').select('*').in('pnl_id', rows.map(r => r.id));
+        const grouped: Record<string, ProjectPnlCost[]> = {};
+        for (const c of (cData || []) as ProjectPnlCost[]) (grouped[c.pnl_id] ??= []).push(c);
+        setMonthPnlCosts(grouped);
+      } else {
+        setMonthPnlCosts({});
+      }
+    })();
+  }, [pnlMonth]);
+  useEffect(() => {
+    supabase.from('pnl_split_settings').select('*').then(({ data }) => {
+      const map: Record<string, PnlSplitSettings> = {};
+      for (const s of (data || []) as PnlSplitSettings[]) map[s.client_id] = s;
+      setSplitSettingsMap(map);
+    });
+  }, []);
+
+  const monthPnlByClient = useMemo(() => {
+    const map: Record<string, ProjectPnl[]> = {};
+    for (const p of monthPnl) (map[p.client_id] ??= []).push(p);
+    return map;
+  }, [monthPnl]);
+
+  // Gom nhóm chung cho 2 biểu đồ: lọc theo tên → tính giá trị → nhóm chi nhánh/công ty → sắp xếp.
+  const buildChartRows = (
+    search: string, group: 'branch' | 'company', sort: 'desc' | 'name',
+    valueOf: (c: Client) => number, hideZero: boolean,
+  ): { key: string; value: number }[] => {
+    const source = filteredClients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()));
+    let rows: { key: string; value: number }[];
+    if (group === 'company') {
+      rows = source.map(c => ({ key: c.name, value: valueOf(c) }));
+    } else {
+      const map: Record<string, number> = {};
+      for (const c of source) {
+        const key = clientToBranch[c.id] || 'Khác';
+        map[key] = (map[key] || 0) + valueOf(c);
+      }
+      rows = Object.entries(map).map(([key, value]) => ({ key, value }));
+    }
+    if (hideZero) rows = rows.filter(r => r.value !== 0);
+    rows.sort(sort === 'name' ? (a, b) => a.key.localeCompare(b.key, 'vi') : (a, b) => b.value - a.value);
+    // Nhóm theo công ty danh sách dài — giới hạn 15 cột cho dễ đọc (dùng ô tìm để xem cụ thể).
+    return group === 'company' ? rows.slice(0, 15) : rows;
+  };
+
+  // ---- Biểu đồ 1: Lao động / Số công ----
+  const [laborMetric, setLaborMetric] = usePersistedState<'workers' | 'mandays'>('lgvn_dash_laborMetric', 'workers');
+  const [laborGroup, setLaborGroup] = usePersistedState<'branch' | 'company'>('lgvn_dash_laborGroup', 'branch');
+  const [laborSort, setLaborSort] = usePersistedState<'desc' | 'name'>('lgvn_dash_laborSort', 'desc');
+  const [laborSearch, setLaborSearch] = useState('');
+
+  // Số công tháng đang chọn của 1 khách hàng — nhập từ P&L Dự án (projects_pnl.total_man_days).
+  const manDaysOf = (clientId: string) => (monthPnlByClient[clientId] || []).reduce((s, p) => s + (p.total_man_days || 0), 0);
+
+  // Số lao động theo tháng chọn: tháng hiện tại dùng số live (current_workers);
+  // tháng cũ lấy số của tuần cuối tháng đó trong lịch sử lao động.
+  const workersOf = (c: Client) =>
+    pnlMonth === curMonth
+      ? (c.current_workers || 0)
+      : (getMonthLast(laborHistory[c.id] || [], pnlMonthNum) ?? 0);
+
+  const laborRows = useMemo(
+    () => buildChartRows(
+      laborSearch, laborGroup, laborSort,
+      c => laborMetric === 'mandays' ? manDaysOf(c.id) : workersOf(c),
+      laborMetric === 'mandays' || pnlMonth !== curMonth,
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredClients, laborSearch, laborMetric, laborGroup, laborSort, clientToBranch, monthPnlByClient, pnlMonth, laborHistory],
+  );
+
+  const laborBarData = {
+    labels: laborRows.map(r => r.key.length > 12 ? r.key.slice(0, 12) + '…' : r.key),
     datasets: [{
-      label: 'Lao động',
-      data: groups.map(g => g.workers),
-      backgroundColor: 'rgba(59,130,246,0.75)',
+      label: laborMetric === 'mandays' ? `Số công T${pnlMonthNum}` : pnlMonth === curMonth ? 'Lao động' : `Lao động T${pnlMonthNum}`,
+      data: laborRows.map(r => r.value),
+      backgroundColor: laborMetric === 'mandays' ? 'rgba(249,115,22,0.75)' : 'rgba(59,130,246,0.75)',
       borderRadius: 4,
     }],
   };
+
+  // ---- Biểu đồ 2: Doanh thu / Lợi nhuận ----
+  const [revMetric, setRevMetric] = usePersistedState<'revenue' | 'net' | 'lg' | 'cn'>('lgvn_dash_revMetric', 'revenue');
+  const [revGroup, setRevGroup] = usePersistedState<'branch' | 'company'>('lgvn_dash_revGroup', 'branch');
+  const [revSort, setRevSort] = usePersistedState<'desc' | 'name'>('lgvn_dash_revSort', 'desc');
+  const [revSearch, setRevSearch] = useState('');
+
+  const REV_METRICS: Record<'revenue' | 'net' | 'lg' | 'cn', { label: string; short: string; color: string }> = {
+    revenue: { label: 'Doanh thu', short: 'Doanh thu', color: 'rgba(16,185,129,0.75)' },
+    net: { label: 'LN ròng (sau chi phí & thuế)', short: 'LN ròng', color: 'rgba(139,92,246,0.75)' },
+    lg: { label: "LN Let's Go VN (sau chia)", short: 'LN LGV', color: 'rgba(59,130,246,0.75)' },
+    cn: { label: 'LN Chi nhánh (sau chia)', short: 'LN Chi nhánh', color: 'rgba(5,150,105,0.75)' },
+  };
+
+  // Tính đủ chuỗi P&L cho 1 khách hàng trong tháng chọn — dùng đúng calcPnl như trang Tài chính.
+  const revValueOf = (c: Client): number => {
+    const pnls = monthPnlByClient[c.id] || [];
+    let sum = 0;
+    for (const p of pnls) {
+      if (revMetric === 'revenue') { sum += p.revenue || 0; continue; }
+      const s = splitSettingsMap[c.id];
+      const r = calcPnl(p, monthPnlCosts[p.id] || [], { taxPct: s?.tax_pct ?? 20, taxExempt: s?.tax_exempt ?? false });
+      sum += revMetric === 'net' ? r.profitAfterTax : revMetric === 'lg' ? r.lgP : r.cnP;
+    }
+    return Math.round(sum);
+  };
+
+  const revRows = useMemo(
+    () => buildChartRows(revSearch, revGroup, revSort, revValueOf, true),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredClients, revSearch, revMetric, revGroup, revSort, clientToBranch, monthPnlByClient, monthPnlCosts, splitSettingsMap],
+  );
+
   const revenueBarData = {
-    labels: barLabels,
+    labels: revRows.map(r => r.key.length > 12 ? r.key.slice(0, 12) + '…' : r.key),
     datasets: [{
-      label: 'Doanh thu',
-      data: groups.map(g => g.revenue),
-      backgroundColor: 'rgba(16,185,129,0.75)',
+      label: `${REV_METRICS[revMetric].short} T${pnlMonthNum}`,
+      data: revRows.map(r => r.value),
+      backgroundColor: REV_METRICS[revMetric].color,
       borderRadius: 4,
     }],
   };
@@ -442,32 +605,125 @@ export default function Dashboard({ clients, onOpenBranch, onOpenClient, onOpenP
 
         {/* Labor & Revenue Bar Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-          <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <Users size={13} className="text-blue-500" />
-                <span className="text-[12.5px] font-semibold text-[#111]">Lao động theo chi nhánh</span>
+          <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-visible">
+            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Users size={13} className={`shrink-0 ${laborMetric === 'mandays' ? 'text-orange-500' : 'text-blue-500'}`} />
+                <span className="text-[12.5px] font-semibold text-[#111] truncate">
+                  {laborMetric === 'mandays' ? 'Số công' : 'Lao động'} theo {laborGroup === 'company' ? 'công ty' : 'chi nhánh'}
+                </span>
+                {(laborMetric === 'mandays' || pnlMonth !== curMonth) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#F5F4EF] text-[#888] shrink-0">T{pnlMonthNum}</span>
+                )}
+                {laborSearch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 truncate">“{laborSearch}”</span>}
               </div>
+              <ChartFilterButton>
+                <FilterRow label="Tháng">
+                  <select value={pnlMonth} onChange={e => setPnlMonth(e.target.value)}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                    {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                  </select>
+                </FilterRow>
+                <FilterRow label="Chỉ số">
+                  <select value={laborMetric} onChange={e => setLaborMetric(e.target.value as 'workers' | 'mandays')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                    <option value="workers">Lao động</option>
+                    <option value="mandays">Số công (P&L)</option>
+                  </select>
+                </FilterRow>
+                <FilterRow label="Nhóm theo">
+                  <select value={laborGroup} onChange={e => setLaborGroup(e.target.value as 'branch' | 'company')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                    <option value="branch">Chi nhánh</option>
+                    <option value="company">Công ty</option>
+                  </select>
+                </FilterRow>
+                <FilterRow label="Sắp xếp">
+                  <select value={laborSort} onChange={e => setLaborSort(e.target.value as 'desc' | 'name')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                    <option value="desc">Cao → thấp</option>
+                    <option value="name">Theo tên</option>
+                  </select>
+                </FilterRow>
+                <FilterRow label="Tìm công ty">
+                  <input
+                    type="text" value={laborSearch} onChange={e => setLaborSearch(e.target.value)}
+                    placeholder="Tên công ty..."
+                    className="text-[11px] px-2 py-1 border border-gray-200 rounded-md outline-none w-[130px] focus:border-blue-400"
+                  />
+                </FilterRow>
+              </ChartFilterButton>
             </div>
             <div className="p-3" style={{ height: 180 }}>
-              {groups.length ? (
-                <Bar data={workerBarData} options={barOpts(false) as any} />
+              {laborRows.length ? (
+                <Bar data={laborBarData} options={barOpts(false) as any} />
               ) : (
-                <div className="flex items-center justify-center h-full text-[12px] text-gray-400">Không có dữ liệu</div>
+                <div className="flex items-center justify-center h-full text-[12px] text-gray-400">
+                  {laborMetric === 'mandays'
+                    ? `Chưa có số công tháng ${pnlMonthNum} — nhập ở Tài chính → P&L Dự án`
+                    : pnlMonth !== curMonth
+                      ? `Chưa có dữ liệu LĐ tháng ${pnlMonthNum} — nhập ở "Nhập nhanh số lao động"`
+                      : 'Không có dữ liệu'}
+                </div>
               )}
             </div>
           </div>
 
-          <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5">
-              <BarChart2 size={13} className="text-emerald-500" />
-              <span className="text-[12.5px] font-semibold text-[#111]">Doanh thu theo chi nhánh</span>
+          <div className="bg-white border border-[#E8E7E2] rounded-lg overflow-visible">
+            <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <BarChart2 size={13} className="text-emerald-500 shrink-0" />
+                <span className="text-[12.5px] font-semibold text-[#111] truncate">
+                  {REV_METRICS[revMetric].short} theo {revGroup === 'company' ? 'công ty' : 'chi nhánh'}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#F5F4EF] text-[#888] shrink-0">T{pnlMonthNum}</span>
+                {revSearch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 truncate">“{revSearch}”</span>}
+              </div>
+              <ChartFilterButton>
+                <FilterRow label="Tháng">
+                  <select value={pnlMonth} onChange={e => setPnlMonth(e.target.value)}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[150px]">
+                    {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                  </select>
+                </FilterRow>
+                <FilterRow label="Chỉ số">
+                  <select value={revMetric} onChange={e => setRevMetric(e.target.value as 'revenue' | 'net' | 'lg' | 'cn')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[150px]">
+                    {(Object.keys(REV_METRICS) as ('revenue' | 'net' | 'lg' | 'cn')[]).map(k => (
+                      <option key={k} value={k}>{REV_METRICS[k].label}</option>
+                    ))}
+                  </select>
+                </FilterRow>
+                <FilterRow label="Nhóm theo">
+                  <select value={revGroup} onChange={e => setRevGroup(e.target.value as 'branch' | 'company')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[150px]">
+                    <option value="branch">Chi nhánh</option>
+                    <option value="company">Công ty</option>
+                  </select>
+                </FilterRow>
+                <FilterRow label="Sắp xếp">
+                  <select value={revSort} onChange={e => setRevSort(e.target.value as 'desc' | 'name')}
+                    className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[150px]">
+                    <option value="desc">Cao → thấp</option>
+                    <option value="name">Theo tên</option>
+                  </select>
+                </FilterRow>
+                <FilterRow label="Tìm công ty">
+                  <input
+                    type="text" value={revSearch} onChange={e => setRevSearch(e.target.value)}
+                    placeholder="Tên công ty..."
+                    className="text-[11px] px-2 py-1 border border-gray-200 rounded-md outline-none w-[150px] focus:border-blue-400"
+                  />
+                </FilterRow>
+              </ChartFilterButton>
             </div>
             <div className="p-3" style={{ height: 180 }}>
-              {groups.length ? (
+              {revRows.length ? (
                 <Bar data={revenueBarData} options={barOpts(true) as any} />
               ) : (
-                <div className="flex items-center justify-center h-full text-[12px] text-gray-400">Không có dữ liệu</div>
+                <div className="flex items-center justify-center h-full text-[12px] text-gray-400">
+                  Chưa có dữ liệu P&L tháng {pnlMonthNum} — nhập ở Tài chính → P&L Dự án
+                </div>
               )}
             </div>
           </div>
