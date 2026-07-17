@@ -51,6 +51,7 @@ interface DashboardProps {
   onOpenBranch?: (region: string) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
+  onOpenWorkspace?: () => void;
   onClientUpdate?: (client: Client) => void;
 }
 
@@ -114,7 +115,7 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenClient, onOpenPipelineEntry, onClientUpdate }: DashboardProps) {
+export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, onClientUpdate }: DashboardProps) {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === 'admin';
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
@@ -596,6 +597,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
               onSelectClient={setSelectedClient}
               onOpenClient={onOpenClient}
               onOpenPipelineEntry={onOpenPipelineEntry}
+              onOpenWorkspace={onOpenWorkspace}
               isAdmin={isAdmin}
               onClientUpdate={onClientUpdate}
               clientToBranch={clientToBranch}

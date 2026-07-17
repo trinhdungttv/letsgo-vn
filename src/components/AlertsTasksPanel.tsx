@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { AlertCircle, RefreshCw, ClipboardList, Trash2, X, Eye } from 'lucide-react';
+import { AlertCircle, RefreshCw, ClipboardList, Trash2, X, Eye, Check, ExternalLink } from 'lucide-react';
 import type { Client, CooperationSuspensionRequest, WorkTask, WorkTaskComment } from '../lib/types';
-import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS, type DocStatus, type TaskStatus as WTaskStatus } from '../lib/types';
-import { daysUntil, formatDate } from '../lib/format';
+import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib/types';
+import { daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { queueGoogleSync } from '../lib/googleSync';
@@ -41,13 +41,14 @@ interface Props {
   onSelectClient?: (client: Client) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
+  onOpenWorkspace?: () => void;
   isAdmin?: boolean;
   onClientUpdate?: (client: Client) => void;
   clientToBranch?: Record<string, string>;
 }
 
-export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, isAdmin, onClientUpdate, clientToBranch }: Props) {
-  const { token } = useAuth();
+export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, isAdmin, onClientUpdate, clientToBranch }: Props) {
+  const { user, token } = useAuth();
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
@@ -58,42 +59,26 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
   const [rawWorkTasks, setRawWorkTasks] = useState<WorkTask[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<DashboardTask | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [doneRenewalTasks, setDoneRenewalTasks] = useState<WorkTask[]>([]);
 
+  // Nguồn sự thật duy nhất: work_tasks (Workspace) + crm_pipeline_tasks (BD).
+  // Bảng dashboard_tasks cũ không còn được đọc/ghi — cột "Tái ký hợp đồng"
+  // được dựng trực tiếp từ clients sắp hết HĐ + task 'Tái ký HĐ' liên kết.
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     try {
-      const [{ data: contractTasks }, { data: pipelineTasks }, { data: workTasks }] = await Promise.all([
-        supabase.from('dashboard_tasks').select('*').order('created_at', { ascending: false }),
+      const doneSince = new Date(Date.now() - 60 * 86400000).toISOString();
+      const [{ data: pipelineTasks }, { data: workTasks }, { data: doneRenewals }] = await Promise.all([
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('created_at', { ascending: false }),
         supabase.from('work_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
+        // Task tái ký đã hoàn tất gần đây — để hiện "Hoàn tất" và không tự sinh lại task mới
+        supabase.from('work_tasks').select('*').eq('task_type', 'Tái ký HĐ').eq('status', 'done').gte('completed_at', doneSince).order('completed_at', { ascending: false }),
       ]);
 
       const allWorkTasks = (workTasks || []) as WorkTask[];
       setRawWorkTasks(allWorkTasks);
-
-      // Build map: client_id → work_task (Tái ký HĐ) for merging with contract alerts
-      const renewalByClient = new Map<string, WorkTask>();
-      for (const wt of allWorkTasks) {
-        if (wt.task_type === 'Tái ký HĐ' && wt.client_id) {
-          renewalByClient.set(wt.client_id, wt);
-        }
-      }
-
-      // De-dupe contract tasks by client_id, enrich with work_task if exists
-      const seenClientIds = new Set<string>();
-      const ct: DashboardTask[] = [];
-      for (const t of (contractTasks || []) as any[]) {
-        const key = t.client_id || t.id;
-        if (seenClientIds.has(key)) continue;
-        seenClientIds.add(key);
-        const linkedWt = t.client_id ? renewalByClient.get(t.client_id) : undefined;
-        ct.push({
-          ...t,
-          source_type: 'contract' as const,
-          status: linkedWt ? (linkedWt.status as TaskStatus) : t.status,
-          _work_task: linkedWt,
-        });
-      }
+      setDoneRenewalTasks((doneRenewals || []) as WorkTask[]);
 
       const pt: DashboardTask[] = (pipelineTasks || []).map((t: any) => ({
         id: `pt_${t.id}`,
@@ -131,48 +116,14 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
           };
         });
 
-      setTasks([...ct, ...pt, ...wt]);
+      setTasks([...pt, ...wt]);
+      setLoaded(true);
     } finally {
       setTasksLoading(false);
     }
   }, [clients]);
 
-  // Sync alerts → tasks
   const syncInFlight = useRef(false);
-  const syncAlertTasks = useCallback(async (alertClients: Client[]) => {
-    if (!alertClients.length || syncInFlight.current) return;
-    syncInFlight.current = true;
-    try {
-      const ids = alertClients.map(c => c.id);
-      const { data: existing } = await supabase.from('dashboard_tasks').select('id, client_id, client_name, client_region').in('client_id', ids);
-      const existingIds = new Set((existing || []).map((r: any) => r.client_id));
-
-      // Update stale name/region on existing tasks
-      for (const row of (existing || []) as any[]) {
-        const client = alertClients.find(c => c.id === row.client_id);
-        if (!client) continue;
-        if (row.client_name !== client.name || row.client_region !== client.region) {
-          await supabase.from('dashboard_tasks').update({ client_name: client.name, client_region: client.region }).eq('id', row.id);
-        }
-      }
-
-      const missing = alertClients.filter(c => !existingIds.has(c.id));
-      if (missing.length) {
-        const upserts = missing.map(c => {
-          const d = daysUntil(c.contract_end);
-          let description = 'Hợp đồng sắp hết hạn';
-          if (c.status === 'danger') description = 'Hợp đồng khẩn cấp cần xử lý';
-          else if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
-          else if (d !== null) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
-          return { client_id: c.id, client_name: c.name, client_region: c.region, description, source_status: c.status };
-        });
-        await supabase.from('dashboard_tasks').insert(upserts);
-      }
-      await loadTasks();
-    } finally {
-      syncInFlight.current = false;
-    }
-  }, [loadTasks]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
@@ -209,22 +160,91 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     return [...map.values()];
   }, [clients, expiringClients]);
 
+  // Task 'Tái ký HĐ' của từng khách hàng — ưu tiên task đang mở; nếu chỉ có task
+  // đã hoàn tất gần đây thì dùng nó (hiện "Hoàn tất" + không tự sinh task mới).
+  const renewalByClient = useMemo(() => {
+    const map = new Map<string, WorkTask>();
+    for (const wt of rawWorkTasks) {
+      if (wt.task_type === 'Tái ký HĐ' && wt.client_id && !map.has(wt.client_id)) map.set(wt.client_id, wt);
+    }
+    for (const wt of doneRenewalTasks) {
+      if (wt.client_id && !map.has(wt.client_id)) map.set(wt.client_id, wt);
+    }
+    return map;
+  }, [rawWorkTasks, doneRenewalTasks]);
+
+  // Cột "Tái ký hợp đồng" — dựng trực tiếp từ clients + task liên kết, không lưu trạng thái riêng.
+  const contractTasks = useMemo((): DashboardTask[] => {
+    const rows = alertAndExpiringClients.map(c => {
+      const linked = renewalByClient.get(c.id);
+      const d = daysUntil(c.contract_end);
+      let description = 'Khách hàng cần chú ý';
+      if (d !== null && d <= 0) description = 'Hợp đồng đã hết hạn';
+      else if (d !== null && d <= 30) description = `Hợp đồng sắp hết hạn (còn ${d} ngày)`;
+      else if (c.status === 'danger') description = 'Khách hàng khẩn cấp cần xử lý';
+      return {
+        id: `ct_${c.id}`,
+        client_id: c.id,
+        client_name: c.name,
+        client_region: c.region,
+        description,
+        status: (linked?.status as TaskStatus) || 'pending',
+        source_status: c.status,
+        created_at: '',
+        source_type: 'contract' as const,
+        _work_task: linked,
+        _real_id: linked?.id,
+      };
+    });
+    // Gấp nhất lên đầu (hết hạn → sắp hết hạn → cảnh báo khác)
+    const urgency = (t: DashboardTask) => {
+      const c = clients.find(x => x.id === t.client_id);
+      const d = c ? daysUntil(c.contract_end) : null;
+      return d === null ? 999 : d;
+    };
+    return rows.sort((a, b) => urgency(a) - urgency(b));
+  }, [alertAndExpiringClients, renewalByClient, clients]);
+
+  // Tự sinh task 'Tái ký HĐ' trong Workspace cho KH sắp hết HĐ chưa có task —
+  // nhập/cập nhật ở Workspace, Dashboard chỉ ánh xạ.
   useEffect(() => {
-    if (alertAndExpiringClients.length && tasks.length >= 0) syncAlertTasks(alertAndExpiringClients);
+    if (!loaded || !user || syncInFlight.current) return;
+    const missing = expiringClients.filter(c => !renewalByClient.has(c.id));
+    if (!missing.length) return;
+    syncInFlight.current = true;
+    (async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const { error } = await supabase.from('work_tasks').insert(missing.map(c => {
+          const d = daysUntil(c.contract_end);
+          return {
+            user_id: (user as any).id,
+            client_id: c.id,
+            title: `Tái ký HĐ — ${c.name}`,
+            task_type: 'Tái ký HĐ',
+            due_date: today,
+            priority: d !== null && d <= 0 ? 'high' : 'medium',
+            kcn: c.industrial_zones?.[0] || null,
+            status: 'pending',
+            doc_status: 'chua_soan',
+          };
+        }));
+        if (!error) {
+          await loadTasks();
+          queueGoogleSync(token);
+        }
+      } finally {
+        syncInFlight.current = false;
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alertAndExpiringClients.length]);
+  }, [loaded, user, expiringClients, renewalByClient]);
 
   const confirmDeleteTask = async () => {
     if (!deleteConfirm) return;
     setDeleting(true);
     const task = deleteConfirm;
-    if (task.source_type === 'contract') {
-      // Xoá dashboard_task alert + xoá work_task liên kết → client quay lại "HĐ cần xử lý" trong Workspace
-      await supabase.from('dashboard_tasks').delete().eq('id', task.id);
-      if (task._work_task) {
-        await supabase.from('work_tasks').delete().eq('id', task._work_task.id);
-      }
-    } else if (task.id.startsWith('pt_')) {
+    if (task.id.startsWith('pt_')) {
       // Pipeline task: reset về pending thay vì xoá
       const realId = task._real_id || task.id.replace('pt_', '');
       await supabase.from('crm_pipeline_tasks').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', realId);
@@ -237,6 +257,25 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     if (detailTask?.id === task.id) setDetailTask(null);
     setDeleteConfirm(null);
     setDeleting(false);
+    queueGoogleSync(token);
+  };
+
+  // Tick hoàn thành — ghi ngược về Workspace/CRM (nguồn sự thật), panel chỉ ánh xạ lại.
+  const markDone = async (task: DashboardTask, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const now = new Date().toISOString();
+    if (task.source_type === 'pipeline') {
+      const realId = task._real_id || task.id.replace('pt_', '');
+      await supabase.from('crm_pipeline_tasks').update({ status: 'done', updated_at: now }).eq('id', realId);
+    } else if (task._work_task) {
+      const patch: Record<string, unknown> = { status: 'done', completed_at: now, updated_at: now };
+      if (task.source_type === 'contract') patch.doc_status = 'hoan_tat';
+      await supabase.from('work_tasks').update(patch).eq('id', task._work_task.id);
+    } else {
+      return;
+    }
+    if (detailTask?.id === task.id) setDetailTask(null);
+    await loadTasks();
     queueGoogleSync(token);
   };
 
@@ -265,7 +304,11 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     return list;
   }, [tasks, regionFilter, suspendedClientIds]);
 
-  const contractTasks = useMemo(() => visibleTasks.filter(t => t.source_type === 'contract'), [visibleTasks]);
+  const visibleContractTasks = useMemo(() => {
+    let list = contractTasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id));
+    if (regionFilter) list = list.filter(t => t.client_region === regionFilter);
+    return list;
+  }, [contractTasks, regionFilter, suspendedClientIds]);
   const workTasks = useMemo(() => visibleTasks.filter(t => t.source_type !== 'contract'), [visibleTasks]);
 
   const renderDocStatusBadge = (docStatus: string | null | undefined) => {
@@ -337,14 +380,26 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
             : renderTaskStatusBadge(task.status)
           }
         </div>
-        {/* Delete button */}
-        <button
-          onClick={e => { e.stopPropagation(); setDeleteConfirm(task); }}
-          title="Xoá"
-          className="p-1 rounded hover:bg-red-50 text-transparent group-hover:text-[#ccc] hover:!text-red-500 transition shrink-0"
-        >
-          <Trash2 size={12} />
-        </button>
+        {/* Tick hoàn thành — ghi về Workspace/CRM */}
+        {((task._work_task && task._work_task.status !== 'done') || task.source_type === 'pipeline') && (
+          <button
+            onClick={e => markDone(task, e)}
+            title="Đánh dấu hoàn thành"
+            className="p-1 rounded hover:bg-emerald-50 text-transparent group-hover:text-[#ccc] hover:!text-emerald-600 transition shrink-0"
+          >
+            <Check size={13} />
+          </button>
+        )}
+        {/* Cảnh báo tái ký là dòng tự động theo hạn HĐ — không xoá tay được */}
+        {task.source_type !== 'contract' && (
+          <button
+            onClick={e => { e.stopPropagation(); setDeleteConfirm(task); }}
+            title="Gỡ khỏi Dashboard"
+            className="p-1 rounded hover:bg-red-50 text-transparent group-hover:text-[#ccc] hover:!text-red-500 transition shrink-0"
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
       </div>
     );
   };
@@ -401,9 +456,9 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
             Tái ký hợp đồng
           </div>
           <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
-            {contractTasks.length === 0 ? (
+            {visibleContractTasks.length === 0 ? (
               <div className="text-center text-[#aaa] text-[13px] py-4">Không có cảnh báo</div>
-            ) : contractTasks.map(renderTask)}
+            ) : visibleContractTasks.map(renderTask)}
           </div>
         </div>
         <div>
@@ -571,10 +626,18 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                     >Xem khách hàng</button>
                   ) : null;
                 })()}
-                <button
-                  onClick={() => { setDeleteConfirm(detailTask); }}
-                  className="text-[11px] px-3 py-1.5 rounded-md border border-amber-200 text-amber-600 font-medium hover:bg-amber-50 transition ml-auto"
-                >Gỡ khỏi Dashboard</button>
+                {(detailTask._work_task || detailTask.source_type === 'workspace') && onOpenWorkspace && (
+                  <button
+                    onClick={() => { onOpenWorkspace(); setDetailTask(null); }}
+                    className="text-[11px] px-3 py-1.5 rounded-md border border-blue-200 text-blue-600 font-medium hover:bg-blue-50 transition inline-flex items-center gap-1"
+                  ><ExternalLink size={11} /> Mở Workspace</button>
+                )}
+                {detailTask.source_type !== 'contract' && (
+                  <button
+                    onClick={() => { setDeleteConfirm(detailTask); }}
+                    className="text-[11px] px-3 py-1.5 rounded-md border border-amber-200 text-amber-600 font-medium hover:bg-amber-50 transition ml-auto"
+                  >Gỡ khỏi Dashboard</button>
+                )}
               </div>
             </div>
           </div>
@@ -593,10 +656,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                 Gỡ <strong>"{deleteConfirm.client_name}"</strong> khỏi bảng cảnh báo?
               </p>
               <p className="text-[11px] text-[#888] mt-2 leading-relaxed">
-                {deleteConfirm.source_type === 'contract'
-                  ? 'Công việc sẽ quay về mục "HĐ cần xử lý" trong Workspace để xử lý lại.'
-                  : 'Công việc sẽ được đặt lại trạng thái và hiển thị lại trong Workspace.'
-                }
+                Công việc sẽ được đặt lại trạng thái và hiển thị lại trong Workspace.
               </p>
             </div>
             <div className="px-5 pb-4 flex gap-2">
