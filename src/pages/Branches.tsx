@@ -19,6 +19,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, ProjectPnlCost, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth, getBranchTypeForMonth, calcPnl } from '../lib/format';
+import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 
 type KhoanTierDef = { min_workers: number; lg_pct: number; cn_pct: number };
 
@@ -348,6 +349,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     }
     try {
       const mgr = await resolveManager(form.manager_name ?? '');
+      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+      const mapPos = parseLatLngFromLink(form.map_link);
       await updateBranch(selected.id, {
         name: form.name || selected.name,
         short_name: form.short_name ?? null,
@@ -356,6 +359,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         region: form.region ?? null,
         location: form.location ?? null,
         map_link: form.map_link ?? null,
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
         address: form.address ?? null,
         phone: form.phone ?? null,
         email: form.email ?? null,

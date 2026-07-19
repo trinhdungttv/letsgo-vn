@@ -9,6 +9,7 @@ import { formatDate } from '../../lib/format';
 import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
 import { useProvinces } from '../../hooks/useProvinces';
+import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -34,6 +35,7 @@ function levenshtein(a: string, b: string): number {
 const emptyAddForm = {
   name: '', full_name: '', location: '', operator: '', area: '', established_year: '',
   total_companies: '', total_workers: '', occupancy_pct: '', labor_availability: 'Trung bình', characteristics: '',
+  map_link: '',
 };
 
 function TagList({ tags, onAdd, onRemove, color }: { tags: string[]; onAdd: (v: string) => void; onRemove: (i: number) => void; color: string }) {
@@ -80,6 +82,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         characteristics: selected.characteristics, strengths: selected.strengths, weaknesses: selected.weaknesses,
         labor_availability: selected.labor_availability, lgv_clients: selected.lgv_clients, lgv_workers: selected.lgv_workers,
         notes: selected.notes, industries: selected.industries || [], countries: selected.countries || [],
+        map_link: selected.map_link ?? null,
       });
     } else {
       setEditForm(null);
@@ -119,6 +122,12 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         occupancy_pct: parseInt(addForm.occupancy_pct) || 0,
         labor_availability: addForm.labor_availability,
         characteristics: addForm.characteristics || null,
+        map_link: addForm.map_link.trim() || null,
+        ...(() => {
+          // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ
+          const p = parseLatLngFromLink(addForm.map_link);
+          return isValidVnLatLng(p) ? { lat: p.lat, lng: p.lng, geocoded_at: new Date().toISOString() } : {};
+        })(),
       }).select().single();
       if (error) throw error;
       await logActivity({
@@ -144,7 +153,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
     if (!selected || !editForm) return;
     setSaving(true);
     try {
-      const updates = { ...editForm, updated_at: new Date().toISOString() };
+      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ
+      const mapPos = parseLatLngFromLink(editForm.map_link);
+      const updates = {
+        ...editForm,
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+        updated_at: new Date().toISOString(),
+      };
       const { error } = await supabase.from('market_zones').update(updates).eq('id', selected.id);
       if (error) throw error;
       await logActivity({
@@ -234,6 +249,22 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                 {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
                 <option value="__new__">+ Thêm tỉnh/thành mới…</option>
               </select>
+            </div>
+            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Link Google Maps</span>
+              <div className="flex gap-2 flex-1 items-center">
+                <input value={editForm.map_link || ''} onChange={e => setEditForm(f => ({ ...f, map_link: e.target.value }))}
+                  placeholder="Dán link Google Maps (…/@lat,lng…) → tự định vị lên Bản đồ"
+                  className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                {editForm.map_link && (
+                  <a href={editForm.map_link} target="_blank" rel="noopener noreferrer"
+                    className="text-[10.5px] px-1.5 py-0.5 rounded border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0 inline-flex items-center gap-1">
+                    <MapPin size={10} /> Mở
+                  </a>
+                )}
+                {selected.lat != null && selected.lng != null && (
+                  <span className="text-[10.5px] text-emerald-600 shrink-0">✓ đã định vị</span>
+                )}
+              </div>
             </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ban quản lý</span>
               <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
@@ -427,6 +458,8 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                 <select value={addForm.labor_availability} onChange={e => setAddForm(f => ({ ...f, labor_availability: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
                   {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select></div>
+              <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
+                <input value={addForm.map_link} onChange={e => setAddForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Đặc thù sơ bộ</label>
                 <textarea value={addForm.characteristics} onChange={e => setAddForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-none" /></div>
             </div>

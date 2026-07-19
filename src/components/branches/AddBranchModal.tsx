@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X as XIcon, Check, AlertCircle } from 'lucide-react';
 import type { Branch, Manager, BranchType } from '../../lib/types';
+import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 
 interface AddBranchModalProps {
   open: boolean;
@@ -63,6 +64,8 @@ export default function AddBranchModal({
       }
 
       const trimmedRegion = region.trim();
+      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+      const mapPos = parseLatLngFromLink(mapLink);
       const created = await addBranch({
         name: trimmedName,
         short_name: shortName.trim() || null,
@@ -72,6 +75,7 @@ export default function AddBranchModal({
         region: trimmedRegion || null,
         location: location || null,
         map_link: mapLink.trim() || null,
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
         address: null,
         phone: null,
         email: null,
