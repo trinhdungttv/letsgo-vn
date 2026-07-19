@@ -4,11 +4,12 @@ import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
+import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
 const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-700' : s === 'Đang TH' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700';
 
-const emptyLeadForm = { company_name: '', region: '', industry: '', workers_needed: '', source: '', lgv_qty: '0' };
+const emptyLeadForm = { company_name: '', region: '', industry: '', workers_needed: '', source: '', lgv_qty: '0', map_link: '' };
 const emptySupForm = { name: '', qty: '0' };
 
 export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: MarketTabProps) {
@@ -25,6 +26,8 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
     if (!leadForm.company_name.trim()) { toast('Nhập tên công ty'); return; }
     setSaving(true);
     try {
+      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ
+      const mapPos = parseLatLngFromLink(leadForm.map_link);
       const { data, error } = await supabase.from('market_leads').insert({
         company_name: leadForm.company_name.trim(),
         region: leadForm.region || (zoneFilter !== 'all' ? zoneFilter : null),
@@ -33,6 +36,8 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
         source: leadForm.source || null,
         status: 'Chưa LH',
         suppliers: [{ name: "Let's Go VN", qty: parseInt(leadForm.lgv_qty) || 0, is_us: true }],
+        map_link: leadForm.map_link.trim() || null,
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).select().single();
       if (error) throw error;
       await logActivity({
@@ -189,6 +194,8 @@ export default function LeadsTab({ marketLeads, zoneFilter, onRefresh, toast }: 
                 <input value={leadForm.source} onChange={e => setLeadForm(f => ({ ...f, source: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Let's Go VN đang cung cấp</label>
                 <input type="number" value={leadForm.lgv_qty} onChange={e => setLeadForm(f => ({ ...f, lgv_qty: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+              <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
+                <input value={leadForm.map_link} onChange={e => setLeadForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowAddLead(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-[12px] font-medium text-gray-600">Hủy</button>

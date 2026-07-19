@@ -402,6 +402,11 @@ export interface MarketLead {
   status: string;
   suppliers: MarketLeadSupplier[];
   created_at: string;
+  // Toạ độ bản đồ (migration 095)
+  map_link?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  geocoded_at?: string | null;
 }
 
 export interface Quote {
