@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Coins, Eye, Building2, FileText } from 'lucide-react';
+import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client } from '../lib/types';
@@ -7,9 +7,10 @@ import ZonesTab from './market/ZonesTab';
 import WageTab from './market/WageTab';
 import CompetitorsTab from './market/CompetitorsTab';
 import LeadsTab from './market/LeadsTab';
+import MapViewTab from './market/MapViewTab';
 import Quotes from './Quotes';
 
-export type MarketTab = 'zones' | 'wage' | 'comp' | 'leads' | 'quote';
+export type MarketTab = 'zones' | 'wage' | 'comp' | 'leads' | 'quote' | 'map';
 
 interface MarketProps {
   marketSurveys: MarketSurvey[];
@@ -27,10 +28,11 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'comp', label: 'Đối thủ', icon: <Eye size={13} /> },
   { id: 'leads', label: 'Công ty / Dự án', icon: <Building2 size={13} /> },
   { id: 'quote', label: 'Báo giá', icon: <FileText size={13} /> },
+  { id: 'map', label: 'Bản đồ', icon: <MapIcon size={13} /> },
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, onRefresh, toast }: MarketProps) {
-  const MARKET_TAB_KEYS = ['zones', 'wage', 'comp', 'leads', 'quote'] as const;
+  const MARKET_TAB_KEYS = ['zones', 'wage', 'comp', 'leads', 'quote', 'map'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
@@ -67,6 +69,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
         {tab === 'wage' && <WageTab {...shared} />}
         {tab === 'comp' && <CompetitorsTab {...shared} />}
         {tab === 'leads' && <LeadsTab {...shared} />}
+        {tab === 'map' && <MapViewTab {...shared} />}
         {tab === 'quote' && (
           <Quotes
             key={zoneFilter}

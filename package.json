@@ -15,6 +15,8 @@
     "chart.js": "^4.5.1",
     "dompurify": "^3.4.11",
     "exceljs": "^4.4.0",
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.3.1",
@@ -24,6 +26,8 @@
   "devDependencies": {
     "@eslint/js": "^9.9.1",
     "@types/dompurify": "^3.0.5",
+    "@types/leaflet": "^1.9.21",
+    "@types/leaflet.markercluster": "^1.5.6",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

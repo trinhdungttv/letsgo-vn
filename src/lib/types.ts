@@ -96,6 +96,11 @@ export interface Client {
   payment_cb_to?: number;
   invoice_date?: string;
   payroll_staff?: string | null;
+  // Toạ độ bản đồ (migration 094)
+  map_link?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  geocoded_at?: string | null;
 }
 
 // Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
@@ -373,6 +378,11 @@ export interface MarketZone {
   notes: string | null;
   updated_at: string;
   created_at: string;
+  // Toạ độ bản đồ (migration 094)
+  map_link?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  geocoded_at?: string | null;
 }
 
 export interface MarketLeadSupplier {
@@ -745,6 +755,10 @@ export interface Branch {
   khoan_tiers?: { min_workers: number; lg_pct: number; cn_pct: number }[];
   created_at: string;
   updated_at: string;
+  // Toạ độ bản đồ (migration 094)
+  lat?: number | null;
+  lng?: number | null;
+  geocoded_at?: string | null;
 }
 
 // --- Morning Priority -------------------------------------------
