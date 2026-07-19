@@ -4,6 +4,7 @@ import type { Client, Branch, Manager, BranchStaff, MarketZone, ServiceType } fr
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
+import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 
 interface AddClientModalProps {
   open: boolean;
@@ -86,6 +87,7 @@ export default function AddClientModal({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [notes, setNotes] = useState('');
+  const [mapLink, setMapLink] = useState('');
 
   const [serviceType, setServiceType] = useState<ServiceType>('leasing');
   const [paymentTermDays, setPaymentTermDays] = useState(30);
@@ -111,7 +113,7 @@ export default function AddClientModal({
 
   const reset = () => {
     setName(''); setNameError(''); setZoneName(''); setRegion(''); setManager('');
-    setPhone(''); setEmail(''); setNotes(''); setServiceType('leasing'); setPaymentTermDays(30);
+    setPhone(''); setEmail(''); setNotes(''); setMapLink(''); setServiceType('leasing'); setPaymentTermDays(30);
     setCutoff({ start: 25, end: null }); setCalc({ start: 27, end: null }); setSalary({ start: 5, end: null });
     setProjectType('contracted'); setLgPct(40); setCnPct(60); setResult(null);
   };
@@ -162,6 +164,12 @@ export default function AddClientModal({
         phone: phone || null,
         email: email || null,
         notes: notes || null,
+        map_link: mapLink.trim() || null,
+        // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+        ...(() => {
+          const p = parseLatLngFromLink(mapLink);
+          return isValidVnLatLng(p) ? { lat: p.lat, lng: p.lng, geocoded_at: new Date().toISOString() } : {};
+        })(),
       };
 
       const { data, error } = await supabase.from('clients').insert(payload).select().single();
@@ -345,6 +353,7 @@ export default function AddClientModal({
               <input type="text" placeholder="Điện thoại" value={phone} onChange={e => setPhone(e.target.value)} className="text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none" />
               <input type="text" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none" />
             </div>
+            <input type="text" placeholder="Link Google Maps (…/@lat,lng…) → tự định vị lên Bản đồ Thị trường" value={mapLink} onChange={e => setMapLink(e.target.value)} className="w-full mt-2.5 text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none" />
             <textarea rows={2} placeholder="Ghi chú nội bộ..." value={notes} onChange={e => setNotes(e.target.value)} className="w-full mt-2.5 text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none resize-none" />
           </div>
         </div>

@@ -21,6 +21,7 @@ import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 import PaymentHistory from '../components/clients/PaymentHistory';
 import ExportMdModal from '../components/clients/ExportMdModal';
+import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -121,6 +122,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     contract_end: client.contract_end || '',
     notes: client.notes || '',
     service_type: client.service_type ?? 'leasing',
+    map_link: client.map_link || '',
   });
   const [timelineForm, setTimelineForm] = useState({
     cutoff_day: client.cutoff_day, cutoff_day_end: client.cutoff_day_end,
@@ -481,7 +483,15 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const handleSave = async () => {
     if (!form.name.trim()) { toast('Tên công ty không được để trống'); return; }
     try {
-      const baseUpdates = { ...form, ...timelineForm, updated_at: new Date().toISOString() };
+      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+      const mapPos = parseLatLngFromLink(form.map_link);
+      const baseUpdates = {
+        ...form,
+        map_link: form.map_link.trim() || null,
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+        ...timelineForm,
+        updated_at: new Date().toISOString(),
+      };
       if (form.service_type === 'recruitment') {
         baseUpdates.cutoff_day = null as any;
         baseUpdates.calc_day = null as any;
@@ -1249,6 +1259,24 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         <button onClick={() => { setNewZoneOpen(false); setNewZoneName(''); }} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
                       </div>
                     )}
+                  </div>
+                  <div className="flex flex-col gap-1 mb-3">
+                    <label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={form.map_link}
+                        onChange={e => setForm({ ...form, map_link: e.target.value })}
+                        placeholder="https://maps.google.com/…/@lat,lng… → tự định vị lên Bản đồ Thị trường"
+                        className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                      />
+                      {form.map_link && (
+                        <a href={form.map_link} target="_blank" rel="noopener noreferrer"
+                          className="text-[11.5px] px-2 py-1.5 rounded-lg border border-gray-300 text-[#666] hover:bg-[#FAFAF8] transition shrink-0">Mở</a>
+                      )}
+                      {client.lat != null && client.lng != null && (
+                        <span className="text-[11px] text-emerald-600 shrink-0">✓ đã định vị</span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
