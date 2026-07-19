@@ -36,8 +36,22 @@ const GROUP_COLOR: Record<Group, string> = Object.fromEntries(GROUPS.map(g => [g
 
 const VN_CENTER: [number, number] = [16.05, 107.5];
 
-export default function MapViewTab({ marketZones, marketLeads, clients, goTab, onRefresh, toast }: MarketTabProps) {
+// App chỉ load clients active — bản đồ cần cả prospect nên tự fetch riêng.
+interface MapClient {
+  id: string;
+  name: string;
+  client_type: 'prospect' | 'active';
+  region: string | null;
+  industrial_zones: string[] | null;
+  current_workers: number | null;
+  map_link: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh, toast }: MarketTabProps) {
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [allClients, setAllClients] = useState<MapClient[]>([]);
   const [activeGroups, setActiveGroups] = useState<Group[]>(GROUPS.map(g => g.id));
   const [geoProgress, setGeoProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [showMissing, setShowMissing] = useState(false);
@@ -46,16 +60,27 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
+  const didFitRef = useRef(false);
+
+  const loadBranches = async () => {
+    const { data, error } = await supabase.from('branches').select('*');
+    if (error) toast('Lỗi tải chi nhánh: ' + error.message);
+    setBranches((data as Branch[]) ?? []);
+  };
+
+  const loadMapClients = async () => {
+    const { data, error } = await supabase.from('clients')
+      .select('id, name, client_type, region, industrial_zones, current_workers, map_link, lat, lng')
+      .is('archived_at', null);
+    if (error) toast('Lỗi tải khách hàng: ' + error.message);
+    setAllClients((data as MapClient[]) ?? []);
+  };
 
   useEffect(() => {
-    supabase.from('branches').select('*').then(({ data, error }) => {
-      if (error) toast('Lỗi tải chi nhánh: ' + error.message);
-      setBranches((data as Branch[]) ?? []);
-    });
+    loadBranches();
+    loadMapClients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const activeClients = useMemo(() => clients.filter(c => !c.archived_at), [clients]);
 
   const points = useMemo<MapPoint[]>(() => {
     const pts: MapPoint[] = [];
@@ -77,7 +102,7 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
         onOpen: () => goTab('zones'),
       });
     });
-    activeClients.forEach(c => {
+    allClients.forEach(c => {
       if (c.lat == null || c.lng == null) return;
       pts.push({
         id: c.id, group: c.client_type === 'active' ? 'client' : 'prospect', name: c.name, lat: c.lat, lng: c.lng,
@@ -96,7 +121,7 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
       });
     });
     return pts;
-  }, [branches, marketZones, marketLeads, activeClients, goTab]);
+  }, [branches, marketZones, marketLeads, allClients, goTab]);
 
   const missingList = useMemo(() => {
     const list: { table: string; id: string; name: string; group: Group; link: string | null }[] = [
@@ -104,13 +129,13 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
         .map(b => ({ table: 'branches', id: b.id, name: b.name, group: 'branch' as Group, link: b.map_link })),
       ...marketZones.filter(x => x.lat == null || x.lng == null)
         .map(z => ({ table: 'market_zones', id: z.id, name: z.name, group: 'kcn' as Group, link: z.map_link ?? null })),
-      ...activeClients.filter(x => x.lat == null || x.lng == null)
+      ...allClients.filter(x => x.lat == null || x.lng == null)
         .map(c => ({ table: 'clients', id: c.id, name: c.name, group: (c.client_type === 'active' ? 'client' : 'prospect') as Group, link: c.map_link ?? null })),
       ...marketLeads.filter(x => x.lat == null || x.lng == null)
         .map(l => ({ table: 'market_leads', id: l.id, name: l.company_name, group: 'lead' as Group, link: l.map_link ?? null })),
     ];
     return list;
-  }, [branches, marketZones, marketLeads, activeClients]);
+  }, [branches, marketZones, marketLeads, allClients]);
 
   // Khởi tạo map một lần
   useEffect(() => {
@@ -176,7 +201,9 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
       marker.bindPopup(el, { closeButton: true, minWidth: 180 });
       cluster.addLayer(marker);
     });
-    if (shown.length) {
+    // Chỉ tự zoom lần đầu có dữ liệu — bấm filter chip không làm nhảy khung nhìn
+    if (shown.length && !didFitRef.current) {
+      didFitRef.current = true;
       const bounds = L.latLngBounds(shown.map(p => [p.lat, p.lng] as [number, number]));
       map.fitBounds(bounds.pad(0.15), { maxZoom: 12 });
     }
@@ -198,12 +225,9 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
     if (error) { toast('Lỗi lưu: ' + error.message); return; }
     toast('Đã lưu toạ độ');
     setLinkInputs(prev => ({ ...prev, [id]: '' }));
-    if (table === 'branches') {
-      const { data } = await supabase.from('branches').select('*');
-      if (data) setBranches(data as Branch[]);
-    } else {
-      await onRefresh();
-    }
+    if (table === 'branches') await loadBranches();
+    else if (table === 'clients') await loadMapClients();
+    else await onRefresh();
   };
 
   const toggleGroup = (g: Group) =>
@@ -223,7 +247,7 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
         table: 'market_zones', id: z.id, name: z.name, link: z.map_link ?? null,
         query: [z.full_name || `KCN ${z.name}`, z.location, 'Việt Nam'].filter(Boolean).join(', '),
       })),
-      ...activeClients.filter(c => c.lat == null || c.lng == null).map(c => ({
+      ...allClients.filter(c => c.lat == null || c.lng == null).map(c => ({
         table: 'clients', id: c.id, name: c.name, link: c.map_link ?? null,
         query: [c.name, (c.industrial_zones ?? [])[0], 'Việt Nam'].filter(Boolean).join(', '),
       })),
@@ -255,9 +279,7 @@ export default function MapViewTab({ marketZones, marketLeads, clients, goTab, o
     }
     setGeoProgress(null);
     toast(`Đã sinh toạ độ: ${ok} thành công${fail ? `, ${fail} không tìm được` : ''}`);
-    const { data } = await supabase.from('branches').select('*');
-    if (data) setBranches(data as Branch[]);
-    await onRefresh();
+    await Promise.all([loadBranches(), loadMapClients(), onRefresh()]);
   };
 
   return (

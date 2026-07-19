@@ -483,12 +483,15 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const handleSave = async () => {
     if (!form.name.trim()) { toast('Tên công ty không được để trống'); return; }
     try {
-      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+      // Dán link Google Maps → tự sinh toạ độ; xoá link (khi trước đó có) → xoá toạ độ đi kèm
       const mapPos = parseLatLngFromLink(form.map_link);
+      const linkCleared = !form.map_link.trim() && !!client.map_link;
       const baseUpdates = {
         ...form,
         map_link: form.map_link.trim() || null,
-        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+        ...(isValidVnLatLng(mapPos)
+          ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() }
+          : linkCleared ? { lat: null, lng: null, geocoded_at: null } : {}),
         ...timelineForm,
         updated_at: new Date().toISOString(),
       };

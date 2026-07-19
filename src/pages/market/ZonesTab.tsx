@@ -153,11 +153,15 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
     if (!selected || !editForm) return;
     setSaving(true);
     try {
-      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ
+      // Dán link Google Maps → tự sinh toạ độ; xoá link (khi trước đó có) → xoá toạ độ đi kèm
       const mapPos = parseLatLngFromLink(editForm.map_link);
+      const linkCleared = !(editForm.map_link ?? '').trim() && !!selected.map_link;
       const updates = {
         ...editForm,
-        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+        map_link: (editForm.map_link ?? '').trim() || null,
+        ...(isValidVnLatLng(mapPos)
+          ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() }
+          : linkCleared ? { lat: null, lng: null, geocoded_at: null } : {}),
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase.from('market_zones').update(updates).eq('id', selected.id);

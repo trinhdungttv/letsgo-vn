@@ -349,8 +349,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     }
     try {
       const mgr = await resolveManager(form.manager_name ?? '');
-      // Dán link Google Maps → tự sinh toạ độ cho tab Bản đồ (Thị trường)
+      // Dán link Google Maps → tự sinh toạ độ; xoá link (khi trước đó có) → xoá toạ độ đi kèm
       const mapPos = parseLatLngFromLink(form.map_link);
+      const linkCleared = !(form.map_link ?? '').trim() && !!selected.map_link;
       await updateBranch(selected.id, {
         name: form.name || selected.name,
         short_name: form.short_name ?? null,
@@ -359,7 +360,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         region: form.region ?? null,
         location: form.location ?? null,
         map_link: form.map_link ?? null,
-        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+        ...(isValidVnLatLng(mapPos)
+          ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() }
+          : linkCleared ? { lat: null, lng: null, geocoded_at: null } : {}),
         address: form.address ?? null,
         phone: form.phone ?? null,
         email: form.email ?? null,
