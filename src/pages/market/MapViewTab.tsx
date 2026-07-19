@@ -11,7 +11,7 @@ import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep } from '.
 import type { Branch } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 
-type Group = 'branch' | 'kcn' | 'client' | 'prospect';
+type Group = 'branch' | 'kcn' | 'client' | 'prospect' | 'lead';
 
 interface MapPoint {
   id: string;
@@ -29,13 +29,14 @@ const GROUPS: { id: Group; label: string; color: string }[] = [
   { id: 'kcn', label: 'Khu công nghiệp', color: '#D97706' },
   { id: 'client', label: 'KH đang hợp tác', color: '#059669' },
   { id: 'prospect', label: 'KH tiềm năng', color: '#7C3AED' },
+  { id: 'lead', label: 'Công ty / Dự án', color: '#DB2777' },
 ];
 
 const GROUP_COLOR: Record<Group, string> = Object.fromEntries(GROUPS.map(g => [g.id, g.color])) as Record<Group, string>;
 
 const VN_CENTER: [number, number] = [16.05, 107.5];
 
-export default function MapViewTab({ marketZones, clients, goTab, onRefresh, toast }: MarketTabProps) {
+export default function MapViewTab({ marketZones, marketLeads, clients, goTab, onRefresh, toast }: MarketTabProps) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [activeGroups, setActiveGroups] = useState<Group[]>(GROUPS.map(g => g.id));
   const [geoProgress, setGeoProgress] = useState<{ done: number; total: number; current: string } | null>(null);
@@ -85,8 +86,17 @@ export default function MapViewTab({ marketZones, clients, goTab, onRefresh, toa
         onOpen: () => { window.location.hash = `#/client-detail/${shortId(c.id)}`; },
       });
     });
+    marketLeads.forEach(l => {
+      if (l.lat == null || l.lng == null) return;
+      pts.push({
+        id: l.id, group: 'lead', name: l.company_name, lat: l.lat, lng: l.lng,
+        sub: [l.region, l.industry, l.workers_needed ? `Nhu cầu ${l.workers_needed} LĐ` : null, l.status].filter(Boolean).join(' · '),
+        mapLink: l.map_link ?? null,
+        onOpen: () => goTab('leads'),
+      });
+    });
     return pts;
-  }, [branches, marketZones, activeClients, goTab]);
+  }, [branches, marketZones, marketLeads, activeClients, goTab]);
 
   const missingList = useMemo(() => {
     const list: { table: string; id: string; name: string; group: Group; link: string | null }[] = [
@@ -96,9 +106,11 @@ export default function MapViewTab({ marketZones, clients, goTab, onRefresh, toa
         .map(z => ({ table: 'market_zones', id: z.id, name: z.name, group: 'kcn' as Group, link: z.map_link ?? null })),
       ...activeClients.filter(x => x.lat == null || x.lng == null)
         .map(c => ({ table: 'clients', id: c.id, name: c.name, group: (c.client_type === 'active' ? 'client' : 'prospect') as Group, link: c.map_link ?? null })),
+      ...marketLeads.filter(x => x.lat == null || x.lng == null)
+        .map(l => ({ table: 'market_leads', id: l.id, name: l.company_name, group: 'lead' as Group, link: l.map_link ?? null })),
     ];
     return list;
-  }, [branches, marketZones, activeClients]);
+  }, [branches, marketZones, marketLeads, activeClients]);
 
   // Khởi tạo map một lần
   useEffect(() => {
@@ -214,6 +226,10 @@ export default function MapViewTab({ marketZones, clients, goTab, onRefresh, toa
       ...activeClients.filter(c => c.lat == null || c.lng == null).map(c => ({
         table: 'clients', id: c.id, name: c.name, link: c.map_link ?? null,
         query: [c.name, (c.industrial_zones ?? [])[0], 'Việt Nam'].filter(Boolean).join(', '),
+      })),
+      ...marketLeads.filter(l => l.lat == null || l.lng == null).map(l => ({
+        table: 'market_leads', id: l.id, name: l.company_name, link: l.map_link ?? null,
+        query: [l.company_name, l.region, 'Việt Nam'].filter(Boolean).join(', '),
       })),
     ];
     if (!jobs.length) { toast('Tất cả bản ghi đã có toạ độ'); return; }
