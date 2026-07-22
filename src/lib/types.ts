@@ -633,6 +633,10 @@ export interface ProjectPnl {
   split_temp_until: string | null;
   split_reverted: boolean;
   invoice_mode: PnlInvoiceMode;
+  // Tỷ lệ phân chia riêng cho phần doanh thu HOH (xuất hộ khách hàng) trong dự án —
+  // mặc định 100% Let's Go VN, tách biệt với lg_pct/cn_pct của Cho thuê lao động.
+  hoh_lg_pct?: number;
+  hoh_cn_pct?: number;
   clients?: { name: string } | null;
 }
 

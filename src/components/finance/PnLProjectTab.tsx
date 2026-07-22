@@ -62,6 +62,9 @@ export default function PnLProjectTab({
   const [rateEditOpen, setRateEditOpen] = useState(false);
   const [pendingRate, setPendingRate] = useState<number | null>(null);
   const [rateSaveAsDefault, setRateSaveAsDefault] = useState(true);
+  // HOH: tỷ lệ phân chia riêng cho phần doanh thu HOH (mặc định 100% LGVN).
+  const [hohLgInput, setHohLgInput] = useState('100');
+  const [hohCnInput, setHohCnInput] = useState('0');
 
   type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
@@ -182,8 +185,28 @@ export default function PnLProjectTab({
       setLgInput(String(selected.lg_pct));
       setCnInput(String(selected.cn_pct));
       setRateInput(String(selected.manday_rate || ''));
+      setHohLgInput(String(selected.hoh_lg_pct ?? 100));
+      setHohCnInput(String(selected.hoh_cn_pct ?? 0));
     }
-  }, [selId, selected?.lg_pct, selected?.cn_pct, selected?.manday_rate]);
+  }, [selId, selected?.lg_pct, selected?.cn_pct, selected?.manday_rate, selected?.hoh_lg_pct, selected?.hoh_cn_pct]);
+
+  const onHohSplitChange = (side: 'lg' | 'cn', val: string) => {
+    const v = Math.min(100, Math.max(0, +val || 0));
+    const other = Math.round((100 - v) * 10) / 10;
+    if (side === 'lg') { setHohLgInput(val); setHohCnInput(String(other)); }
+    else { setHohCnInput(val); setHohLgInput(String(other)); }
+  };
+
+  const onHohSplitBlur = () => {
+    if (!selected) return;
+    const lg = Math.min(100, Math.max(0, +hohLgInput || 0));
+    const cn = Math.round((100 - lg) * 10) / 10;
+    if (lg === (selected.hoh_lg_pct ?? 100) && cn === (selected.hoh_cn_pct ?? 0)) return;
+    guard(
+      () => updateField({ hoh_lg_pct: lg, hoh_cn_pct: cn }),
+      () => { setHohLgInput(String(selected.hoh_lg_pct ?? 100)); setHohCnInput(String(selected.hoh_cn_pct ?? 0)); }
+    );
+  };
 
   const taxOptsFor = useCallback((clientId: string) => {
     const s = splitSettings[clientId];
@@ -203,7 +226,11 @@ export default function PnLProjectTab({
   }, [invoiceSettingsFor]);
 
   const costs = selId ? (pnlCosts[selId] || []) : [];
-  const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id)) : null;
+  const hohRevenue = selId ? (revLines[selId] || []).filter(l => l.service_type === 'hoh').reduce((s, l) => s + (l.amount || 0), 0) : 0;
+  const hasHoh = hohRevenue > 0 || costs.some(c => c.service_type === 'hoh');
+  const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id), {
+    revenue: hohRevenue, lgPct: selected.hoh_lg_pct ?? 100, cnPct: selected.hoh_cn_pct ?? 0,
+  }) : null;
 
   // Tự dọn dữ liệu chi phí Lương/BHXH ở dự án "Nhiều kỳ":
   // - Dòng chưa gắn kỳ (tạo từ trước khi bật chế độ này) → coi như thuộc kỳ đầu tiên.
@@ -663,6 +690,7 @@ export default function PnLProjectTab({
             const c = pnlCosts[p.id] || [];
             const rr = calcPnl(p, c, taxOptsFor(p.client_id));
             const gtldRevenue = (revLines[p.id] || []).filter(l => l.service_type === 'recruitment').reduce((s, l) => s + (l.amount || 0), 0);
+            const hohLineRevenue = (revLines[p.id] || []).filter(l => l.service_type === 'hoh').reduce((s, l) => s + (l.amount || 0), 0);
             return (
               <div
                 key={p.id}
@@ -684,6 +712,9 @@ export default function PnLProjectTab({
                     <span className={`text-[11px] font-medium ${rr.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>LN: {fmtTrieu(rr.profit)}</span>
                     {gtldRevenue > 0 && (
                       <span className="text-[10px] text-purple-500">GTLĐ: {fmtTrieu(gtldRevenue)}</span>
+                    )}
+                    {hohLineRevenue > 0 && (
+                      <span className="text-[10px] text-sky-500">HOH: {fmtTrieu(hohLineRevenue)}</span>
                     )}
                   </div>
                 </div>
@@ -828,7 +859,7 @@ export default function PnLProjectTab({
                 const invoiceDate = isPeriodic && settings.invoice_days[periodIndex]
                   ? `${month}-${String(Math.min(settings.invoice_days[periodIndex], 28)).padStart(2, '0')}`
                   : null;
-                const label = serviceType === 'recruitment' ? 'Giới thiệu lao động' : (settings.invoice_label_template || 'Hoa don');
+                const label = serviceType === 'recruitment' ? 'Giới thiệu lao động' : serviceType === 'hoh' ? 'HOH' : (settings.invoice_label_template || 'Hoa don');
                 const { data, error } = await supabase.from('pnl_revenue_lines')
                   .insert({ pnl_id: selected.id, label, amount: 0, sort_order: currentLines.length, period_label: periodLabel, invoice_date: invoiceDate, service_type: serviceType })
                   .select().single();
@@ -902,6 +933,10 @@ export default function PnLProjectTab({
                         className="flex items-center gap-1 text-[10px] text-[#bbb] hover:text-purple-600 font-medium">
                         <Plus size={10} /> GTLD
                       </button>
+                      <button onClick={() => addLine('hoh')} title="Thêm dòng doanh thu HOH (xuất hộ khách hàng, lấy phí) — dịch vụ phụ, ít khi dùng"
+                        className="flex items-center gap-1 text-[10px] text-[#bbb] hover:text-sky-600 font-medium">
+                        <Plus size={10} /> HOH
+                      </button>
                     </div>
                   </div>
                   {lines.length > 0 && (
@@ -937,6 +972,9 @@ export default function PnLProjectTab({
                                 <div className="flex items-center gap-1">
                                   {l.service_type === 'recruitment' && (
                                     <span title="Giới thiệu Lao động" className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-purple-50 text-purple-500 border border-purple-200">GTLD</span>
+                                  )}
+                                  {l.service_type === 'hoh' && (
+                                    <span title="HOH — xuất hộ khách hàng" className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-sky-50 text-sky-600 border border-sky-200">HOH</span>
                                   )}
                                   <input key={`rl-${l.id}`} defaultValue={l.label} onBlur={e => {
                                       const target = e.target; const v = target.value;
@@ -1152,6 +1190,34 @@ export default function PnLProjectTab({
                 ) : (
                   <div className="text-[12px] text-[#666]">LGV trả toàn bộ chi phí &amp; nhận 100% LN. Chi nhánh nhận lương cố định.</div>
                 )}
+                {hasHoh && (
+                  <div className="border border-sky-200 bg-sky-50/40 rounded-lg p-2.5 flex items-center gap-2.5 flex-wrap">
+                    <span className="text-[11px] text-sky-700 font-medium shrink-0">Phân chia HOH:</span>
+                    <span className="text-[11px] text-[#666]">Let's Go VN:</span>
+                    <div className="relative w-[70px]">
+                      <input
+                        type="number" min={0} max={100}
+                        value={hohLgInput}
+                        onChange={e => onHohSplitChange('lg', e.target.value)}
+                        onBlur={onHohSplitBlur}
+                        className="w-full text-[12px] px-2 py-1 pr-5 border border-gray-300 rounded-lg outline-none focus:border-sky-500 text-right bg-white"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">%</span>
+                    </div>
+                    <span className="text-[11px] text-[#666]">Chi nhánh:</span>
+                    <div className="relative w-[70px]">
+                      <input
+                        type="number" min={0} max={100}
+                        value={hohCnInput}
+                        onChange={e => onHohSplitChange('cn', e.target.value)}
+                        onBlur={onHohSplitBlur}
+                        className="w-full text-[12px] px-2 py-1 pr-5 border border-gray-300 rounded-lg outline-none focus:border-sky-500 text-right bg-white"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-[#999]">%</span>
+                    </div>
+                    <span className="text-[10px] text-sky-700">— riêng cho phần doanh thu HOH, mặc định 100% Let's Go VN</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1162,13 +1228,21 @@ export default function PnLProjectTab({
               const selectedNewCostPeriod = periodOptions.includes(newCostPeriod) ? newCostPeriod : periodOptions[0];
               const groupOf = (label: string): CostGroupType => costCategories.find(cat => cat.label === label)?.group_type ?? 'general';
               const isReferral = (c: ProjectPnlCost) => c.service_type === 'recruitment';
-              const salaryCosts = costs.filter(c => groupOf(c.label) === 'salary' && !isReferral(c));
-              const generalCosts = costs.filter(c => groupOf(c.label) !== 'salary' && !isReferral(c));
+              const isHoh = (c: ProjectPnlCost) => c.service_type === 'hoh';
+              const salaryCosts = costs.filter(c => groupOf(c.label) === 'salary' && !isReferral(c) && !isHoh(c));
+              const generalCosts = costs.filter(c => groupOf(c.label) !== 'salary' && !isReferral(c) && !isHoh(c));
               const referralCosts = costs.filter(isReferral);
+              const hohCosts = costs.filter(isHoh);
               const addReferralCost = async () => {
                 if (!selected) return;
                 try {
                   await onAddCost({ pnl_id: selected.id, label: 'Chi phí Giới thiệu Lao động', value: 0, payer: 'lg', sort_order: costs.length, period_label: null, service_type: 'recruitment' });
+                } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
+              };
+              const addHohCost = async () => {
+                if (!selected) return;
+                try {
+                  await onAddCost({ pnl_id: selected.id, label: 'Chi phí HOH', value: 0, payer: 'lg', sort_order: costs.length, period_label: null, service_type: 'hoh' });
                 } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
               };
 
@@ -1249,19 +1323,17 @@ export default function PnLProjectTab({
               };
 
               const sumVal = (rows: ProjectPnlCost[]) => rows.reduce((s, c) => s + (Number(c.value) || 0), 0);
-              const renderTable = (title: string, rows: ProjectPnlCost[], subtotal: number, emptyHint: string, accent: 'salary' | 'general' | 'referral') => {
+              const ACCENT_STYLES: Record<'salary' | 'general' | 'referral' | 'hoh', { bar: string; badge: string; total: string; container: string; headerBorder: string }> = {
+                salary: { bar: 'bg-amber-400', badge: 'bg-[#FDF1D6] text-amber-800 border-amber-300', total: 'text-amber-700', container: 'border-amber-200 bg-[#FFFCF5]', headerBorder: 'border-amber-200' },
+                general: { bar: 'bg-[#9DB7D8]', badge: 'bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]', total: 'text-[#185FA5]', container: 'border-[#D8E6F5] bg-[#F8FBFE]', headerBorder: 'border-[#D8E6F5]' },
+                referral: { bar: 'bg-purple-300', badge: 'bg-purple-50 text-purple-600 border-purple-200', total: 'text-purple-600', container: 'border-purple-200 bg-purple-50/30', headerBorder: 'border-purple-200' },
+                hoh: { bar: 'bg-sky-300', badge: 'bg-sky-50 text-sky-600 border-sky-200', total: 'text-sky-600', container: 'border-sky-200 bg-sky-50/30', headerBorder: 'border-sky-200' },
+              };
+              const renderTable = (title: string, rows: ProjectPnlCost[], subtotal: number, emptyHint: string, accent: 'salary' | 'general' | 'referral' | 'hoh') => {
                 const showPeriod = isPeriodic && accent === 'salary';
-                const accentCls = accent === 'salary'
-                  ? { bar: 'bg-amber-400', badge: 'bg-[#FDF1D6] text-amber-800 border-amber-300', total: 'text-amber-700' }
-                  : accent === 'referral'
-                    ? { bar: 'bg-purple-300', badge: 'bg-purple-50 text-purple-600 border-purple-200', total: 'text-purple-600' }
-                    : { bar: 'bg-[#9DB7D8]', badge: 'bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]', total: 'text-[#185FA5]' };
-                const containerCls = accent === 'salary'
-                  ? 'border-amber-200 bg-[#FFFCF5]'
-                  : accent === 'referral'
-                    ? 'border-purple-200 bg-purple-50/30'
-                    : 'border-[#D8E6F5] bg-[#F8FBFE]';
-                const headerBorderCls = accent === 'salary' ? 'border-amber-200' : accent === 'referral' ? 'border-purple-200' : 'border-[#D8E6F5]';
+                const accentCls = ACCENT_STYLES[accent];
+                const containerCls = accentCls.container;
+                const headerBorderCls = accentCls.headerBorder;
                 return (
                   <div className={`rounded-lg border ${containerCls} overflow-hidden`}>
                     <div className={`flex items-center gap-2 px-3 py-2 border-b ${headerBorderCls}`}>
@@ -1310,6 +1382,7 @@ export default function PnLProjectTab({
                     {renderTable('Chi phí Lương + BHXH', salaryCosts, sumVal(salaryCosts), 'Chưa có khoản lương/BHXH nào — gán nhóm "Lương/BHXH" cho hạng mục trong Quản lý hạng mục.', 'salary')}
                     {renderTable('Chi phí chung', generalCosts, sumVal(generalCosts), 'Chưa có khoản chi phí chung nào.', 'general')}
                     {referralCosts.length > 0 && renderTable('Chi phí Giới thiệu Lao động (GTLD)', referralCosts, sumVal(referralCosts), '', 'referral')}
+                    {hohCosts.length > 0 && renderTable('Chi phí HOH', hohCosts, sumVal(hohCosts), '', 'hoh')}
                     <div className="pt-1 flex items-center gap-2">
                       {isPeriodic && (
                         <select
@@ -1346,6 +1419,10 @@ export default function PnLProjectTab({
                       <button onClick={() => guard(addReferralCost)} title="Thêm chi phí riêng cho Giới thiệu Lao động (GTLD) — dịch vụ phụ, ít khi dùng"
                         className="text-[10px] text-[#bbb] hover:text-purple-600 font-medium shrink-0 whitespace-nowrap">
                         + CP GTLD
+                      </button>
+                      <button onClick={() => guard(addHohCost)} title="Thêm chi phí riêng cho HOH — dịch vụ phụ, ít khi dùng"
+                        className="text-[10px] text-[#bbb] hover:text-sky-600 font-medium shrink-0 whitespace-nowrap">
+                        + CP HOH
                       </button>
                       <button onClick={() => setCostSettingsOpen(true)} title="Quan ly hang muc chi phi"
                         className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
@@ -1455,6 +1532,13 @@ export default function PnLProjectTab({
                     <div className="text-[10px] text-emerald-600 mt-0.5">{selected.project_type === 'shared' ? `${selected.cn_pct}% LN` : selected.project_type === 'per_manday' ? `${(selected.manday_rate || 0).toLocaleString('vi-VN')}đ/công × ${(selected.total_man_days || 0).toLocaleString('vi-VN')} công` : 'Nhận lương CĐ'}</div>
                   </div>
                 </div>
+                {hasHoh && (
+                  <div className="mt-2.5 text-[11px] text-sky-700 bg-sky-50/60 border border-sky-200 rounded-lg px-2.5 py-2">
+                    <strong>Trong đó HOH</strong> (chia {selected.hoh_lg_pct ?? 100}/{selected.hoh_cn_pct ?? 0}):
+                    {' '}LN <strong>{fmtTrieu(r.hohProfit)}</strong>
+                    {' → '}LGV <strong>{fmtTrieu(r.hohLgP)}</strong>{' · '}CN <strong>{fmtTrieu(r.hohCnP)}</strong> đ
+                  </div>
+                )}
                 {selected.project_type === 'shared' && (
                   <div className="mt-2.5 text-[11px] text-[#666] bg-[#F5F4EF] rounded-lg px-2.5 py-2">
                     <strong className="text-[#555]">CP theo bên: </strong>

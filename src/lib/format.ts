@@ -248,11 +248,14 @@ export function getBranchTypeForMonth(history: BranchTypeHistory[], month: strin
 }
 
 // P&L calculation shared by the Finance Workspace project tabs.
+// hohOpts: phần doanh thu "HOH" (xuất hộ khách hàng, lấy phí) trong dự án — tách riêng khỏi
+// khoán/lương thông thường, mặc định 100% về Let's Go VN, có thể tuỳ chỉnh tỷ lệ theo dự án.
 export function calcPnl(
   p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number; manday_rate?: number; total_man_days?: number },
-  costs: { value: number; payer: CostPayer; label?: string }[],
-  taxOpts?: { categories?: { label: string; group_type?: string }[]; taxPct?: number; taxExempt?: boolean }
-): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number } {
+  costs: { value: number; payer: CostPayer; label?: string; service_type?: string }[],
+  taxOpts?: { categories?: { label: string; group_type?: string }[]; taxPct?: number; taxExempt?: boolean },
+  hohOpts?: { revenue: number; lgPct: number; cnPct: number }
+): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number; hohProfit: number; hohLgP: number; hohCnP: number } {
   const tc = costs.reduce((s, c) => s + (Number(c.value) || 0), 0);
   const profit = p.revenue - tc;
   let lgC = 0, cnC = 0, shC = 0;
@@ -271,18 +274,37 @@ export function calcPnl(
   const taxPct = taxOpts?.taxExempt ? 0 : (taxOpts?.taxPct ?? 0);
   const tax = profit > 0 ? profit * taxPct / 100 : 0;
   const profitAfterTax = profit - tax;
+
+  // Tách phần lợi nhuận sau thuế thuộc về HOH (theo tỷ lệ giữa LN trước thuế của HOH và tổng LN
+  // trước thuế — cùng chịu thuế TNDN như phần còn lại), phần còn lại tính theo cách chia thông
+  // thường của dự án (managed/per_manday/shared). Không có dòng HOH nào → kết quả giống hệt trước đây.
+  const hohCost = costs.filter(c => c.service_type === 'hoh').reduce((s, c) => s + (Number(c.value) || 0), 0);
+  const hohRevenue = hohOpts?.revenue ?? 0;
+  const hohProfit = hohRevenue - hohCost;
+  const restProfitPreTax = profit - hohProfit;
+  const scale = profit !== 0 ? profitAfterTax / profit : 1;
+  const hohPostTax = hohProfit * scale;
+  const restPostTax = restProfitPreTax * scale;
+
   // per_manday: CN nhận đơn giá × công (đảm bảo đủ kể cả khi lỗ), LGV nhận phần còn lại (có thể âm).
-  let lgP: number, cnP: number;
+  let restLgP: number, restCnP: number;
   if (p.project_type === 'managed') {
-    lgP = profitAfterTax; cnP = 0;
+    restLgP = restPostTax; restCnP = 0;
   } else if (p.project_type === 'per_manday') {
-    cnP = (Number(p.manday_rate) || 0) * (Number(p.total_man_days) || 0);
-    lgP = profitAfterTax - cnP;
+    restCnP = (Number(p.manday_rate) || 0) * (Number(p.total_man_days) || 0);
+    restLgP = restPostTax - restCnP;
   } else {
-    lgP = profitAfterTax * p.lg_pct / 100;
-    cnP = profitAfterTax * p.cn_pct / 100;
+    restLgP = restPostTax * p.lg_pct / 100;
+    restCnP = restPostTax * p.cn_pct / 100;
   }
-  return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax };
+  const hohLgPct = hohOpts?.lgPct ?? 100;
+  const hohCnPct = hohOpts?.cnPct ?? 0;
+  const hohLgP = hohPostTax * hohLgPct / 100;
+  const hohCnP = hohPostTax * hohCnPct / 100;
+  const lgP = restLgP + hohLgP;
+  const cnP = restCnP + hohCnP;
+
+  return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax, hohProfit, hohLgP, hohCnP };
 }
 
 export function statusPill(status: string): { label: string; cls: string } {
