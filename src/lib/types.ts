@@ -602,6 +602,9 @@ export interface PnlRevenueLine {
   sort_order: number;
   period_label: string | null;
   man_days: number;
+  // 'leasing' (mặc định) = Cho thuê lao động; 'recruitment' = Giới thiệu Lao động (GTLD),
+  // dịch vụ phụ một số dự án làm thêm — vẫn cộng chung vào doanh thu dự án.
+  service_type?: ServiceType;
 }
 
 // 'shared'     - Đã Nhận Khoán: chia LN sau thuế theo % lg_pct/cn_pct.
@@ -665,6 +668,8 @@ export interface ProjectPnlCost {
   payer: CostPayer;
   sort_order: number;
   period_label: string | null;
+  // 'leasing' (mặc định) = Cho thuê lao động; 'recruitment' = chi phí riêng cho GTLD.
+  service_type?: ServiceType;
 }
 
 export interface BranchOverhead {
