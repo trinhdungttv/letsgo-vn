@@ -36,6 +36,9 @@ const GROUP_COLOR: Record<Group, string> = Object.fromEntries(GROUPS.map(g => [g
 
 const VN_CENTER: [number, number] = [16.05, 107.5];
 
+// Zoom >= mức này thì hiện tên cố định cạnh marker (không cần click/hover).
+const LABEL_ZOOM = 12;
+
 // App chỉ load clients active — bản đồ cần cả prospect nên tự fetch riêng.
 interface MapClient {
   id: string;
@@ -55,6 +58,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const [activeGroups, setActiveGroups] = useState<Group[]>(GROUPS.map(g => g.id));
   const [geoProgress, setGeoProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [linkInputs, setLinkInputs] = useState<Record<string, string>>({});
   const [savingLink, setSavingLink] = useState<string | null>(null);
   const mapDivRef = useRef<HTMLDivElement>(null);
@@ -123,19 +127,18 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     return pts;
   }, [branches, marketZones, marketLeads, allClients, goTab]);
 
+  // Bản ghi thiếu link Google Maps HOẶC thiếu toạ độ — cả hai đều cần bổ sung.
   const missingList = useMemo(() => {
-    const list: { table: string; id: string; name: string; group: Group; link: string | null }[] = [
-      ...branches.filter(x => x.lat == null || x.lng == null)
-        .map(b => ({ table: 'branches', id: b.id, name: b.name, group: 'branch' as Group, link: b.map_link })),
-      ...marketZones.filter(x => x.lat == null || x.lng == null)
-        .map(z => ({ table: 'market_zones', id: z.id, name: z.name, group: 'kcn' as Group, link: z.map_link ?? null })),
-      ...allClients.filter(x => x.lat == null || x.lng == null)
-        .map(c => ({ table: 'clients', id: c.id, name: c.name, group: (c.client_type === 'active' ? 'client' : 'prospect') as Group, link: c.map_link ?? null })),
-      ...marketLeads.filter(x => x.lat == null || x.lng == null)
-        .map(l => ({ table: 'market_leads', id: l.id, name: l.company_name, group: 'lead' as Group, link: l.map_link ?? null })),
+    const rows: { table: string; id: string; name: string; group: Group; link: string | null; hasCoords: boolean }[] = [
+      ...branches.map(b => ({ table: 'branches', id: b.id, name: b.name, group: 'branch' as Group, link: b.map_link, hasCoords: b.lat != null && b.lng != null })),
+      ...marketZones.map(z => ({ table: 'market_zones', id: z.id, name: z.name, group: 'kcn' as Group, link: z.map_link ?? null, hasCoords: z.lat != null && z.lng != null })),
+      ...allClients.map(c => ({ table: 'clients', id: c.id, name: c.name, group: (c.client_type === 'active' ? 'client' : 'prospect') as Group, link: c.map_link ?? null, hasCoords: c.lat != null && c.lng != null })),
+      ...marketLeads.map(l => ({ table: 'market_leads', id: l.id, name: l.company_name, group: 'lead' as Group, link: l.map_link ?? null, hasCoords: l.lat != null && l.lng != null })),
     ];
-    return list;
+    return rows.filter(r => !r.link?.trim() || !r.hasCoords);
   }, [branches, marketZones, marketLeads, allClients]);
+
+  const missingCoordsCount = useMemo(() => missingList.filter(m => !m.hasCoords).length, [missingList]);
 
   // Khởi tạo map một lần
   useEffect(() => {
@@ -155,6 +158,8 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       }),
     });
     map.addLayer(cluster);
+    // Bật/tắt nhãn tên theo mức zoom — chỉ setState khi vượt ngưỡng để tránh vẽ lại thừa.
+    map.on('zoomend', () => setShowLabels(map.getZoom() >= LABEL_ZOOM));
     mapRef.current = map;
     clusterRef.current = cluster;
     return () => { map.remove(); mapRef.current = null; clusterRef.current = null; };
@@ -171,11 +176,19 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       const color = GROUP_COLOR[p.group];
       const icon = L.divIcon({
         className: 'lgmap-marker',
-        html: `<span class="lgmap-dot" style="background:${color}"></span><span class="lgmap-label">${escapeHtml(p.name)}</span>`,
-        iconSize: [12, 12],
-        iconAnchor: [6, 6],
+        html: `<span class="lgmap-pin" style="background:${color}"></span>`,
+        iconSize: [26, 34],
+        iconAnchor: [13, 32],
+        popupAnchor: [0, -30],
       });
       const marker = L.marker([p.lat, p.lng], { icon });
+      marker.bindTooltip(escapeHtml(p.name), {
+        direction: 'top',
+        offset: [0, -30],
+        className: 'lgmap-tooltip',
+        permanent: showLabels,
+        opacity: showLabels ? 0.95 : 1,
+      });
       const el = document.createElement('div');
       el.className = 'lgmap-popup';
       el.innerHTML = `
@@ -207,23 +220,26 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       const bounds = L.latLngBounds(shown.map(p => [p.lat, p.lng] as [number, number]));
       map.fitBounds(bounds.pad(0.15), { maxZoom: 12 });
     }
-  }, [points, activeGroups]);
+  }, [points, activeGroups, showLabels]);
 
-  // Dán link Google Maps cho một bản ghi thiếu toạ độ: parse @lat,lng và lưu vào DB.
-  const saveLink = async (table: string, id: string) => {
+  // Dán link Google Maps: parse được toạ độ thì lưu link + lat/lng; link ngắn (goo.gl)
+  // không chứa toạ độ thì vẫn lưu link nếu bản ghi đã có toạ độ sẵn.
+  const saveLink = async (table: string, id: string, hasCoords: boolean) => {
     const link = (linkInputs[id] ?? '').trim();
     const pos = parseLatLngFromLink(link);
-    if (!isValidVnLatLng(pos)) {
+    const parsed = isValidVnLatLng(pos);
+    if (!parsed && !hasCoords) {
       toast('Không đọc được toạ độ từ link — hãy dùng link có dạng .../@lat,lng hoặc ?q=lat,lng');
       return;
     }
     setSavingLink(id);
-    const { error } = await supabase.from(table)
-      .update({ map_link: link, lat: pos.lat, lng: pos.lng, geocoded_at: new Date().toISOString() })
-      .eq('id', id);
+    const patch = parsed
+      ? { map_link: link, lat: pos.lat, lng: pos.lng, geocoded_at: new Date().toISOString() }
+      : { map_link: link };
+    const { error } = await supabase.from(table).update(patch).eq('id', id);
     setSavingLink(null);
     if (error) { toast('Lỗi lưu: ' + error.message); return; }
-    toast('Đã lưu toạ độ');
+    toast(parsed ? 'Đã lưu link + toạ độ' : 'Đã lưu link (giữ toạ độ hiện có)');
     setLinkInputs(prev => ({ ...prev, [id]: '' }));
     if (table === 'branches') await loadBranches();
     else if (table === 'clients') await loadMapClients();
@@ -299,10 +315,10 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
           );
         })}
         <div className="flex-1" />
-        {missingList.length > 0 && !geoProgress && (
+        {missingCoordsCount > 0 && !geoProgress && (
           <button onClick={runGeocode}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition">
-            <Crosshair size={13} /> Sinh toạ độ ({missingList.length} thiếu)
+            <Crosshair size={13} /> Sinh toạ độ ({missingCoordsCount} thiếu)
           </button>
         )}
         {geoProgress && (
@@ -321,7 +337,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <button onClick={() => setShowMissing(v => !v)}
             className="w-full px-4 py-2.5 text-left text-[12.5px] font-semibold text-[#111] flex items-center justify-between hover:bg-[#F9F9F7]">
-            <span>Chưa có toạ độ ({missingList.length})</span>
+            <span>Thiếu link Google Maps / toạ độ ({missingList.length})</span>
             <span className="text-[11px] text-[#888] font-normal">
               Dán link Google Maps để định vị chính xác, hoặc bấm «Sinh toạ độ» để tra tự động {showMissing ? '▲' : '▼'}
             </span>
@@ -332,6 +348,14 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
                 <div key={m.id} className="px-4 py-2 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full flex-none" style={{ backgroundColor: GROUP_COLOR[m.group] }} />
                   <span className="text-[12px] font-medium text-[#333] w-56 truncate">{m.name}</span>
+                  <span className="flex items-center gap-1 flex-none">
+                    {!m.link?.trim() && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">thiếu link</span>
+                    )}
+                    {!m.hasCoords && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200">thiếu toạ độ</span>
+                    )}
+                  </span>
                   <input
                     value={linkInputs[m.id] ?? ''}
                     onChange={e => setLinkInputs(prev => ({ ...prev, [m.id]: e.target.value }))}
@@ -339,7 +363,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
                     className="flex-1 text-[12px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]"
                   />
                   <button
-                    onClick={() => saveLink(m.table, m.id)}
+                    onClick={() => saveLink(m.table, m.id, m.hasCoords)}
                     disabled={savingLink === m.id || !(linkInputs[m.id] ?? '').trim()}
                     className="text-[11.5px] font-medium px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition">
                     {savingLink === m.id ? 'Đang lưu…' : 'Lưu'}
