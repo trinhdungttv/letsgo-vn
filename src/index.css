@@ -71,6 +71,18 @@ body {
 .lgmap-marker:hover .lgmap-pin {
   transform: rotate(-45deg) scale(1.15);
 }
+.lgmap-pin-has-icon::after {
+  display: none;
+}
+.lgmap-pin-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
 .lgmap-tooltip {
   font-size: 11.5px;
   font-weight: 600;
@@ -82,6 +94,75 @@ body {
 }
 .lgmap-tooltip::before {
   border-top-color: rgba(255, 255, 255, 0.95);
+}
+.lgmap-distance {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #bfdbfe;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.lgmap-distance::before {
+  display: none;
+}
+.lgmap-distance-alt {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.lgmap-legend {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e8e7e2;
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #333;
+  line-height: 1.7;
+}
+.lgmap-legend-title {
+  font-weight: 700;
+  font-size: 11.5px;
+  margin-bottom: 3px;
+}
+.lgmap-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.lgmap-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  flex: none;
+}
+.lgmap-legend-note {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #999;
+  font-style: italic;
+}
+.lgmap-region-tooltip {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 11.5px;
+  padding: 6px 9px;
+  border-radius: 6px;
+}
+.lgmap-region-name {
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.lgmap-region-name span {
+  font-weight: 400;
+  color: #888;
+}
+.lgmap-region-row b {
+  font-weight: 600;
 }
 .lgmap-cluster div {
   width: 34px;

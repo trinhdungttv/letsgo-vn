@@ -101,6 +101,13 @@ export interface Client {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Hồ sơ thị trường: ngành nghề + theo dõi lấp đầy NCC + lương khảo sát (migration 100)
+  industry?: string | null;
+  market_workers_needed?: number | null;
+  market_suppliers?: MarketLeadSupplier[];
+  wage_min?: number | null;
+  wage_max?: number | null;
+  allowance_notes?: string | null;
 }
 
 // Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
@@ -407,6 +414,10 @@ export interface MarketLead {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Lương khảo sát thực địa (migration 100)
+  wage_min?: number | null;
+  wage_max?: number | null;
+  allowance_notes?: string | null;
 }
 
 export interface Quote {

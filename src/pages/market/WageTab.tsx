@@ -1,16 +1,18 @@
-import { Fragment, useState, useMemo } from 'react';
+import { Fragment, useState, useMemo, useEffect } from 'react';
 import { Plus, Trash2, ExternalLink, Coins, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
+import SearchSelect from './SearchSelect';
+import { fetchIndustries, addIndustry } from './industries';
 
 const emptyForm = {
   zone_name: '', industry: '', pt_min: '', pt_max: '', tv_min: '', tv_max: '', ct_min: '', ct_max: '',
   labor_availability: 'Trung bình', occupancy: '', survey_date: new Date().toISOString().split('T')[0],
 };
 
-export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZoneFilter, goTab, onRefresh, toast }: MarketTabProps) {
+export default function WageTab({ marketZones, marketSurveys, marketLeads, clients, zoneFilter, setZoneFilter, goTab, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -30,18 +32,56 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
     return [...set].sort();
   }, [zoneToProvince]);
 
-  const filteredZoneNames = useMemo(() => {
-    let names = zoneNames;
-    if (provinceFilter !== 'all') {
-      names = names.filter(z => zoneToProvince[z] === provinceFilter);
-    }
-    if (zoneFilter !== 'all') {
-      names = names.filter(z => z === zoneFilter);
-    }
-    return names;
-  }, [zoneNames, provinceFilter, zoneFilter, zoneToProvince]);
+  // Danh sách KCN theo tỉnh đã chọn (chưa áp bộ lọc KCN) — nguồn cho dropdown KCN.
+  const zonesInProvince = useMemo(
+    () => provinceFilter === 'all' ? zoneNames : zoneNames.filter(z => zoneToProvince[z] === provinceFilter),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [zoneNames.join('|'), provinceFilter, zoneToProvince],
+  );
+
+  const filteredZoneNames = useMemo(
+    () => zoneFilter === 'all' ? zonesInProvince : zonesInProvince.filter(z => z === zoneFilter),
+    [zonesInProvince, zoneFilter],
+  );
 
   const zonesToShow = filteredZoneNames;
+
+  // Tổng hợp mức lương theo NGÀNH NGHỀ từ dữ liệu đã nhập ở tab Công ty/Dự án — cả Khách
+  // hàng đang hợp tác (clients.wage_min/max) lẫn Dự án/Công ty đang tìm hiểu
+  // (marketLeads.wage_min/max). Không thay thế bảng khảo sát theo KCN ở trên, chỉ bổ
+  // sung góc nhìn theo ngành, gộp từ mọi khu vực.
+  const industryWageSummary = useMemo(() => {
+    interface Acc { min: number; max: number; count: number; names: string[] }
+    const map = new Map<string, Acc>();
+    const feed = (industry: string | null | undefined, wageMin: number | null | undefined, wageMax: number | null | undefined, name: string) => {
+      if (!industry || wageMin == null || wageMax == null) return;
+      const key = industry.trim();
+      if (!key) return;
+      const cur = map.get(key) ?? { min: wageMin, max: wageMax, count: 0, names: [] };
+      cur.min = Math.min(cur.min, wageMin);
+      cur.max = Math.max(cur.max, wageMax);
+      cur.count += 1;
+      if (cur.names.length < 4) cur.names.push(name);
+      map.set(key, cur);
+    };
+    clients.forEach(c => feed(c.industry, c.wage_min, c.wage_max, c.name));
+    marketLeads.forEach(l => feed(l.industry, l.wage_min, l.wage_max, l.company_name));
+    return [...map.entries()]
+      .map(([industry, v]) => ({ industry, ...v }))
+      .sort((a, b) => a.industry.localeCompare(b.industry, 'vi'));
+  }, [clients, marketLeads]);
+
+  const [industries, setIndustries] = useState<string[]>([]);
+  useEffect(() => {
+    fetchIndustries(marketSurveys.map(s => s.industry)).then(setIndustries);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleAddIndustry = async (name: string) => {
+    const err = await addIndustry(name);
+    if (err) toast('Lỗi thêm ngành (bảng industries chưa tạo? Chạy migration 099): ' + err);
+    setIndustries(prev => [...new Set([...prev, name])].sort((a, b) => a.localeCompare(b, 'vi')));
+  };
 
   const openAdd = (zone?: string) => {
     setForm({ ...emptyForm, zone_name: zone || zoneNames[0] || '' });
@@ -98,6 +138,23 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
 
   return (
     <div className="space-y-3">
+      {industryWageSummary.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2]">
+            <div className="text-[12.5px] font-semibold text-[#111]">Mức lương theo ngành nghề (tổng hợp từ Công ty/Dự án)</div>
+            <div className="text-[11px] text-[#999] mt-0.5">Gộp từ Khách hàng đang hợp tác + Công ty/Dự án đang tìm hiểu đã nhập lương khảo sát, theo mọi khu vực</div>
+          </div>
+          <div className="p-3 flex flex-wrap gap-2">
+            {industryWageSummary.map(s => (
+              <div key={s.industry} className="rounded-lg border border-[#E8E7E2] px-3 py-2 min-w-[160px]">
+                <div className="text-[12px] font-medium text-[#222]">{s.industry}</div>
+                <div className="text-[14px] font-semibold text-emerald-700 mt-0.5">{fmtTr(s.min)}–{fmtTr(s.max)}tr</div>
+                <div className="text-[10.5px] text-[#999] mt-0.5">{s.count} nguồn · {s.names.join(', ')}{s.count > s.names.length ? '…' : ''}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Lương thị trường theo khu vực & ngành nghề</div>
@@ -105,22 +162,22 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
             <Plus size={13} /> Thêm khảo sát
           </button>
         </div>
-        <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap">
-          <span className="text-[12px] text-[#888] shrink-0">Tinh/TP:</span>
-          <button onClick={() => { setProvinceFilter('all'); setZoneFilter('all'); }} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${provinceFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>Tat ca</button>
-          {provinces.map(p => (
-            <button key={p} onClick={() => { setProvinceFilter(p); setZoneFilter('all'); }} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${provinceFilter === p ? 'bg-blue-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>{p}</button>
-          ))}
+        <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] text-[#888] shrink-0">Tỉnh/TP:</span>
+          <SearchSelect
+            value={provinceFilter}
+            onChange={v => { setProvinceFilter(v); setZoneFilter('all'); }}
+            options={[{ value: 'all', label: `Tất cả (${provinces.length})` }, ...provinces.map(p => ({ value: p, label: p }))]}
+            className="w-52"
+          />
+          <span className="text-[12px] text-[#888] shrink-0">KCN:</span>
+          <SearchSelect
+            value={zoneFilter}
+            onChange={setZoneFilter}
+            options={[{ value: 'all', label: `Tất cả (${zonesInProvince.length})` }, ...zonesInProvince.map(z => ({ value: z, label: z }))]}
+            className="w-64"
+          />
         </div>
-        {filteredZoneNames.length > 1 && (
-          <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap bg-[#FAFAF8]">
-            <span className="text-[12px] text-[#888] shrink-0">KCN:</span>
-            <button onClick={() => setZoneFilter('all')} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === 'all' ? 'bg-emerald-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>Tat ca ({filteredZoneNames.length})</button>
-            {filteredZoneNames.map(z => (
-              <button key={z} onClick={() => setZoneFilter(z)} className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${zoneFilter === z ? 'bg-emerald-600 text-white' : 'bg-[#F0EEE9] text-[#666]'}`}>{z}</button>
-            ))}
-          </div>
-        )}
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
@@ -176,11 +233,23 @@ export default function WageTab({ marketZones, marketSurveys, zoneFilter, setZon
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Khu vực *</label>
-                <input list="wage-zones" value={form.zone_name} onChange={e => setForm(f => ({ ...f, zone_name: e.target.value }))} placeholder="KCN Biên Hòa 2" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                <datalist id="wage-zones">{zoneNames.map(z => <option key={z} value={z} />)}</datalist>
+                <SearchSelect
+                  value={form.zone_name}
+                  onChange={v => setForm(f => ({ ...f, zone_name: v }))}
+                  options={zoneNames.map(z => ({ value: z, label: z }))}
+                  placeholder="Chọn KCN…"
+                />
               </div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Ngành nghề *</label>
-                <input value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))} placeholder="Giày da" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <SearchSelect
+                  value={form.industry}
+                  onChange={v => setForm(f => ({ ...f, industry: v }))}
+                  options={industries.map(i => ({ value: i, label: i }))}
+                  placeholder="Chọn ngành…"
+                  allowAdd
+                  onAdd={handleAddIndustry}
+                />
+              </div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">PT từ (tr)</label>
                 <input type="number" step="0.1" value={form.pt_min} onChange={e => setForm(f => ({ ...f, pt_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">PT đến (tr)</label>
