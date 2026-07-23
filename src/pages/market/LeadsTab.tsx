@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, X, ArrowRight, Pencil, Users } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, X, ArrowRight, Pencil, Users, GripVertical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -36,6 +36,34 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const [provinceFilter, setProvinceFilter] = useState('all');
   const [industryFilter, setIndustryFilter] = useState('all');
+
+  // Chia đôi "Khách hàng đang hợp tác" / "Dự án/Công ty đang tìm hiểu" thành 2 khối kéo
+  // được chiều ngang — tỉ lệ lưu vào localStorage để F5 không mất, khỏi kéo lại.
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [leftPct, setLeftPct] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('market_leads_split_pct'));
+    return saved >= 20 && saved <= 80 ? saved : 50;
+  });
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent) => {
+      if (!splitRef.current) return;
+      const rect = splitRef.current.getBoundingClientRect();
+      const pct = ((e.clientX - rect.left) / rect.width) * 100;
+      setLeftPct(Math.min(80, Math.max(20, pct)));
+    };
+    const onUp = () => setDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [dragging]);
+
+  useEffect(() => { localStorage.setItem('market_leads_split_pct', String(leftPct)); }, [leftPct]);
 
   useEffect(() => {
     fetchIndustries([...marketLeads.map(l => l.industry), ...clients.map(c => c.industry)]).then(setIndustries);
@@ -390,8 +418,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         )}
       </div>
 
+      <div ref={splitRef} className={`flex items-start ${dragging ? 'select-none' : ''}`}>
       {/* ── Khách hàng đang hợp tác ── */}
-      <div className="space-y-2">
+      <div className="space-y-2 min-w-0" style={{ width: `${leftPct}%` }}>
         <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
         <div className="space-y-3">
           {trackedClients.map(c => (
@@ -438,8 +467,17 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         </div>
       </div>
 
+      <div
+        onMouseDown={() => setDragging(true)}
+        className="relative w-3 shrink-0 self-stretch flex items-center justify-center cursor-col-resize group"
+        title="Kéo để đổi chiều rộng"
+      >
+        <div className={`w-1 h-full min-h-[80px] rounded-full transition ${dragging ? 'bg-blue-400' : 'bg-[#E8E7E2] group-hover:bg-blue-300'}`} />
+        <GripVertical size={12} className="absolute text-[#bbb] group-hover:text-blue-500 pointer-events-none" />
+      </div>
+
       {/* ── Dự án / Công ty đang tìm hiểu ── */}
-      <div className="space-y-2">
+      <div className="space-y-2 min-w-0" style={{ width: `${100 - leftPct}%` }}>
         <div className="text-[12.5px] font-semibold text-[#111]">Dự án / Công ty đang tìm hiểu</div>
         <div className="space-y-3">
           {list.map(l => (
@@ -488,6 +526,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
             <div className="text-center py-8 text-[12px] text-[#aaa]">Chưa có công ty/dự án nào được phát hiện</div>
           )}
         </div>
+      </div>
       </div>
 
       {addTab && (

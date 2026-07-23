@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon } from 'lucide-react';
+import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon, Factory } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client } from '../lib/types';
 import ZonesTab from './market/ZonesTab';
+import IndustryTab from './market/IndustryTab';
 import WageTab from './market/WageTab';
 import CompetitorsTab from './market/CompetitorsTab';
 import LeadsTab from './market/LeadsTab';
 import MapViewTab from './market/MapViewTab';
 import Quotes from './Quotes';
 
-export type MarketTab = 'zones' | 'wage' | 'comp' | 'leads' | 'quote' | 'map';
+export type MarketTab = 'zones' | 'industry' | 'wage' | 'comp' | 'leads' | 'quote' | 'map';
 
 interface MarketProps {
   marketSurveys: MarketSurvey[];
@@ -24,6 +25,7 @@ interface MarketProps {
 
 const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'zones', label: 'Khu vực', icon: <MapPin size={13} /> },
+  { id: 'industry', label: 'Ngành Nghề', icon: <Factory size={13} /> },
   { id: 'wage', label: 'Lương TT', icon: <Coins size={13} /> },
   { id: 'comp', label: 'Đối thủ', icon: <Eye size={13} /> },
   { id: 'leads', label: 'Công ty / Dự án', icon: <Building2 size={13} /> },
@@ -32,7 +34,7 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, onRefresh, toast }: MarketProps) {
-  const MARKET_TAB_KEYS = ['zones', 'wage', 'comp', 'leads', 'quote', 'map'] as const;
+  const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'quote', 'map'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
@@ -66,6 +68,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
         </div>
 
         {tab === 'zones' && <ZonesTab {...shared} />}
+        {tab === 'industry' && <IndustryTab clients={clients} marketLeads={marketLeads} marketSurveys={marketSurveys} competitors={competitors} goTab={goTab} toast={toast} />}
         {tab === 'wage' && <WageTab {...shared} />}
         {tab === 'comp' && <CompetitorsTab {...shared} />}
         {tab === 'leads' && <LeadsTab {...shared} />}

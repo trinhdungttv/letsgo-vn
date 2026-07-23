@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X } from 'lucide-react';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
@@ -10,6 +10,9 @@ import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
 import { useProvinces } from '../../hooks/useProvinces';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
+import { fetchIndustries, addIndustry } from './industries';
+import { fetchCountries, addCountry } from './countries';
+import SearchSelect from './SearchSelect';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -38,22 +41,33 @@ const emptyAddForm = {
   map_link: '',
 };
 
-function TagList({ tags, onAdd, onRemove, color }: { tags: string[]; onAdd: (v: string) => void; onRemove: (i: number) => void; color: string }) {
-  const [val, setVal] = useState('');
+// Chọn nhiều giá trị từ 1 nguồn dữ liệu chung (ngành nghề / quốc gia…) — gõ để tìm hoặc
+// thêm mới ngay nếu chưa có, tránh gõ tay tự do gây trùng lặp/không đồng bộ giữa các nơi.
+function MultiPicker({ tags, options, onAdd, onRemove, onAddOption, color, placeholder }: {
+  tags: string[];
+  options: string[];
+  onAdd: (v: string) => void;
+  onRemove: (i: number) => void;
+  onAddOption: (v: string) => void | Promise<void>;
+  color: string;
+  placeholder: string;
+}) {
   return (
-    <div className="flex flex-wrap gap-1 items-center">
+    <div className="flex-1 flex flex-wrap gap-1.5 items-center">
       {tags.map((t, i) => (
         <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${color}`}>
           {t}
           <button onClick={() => onRemove(i)} className="hover:opacity-70"><X size={10} /></button>
         </span>
       ))}
-      <input
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && val.trim()) { onAdd(val.trim()); setVal(''); } }}
-        placeholder="+ thêm"
-        className="text-[11px] px-2 py-0.5 rounded-full border border-dashed border-gray-300 outline-none w-16 focus:w-24 transition-all"
+      <SearchSelect
+        value=""
+        onChange={onAdd}
+        options={options.filter(o => !tags.includes(o)).map(o => ({ value: o, label: o }))}
+        placeholder={placeholder}
+        allowAdd
+        onAdd={onAddOption}
+        className="w-44"
       />
     </div>
   );
@@ -67,12 +81,33 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<MarketZone> | null>(null);
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
+  const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
+  useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
   const { provinces: sharedProvinces, addProvince } = useProvinces();
   const provinceOptions = sharedProvinces;
   const provinceNames = [ALL_OPTION, ...provinceOptions];
   const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
+
+  const [industryOptions, setIndustryOptions] = useState<string[]>([]);
+  const [countryOptions, setCountryOptions] = useState<string[]>([]);
+  useEffect(() => {
+    fetchIndustries(marketZones.flatMap(z => z.industries || [])).then(setIndustryOptions);
+    fetchCountries(marketZones.flatMap(z => z.countries || [])).then(setCountryOptions);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleAddIndustryOption = async (name: string) => {
+    const err = await addIndustry(name);
+    if (err) toast('Lỗi thêm ngành: ' + err);
+    setIndustryOptions(prev => [...new Set([...prev, name])].sort((a, b) => a.localeCompare(b, 'vi')));
+  };
+  const handleAddCountryOption = async (name: string) => {
+    const err = await addCountry(name);
+    if (err) toast('Lỗi thêm quốc gia: ' + err);
+    setCountryOptions(prev => [...new Set([...prev, name])].sort((a, b) => a.localeCompare(b, 'vi')));
+  };
 
   useEffect(() => {
     if (selected) {
@@ -83,6 +118,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         labor_availability: selected.labor_availability, lgv_clients: selected.lgv_clients, lgv_workers: selected.lgv_workers,
         notes: selected.notes, industries: selected.industries || [], countries: selected.countries || [],
         map_link: selected.map_link ?? null,
+        image_url: selected.image_url ?? null,
       });
     } else {
       setEditForm(null);
@@ -270,6 +306,18 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                 )}
               </div>
             </div>
+            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ảnh cover (link)</span>
+              <div className="flex gap-2 flex-1 items-center">
+                <input value={editForm.image_url || ''} onChange={e => setEditForm(f => ({ ...f, image_url: e.target.value }))}
+                  placeholder="Dán link ảnh cổng KCN…"
+                  className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                {editForm.image_url && (
+                  <div className="w-14 h-10 rounded overflow-hidden border border-gray-200 shrink-0">
+                    <img src={editForm.image_url} alt="" className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ban quản lý</span>
               <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
             </div>
@@ -280,12 +328,14 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               </div>
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Ngành nghề chủ yếu</span>
-              <TagList tags={editForm.industries || []} color="bg-blue-50 text-blue-700"
+              <MultiPicker tags={editForm.industries || []} options={industryOptions} color="bg-blue-50 text-blue-700"
+                placeholder="+ chọn ngành nghề…" onAddOption={handleAddIndustryOption}
                 onAdd={v => setEditForm(f => ({ ...f, industries: [...(f?.industries || []), v] }))}
                 onRemove={i => setEditForm(f => ({ ...f, industries: (f?.industries || []).filter((_, idx) => idx !== i) }))} />
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">FDI từ quốc gia</span>
-              <TagList tags={editForm.countries || []} color="bg-violet-50 text-violet-700"
+              <MultiPicker tags={editForm.countries || []} options={countryOptions} color="bg-violet-50 text-violet-700"
+                placeholder="+ chọn quốc gia…" onAddOption={handleAddCountryOption}
                 onAdd={v => setEditForm(f => ({ ...f, countries: [...(f?.countries || []), v] }))}
                 onRemove={i => setEditForm(f => ({ ...f, countries: (f?.countries || []).filter((_, idx) => idx !== i) }))} />
             </div>
@@ -388,31 +438,70 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         </div>
         <div className="flex items-center gap-2">
           <FilterDropdown label="Tỉnh/Thành" options={provinceNames} selected={activeProvinces} onChange={setActiveProvinces} />
+          <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+            <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
+            <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
+          </div>
           <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
             <Plus size={13} /> Thêm khu vực
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        {filteredZones.map(z => (
-          <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 cursor-pointer hover:border-blue-300 transition">
-            <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
-            <div className="text-[11px] text-[#888] mb-1.5">{z.location || '—'}</div>
-            <div className="h-1 bg-[#F0EEE9] rounded-full overflow-hidden mb-1.5">
-              <div className={`h-1 rounded-full ${occColor(z.occupancy_pct).split(' ')[1]}`} style={{ width: `${z.occupancy_pct ?? 0}%` }} />
+      {viewMode === 'list' && (
+        <div className="grid grid-cols-3 gap-3">
+          {filteredZones.map(z => (
+            <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 cursor-pointer hover:border-blue-300 transition">
+              <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
+              <div className="text-[11px] text-[#888] mb-1.5">{z.location || '—'}</div>
+              <div className="h-1 bg-[#F0EEE9] rounded-full overflow-hidden mb-1.5">
+                <div className={`h-1 rounded-full ${occColor(z.occupancy_pct).split(' ')[1]}`} style={{ width: `${z.occupancy_pct ?? 0}%` }} />
+              </div>
+              <div className="flex justify-between text-[10.5px] text-[#888]">
+                <span className="inline-flex items-center gap-1"><Building2 size={10} /> {z.total_companies ?? 0}</span>
+                <span className="inline-flex items-center gap-1"><Users size={10} /> {((z.total_workers ?? 0) / 1000).toFixed(0)}k LĐ</span>
+                <span className={`font-medium ${occColor(z.occupancy_pct).split(' ')[0]}`}>{z.occupancy_pct ?? 0}%</span>
+              </div>
             </div>
-            <div className="flex justify-between text-[10.5px] text-[#888]">
-              <span className="inline-flex items-center gap-1"><Building2 size={10} /> {z.total_companies ?? 0}</span>
-              <span className="inline-flex items-center gap-1"><Users size={10} /> {((z.total_workers ?? 0) / 1000).toFixed(0)}k LĐ</span>
-              <span className={`font-medium ${occColor(z.occupancy_pct).split(' ')[0]}`}>{z.occupancy_pct ?? 0}%</span>
-            </div>
+          ))}
+          <div onClick={() => setShowAdd(true)} className="border border-dashed border-gray-300 rounded-[10px] flex items-center justify-center gap-1.5 p-3 cursor-pointer text-[12px] text-[#aaa] hover:border-blue-300 hover:text-blue-500 transition">
+            <Plus size={14} /> Thêm khu vực
           </div>
-        ))}
-        <div onClick={() => setShowAdd(true)} className="border border-dashed border-gray-300 rounded-[10px] flex items-center justify-center gap-1.5 p-3 cursor-pointer text-[12px] text-[#aaa] hover:border-blue-300 hover:text-blue-500 transition">
-          <Plus size={14} /> Thêm khu vực
         </div>
-      </div>
+      )}
+
+      {viewMode === 'card' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredZones.map(z => (
+            <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
+              {z.image_url ? (
+                <div className="h-36 w-full overflow-hidden bg-gray-100">
+                  <img src={z.image_url} alt={z.name} className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="h-36 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+                  <ImageIcon size={22} className="text-[#ccc]" />
+                </div>
+              )}
+              <div className="p-3.5">
+                <div className="text-[13px] font-semibold text-[#111]">{z.name}</div>
+                <div className="text-[11px] text-[#888] flex items-center gap-1 mt-0.5"><MapPin size={10} /> {z.location || '—'}</div>
+                <div className="h-1 bg-[#F0EEE9] rounded-full overflow-hidden my-2">
+                  <div className={`h-1 rounded-full ${occColor(z.occupancy_pct).split(' ')[1]}`} style={{ width: `${z.occupancy_pct ?? 0}%` }} />
+                </div>
+                <div className="flex justify-between text-[10.5px] text-[#888]">
+                  <span className="inline-flex items-center gap-1"><Building2 size={10} /> {z.total_companies ?? 0} cty</span>
+                  <span className="inline-flex items-center gap-1"><Users size={10} /> {((z.total_workers ?? 0) / 1000).toFixed(0)}k LĐ</span>
+                  <span className={`font-medium ${occColor(z.occupancy_pct).split(' ')[0]}`}>{z.occupancy_pct ?? 0}%</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          <div onClick={() => setShowAdd(true)} className="border border-dashed border-gray-300 rounded-[12px] flex items-center justify-center gap-1.5 min-h-[150px] cursor-pointer text-[12px] text-[#aaa] hover:border-blue-300 hover:text-blue-500 transition">
+            <Plus size={16} /> Thêm khu vực
+          </div>
+        </div>
+      )}
 
       {marketZones.length === 0 && (
         <div className="text-center py-8 text-[12px] text-[#aaa]">Chưa có hồ sơ khu vực nào. Bấm "Thêm khu vực" để bắt đầu.</div>

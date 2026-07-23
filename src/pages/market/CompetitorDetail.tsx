@@ -1,21 +1,31 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeft, Pencil, Save, Plus } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, Globe, User } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency } from '../../lib/format';
-import type { Competitor, CompetitorClient, CompetitorLog } from '../../lib/types';
+import type { Competitor, CompetitorClient, CompetitorLog, MarketZone, Client, MarketLead } from '../../lib/types';
+import { useProvinces } from '../../hooks/useProvinces';
+import { useAuth } from '../../lib/auth';
+import { logActivity } from '../../lib/audit';
+import SearchSelect from './SearchSelect';
 
 interface Props {
   competitor: Competitor;
+  marketZones: MarketZone[];
+  clients: Client[];
+  marketLeads: MarketLead[];
   onBack: () => void;
+  onRefresh: () => Promise<void>;
   toast: (msg: string) => void;
 }
 
 interface LgClient { id: string; name: string; industrial_zones: string[] }
 
-export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
+export default function CompetitorDetail({ competitor, marketZones, clients, marketLeads, onBack, onRefresh, toast }: Props) {
+  const { user } = useAuth();
   const [lgClients, setLgClients] = useState<LgClient[]>([]);
   const [compClients, setCompClients] = useState<CompetitorClient[]>([]);
   const [logs, setLogs] = useState<CompetitorLog[]>([]);
+  const { provinces } = useProvinces();
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -26,11 +36,95 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
     recruitment_source: competitor.recruitment_source ?? '',
     strengths: competitor.strengths ?? '',
     weaknesses: competitor.weaknesses ?? '',
+    image_url: competitor.image_url ?? '',
+    director: competitor.director ?? '',
+    website_url: competitor.website_url ?? '',
+    facebook_url: competitor.facebook_url ?? '',
+    tiktok_url: competitor.tiktok_url ?? '',
+    social_other_url: competitor.social_other_url ?? '',
   });
+  const [activeZones, setActiveZones] = useState<string[]>(competitor.active_zones ?? []);
+
+  const kcnNameSet = useMemo(() => new Set(marketZones.map(z => z.name)), [marketZones]);
+
+  const zoneOptions = useMemo(() => {
+    const kcnNames = marketZones.map(z => z.name);
+    const all = [...new Set([...kcnNames, ...provinces])].sort((a, b) => a.localeCompare(b, 'vi'));
+    return all.filter(z => !activeZones.includes(z)).map(z => ({ value: z, label: z }));
+  }, [marketZones, provinces, activeZones]);
+
+  const addActiveZone = async (zone: string) => {
+    const next = [...activeZones, zone];
+    setActiveZones(next);
+    const { error } = await supabase.from('competitors').update({ active_zones: next }).eq('id', competitor.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    competitor.active_zones = next;
+  };
+
+  const removeActiveZone = async (zone: string) => {
+    const next = activeZones.filter(z => z !== zone);
+    setActiveZones(next);
+    const { error } = await supabase.from('competitors').update({ active_zones: next }).eq('id', competitor.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    competitor.active_zones = next;
+  };
 
   const [logNote, setLogNote] = useState('');
   const [logSource, setLogSource] = useState('');
-  const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '' });
+  const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '' });
+  const [kcnFromProfile, setKcnFromProfile] = useState(false);
+
+  // Danh sách gợi ý cho "Tên nhà máy" — gộp Khách hàng đang hợp tác (clients) +
+  // Công ty/Dự án đang tìm hiểu (market_leads) bên tab Công ty/Dự án. Chọn tên chưa có
+  // trong 2 nguồn này sẽ tạo mới 1 "Công ty/Dự án đang tìm hiểu" để đồng bộ ngược lại đó.
+  const companyNameOptions = useMemo(() => {
+    const names = new Set<string>([...clients.map(c => c.name), ...marketLeads.map(l => l.company_name)]);
+    return [...names].sort((a, b) => a.localeCompare(b, 'vi')).map(n => ({ value: n, label: n }));
+  }, [clients, marketLeads]);
+
+  // KCN đã setup sẵn ở hồ sơ Khách hàng/Dự án ứng với tên công ty — dùng để tự nhảy về
+  // đúng KCN khi chọn tên; nếu công ty đó chưa có KCN nào thì cho gõ tay và đồng bộ ngược lại.
+  const zoneForCompany = (name: string): string | null => {
+    const cl = clients.find(c => c.name === name);
+    if (cl?.industrial_zones?.length) return cl.industrial_zones[0];
+    const ld = marketLeads.find(l => l.company_name === name);
+    if (ld?.region) return ld.region;
+    return null;
+  };
+
+  const handlePickClientName = (name: string) => {
+    const zone = zoneForCompany(name);
+    setClientForm(f => ({ ...f, client_name: name, kcn: zone || '' }));
+    setKcnFromProfile(!!zone);
+  };
+
+  const handleCreateLeadFromName = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const { data, error } = await supabase.from('market_leads').insert({
+        company_name: trimmed,
+        region: competitor.zone_name || null,
+        source: `Phát hiện từ đối thủ "${competitor.company_name}"`,
+        status: 'Chưa LH',
+        suppliers: [{ name: competitor.company_name, qty: 0, is_us: false }],
+      }).select().single();
+      if (error) throw error;
+      await logActivity({
+        user, action: 'insert', table: 'market_leads', recordId: data.id,
+        description: `Thêm công ty/dự án "${trimmed}" (phát hiện từ đối thủ "${competitor.company_name}")`,
+        newData: data,
+      });
+      if (!competitor.supplying_for?.includes(trimmed)) {
+        const supplying_for = [...(competitor.supplying_for ?? []), trimmed];
+        await supabase.from('competitors').update({ supplying_for }).eq('id', competitor.id);
+        competitor.supplying_for = supplying_for;
+      }
+      await onRefresh();
+      toast(`Đã thêm "${trimmed}" vào Công ty/Dự án đang tìm hiểu`);
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    setClientForm(f => ({ ...f, client_name: trimmed }));
+  };
 
   const load = async () => {
     const [{ data: clientsData }, { data: ccData }, { data: logsData }] = await Promise.all([
@@ -54,6 +148,12 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
       recruitment_source: form.recruitment_source.trim() || null,
       strengths: form.strengths.trim() || null,
       weaknesses: form.weaknesses.trim() || null,
+      image_url: form.image_url.trim() || null,
+      director: form.director.trim() || null,
+      website_url: form.website_url.trim() || null,
+      facebook_url: form.facebook_url.trim() || null,
+      tiktok_url: form.tiktok_url.trim() || null,
+      social_other_url: form.social_other_url.trim() || null,
     }).eq('id', competitor.id);
     setSaving(false);
     if (error) { toast('Lỗi: ' + error.message); return; }
@@ -64,6 +164,12 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
       recruitment_source: form.recruitment_source.trim(),
       strengths: form.strengths.trim(),
       weaknesses: form.weaknesses.trim(),
+      image_url: form.image_url.trim() || null,
+      director: form.director.trim() || null,
+      website_url: form.website_url.trim() || null,
+      facebook_url: form.facebook_url.trim() || null,
+      tiktok_url: form.tiktok_url.trim() || null,
+      social_other_url: form.social_other_url.trim() || null,
     });
     setEditing(false);
     toast('Đã lưu thông tin đối thủ');
@@ -83,15 +189,35 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
   };
 
   const handleAddClient = async () => {
-    if (!clientForm.client_name.trim()) return;
+    const name = clientForm.client_name.trim();
+    const kcn = clientForm.kcn.trim();
+    if (!name) return;
     const { error } = await supabase.from('competitor_clients').insert({
       competitor_id: competitor.id,
-      client_name: clientForm.client_name.trim(),
-      kcn: clientForm.kcn.trim() || null,
+      client_name: name,
+      kcn: kcn || null,
       worker_count: clientForm.worker_count ? parseInt(clientForm.worker_count, 10) : 0,
+      sale_name: clientForm.sale_name.trim() || null,
+      sale_phone: clientForm.sale_phone.trim() || null,
+      sale_fee: clientForm.sale_fee ? parseFloat(clientForm.sale_fee) : null,
     });
     if (error) { toast('Lỗi: ' + error.message); return; }
-    setClientForm({ client_name: '', kcn: '', worker_count: '' });
+
+    // Công ty chưa có KCN nào ở hồ sơ Khách hàng/Dự án — KCN gõ tay ở đây được đồng bộ
+    // ngược lại hồ sơ đó, để lần sau chọn tên sẽ tự nhảy về đúng KCN.
+    if (kcn && !kcnFromProfile) {
+      const cl = clients.find(c => c.name === name);
+      const ld = marketLeads.find(l => l.company_name === name);
+      if (cl && !cl.industrial_zones?.length) {
+        await supabase.from('clients').update({ industrial_zones: [kcn] }).eq('id', cl.id);
+      } else if (ld && !ld.region) {
+        await supabase.from('market_leads').update({ region: kcn }).eq('id', ld.id);
+      }
+      await onRefresh();
+    }
+
+    setClientForm({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '' });
+    setKcnFromProfile(false);
     await load();
   };
 
@@ -117,8 +243,40 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
         <button onClick={onBack} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E8E7E2] bg-white hover:bg-[#F9F9F7] transition">
           <ArrowLeft size={13} /> Quay lại
         </button>
+        {competitor.image_url && (
+          <div className="w-9 h-9 rounded-lg overflow-hidden border border-gray-200 shrink-0">
+            <img src={competitor.image_url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
         <div className="text-[15px] font-semibold text-[#111]">{competitor.company_name}</div>
         <span className="px-2 py-0.5 rounded-full bg-[#F9F9F7] border border-[#E8E7E2] text-[11px] text-[#666]">{competitor.zone_name}</span>
+      </div>
+
+      <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#E8E7E2] flex items-center justify-between gap-2 flex-wrap bg-gradient-to-r from-blue-50/60 to-transparent">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0"><MapPin size={14} /></div>
+            <div>
+              <div className="text-[12.5px] font-semibold text-[#111]">Khu vực hoạt động</div>
+              <div className="text-[10.5px] text-[#999]">{activeZones.length} khu vực đã chọn</div>
+            </div>
+          </div>
+          <SearchSelect value="" onChange={addActiveZone} options={zoneOptions} placeholder="+ Chọn KCN / Tỉnh thành…" className="w-56" />
+        </div>
+        <div className="p-3.5 flex flex-wrap gap-1.5">
+          {activeZones.length ? activeZones.map(z => {
+            const isKcn = kcnNameSet.has(z);
+            return (
+              <span key={z} className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11.5px] font-medium border ${isKcn ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-violet-50 text-violet-700 border-violet-100'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isKcn ? 'bg-blue-500' : 'bg-violet-500'}`} />
+                {z}
+                <button onClick={() => removeActiveZone(z)} className="p-0.5 rounded-full hover:bg-black/5 transition"><X size={10} /></button>
+              </span>
+            );
+          }) : (
+            <span className="text-[11.5px] text-[#aaa]">Chưa chọn khu vực hoạt động nào</span>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -161,6 +319,39 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
                     </div>
                   </div>
                   <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-[#888]">Giám đốc</label>
+                    <input value={form.director} onChange={e => setForm(f => ({ ...f, director: e.target.value }))} placeholder="Tên giám đốc / người phụ trách" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-[#888]">Ảnh cover (link)</label>
+                    <div className="flex gap-2 items-center">
+                      <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="Dán link ảnh…" className="flex-1 text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                      {form.image_url && (
+                        <div className="w-14 h-10 rounded overflow-hidden border border-gray-200 shrink-0">
+                          <img src={form.image_url} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Website</label>
+                      <input value={form.website_url} onChange={e => setForm(f => ({ ...f, website_url: e.target.value }))} placeholder="https://…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Facebook</label>
+                      <input value={form.facebook_url} onChange={e => setForm(f => ({ ...f, facebook_url: e.target.value }))} placeholder="https://facebook.com/…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">TikTok</label>
+                      <input value={form.tiktok_url} onChange={e => setForm(f => ({ ...f, tiktok_url: e.target.value }))} placeholder="https://tiktok.com/@…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Mạng xã hội khác</label>
+                      <input value={form.social_other_url} onChange={e => setForm(f => ({ ...f, social_other_url: e.target.value }))} placeholder="https://…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Điểm mạnh</label>
                     <textarea value={form.strengths} onChange={e => setForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-none" />
                   </div>
@@ -175,6 +366,26 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
                   <div className="flex justify-between"><span className="text-[#888]">Khu vực</span><span className="font-medium text-[#111]">{competitor.zone_name}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Tổng LĐ ước tính</span><span className="font-medium text-[#111]">{(competitor.total_workers ?? 0).toLocaleString('vi-VN')}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Nguồn tuyển</span><span className="font-medium text-[#111]">{competitor.recruitment_source || '—'}</span></div>
+                  <div className="flex justify-between items-center"><span className="text-[#888] flex items-center gap-1"><User size={11} /> Giám đốc</span><span className="font-medium text-[#111]">{competitor.director || '—'}</span></div>
+                  <div>
+                    <div className="text-[#888] mb-1.5">Liên kết</div>
+                    {(competitor.website_url || competitor.facebook_url || competitor.tiktok_url || competitor.social_other_url) ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {competitor.website_url && (
+                          <a href={competitor.website_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition"><Globe size={11} /> Website <ExternalLink size={9} className="text-[#999]" /></a>
+                        )}
+                        {competitor.facebook_url && (
+                          <a href={competitor.facebook_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Facebook <ExternalLink size={9} className="text-[#999]" /></a>
+                        )}
+                        {competitor.tiktok_url && (
+                          <a href={competitor.tiktok_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">TikTok <ExternalLink size={9} className="text-[#999]" /></a>
+                        )}
+                        {competitor.social_other_url && (
+                          <a href={competitor.social_other_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Khác <ExternalLink size={9} className="text-[#999]" /></a>
+                        )}
+                      </div>
+                    ) : <span className="text-[11.5px] text-[#aaa]">Chưa có</span>}
+                  </div>
                   <div>
                     <div className="text-[#888] mb-1">Điểm mạnh</div>
                     <div className="text-[#111] whitespace-pre-line bg-[#F9F9F7] rounded-lg px-2.5 py-1.5">{competitor.strengths || '—'}</div>
@@ -226,7 +437,7 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]">
                 <thead><tr className="border-b border-[#E8E7E2]">
-                  {['Tên nhà máy', 'KCN', 'LĐ', 'Quan hệ'].map(h => (
+                  {['Tên nhà máy', 'KCN', 'LĐ', 'Sale phụ trách', 'SĐT sale', 'Phí sale/tháng', 'Quan hệ'].map(h => (
                     <th key={h} className="text-left px-3 py-2 text-[11px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                   ))}
                 </tr></thead>
@@ -236,6 +447,9 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
                       <td className="px-3 py-2 font-medium">{c.client_name}</td>
                       <td className="px-3 py-2 text-[#666]">{c.kcn || '—'}</td>
                       <td className="px-3 py-2">{(c.worker_count ?? 0).toLocaleString('vi-VN')}</td>
+                      <td className="px-3 py-2 text-[#666]">{c.sale_name || '—'}</td>
+                      <td className="px-3 py-2 text-[#666]">{c.sale_phone || '—'}</td>
+                      <td className="px-3 py-2 text-blue-700 font-medium">{c.sale_fee ? formatCurrency(c.sale_fee) : '—'}</td>
                       <td className="px-3 py-2">
                         {isSharedClient(c.client_name)
                           ? <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 text-[11px] font-medium">⚠ Chung LG</span>
@@ -244,19 +458,34 @@ export default function CompetitorDetail({ competitor, onBack, toast }: Props) {
                     </tr>
                   ))}
                   {compClients.length === 0 && (
-                    <tr><td colSpan={4} className="text-center py-5 text-[#aaa]">Chưa có dữ liệu</td></tr>
+                    <tr><td colSpan={7} className="text-center py-5 text-[#aaa]">Chưa có dữ liệu</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-            <div className="p-3 border-t border-[#E8E7E2] grid grid-cols-[2fr_1fr_1fr_auto] gap-2">
-              <input value={clientForm.client_name} onChange={e => setClientForm(f => ({ ...f, client_name: e.target.value }))} placeholder="Tên nhà máy"
-                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-              <input value={clientForm.kcn} onChange={e => setClientForm(f => ({ ...f, kcn: e.target.value }))} placeholder="KCN"
-                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+            <div className="p-3 border-t border-[#E8E7E2] grid grid-cols-2 gap-2">
+              <div className="col-span-2 flex flex-col gap-1">
+                <SearchSelect value={clientForm.client_name} onChange={handlePickClientName}
+                  options={companyNameOptions} placeholder="Chọn tên nhà máy (KH đang hợp tác / Dự án đang tìm hiểu)…"
+                  allowAdd onAdd={handleCreateLeadFromName} />
+                <span className="text-[10.5px] text-[#999]">Không thấy trong danh sách? Gõ tên mới → sẽ tự thêm vào "Công ty/Dự án đang tìm hiểu"</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <input value={clientForm.kcn} readOnly={kcnFromProfile}
+                  onChange={e => setClientForm(f => ({ ...f, kcn: e.target.value }))}
+                  placeholder="KCN (chưa có hồ sơ → gõ tay)"
+                  className={`text-[12.5px] px-2.5 py-1.5 border rounded-lg outline-none ${kcnFromProfile ? 'bg-[#F5F4EF] border-[#E8E7E2] text-[#666]' : 'border-[#E8E7E2] focus:border-[#1D4ED8]'}`} />
+                {kcnFromProfile && <span className="text-[10px] text-emerald-600">✓ Tự động theo hồ sơ đã setup</span>}
+              </div>
               <input type="number" min={0} value={clientForm.worker_count} onChange={e => setClientForm(f => ({ ...f, worker_count: e.target.value }))} placeholder="Số LĐ"
                 className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-              <button onClick={handleAddClient} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition whitespace-nowrap">
+              <input value={clientForm.sale_name} onChange={e => setClientForm(f => ({ ...f, sale_name: e.target.value }))} placeholder="Tên sale phụ trách"
+                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+              <input value={clientForm.sale_phone} onChange={e => setClientForm(f => ({ ...f, sale_phone: e.target.value }))} placeholder="SĐT sale"
+                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+              <input type="number" min={0} value={clientForm.sale_fee} onChange={e => setClientForm(f => ({ ...f, sale_fee: e.target.value }))} placeholder="Phí sale/tháng (₫)"
+                className="col-span-2 text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+              <button onClick={handleAddClient} className="col-span-2 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition whitespace-nowrap">
                 <Plus size={12} /> Thêm
               </button>
             </div>

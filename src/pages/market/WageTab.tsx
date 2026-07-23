@@ -1,5 +1,5 @@
 import { Fragment, useState, useMemo, useEffect } from 'react';
-import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check, List, LayoutGrid, Image as ImageIcon, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -23,6 +23,8 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const [reassignZone, setReassignZone] = useState<string | null>(null);
   const [reassignValue, setReassignValue] = useState('');
   const [reassigning, setReassigning] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_wage_view_mode') as 'list' | 'card') || 'list');
+  useEffect(() => { localStorage.setItem('market_wage_view_mode', viewMode); }, [viewMode]);
 
   // Tên KCN chính thức đã tạo bên tab Khu vực — khảo sát nào có zone_name KHÔNG khớp tên
   // này (gõ tay sai chính tả, thiếu tiền tố "KCN "…) sẽ bị tách thành nhóm riêng, không
@@ -34,6 +36,12 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const zoneToProvince = useMemo(() => {
     const map: Record<string, string> = {};
     marketZones.forEach(z => { if (z.location) map[z.name] = z.location; });
+    return map;
+  }, [marketZones]);
+
+  const zoneToImage = useMemo(() => {
+    const map: Record<string, string | null | undefined> = {};
+    marketZones.forEach(z => { map[z.name] = z.image_url; });
     return map;
   }, [marketZones]);
 
@@ -231,9 +239,15 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Lương thị trường theo khu vực & ngành nghề</div>
-          <button onClick={() => openAdd()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-            <Plus size={13} /> Thêm khảo sát
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
+              <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
+            </div>
+            <button onClick={() => openAdd()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+              <Plus size={13} /> Thêm khảo sát
+            </button>
+          </div>
         </div>
         <div className="px-4 py-2 border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
           <span className="text-[12px] text-[#888] shrink-0">Tỉnh/TP:</span>
@@ -251,6 +265,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
             className="w-64"
           />
         </div>
+        {viewMode === 'list' && (
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
@@ -337,6 +352,59 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
             </tbody>
           </table>
         </div>
+        )}
+
+        {viewMode === 'card' && (
+        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {zonesToShow.map(zone => {
+            const rows = marketSurveys.filter(s => s.zone_name === zone);
+            const isOfficial = officialZoneNames.has(zone);
+            const img = zoneToImage[zone];
+            return (
+              <div key={zone} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden">
+                {img ? (
+                  <div className="h-32 w-full overflow-hidden bg-gray-100">
+                    <img src={img} alt={zone} className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="h-32 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+                    <ImageIcon size={20} className="text-[#ccc]" />
+                  </div>
+                )}
+                <div className="p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[12.5px] font-semibold text-[#111] truncate">{zone}</div>
+                      {zoneToProvince[zone] && (
+                        <div className="text-[10.5px] text-[#888] flex items-center gap-1 mt-0.5"><MapPin size={10} /> {zoneToProvince[zone]}</div>
+                      )}
+                    </div>
+                    {isOfficial ? (
+                      <button onClick={() => goTab('zones', zone)} className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><ExternalLink size={9} /> Hồ sơ</button>
+                    ) : (
+                      <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200">⚠ chưa khớp KCN</span>
+                    )}
+                  </div>
+                  <div className="mt-2.5 pt-2.5 border-t border-gray-100 space-y-1.5">
+                    {rows.length ? rows.map(d => (
+                      <div key={d.id} className="flex items-center justify-between text-[11px]">
+                        <span className="text-[#666] truncate mr-2">{d.industry || 'Chưa gán ngành'}</span>
+                        <span className="shrink-0 text-emerald-700 font-medium">{fmtTr(d.wage_skilled_min)}–{fmtTr(d.wage_skilled_max)}tr</span>
+                      </div>
+                    )) : (
+                      <div className="text-[11px] text-[#aaa]">Chưa có dữ liệu lương</div>
+                    )}
+                  </div>
+                  <button onClick={() => openAdd(zone)} className="mt-2.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><Plus size={9} /> Thêm ngành</button>
+                </div>
+              </div>
+            );
+          })}
+          {zonesToShow.length === 0 && (
+            <div className="col-span-full text-center py-6 text-[#aaa] text-[12px]">Chưa có khảo sát lương nào</div>
+          )}
+        </div>
+        )}
       </div>
 
       {showAdd && (

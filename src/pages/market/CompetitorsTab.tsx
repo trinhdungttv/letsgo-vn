@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, X, Eye } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -18,12 +18,14 @@ const trendIcon = (trend: string) => {
   return <span className="text-[#888] inline-flex items-center gap-0.5 text-[11.5px]"><Minus size={11} /> Ổn định</span>;
 };
 
-export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter, onRefresh, toast }: MarketTabProps) {
+export default function CompetitorsTab({ marketZones, marketSurveys, competitors, clients, marketLeads, zoneFilter, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_competitors_view_mode') as 'list' | 'card') || 'list');
+  useEffect(() => { localStorage.setItem('market_competitors_view_mode', viewMode); }, [viewMode]);
 
   const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
 
@@ -72,7 +74,7 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
   };
 
   if (selectedCompetitor) {
-    return <CompetitorDetail competitor={selectedCompetitor} onBack={() => setSelectedCompetitor(null)} toast={toast} />;
+    return <CompetitorDetail competitor={selectedCompetitor} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={() => setSelectedCompetitor(null)} onRefresh={onRefresh} toast={toast} />;
   }
 
   return (
@@ -84,10 +86,17 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Nhà cung ứng đối thủ</div>
-          <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-            <Plus size={13} /> Thêm đối thủ
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+              <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
+              <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
+            </div>
+            <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+              <Plus size={13} /> Thêm đối thủ
+            </button>
+          </div>
         </div>
+        {viewMode === 'list' && (
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
@@ -133,6 +142,58 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
             </tbody>
           </table>
         </div>
+        )}
+
+        {viewMode === 'card' && (
+        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {list.map(c => {
+            const avg = avgForZone(c.zone_name || '');
+            const diff = avg && c.wage_paid ? Math.round(((c.wage_paid - avg) / avg) * 100) : null;
+            const wn = diff == null ? null : diff < -3 ? { cls: 'bg-red-50 text-red-700', txt: `▼ Thấp hơn TT ${Math.abs(diff)}%` }
+              : diff > 3 ? { cls: 'bg-emerald-50 text-emerald-700', txt: `▲ Cao hơn TT ${diff}%` }
+                : { cls: 'bg-amber-50 text-amber-700', txt: '≈ Bằng TT' };
+            return (
+              <div key={c.id} onClick={() => setSelectedCompetitor(c)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
+                {c.image_url ? (
+                  <div className="h-32 w-full overflow-hidden bg-gray-100">
+                    <img src={c.image_url} alt={c.company_name} className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="h-32 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+                    <ImageIcon size={20} className="text-[#ccc]" />
+                  </div>
+                )}
+                <div className="p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[12.5px] font-semibold text-[#1D4ED8] truncate">{c.company_name}</div>
+                      <div className="text-[10.5px] text-[#888] flex items-center gap-1 mt-0.5"><MapPin size={10} /> {c.zone_name}</div>
+                    </div>
+                    {trendIcon(c.trend)}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2.5 pt-2.5 border-t border-gray-100 text-center">
+                    <div><div className="text-[13px] font-bold text-[#111]">{(c.total_workers ?? 0).toLocaleString('vi-VN')}</div><div className="text-[9px] text-[#999] uppercase">LĐ</div></div>
+                    <div><div className="text-[13px] font-bold text-[#111]">{fmtTr(c.wage_paid)}</div><div className="text-[9px] text-[#999] uppercase">Lương PT</div></div>
+                    <div><div className="text-[13px] font-bold text-blue-700">{c.fee_per_shift ? c.fee_per_shift.toLocaleString('vi-VN') : '—'}</div><div className="text-[9px] text-[#999] uppercase">Phí/công</div></div>
+                  </div>
+                  {wn && <div className={`text-[10.5px] px-1.5 py-0.5 rounded inline-block mt-2 font-medium ${wn.cls}`}>{wn.txt}</div>}
+                  {c.supplying_for?.length ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {c.supplying_for.slice(0, 3).map((s, i) => (
+                        <span key={i} className="inline-block bg-[#F9F9F7] border border-[#E8E7E2] px-1.5 py-0.5 rounded text-[10.5px]">{s}</span>
+                      ))}
+                      {c.supplying_for.length > 3 && <span className="text-[10.5px] text-[#999]">+{c.supplying_for.length - 3}</span>}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+          {list.length === 0 && (
+            <div className="col-span-full text-center py-6 text-[#aaa] text-[12px]">Chưa có dữ liệu đối thủ</div>
+          )}
+        </div>
+        )}
       </div>
 
       {showAdd && (

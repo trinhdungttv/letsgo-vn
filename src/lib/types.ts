@@ -343,6 +343,15 @@ export interface Competitor {
   strengths?: string;
   weaknesses?: string;
   recruitment_source?: string;
+  // Ảnh cover + Khu vực hoạt động (migration 103)
+  image_url?: string | null;
+  active_zones?: string[] | null;
+  // Giám đốc + mạng xã hội (migration 105)
+  director?: string | null;
+  website_url?: string | null;
+  facebook_url?: string | null;
+  tiktok_url?: string | null;
+  social_other_url?: string | null;
 }
 
 export interface CompetitorClient {
@@ -353,6 +362,11 @@ export interface CompetitorClient {
   worker_count?: number;
   relationship?: string;
   created_at?: string;
+  // Phí sale/cộng tác viên trả hàng tháng cho dự án này (migration 103)
+  sale_name?: string | null;
+  sale_fee?: number | null;
+  // SĐT sale phụ trách (migration 104)
+  sale_phone?: string | null;
 }
 
 export interface CompetitorLog {
@@ -392,6 +406,83 @@ export interface MarketZone {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Ảnh cover (migration 102)
+  image_url?: string | null;
+}
+
+export interface Industry {
+  id: string;
+  name: string;
+  overview?: string | null;
+  policy_notes?: string | null;
+  tax_notes?: string | null;
+  trend_notes?: string | null;
+  // Lịch mùa vụ (migration 108) — 12 phần tử, index 0 = tháng 1
+  season_levels?: number[] | null;
+  season_notes?: string[] | null;
+  // Hồ sơ giữ chân lao động (migration 109)
+  turnover_rate?: number | null;
+  quit_stage?: string | null;
+  quit_reasons?: string[] | null;
+  retention_actions?: string | null;
+  updated_at?: string;
+  created_at?: string;
+}
+
+// Bản đồ vị trí tuyển dụng trong ngành (migration 109)
+export interface IndustryPosition {
+  id: string;
+  industry_id: string;
+  position: string;
+  ratio_pct?: number | null;
+  wage_min?: number | null;
+  wage_max?: number | null;
+  requirements?: string | null;
+  difficulty?: number | null;
+  sort_order?: number | null;
+  created_at?: string;
+}
+
+// Chỉ số ngành theo quý (migration 109)
+export interface IndustryMetric {
+  id: string;
+  industry_id: string;
+  period: string;
+  avg_wage_unskilled?: number | null;
+  avg_wage_skilled?: number | null;
+  service_fee_min?: number | null;
+  service_fee_max?: number | null;
+  turnover_rate?: number | null;
+  ot_hours?: number | null;
+  demand_headcount?: number | null;
+  note?: string | null;
+  created_at?: string;
+}
+
+// Chuỗi giá trị ngành (migration 109) — 'input' nguyên liệu, 'customer' khách của khách, 'market' thị trường xuất
+export type ValueChainKind = 'input' | 'customer' | 'market';
+export interface IndustryValueChainItem {
+  id: string;
+  industry_id: string;
+  kind: ValueChainKind;
+  name: string;
+  note?: string | null;
+  created_at?: string;
+}
+
+// Thuật ngữ ngành (migration 107) — industry_id null = thuật ngữ dùng chung mọi ngành
+export interface IndustryTerm {
+  id: string;
+  industry_id?: string | null;
+  term: string;
+  aliases?: string[] | null;
+  category?: string | null;
+  short_def?: string | null;
+  detail?: string | null;
+  example?: string | null;
+  pinned?: boolean | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface MarketLeadSupplier {
