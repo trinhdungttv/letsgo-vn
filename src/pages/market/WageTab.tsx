@@ -1,5 +1,5 @@
 import { Fragment, useState, useMemo, useEffect } from 'react';
-import { Plus, Trash2, ExternalLink, Coins, X } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -18,6 +18,16 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [provinceFilter, setProvinceFilter] = useState<string>('all');
+  const [editIndustryId, setEditIndustryId] = useState<string | null>(null);
+  const [editIndustryValue, setEditIndustryValue] = useState('');
+  const [reassignZone, setReassignZone] = useState<string | null>(null);
+  const [reassignValue, setReassignValue] = useState('');
+  const [reassigning, setReassigning] = useState(false);
+
+  // Tên KCN chính thức đã tạo bên tab Khu vực — khảo sát nào có zone_name KHÔNG khớp tên
+  // này (gõ tay sai chính tả, thiếu tiền tố "KCN "…) sẽ bị tách thành nhóm riêng, không
+  // gộp đúng vào KCN thật. Cảnh báo + cho gộp lại ngay tại đây.
+  const officialZoneNames = useMemo(() => new Set(marketZones.map(z => z.name)), [marketZones]);
 
   const zoneNames = [...new Set([...marketZones.map(z => z.name), ...marketSurveys.map(s => s.zone_name)])];
 
@@ -46,10 +56,26 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
 
   const zonesToShow = filteredZoneNames;
 
+  // Khớp Khách hàng/Dự án với bộ lọc Tỉnh/TP + KCN đang chọn trên bảng khảo sát —
+  // dùng chung logic zoneToProvince để "Mức lương theo ngành nghề" chỉ tổng hợp đúng
+  // phạm vi đang lọc, không lẫn dữ liệu ngoài phạm vi (KCN không thuộc tỉnh đã chọn…).
+  const matchesFilter = (region: string | null | undefined, zones: string[] | undefined) => {
+    if (zoneFilter !== 'all') {
+      if (region === zoneFilter || zones?.includes(zoneFilter)) return true;
+      return false;
+    }
+    if (provinceFilter !== 'all') {
+      if (region && zoneToProvince[region] === provinceFilter) return true;
+      if (region === provinceFilter) return true;
+      if (zones?.some(z => zoneToProvince[z] === provinceFilter)) return true;
+      return false;
+    }
+    return true;
+  };
+
   // Tổng hợp mức lương theo NGÀNH NGHỀ từ dữ liệu đã nhập ở tab Công ty/Dự án — cả Khách
   // hàng đang hợp tác (clients.wage_min/max) lẫn Dự án/Công ty đang tìm hiểu
-  // (marketLeads.wage_min/max). Không thay thế bảng khảo sát theo KCN ở trên, chỉ bổ
-  // sung góc nhìn theo ngành, gộp từ mọi khu vực.
+  // (marketLeads.wage_min/max), giới hạn theo Tỉnh/TP + KCN đang lọc ở bảng bên dưới.
   const industryWageSummary = useMemo(() => {
     interface Acc { min: number; max: number; count: number; names: string[] }
     const map = new Map<string, Acc>();
@@ -64,12 +90,13 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
       if (cur.names.length < 4) cur.names.push(name);
       map.set(key, cur);
     };
-    clients.forEach(c => feed(c.industry, c.wage_min, c.wage_max, c.name));
-    marketLeads.forEach(l => feed(l.industry, l.wage_min, l.wage_max, l.company_name));
+    clients.filter(c => matchesFilter(c.region, c.industrial_zones ?? undefined)).forEach(c => feed(c.industry, c.wage_min, c.wage_max, c.name));
+    marketLeads.filter(l => matchesFilter(l.region, undefined)).forEach(l => feed(l.industry, l.wage_min, l.wage_max, l.company_name));
     return [...map.entries()]
       .map(([industry, v]) => ({ industry, ...v }))
       .sort((a, b) => a.industry.localeCompare(b.industry, 'vi'));
-  }, [clients, marketLeads]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, marketLeads, provinceFilter, zoneFilter, zoneToProvince]);
 
   const [industries, setIndustries] = useState<string[]>([]);
   useEffect(() => {
@@ -134,6 +161,49 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
+  const startEditIndustry = (id: string, current: string | null) => {
+    setEditIndustryId(id);
+    setEditIndustryValue(current ?? '');
+  };
+
+  const handleSaveIndustry = async (id: string) => {
+    if (!editIndustryValue.trim()) { toast('Chọn ngành nghề'); return; }
+    try {
+      const existing = marketSurveys.find(s => s.id === id);
+      const { error } = await supabase.from('market_surveys').update({ industry: editIndustryValue.trim() }).eq('id', id);
+      if (error) throw error;
+      if (existing) {
+        await logActivity({
+          user, action: 'update', table: 'market_surveys', recordId: id,
+          description: `Cập nhật ngành nghề khảo sát tại "${existing.zone_name}": ${existing.industry || '—'} → ${editIndustryValue.trim()}`,
+          oldData: existing, newData: { ...existing, industry: editIndustryValue.trim() },
+        });
+      }
+      await onRefresh();
+      setEditIndustryId(null);
+      toast('Đã cập nhật ngành nghề');
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+  };
+
+  // Gộp toàn bộ khảo sát của 1 zone_name gõ sai/lệch chính tả vào đúng tên KCN chính thức
+  // đã tạo bên tab Khu vực — sửa 1 lần cho tất cả dòng đang bị tách nhóm sai.
+  const handleReassignZone = async (oldZone: string) => {
+    if (!reassignValue.trim() || reassignValue === oldZone) return;
+    setReassigning(true);
+    try {
+      const { error } = await supabase.from('market_surveys').update({ zone_name: reassignValue }).eq('zone_name', oldZone);
+      if (error) throw error;
+      await logActivity({
+        user, action: 'update', table: 'market_surveys',
+        description: `Gộp khảo sát khu vực "${oldZone}" vào KCN chính thức "${reassignValue}"`,
+      });
+      await onRefresh();
+      setReassignZone(null);
+      toast(`Đã gộp "${oldZone}" vào "${reassignValue}"`);
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    setReassigning(false);
+  };
+
   const fmtTr = (v: number | null | undefined) => v != null ? (v / 1_000_000).toFixed(1) : '—';
 
   return (
@@ -142,7 +212,10 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2]">
             <div className="text-[12.5px] font-semibold text-[#111]">Mức lương theo ngành nghề (tổng hợp từ Công ty/Dự án)</div>
-            <div className="text-[11px] text-[#999] mt-0.5">Gộp từ Khách hàng đang hợp tác + Công ty/Dự án đang tìm hiểu đã nhập lương khảo sát, theo mọi khu vực</div>
+            <div className="text-[11px] text-[#999] mt-0.5">
+              Gộp từ Khách hàng đang hợp tác + Công ty/Dự án đang tìm hiểu đã nhập lương khảo sát
+              {provinceFilter !== 'all' || zoneFilter !== 'all' ? ` · trong phạm vi đang lọc (${zoneFilter !== 'all' ? zoneFilter : provinceFilter})` : ', theo mọi khu vực'}
+            </div>
           </div>
           <div className="p-3 flex flex-wrap gap-2">
             {industryWageSummary.map(s => (
@@ -188,20 +261,62 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
             <tbody>
               {zonesToShow.map(zone => {
                 const rows = marketSurveys.filter(s => s.zone_name === zone);
+                const isOfficial = officialZoneNames.has(zone);
                 return (
                   <Fragment key={zone}>
                     <tr className="bg-[#F9F9F7]">
                       <td colSpan={8} className="px-3 py-1.5 font-medium text-[11.5px]">
-                        <span className="inline-flex items-center gap-2">
+                        <span className="inline-flex items-center gap-2 flex-wrap">
                           {zone}
+                          {!isOfficial && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200">⚠ không khớp KCN đã tạo</span>
+                          )}
                           <button onClick={() => openAdd(zone)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-[#E8E7E2] text-[#666] hover:bg-white"><Plus size={9} /> Thêm ngành</button>
-                          <button onClick={() => goTab('zones', zone)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-[#E8E7E2] text-[#666] hover:bg-white"><ExternalLink size={9} /> Hồ sơ KV</button>
+                          {isOfficial ? (
+                            <button onClick={() => goTab('zones', zone)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-[#E8E7E2] text-[#666] hover:bg-white"><ExternalLink size={9} /> Hồ sơ KV</button>
+                          ) : (
+                            <button onClick={() => { setReassignZone(reassignZone === zone ? null : zone); setReassignValue(''); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] border border-red-200 text-red-600 hover:bg-red-50"><Pencil size={9} /> Gộp vào KCN đúng</button>
+                          )}
                         </span>
+                        {reassignZone === zone && (
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <SearchSelect
+                              value={reassignValue}
+                              onChange={setReassignValue}
+                              options={[...officialZoneNames].sort((a, b) => a.localeCompare(b, 'vi')).map(z => ({ value: z, label: z }))}
+                              placeholder="Chọn KCN chính thức…"
+                              className="w-56"
+                            />
+                            <button onClick={() => handleReassignZone(zone)} disabled={reassigning || !reassignValue.trim()} className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-blue-600 text-white disabled:opacity-40">{reassigning ? 'Đang gộp…' : 'Gộp'}</button>
+                            <button onClick={() => setReassignZone(null)} className="text-[11px] px-2 py-1 rounded-lg border border-gray-300">Huỷ</button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     {rows.length ? rows.map(d => (
                       <tr key={d.id} className="border-b border-[#F0EEE9] last:border-0">
-                        <td className="px-3 py-2 pl-6 text-[#888]">└ {d.industry || '—'}</td>
+                        <td className="px-3 py-2 pl-6">
+                          {editIndustryId === d.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <SearchSelect
+                                value={editIndustryValue}
+                                onChange={setEditIndustryValue}
+                                options={industries.map(i => ({ value: i, label: i }))}
+                                placeholder="Chọn ngành…"
+                                allowAdd
+                                onAdd={handleAddIndustry}
+                                className="w-44"
+                              />
+                              <button onClick={() => handleSaveIndustry(d.id)} className="text-emerald-600 hover:text-emerald-700"><Check size={13} /></button>
+                              <button onClick={() => setEditIndustryId(null)} className="text-[#aaa] hover:text-red-500"><X size={13} /></button>
+                            </div>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1.5 group ${d.industry ? 'text-[#333]' : 'text-amber-600'}`}>
+                              └ {d.industry || 'Chưa gán ngành nghề'}
+                              <button onClick={() => startEditIndustry(d.id, d.industry)} className="opacity-40 group-hover:opacity-100 text-[#999] hover:text-blue-600 transition"><Pencil size={11} /></button>
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2">{fmtTr(d.wage_unskilled_min)}–{fmtTr(d.wage_unskilled_max)}tr</td>
                         <td className="px-3 py-2 text-blue-700 font-medium">{fmtTr(d.wage_seasonal_min)}–{fmtTr(d.wage_seasonal_max)}tr</td>
                         <td className="px-3 py-2 text-emerald-700 font-medium">{fmtTr(d.wage_skilled_min)}–{fmtTr(d.wage_skilled_max)}tr</td>

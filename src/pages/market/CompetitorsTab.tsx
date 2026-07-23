@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, Map, List } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, X, Eye } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
-import KCNMap from './KCNMap';
 
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
@@ -25,7 +24,6 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
-  const [activeView, setActiveView] = useState<'list' | 'map'>('list');
 
   const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
 
@@ -83,20 +81,6 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
         <Eye size={12} /> Lương trả LĐ: so với mặt bằng thị trường khu vực · Phí/công = chi phí bên họ trả mỗi ca lao động
       </div>
 
-      <div className="flex gap-1.5">
-        <button onClick={() => setActiveView('list')}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${activeView === 'list' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
-          <List size={13} /> Danh sách
-        </button>
-        <button onClick={() => setActiveView('map')}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${activeView === 'map' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
-          <Map size={13} /> Bản đồ KCN
-        </button>
-      </div>
-
-      {activeView === 'map' ? (
-        <KCNMap competitors={competitors} toast={toast} />
-      ) : (
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Nhà cung ứng đối thủ</div>
@@ -150,7 +134,6 @@ export default function CompetitorsTab({ marketSurveys, competitors, zoneFilter,
           </table>
         </div>
       </div>
-      )}
 
       {showAdd && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

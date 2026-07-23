@@ -1,18 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2 } from 'lucide-react';
+import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2 } from 'lucide-react';
 import { createPopulationLayer, createCommuneLayer, createDensityLegend } from './populationDensity';
 import { fetchCommunes } from './populationData';
 import type { CommuneRow } from './populationData';
 import PopulationDataPanel from './PopulationDataPanel';
+import SearchSelect from './SearchSelect';
+import { fetchIndustries } from './industries';
 import { supabase } from '../../lib/supabase';
 import { shortId } from '../../hooks/useHashSubRoute';
 import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep, haversineKm } from '../../lib/geo';
-import type { Branch } from '../../lib/types';
+import type { Branch, MarketLeadSupplier } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 
 type Group = 'branch' | 'kcn' | 'client' | 'prospect' | 'lead';
@@ -26,6 +28,9 @@ interface MapPoint {
   sub: string;
   mapLink: string | null;
   onOpen?: () => void;
+  // Lương công ty + chi tiết theo từng NCC — chỉ có ở client/prospect/lead đã nhập lương.
+  wage?: { min: number; max: number } | null;
+  suppliers?: MarketLeadSupplier[];
 }
 
 const GROUPS: { id: Group; label: string; color: string }[] = [
@@ -52,6 +57,32 @@ function loadGroupIcons(): Record<Group, string> {
     return { ...DEFAULT_GROUP_ICONS, ...parsed };
   } catch {
     return { ...DEFAULT_GROUP_ICONS };
+  }
+}
+
+// Bộ lọc/hiển thị bản đồ — nhớ theo máy (localStorage) để mở lại/F5 không phải chọn lại.
+const MAP_PREFS_KEY = 'lgmap_prefs_v1';
+interface MapPrefs {
+  activeGroups: Group[];
+  densityOn: boolean;
+  wageLayerOn: boolean;
+  satView: boolean;
+  labelMode: 'auto' | 'always';
+  provinceFilter: string;
+  industryFilter: string;
+}
+const DEFAULT_PREFS: MapPrefs = {
+  activeGroups: GROUPS.map(g => g.id),
+  densityOn: false, wageLayerOn: false, satView: false, labelMode: 'auto',
+  provinceFilter: 'all', industryFilter: 'all',
+};
+function loadMapPrefs(): MapPrefs {
+  try {
+    const raw = localStorage.getItem(MAP_PREFS_KEY);
+    if (!raw) return { ...DEFAULT_PREFS };
+    return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_PREFS };
   }
 }
 
@@ -83,21 +114,34 @@ interface MapClient {
   map_link: string | null;
   lat: number | null;
   lng: number | null;
+  industry: string | null;
+  wage_min: number | null;
+  wage_max: number | null;
+  market_suppliers: MarketLeadSupplier[] | null;
 }
 
 export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh, toast }: MarketTabProps) {
+  const [prefsLoaded] = useState(() => loadMapPrefs());
   const [branches, setBranches] = useState<Branch[]>([]);
   const [allClients, setAllClients] = useState<MapClient[]>([]);
-  const [activeGroups, setActiveGroups] = useState<Group[]>(GROUPS.map(g => g.id));
+  const [activeGroups, setActiveGroups] = useState<Group[]>(prefsLoaded.activeGroups);
   const [geoProgress, setGeoProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [missingGroupFilter, setMissingGroupFilter] = useState<Group | 'all'>('all');
   const [showLabels, setShowLabels] = useState(false);
-  const [labelMode, setLabelMode] = useState<'auto' | 'always'>('auto');
-  const [satView, setSatView] = useState(false);
+  const [labelMode, setLabelMode] = useState<'auto' | 'always'>(prefsLoaded.labelMode);
+  const [satView, setSatView] = useState(prefsLoaded.satView);
   const [measureOn, setMeasureOn] = useState(false);
   const [groupIcons, setGroupIcons] = useState<Record<Group, string>>(() => loadGroupIcons());
   const [showIconSettings, setShowIconSettings] = useState(false);
-  const [densityOn, setDensityOn] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [densityOn, setDensityOn] = useState(prefsLoaded.densityOn);
+  const [wageLayerOn, setWageLayerOn] = useState(prefsLoaded.wageLayerOn);
+  const [provinceFilter, setProvinceFilter] = useState(prefsLoaded.provinceFilter);
+  const [industryFilter, setIndustryFilter] = useState(prefsLoaded.industryFilter);
+  const [industries, setIndustries] = useState<string[]>([]);
   const [communeRows, setCommuneRows] = useState<CommuneRow[] | null>(null);
   const [communeLoading, setCommuneLoading] = useState(false);
   const [showPopulationPanel, setShowPopulationPanel] = useState(false);
@@ -108,7 +152,9 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const [routeInfo, setRouteInfo] = useState<{ km: number; geometry: [number, number][] } | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const mapDivRef = useRef<HTMLDivElement>(null);
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const myLocationMarkerRef = useRef<L.Marker | L.Circle | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
   const didFitRef = useRef(false);
   const osmLayerRef = useRef<L.TileLayer | null>(null);
@@ -126,11 +172,31 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   };
 
   const loadMapClients = async () => {
-    const { data, error } = await supabase.from('clients')
-      .select('id, name, client_type, region, industrial_zones, current_workers, map_link, lat, lng')
+    // current_workers KHÔNG phải cột thật trong bảng clients — nó được tính từ dòng mới nhất
+    // của client_labor_history (giống cách useAppData làm), nên phải fetch riêng rồi ghép vào.
+    // industry/wage_min/wage_max/market_suppliers chỉ có nếu đã chạy migration 100 — thiếu
+    // thì fallback về các cột cơ bản thay vì lỗi trắng cả danh sách khách hàng trên bản đồ.
+    let { data, error } = await supabase.from('clients')
+      .select('id, name, client_type, region, industrial_zones, map_link, lat, lng, industry, wage_min, wage_max, market_suppliers')
       .is('archived_at', null);
-    if (error) toast('Lỗi tải khách hàng: ' + error.message);
-    setAllClients((data as MapClient[]) ?? []);
+    if (error) {
+      ({ data, error } = await supabase.from('clients')
+        .select('id, name, client_type, region, industrial_zones, map_link, lat, lng')
+        .is('archived_at', null));
+    }
+    if (error) { toast('Lỗi tải khách hàng: ' + error.message); return; }
+    const rows = ((data ?? []) as Omit<MapClient, 'current_workers'>[]).map(c => ({ ...c, current_workers: null as number | null }));
+    const ids = rows.map(c => c.id);
+    if (ids.length) {
+      const { data: laborData, error: laborErr } = await supabase.from('client_labor_history')
+        .select('client_id, count, created_at').in('client_id', ids).order('created_at', { ascending: true });
+      if (!laborErr && laborData) {
+        const latest = new Map<string, number>();
+        laborData.forEach(h => latest.set(h.client_id, h.count));
+        rows.forEach(c => { c.current_workers = latest.get(c.id) ?? null; });
+      }
+    }
+    setAllClients(rows);
   };
 
   const loadCommunes = async () => {
@@ -148,13 +214,39 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   useEffect(() => {
     loadBranches();
     loadMapClients();
+    fetchIndustries([...marketLeads.map(l => l.industry)]).then(setIndustries);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Nhớ bộ lọc/hiển thị theo máy — F5 hoặc vào lại vẫn giữ nguyên lựa chọn.
+  useEffect(() => {
+    const prefs: MapPrefs = { activeGroups, densityOn, wageLayerOn, satView, labelMode, provinceFilter, industryFilter };
+    localStorage.setItem(MAP_PREFS_KEY, JSON.stringify(prefs));
+  }, [activeGroups, densityOn, wageLayerOn, satView, labelMode, provinceFilter, industryFilter]);
+
+  // Tỉnh/TP suy ra từ tên KCN (marketZones.location), giống cách làm ở tab Lương TT / Công ty-Dự án.
+  const zoneToProvince = useMemo(() => {
+    const map: Record<string, string> = {};
+    marketZones.forEach(z => { if (z.location) map[z.name] = z.location; });
+    return map;
+  }, [marketZones]);
+  const provinces = useMemo(
+    () => [...new Set([...marketZones.map(z => z.location), ...branches.map(b => b.location)].filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'vi')),
+    [marketZones, branches],
+  );
+  const matchesProvinceFilter = (region: string | null | undefined, zones: string[] | undefined) => {
+    if (provinceFilter === 'all') return true;
+    if (region && (zoneToProvince[region] === provinceFilter || region === provinceFilter)) return true;
+    if (zones?.some(z => zoneToProvince[z] === provinceFilter)) return true;
+    return false;
+  };
+  const matchesIndustryFilter = (industry: string | null | undefined) => industryFilter === 'all' || industry === industryFilter;
 
   const points = useMemo<MapPoint[]>(() => {
     const pts: MapPoint[] = [];
     branches.forEach(b => {
       if (b.lat == null || b.lng == null) return;
+      if (provinceFilter !== 'all' && b.location !== provinceFilter) return;
       pts.push({
         id: b.id, group: 'branch', name: b.short_name || b.name, lat: b.lat, lng: b.lng,
         sub: [b.manager_name && `QL: ${b.manager_name}`, b.address].filter(Boolean).join(' · '),
@@ -164,6 +256,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     });
     marketZones.forEach(z => {
       if (z.lat == null || z.lng == null) return;
+      if (provinceFilter !== 'all' && z.location !== provinceFilter) return;
       pts.push({
         id: z.id, group: 'kcn', name: z.name, lat: z.lat, lng: z.lng,
         sub: [z.location, z.total_workers != null && `${z.total_workers.toLocaleString('vi-VN')} LĐ`, `${z.lgv_clients} KH LGV`].filter(Boolean).join(' · '),
@@ -173,24 +266,33 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     });
     allClients.forEach(c => {
       if (c.lat == null || c.lng == null) return;
+      if (!matchesProvinceFilter(c.region, c.industrial_zones ?? undefined)) return;
+      if (!matchesIndustryFilter(c.industry)) return;
       pts.push({
         id: c.id, group: c.client_type === 'active' ? 'client' : 'prospect', name: c.name, lat: c.lat, lng: c.lng,
         sub: [(c.industrial_zones ?? [])[0], c.region, c.current_workers ? `${c.current_workers} LĐ` : null].filter(Boolean).join(' · '),
         mapLink: c.map_link ?? null,
         onOpen: () => { window.location.hash = `#/client-detail/${shortId(c.id)}`; },
+        wage: c.wage_min != null && c.wage_max != null ? { min: c.wage_min, max: c.wage_max } : null,
+        suppliers: c.market_suppliers ?? [],
       });
     });
     marketLeads.forEach(l => {
       if (l.lat == null || l.lng == null) return;
+      if (!matchesProvinceFilter(l.region, undefined)) return;
+      if (!matchesIndustryFilter(l.industry)) return;
       pts.push({
         id: l.id, group: 'lead', name: l.company_name, lat: l.lat, lng: l.lng,
         sub: [l.region, l.industry, l.workers_needed ? `Nhu cầu ${l.workers_needed} LĐ` : null, l.status].filter(Boolean).join(' · '),
         mapLink: l.map_link ?? null,
         onOpen: () => goTab('leads'),
+        wage: l.wage_min != null && l.wage_max != null ? { min: l.wage_min, max: l.wage_max } : null,
+        suppliers: l.suppliers,
       });
     });
     return pts;
-  }, [branches, marketZones, marketLeads, allClients, goTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches, marketZones, marketLeads, allClients, goTab, provinceFilter, industryFilter, zoneToProvince]);
 
   // Bản ghi thiếu link Google Maps HOẶC thiếu toạ độ — cả hai đều cần bổ sung.
   const missingList = useMemo(() => {
@@ -204,6 +306,10 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   }, [branches, marketZones, marketLeads, allClients]);
 
   const missingCoordsCount = useMemo(() => missingList.filter(m => !m.hasCoords).length, [missingList]);
+  const missingShown = useMemo(
+    () => missingGroupFilter === 'all' ? missingList : missingList.filter(m => m.group === missingGroupFilter),
+    [missingList, missingGroupFilter],
+  );
 
   // Khởi tạo map một lần
   useEffect(() => {
@@ -259,24 +365,39 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       });
       const marker = L.marker([p.lat, p.lng], { icon });
       const labelsOn = labelMode === 'always' || showLabels;
-      marker.bindTooltip(escapeHtml(p.name), {
+      const wageLabel = wageLayerOn && p.wage ? ` · 💰${wageFmt(p.wage.min, p.wage.max)}` : '';
+      marker.bindTooltip(escapeHtml(p.name) + escapeHtml(wageLabel), {
         direction: 'top',
         offset: [0, -30],
         className: 'lgmap-tooltip',
-        permanent: labelsOn,
+        permanent: labelsOn || (wageLayerOn && !!p.wage),
         opacity: labelsOn ? 0.95 : 1,
       });
       const el = document.createElement('div');
       el.className = 'lgmap-popup';
       el.innerHTML = `
         <div class="lgmap-popup-title" style="color:${color}">${escapeHtml(p.name)}</div>
-        ${p.sub ? `<div class="lgmap-popup-sub">${escapeHtml(p.sub)}</div>` : ''}`;
+        ${p.sub ? `<div class="lgmap-popup-sub">${escapeHtml(p.sub)}</div>` : ''}
+        ${wageLayerOn && p.wage ? `
+          <div class="lgmap-popup-wage">💰 Lương chung: <b>${escapeHtml(wageFmt(p.wage.min, p.wage.max)!)}</b></div>
+          ${p.suppliers?.length ? `<div class="lgmap-popup-suppliers">${p.suppliers.map(s => `
+            <div class="lgmap-popup-supplier-row">
+              <span>${s.is_us ? '● ' : ''}${escapeHtml(s.name)}</span>
+              <span>${s.wage_min != null && s.wage_max != null ? escapeHtml(wageFmt(s.wage_min, s.wage_max)!) : '—'}</span>
+            </div>`).join('')}</div>` : ''}
+        ` : ''}`;
       const row = document.createElement('div');
       row.className = 'lgmap-popup-actions';
       if (p.onOpen) {
         const btn = document.createElement('button');
         btn.textContent = 'Mở hồ sơ';
         btn.onclick = p.onOpen;
+        row.appendChild(btn);
+      }
+      if (wageLayerOn && (p.wage || p.suppliers?.length)) {
+        const btn = document.createElement('button');
+        btn.textContent = 'Sửa lương NCC';
+        btn.onclick = () => goTab('leads');
         row.appendChild(btn);
       }
       if (p.mapLink) {
@@ -297,7 +418,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       const bounds = L.latLngBounds(shown.map(p => [p.lat, p.lng] as [number, number]));
       map.fitBounds(bounds.pad(0.15), { maxZoom: 12 });
     }
-  }, [points, activeGroups, showLabels, labelMode, groupIcons]);
+  }, [points, activeGroups, showLabels, labelMode, groupIcons, wageLayerOn]);
 
   const setGroupIcon = (g: Group, value: string) => {
     setGroupIcons(prev => {
@@ -493,8 +614,92 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     await Promise.all([loadBranches(), loadMapClients(), onRefresh()]);
   };
 
-  return (
-    <div className="space-y-3">
+  // Định vị bằng GPS trình duyệt — zoom mức 15 (nhìn rõ khu vực xung quanh, không quá gần).
+  const locateMe = () => {
+    if (!navigator.geolocation) { toast('Trình duyệt không hỗ trợ định vị'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setLocating(false);
+        const map = mapRef.current;
+        if (!map) return;
+        const { latitude, longitude } = pos.coords;
+        if (myLocationMarkerRef.current) myLocationMarkerRef.current.remove();
+        const icon = L.divIcon({
+          className: 'lgmap-my-location',
+          html: '<span class="lgmap-my-location-dot"></span>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        myLocationMarkerRef.current = L.marker([latitude, longitude], { icon, zIndexOffset: 1000 })
+          .addTo(map).bindTooltip('Vị trí của tôi', { direction: 'top', offset: [0, -10] });
+        map.setView([latitude, longitude], 15);
+      },
+      err => {
+        setLocating(false);
+        toast('Không lấy được vị trí: ' + (err.code === 1 ? 'bạn chưa cấp quyền định vị' : err.message));
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  // Xem toàn màn hình — bấm nút hoặc phím tắt "F" (bỏ qua khi đang gõ trong ô nhập liệu).
+  const toggleFullscreen = () => {
+    const el = mapWrapperRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else el.requestFullscreen().catch(() => toast('Trình duyệt không hỗ trợ xem toàn màn hình'));
+  };
+
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      // Kích thước khung map đổi đột ngột khi vào/thoát fullscreen — Leaflet cần được báo lại.
+      setTimeout(() => mapRef.current?.invalidateSize(), 50);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'f' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (!mapWrapperRef.current?.matches(':hover') && !document.fullscreenElement) return;
+      e.preventDefault();
+      toggleFullscreen();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Toàn bộ thanh bộ lọc + toggle lớp + đo khoảng cách + công cụ — dùng lại y hệt cho cả
+  // chế độ thường (nằm trong luồng trang) lẫn full màn hình (nổi trên bản đồ, ẩn/hiện khi
+  // di chuột, kiểu Apple), tránh phải nhân đôi JSX.
+  const controls = (
+    <>
+      <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3 py-2 flex items-center gap-2 flex-wrap">
+        <span className="text-[12px] text-[#888] shrink-0">Tỉnh/TP:</span>
+        <SearchSelect
+          value={provinceFilter}
+          onChange={setProvinceFilter}
+          options={[{ value: 'all', label: `Tất cả (${provinces.length})` }, ...provinces.map(p => ({ value: p, label: p }))]}
+          className="w-48"
+        />
+        <span className="text-[12px] text-[#888] shrink-0">Ngành nghề:</span>
+        <SearchSelect
+          value={industryFilter}
+          onChange={setIndustryFilter}
+          options={[{ value: 'all', label: `Tất cả (${industries.length})` }, ...industries.map(i => ({ value: i, label: i }))]}
+          className="w-48"
+        />
+        {(provinceFilter !== 'all' || industryFilter !== 'all') && (
+          <button onClick={() => { setProvinceFilter('all'); setIndustryFilter('all'); }} className="text-[11.5px] text-blue-600 hover:underline">Xoá lọc</button>
+        )}
+      </div>
+
       <div className="flex items-center gap-1.5 flex-wrap">
         {GROUPS.map(g => {
           const on = activeGroups.includes(g.id);
@@ -510,12 +715,6 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
           );
         })}
         <div className="flex-1" />
-        {missingCoordsCount > 0 && !geoProgress && (
-          <button onClick={runGeocode}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition">
-            <Crosshair size={13} /> Sinh toạ độ ({missingCoordsCount} thiếu)
-          </button>
-        )}
         {geoProgress && (
           <span className="text-[12px] text-[#888] inline-flex items-center gap-1.5">
             <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -544,9 +743,11 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
           <Users size={12} /> Mật độ dân số
           {communeLoading && <Loader2 size={11} className="animate-spin" />}
         </button>
-        <button onClick={() => setShowPopulationPanel(true)}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border bg-white border-[#D8D6D0] text-[#666]">
-          <Database size={12} /> Quản lý dữ liệu dân số
+        <button onClick={() => setWageLayerOn(v => !v)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border transition ${
+            wageLayerOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'
+          }`}>
+          <DollarSign size={12} /> Lương công ty
         </button>
         <button onClick={() => { setMeasureOn(v => !v); if (measureOn) { setFromId(''); setToId(''); } }}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border transition ${
@@ -556,31 +757,21 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
         </button>
         {measureOn && (
           <>
-            <select value={fromId} onChange={e => setFromId(e.target.value)}
-              className="text-[11.5px] px-2 py-1 border border-[#D8D6D0] rounded-lg bg-white outline-none max-w-[190px]">
-              <option value="">Từ điểm…</option>
-              {GROUPS.map(g => {
-                const opts = points.filter(p => p.group === g.id);
-                return opts.length ? (
-                  <optgroup key={g.id} label={g.label}>
-                    {opts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </optgroup>
-                ) : null;
-              })}
-            </select>
+            <SearchSelect
+              value={fromId}
+              onChange={setFromId}
+              options={points.map(p => ({ value: p.id, label: `${GROUPS.find(g => g.id === p.group)?.label} — ${p.name}` }))}
+              placeholder="Từ điểm… (gõ để tìm)"
+              className="w-52"
+            />
             <span className="text-[12px] text-[#888]">→</span>
-            <select value={toId} onChange={e => setToId(e.target.value)}
-              className="text-[11.5px] px-2 py-1 border border-[#D8D6D0] rounded-lg bg-white outline-none max-w-[190px]">
-              <option value="">Đến điểm…</option>
-              {GROUPS.map(g => {
-                const opts = points.filter(p => p.group === g.id && p.id !== fromId);
-                return opts.length ? (
-                  <optgroup key={g.id} label={g.label}>
-                    {opts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </optgroup>
-                ) : null;
-              })}
-            </select>
+            <SearchSelect
+              value={toId}
+              onChange={setToId}
+              options={points.filter(p => p.id !== fromId).map(p => ({ value: p.id, label: `${GROUPS.find(g => g.id === p.group)?.label} — ${p.name}` }))}
+              placeholder="Đến điểm… (gõ để tìm)"
+              className="w-52"
+            />
             {routeLoading && straightKm != null && (
               <span className="text-[12px] text-[#888] inline-flex items-center gap-1.5">
                 <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -603,21 +794,60 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
         )}
 
         <div className="flex-1" />
-        <button onClick={() => setShowIconSettings(v => !v)}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border transition ${
-            showIconSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'
+        <button onClick={() => { setShowToolsMenu(v => !v); setShowIconSettings(false); }}
+          className={`relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border transition ${
+            showToolsMenu ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'
           }`}>
-          <Settings size={12} /> Icon theo loại
+          <Wrench size={12} /> Công cụ
+          {missingCoordsCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+              {missingCoordsCount > 9 ? '9+' : missingCoordsCount}
+            </span>
+          )}
         </button>
 
-        {showIconSettings && (
+        {showToolsMenu && !showIconSettings && (
+          <div className="absolute top-full right-0 mt-1.5 z-[1000] w-72 bg-white border border-[#E8E7E2] rounded-[10px] shadow-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[#F0EEE9]">
+              <span className="text-[12.5px] font-semibold text-[#111]">Công cụ bản đồ</span>
+              <button onClick={() => setShowToolsMenu(false)} className="text-[#999] hover:text-[#333]"><X size={14} /></button>
+            </div>
+            <button
+              onClick={() => { setShowToolsMenu(false); if (missingCoordsCount > 0 && !geoProgress) runGeocode(); }}
+              disabled={missingCoordsCount === 0 || !!geoProgress}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7] disabled:opacity-40 disabled:hover:bg-transparent border-b border-[#F0EEE9]">
+              <Crosshair size={13} className="text-[#666]" />
+              <span className="flex-1">Sinh toạ độ</span>
+              <span className="text-[11px] text-[#999]">{missingCoordsCount > 0 ? `${missingCoordsCount} thiếu` : 'Đã đủ'}</span>
+            </button>
+            <button
+              onClick={() => { setShowToolsMenu(false); setShowPopulationPanel(true); }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7] border-b border-[#F0EEE9]">
+              <Database size={13} className="text-[#666]" />
+              <span className="flex-1">Quản lý dữ liệu dân số</span>
+              <ChevronRight size={13} className="text-[#ccc]" />
+            </button>
+            <button
+              onClick={() => setShowIconSettings(true)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7]">
+              <Settings size={13} className="text-[#666]" />
+              <span className="flex-1">Icon theo loại</span>
+              <ChevronRight size={13} className="text-[#ccc]" />
+            </button>
+          </div>
+        )}
+
+        {showToolsMenu && showIconSettings && (
           <div className="absolute top-full right-0 mt-1.5 z-[1000] w-80 bg-white border border-[#E8E7E2] rounded-[10px] shadow-lg p-3 space-y-2">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[12.5px] font-semibold text-[#111]">Tuỳ chỉnh icon marker</span>
-              <button onClick={() => setShowIconSettings(false)} className="text-[#999] hover:text-[#333]">
+              <button onClick={() => setShowIconSettings(false)} className="text-[#999] hover:text-[#333] inline-flex items-center gap-1 text-[11.5px]">
+                <ChevronLeft size={13} /> Quay lại
+              </button>
+              <button onClick={() => { setShowIconSettings(false); setShowToolsMenu(false); }} className="text-[#999] hover:text-[#333]">
                 <X size={14} />
               </button>
             </div>
+            <span className="text-[12.5px] font-semibold text-[#111] block">Tuỳ chỉnh icon marker</span>
             {GROUPS.map(g => (
               <div key={g.id} className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full flex-none" style={{ backgroundColor: g.color }} />
@@ -641,9 +871,26 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
           </div>
         )}
       </div>
+    </>
+  );
 
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-        <div ref={mapDivRef} style={{ height: 'calc(100vh - 260px)', minHeight: 420 }} />
+  return (
+    <div className="space-y-3">
+      {!isFullscreen && controls}
+
+      <div ref={mapWrapperRef} className={`relative bg-white border border-[#E8E7E2] overflow-hidden ${isFullscreen ? '' : 'rounded-[10px]'}`}>
+        <div ref={mapDivRef} style={{ height: isFullscreen ? '100vh' : 'calc(100vh - 260px)', minHeight: 420 }} />
+        {isFullscreen && <FullscreenControlsOverlay>{controls}</FullscreenControlsOverlay>}
+        <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
+          <button onClick={locateMe} disabled={locating} title="Vị trí của tôi"
+            className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7] disabled:opacity-50">
+            {locating ? <Loader2 size={16} className="animate-spin" /> : <LocateFixed size={16} />}
+          </button>
+          <button onClick={toggleFullscreen} title={isFullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'}
+            className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7]">
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+        </div>
       </div>
 
       {missingList.length > 0 && (
@@ -656,8 +903,26 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
             </span>
           </button>
           {showMissing && (
-            <div className="border-t border-[#E8E7E2] divide-y divide-[#F0EEE9] max-h-72 overflow-y-auto">
-              {missingList.map(m => (
+            <div className="border-t border-[#E8E7E2]">
+              <div className="px-4 py-2 flex items-center gap-1.5 flex-wrap bg-[#FAFAF8] border-b border-[#F0EEE9]">
+                <button onClick={() => setMissingGroupFilter('all')}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition ${missingGroupFilter === 'all' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'}`}>
+                  Tất cả ({missingList.length})
+                </button>
+                {GROUPS.map(g => {
+                  const count = missingList.filter(m => m.group === g.id).length;
+                  if (!count) return null;
+                  return (
+                    <button key={g.id} onClick={() => setMissingGroupFilter(g.id)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition ${missingGroupFilter === g.id ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'}`}>
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: g.color }} />
+                      {g.label} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            <div className="divide-y divide-[#F0EEE9] max-h-72 overflow-y-auto">
+              {missingShown.map(m => (
                 <div key={m.id} className="px-4 py-2 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full flex-none" style={{ backgroundColor: GROUP_COLOR[m.group] }} />
                   <span className="text-[12px] font-medium text-[#333] w-56 truncate">{m.name}</span>
@@ -684,6 +949,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
                 </div>
               ))}
             </div>
+            </div>
           )}
         </div>
       )}
@@ -702,8 +968,52 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   );
 }
 
+/** Menu bộ lọc nổi trên bản đồ khi ở chế độ toàn màn hình — kiểu Apple: ẩn theo mặc định,
+ * di chuột vào dải mỏng trên cùng (hoặc vào chính menu) để hiện, tự ẩn sau 30s không thao tác. */
+function FullscreenControlsOverlay({ children }: { children: ReactNode }) {
+  const [revealed, setRevealed] = useState(true);
+  const hideTimerRef = useRef<number | null>(null);
+
+  const scheduleHide = () => {
+    if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = window.setTimeout(() => setRevealed(false), 30000);
+  };
+  const wake = () => { setRevealed(true); scheduleHide(); };
+
+  useEffect(() => {
+    scheduleHide();
+    return () => { if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <>
+      <div onMouseEnter={wake} className="absolute top-0 left-0 right-0 h-3 z-[1001]" />
+      {!revealed && (
+        <div onMouseEnter={wake}
+          className="absolute top-2 left-1/2 -translate-x-1/2 z-[1001] w-10 h-1.5 rounded-full bg-white/50 hover:bg-white/80 cursor-pointer transition" />
+      )}
+      <div
+        onMouseMove={wake}
+        onClick={wake}
+        className={`absolute top-3 left-1/2 -translate-x-1/2 z-[1001] transition-all duration-300 ease-out ${
+          revealed ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'
+        }`}>
+        <div className="bg-white/75 backdrop-blur-xl border border-white/60 shadow-2xl rounded-2xl px-3 py-2.5 max-w-[92vw] max-h-[85vh] overflow-y-auto space-y-2">
+          {children}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function fmtKm(km: number) {
   return km < 10 ? km.toFixed(1) : Math.round(km).toString();
+}
+
+function wageFmt(min: number | null | undefined, max: number | null | undefined) {
+  if (min == null || max == null) return null;
+  return `${(min / 1_000_000).toFixed(1)}–${(max / 1_000_000).toFixed(1)}tr`;
 }
 
 function escapeHtml(s: string) {

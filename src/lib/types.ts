@@ -108,6 +108,8 @@ export interface Client {
   wage_min?: number | null;
   wage_max?: number | null;
   allowance_notes?: string | null;
+  // Chi tiết lương Let's Go VN trả cho khách hàng này, theo từng trường dùng chung (migration 101)
+  wage_detail?: Record<string, number> | null;
 }
 
 // Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
@@ -396,6 +398,11 @@ export interface MarketLeadSupplier {
   name: string;
   qty: number;
   is_us: boolean;
+  // Lương NCC này trả cho LĐ tại chính công ty/dự án này (khác nhau theo từng dự án)
+  wage_min?: number | null;
+  wage_max?: number | null;
+  // Chi tiết lương theo từng trường dùng chung (tên trường từ wage_detail_fields, giá trị VNĐ)
+  wage_detail?: Record<string, number> | null;
 }
 
 export interface MarketLead {
@@ -418,6 +425,8 @@ export interface MarketLead {
   wage_min?: number | null;
   wage_max?: number | null;
   allowance_notes?: string | null;
+  // Chi tiết lương Let's Go VN dự kiến trả, theo từng trường dùng chung (migration 101)
+  wage_detail?: Record<string, number> | null;
 }
 
 export interface Quote {
