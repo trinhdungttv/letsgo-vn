@@ -13,6 +13,7 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchCountries, addCountry } from './countries';
 import SearchSelect from './SearchSelect';
+import { type RegionZone, REGION_ZONES, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls, fmtRegionWage } from './regionWage';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -83,6 +84,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
+  // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
+  const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
+  useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
   const { provinces: sharedProvinces, addProvince } = useProvinces();
@@ -242,7 +246,14 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         <div className="flex items-center gap-3 flex-wrap">
           <button onClick={() => setSelectedId(null)} className="p-1.5 rounded-lg border border-[#E8E7E2] hover:bg-[#F9F9F7]"><ArrowLeft size={14} /></button>
           <div>
-            <div className="text-[13px] font-semibold text-[#111]">{selected.full_name || selected.name}</div>
+            <div className="text-[13px] font-semibold text-[#111] flex items-center gap-2">
+              {selected.full_name || selected.name}
+              {regionZoneLabel(selected.region_zone) && (
+                <span className={`text-[10.5px] font-semibold w-7 h-5 inline-flex items-center justify-center rounded ${regionZoneColorCls(selected.region_zone)}`}>
+                  {regionZoneLabel(selected.region_zone)}
+                </span>
+              )}
+            </div>
             <div className="text-[11px] text-[#888]">{selected.location || '—'}</div>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -289,6 +300,20 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                 {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
                 <option value="__new__">+ Thêm tỉnh/thành mới…</option>
               </select>
+            </div>
+            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Vùng lương tối thiểu</span>
+              <select value={editForm.region_zone || ''} onChange={e => setEditForm(f => ({ ...f, region_zone: e.target.value || null }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
+                <option value="">— Chưa gán vùng —</option>
+                {REGION_ZONES.map(z => <option key={z.key} value={z.key}>{z.label} · Vùng {z.key} ({fmtRegionWage(regionWages[z.key])}tr)</option>)}
+              </select>
+              {regionZoneLabel(editForm.region_zone) && (
+                <span className={`text-[10.5px] font-semibold w-7 h-5 inline-flex items-center justify-center rounded ${regionZoneColorCls(editForm.region_zone)}`}>
+                  {regionZoneLabel(editForm.region_zone)}
+                </span>
+              )}
+              {regionZoneLabel(editForm.region_zone) && (
+                <span className="text-[11px] text-[#888]">{fmtRegionWage(regionWageOf(editForm.region_zone, regionWages))}tr</span>
+              )}
             </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Link Google Maps</span>
               <div className="flex gap-2 flex-1 items-center">

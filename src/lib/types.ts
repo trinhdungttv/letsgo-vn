@@ -352,6 +352,11 @@ export interface Competitor {
   facebook_url?: string | null;
   tiktok_url?: string | null;
   social_other_url?: string | null;
+  // Vị trí hiển thị ảnh cover (%) + link Google Maps văn phòng + giá trị link tự thêm (migration 114)
+  image_pos_x?: number;
+  image_pos_y?: number;
+  map_link?: string | null;
+  custom_links?: Record<string, string>;
 }
 
 export interface CompetitorClient {
@@ -408,6 +413,8 @@ export interface MarketZone {
   geocoded_at?: string | null;
   // Ảnh cover (migration 102)
   image_url?: string | null;
+  // Vùng lương tối thiểu Vùng I–IV (migration 110) — mỗi KCN 1 vùng riêng
+  region_zone?: string | null;
 }
 
 export interface Industry {

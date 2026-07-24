@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
+import { type CompetitorLinkType, fetchLinkTypes, addLinkType, deleteLinkType, reorderLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
@@ -26,6 +27,39 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_competitors_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_competitors_view_mode', viewMode); }, [viewMode]);
+
+  // Danh sách "nút link nhanh" (Bản đồ/Website/Facebook/TikTok…) — cấu hình chung, hiển thị
+  // trên mọi thẻ đối thủ. Sắp xếp/thêm/xoá ở đây áp dụng ngay cho toàn bộ danh sách.
+  const [linkTypes, setLinkTypes] = useState<CompetitorLinkType[]>([]);
+  const [showLinkSettings, setShowLinkSettings] = useState(false);
+  const [newLinkLabel, setNewLinkLabel] = useState('');
+  const [savingLinkType, setSavingLinkType] = useState(false);
+  const loadLinkTypes = () => { fetchLinkTypes().then(setLinkTypes); };
+  useEffect(() => { loadLinkTypes(); }, []);
+
+  const moveLinkType = async (index: number, dir: -1 | 1) => {
+    const next = [...linkTypes];
+    const j = index + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[index], next[j]] = [next[j], next[index]];
+    setLinkTypes(next);
+    await reorderLinkTypes(next);
+  };
+  const handleDeleteLinkType = async (t: CompetitorLinkType) => {
+    if (!confirm(`Xoá nút "${t.label}" khỏi mọi thẻ đối thủ? Dữ liệu link đã nhập (nếu có) sẽ không hiện nữa.`)) return;
+    const err = await deleteLinkType(t.id);
+    if (err) { toast('Lỗi xoá: ' + err); return; }
+    loadLinkTypes();
+  };
+  const handleAddLinkType = async () => {
+    if (!newLinkLabel.trim()) { toast('Nhập tên loại liên kết'); return; }
+    setSavingLinkType(true);
+    const err = await addLinkType(newLinkLabel, linkTypes);
+    setSavingLinkType(false);
+    if (err) { toast('Lỗi thêm: ' + err); return; }
+    setNewLinkLabel('');
+    loadLinkTypes();
+  };
 
   const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
 
@@ -83,13 +117,50 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
         <Eye size={12} /> Lương trả LĐ: so với mặt bằng thị trường khu vực · Phí/công = chi phí bên họ trả mỗi ca lao động
       </div>
 
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] flex-wrap gap-2">
+      {/* Không dùng overflow-hidden ở đây — panel "Cài đặt nút liên kết" là absolute, sẽ bị
+          cắt mất bởi overflow-hidden của thẻ cha (giống lỗi từng gặp ở tab Lương TT). */}
+      <div className="bg-white border border-[#E8E7E2] rounded-[10px]">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] rounded-t-[10px] flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-[#111]">Nhà cung ứng đối thủ</div>
           <div className="flex items-center gap-2">
             <div className="flex border border-gray-300 rounded-lg overflow-hidden">
               <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
               <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
+            </div>
+            <div className="relative shrink-0">
+              <button onClick={() => setShowLinkSettings(v => !v)} title="Cài đặt nút liên kết nhanh" className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showLinkSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}>
+                <Settings size={13} />
+              </button>
+              {showLinkSettings && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowLinkSettings(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 z-20 w-[300px] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[12.5px] font-semibold text-[#111]">Nút liên kết nhanh</div>
+                      <button onClick={() => setShowLinkSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
+                    </div>
+                    <div className="text-[10.5px] text-[#999]">Áp dụng cho mọi thẻ đối thủ — sắp xếp, thêm, xoá ở đây có hiệu lực ngay.</div>
+                    <div className="space-y-1">
+                      {linkTypes.map((t, i) => (
+                        <div key={t.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-gray-200">
+                          <span className="text-[12px] text-[#333] flex-1 truncate">{t.label}</span>
+                          <button onClick={() => moveLinkType(i, -1)} disabled={i === 0} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowUp size={12} /></button>
+                          <button onClick={() => moveLinkType(i, 1)} disabled={i === linkTypes.length - 1} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowDown size={12} /></button>
+                          <button onClick={() => handleDeleteLinkType(t)} className="p-0.5 text-[#aaa] hover:text-red-500"><Trash2 size={12} /></button>
+                        </div>
+                      ))}
+                      {linkTypes.length === 0 && <div className="text-[11px] text-[#aaa] py-1">Chưa có nút liên kết nào.</div>}
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1.5 border-t border-gray-100">
+                      <input value={newLinkLabel} onChange={e => setNewLinkLabel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleAddLinkType(); }}
+                        placeholder="Tên loại liên kết mới…" className="flex-1 text-[12px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                      <button onClick={handleAddLinkType} disabled={savingLinkType} className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium bg-[#1D4ED8] text-white disabled:opacity-50">
+                        <Plus size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm đối thủ
@@ -97,7 +168,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
           </div>
         </div>
         {viewMode === 'list' && (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-b-[10px]">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
               {['Nhà cung ứng', 'Khu vực', 'Tổng LĐ', 'Lương trả LĐ PT', 'Phí DV PT (₫)', 'Phí DV TN (₫)', 'Phí DV KTV (₫)', 'Phí/công (₫)', 'Xu hướng', 'Đang cung cấp cho'].map(h => (
@@ -145,7 +216,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
         )}
 
         {viewMode === 'card' && (
-        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 rounded-b-[10px]">
           {list.map(c => {
             const avg = avgForZone(c.zone_name || '');
             const diff = avg && c.wage_paid ? Math.round(((c.wage_paid - avg) / avg) * 100) : null;
@@ -156,7 +227,12 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
               <div key={c.id} onClick={() => setSelectedCompetitor(c)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
                 {c.image_url ? (
                   <div className="h-32 w-full overflow-hidden bg-gray-100">
-                    <img src={c.image_url} alt={c.company_name} className="w-full h-full object-cover" />
+                    <img
+                      src={c.image_url}
+                      alt={c.company_name}
+                      className="w-full h-full object-cover"
+                      style={{ objectPosition: `${c.image_pos_x ?? 50}% ${c.image_pos_y ?? 50}%` }}
+                    />
                   </div>
                 ) : (
                   <div className="h-32 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
@@ -167,7 +243,27 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-[12.5px] font-semibold text-[#1D4ED8] truncate">{c.company_name}</div>
-                      <div className="text-[10.5px] text-[#888] flex items-center gap-1 mt-0.5"><MapPin size={10} /> {c.zone_name}</div>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-[10.5px] text-[#888] flex items-center gap-1"><MapPin size={10} /> {c.zone_name}</span>
+                        {linkTypes.map(t => {
+                          const url = getLinkUrl(c, t);
+                          if (!url) return null;
+                          const Icon = iconForLinkKey(t.key);
+                          return (
+                            <a
+                              key={t.id}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={t.label}
+                              onClick={e => e.stopPropagation()}
+                              className="w-5 h-5 rounded-full bg-[#F9F9F7] border border-[#E8E7E2] text-[#666] flex items-center justify-center hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition shrink-0"
+                            >
+                              <Icon size={10} />
+                            </a>
+                          );
+                        })}
+                      </div>
                     </div>
                     {trendIcon(c.trend)}
                   </div>

@@ -10,6 +10,8 @@ import SupplierFillCard from './SupplierFillCard';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls } from './regionWage';
+import { fmtTr } from './shared';
 import type { Client } from '../../lib/types';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
@@ -36,6 +38,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const [provinceFilter, setProvinceFilter] = useState('all');
   const [industryFilter, setIndustryFilter] = useState('all');
+  // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
+  const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
+  useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
 
   // Chia đôi "Khách hàng đang hợp tác" / "Dự án/Công ty đang tìm hiểu" thành 2 khối kéo
   // được chiều ngang — tỉ lệ lưu vào localStorage để F5 không mất, khỏi kéo lại.
@@ -101,6 +106,15 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   ])].sort((a, b) => a.localeCompare(b, 'vi'));
   const zonesInProvince = provinceFilter === 'all' ? zoneNames : zoneNames.filter(z => zoneToProvince[z] === provinceFilter);
 
+  // So khớp không phân biệt hoa/thường & chấp nhận lệch tiền tố "KCN " — region gõ tay
+  // ("BIÊN HOÀ 2") thường khác tên KCN chính thức ("KCN Biên Hoà 2"), so khớp tuyệt đối
+  // sẽ bỏ sót khách hàng/dự án dù đã gán đúng khu vực (vd: TCL tại KCN Biên Hoà 2).
+  const zoneMatches = (a: string | null | undefined, b: string | null | undefined) => {
+    if (!a || !b) return false;
+    const na = a.trim().toLowerCase();
+    const nb = b.trim().toLowerCase();
+    return na === nb || na.includes(nb) || nb.includes(na);
+  };
   const matchesProvince = (region: string | null | undefined, zones: string[] | undefined) => {
     if (provinceFilter === 'all') return true;
     if (region && zoneToProvince[region] === provinceFilter) return true;
@@ -110,11 +124,23 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   };
   const matchesZone = (region: string | null | undefined, zones: string[] | undefined) => {
     if (zoneFilter === 'all') return true;
-    if (region === zoneFilter || region?.includes(zoneFilter)) return true;
-    if (zones?.includes(zoneFilter)) return true;
+    if (zoneMatches(region, zoneFilter)) return true;
+    if (zones?.some(z => zoneMatches(z, zoneFilter))) return true;
     return false;
   };
   const matchesIndustry = (industry: string | null | undefined) => industryFilter === 'all' || industry === industryFilter;
+
+  // Vùng lương tối thiểu của 1 khách hàng/dự án — suy từ KCN đã gán (industrial_zones của
+  // khách hàng, hoặc region của dự án) khớp sang market_zones.region_zone. Mỗi KCN 1 vùng.
+  const regionInfoFor = (names: (string | null | undefined)[]): { zone: string; label: string; wage: number | null } | null => {
+    for (const n of names) {
+      if (!n) continue;
+      const z = marketZones.find(mz => zoneMatches(mz.name, n) && mz.region_zone);
+      const label = regionZoneLabel(z?.region_zone);
+      if (z && z.region_zone && label) return { zone: z.region_zone, label, wage: regionWageOf(z.region_zone, regionWages) };
+    }
+    return null;
+  };
 
   const list = marketLeads.filter(l => matchesProvince(l.region, undefined) && matchesZone(l.region, undefined) && matchesIndustry(l.industry));
   const trackedClients = clients.filter(c =>
@@ -427,7 +453,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
             <div key={c.id} className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="flex items-start justify-between gap-2 px-4 py-2.5 bg-emerald-50/40 border-b border-[#E8E7E2] flex-wrap">
                 <div className="min-w-0">
-                  <div className="text-[12.5px] font-medium">{c.name}</div>
+                  <div className="text-[12.5px] font-medium flex items-center gap-1.5 flex-wrap">
+                    {c.name}
+                    {(() => { const r = regionInfoFor([...(c.industrial_zones ?? []), c.region]); return r && (
+                      <span className={`text-[10px] font-semibold w-6 h-4 inline-flex items-center justify-center rounded ${regionZoneColorCls(r.zone)}`}>{r.label}</span>
+                    ); })()}
+                  </div>
                   <div className="text-[11px] text-[#888] mt-0.5">
                     {c.region || '—'} · {c.industry || '—'}{wageFmt(c.wage_min, c.wage_max) ? ` · Lương ${wageFmt(c.wage_min, c.wage_max)}` : ''}
                     {c.allowance_notes ? ` · ${c.allowance_notes}` : ''}
@@ -489,6 +520,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                     <select value={l.status} onChange={e => handleStatusChange(l.id, e.target.value)} className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium border-0 outline-none ${statusCls(l.status)}`}>
                       {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
                     </select>
+                    {(() => { const r = regionInfoFor([l.region]); return r && (
+                      <span className={`text-[10px] font-semibold w-6 h-4 inline-flex items-center justify-center rounded ${regionZoneColorCls(r.zone)}`}>{r.label}</span>
+                    ); })()}
                   </div>
                   <div className="text-[11px] text-[#888] mt-0.5">
                     {l.region || '—'} · {l.industry || '—'} · {l.source || '—'} · {new Date(l.lead_date).toLocaleDateString('vi-VN')}

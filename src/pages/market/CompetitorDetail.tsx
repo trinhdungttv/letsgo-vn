@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from 'react';
-import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, Globe, User } from 'lucide-react';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, User, RotateCcw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency } from '../../lib/format';
 import type { Competitor, CompetitorClient, CompetitorLog, MarketZone, Client, MarketLead } from '../../lib/types';
@@ -7,6 +7,7 @@ import { useProvinces } from '../../hooks/useProvinces';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import SearchSelect from './SearchSelect';
+import { type CompetitorLinkType, fetchLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 
 interface Props {
   competitor: Competitor;
@@ -37,13 +38,51 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     strengths: competitor.strengths ?? '',
     weaknesses: competitor.weaknesses ?? '',
     image_url: competitor.image_url ?? '',
+    image_pos_x: competitor.image_pos_x ?? 50,
+    image_pos_y: competitor.image_pos_y ?? 50,
     director: competitor.director ?? '',
+    map_link: competitor.map_link ?? '',
     website_url: competitor.website_url ?? '',
     facebook_url: competitor.facebook_url ?? '',
     tiktok_url: competitor.tiktok_url ?? '',
     social_other_url: competitor.social_other_url ?? '',
   });
   const [activeZones, setActiveZones] = useState<string[]>(competitor.active_zones ?? []);
+
+  // Nút liên kết nhanh (Bản đồ/Website/Facebook/TikTok…) — cấu hình chung, quản lý ở tab
+  // Đối thủ (nút cài đặt). Loại tự thêm (field null) lưu giá trị vào custom_links[key].
+  const [linkTypes, setLinkTypes] = useState<CompetitorLinkType[]>([]);
+  useEffect(() => { fetchLinkTypes().then(setLinkTypes); }, []);
+  const [customLinkDrafts, setCustomLinkDrafts] = useState<Record<string, string>>(competitor.custom_links ?? {});
+
+  // Kéo ảnh cover để chỉnh object-position — khung xem trước cùng tỷ lệ với thẻ thật (h-32)
+  // nên "vừa với khung hình" đúng như hiển thị thực tế, không cần biết ảnh ngang hay dọc.
+  const imgBoxRef = useRef<HTMLDivElement>(null);
+  const [draggingImg, setDraggingImg] = useState(false);
+  const handleImgDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDraggingImg(true);
+    const box = imgBoxRef.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    const onMove = (ev: MouseEvent) => {
+      const dxPct = ((ev.movementX) / rect.width) * 100;
+      const dyPct = ((ev.movementY) / rect.height) * 100;
+      // Kéo ảnh sang phải → lộ phần bên trái ảnh ra → object-position X giảm.
+      setForm(f => ({
+        ...f,
+        image_pos_x: Math.min(100, Math.max(0, f.image_pos_x - dxPct)),
+        image_pos_y: Math.min(100, Math.max(0, f.image_pos_y - dyPct)),
+      }));
+    };
+    const onUp = () => {
+      setDraggingImg(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const kcnNameSet = useMemo(() => new Set(marketZones.map(z => z.name)), [marketZones]);
 
@@ -141,7 +180,8 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
 
   const handleSave = async () => {
     setSaving(true);
-    const { error } = await supabase.from('competitors').update({
+    const custom_links = Object.fromEntries(Object.entries(customLinkDrafts).filter(([, v]) => v.trim()));
+    const patch = {
       company_name: form.company_name.trim(),
       zone_name: form.zone_name.trim(),
       total_workers: form.total_workers,
@@ -149,28 +189,20 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
       strengths: form.strengths.trim() || null,
       weaknesses: form.weaknesses.trim() || null,
       image_url: form.image_url.trim() || null,
+      image_pos_x: form.image_pos_x,
+      image_pos_y: form.image_pos_y,
       director: form.director.trim() || null,
+      map_link: form.map_link.trim() || null,
       website_url: form.website_url.trim() || null,
       facebook_url: form.facebook_url.trim() || null,
       tiktok_url: form.tiktok_url.trim() || null,
       social_other_url: form.social_other_url.trim() || null,
-    }).eq('id', competitor.id);
+      custom_links,
+    };
+    const { error } = await supabase.from('competitors').update(patch).eq('id', competitor.id);
     setSaving(false);
     if (error) { toast('Lỗi: ' + error.message); return; }
-    Object.assign(competitor, {
-      company_name: form.company_name.trim(),
-      zone_name: form.zone_name.trim(),
-      total_workers: form.total_workers,
-      recruitment_source: form.recruitment_source.trim(),
-      strengths: form.strengths.trim(),
-      weaknesses: form.weaknesses.trim(),
-      image_url: form.image_url.trim() || null,
-      director: form.director.trim() || null,
-      website_url: form.website_url.trim() || null,
-      facebook_url: form.facebook_url.trim() || null,
-      tiktok_url: form.tiktok_url.trim() || null,
-      social_other_url: form.social_other_url.trim() || null,
-    });
+    Object.assign(competitor, patch);
     setEditing(false);
     toast('Đã lưu thông tin đối thủ');
   };
@@ -245,7 +277,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
         </button>
         {competitor.image_url && (
           <div className="w-9 h-9 rounded-lg overflow-hidden border border-gray-200 shrink-0">
-            <img src={competitor.image_url} alt="" className="w-full h-full object-cover" />
+            <img src={competitor.image_url} alt="" className="w-full h-full object-cover" style={{ objectPosition: `${competitor.image_pos_x ?? 50}% ${competitor.image_pos_y ?? 50}%` }} />
           </div>
         )}
         <div className="text-[15px] font-semibold text-[#111]">{competitor.company_name}</div>
@@ -324,16 +356,36 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Ảnh cover (link)</label>
-                    <div className="flex gap-2 items-center">
-                      <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="Dán link ảnh…" className="flex-1 text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-                      {form.image_url && (
-                        <div className="w-14 h-10 rounded overflow-hidden border border-gray-200 shrink-0">
-                          <img src={form.image_url} alt="" className="w-full h-full object-cover" />
+                    <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="Dán link ảnh…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    {form.image_url && (
+                      <div className="mt-1">
+                        <div
+                          ref={imgBoxRef}
+                          onMouseDown={handleImgDragStart}
+                          className={`h-32 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
+                        >
+                          <img
+                            src={form.image_url}
+                            alt=""
+                            draggable={false}
+                            className="w-full h-full object-cover pointer-events-none select-none"
+                            style={{ objectPosition: `${form.image_pos_x}% ${form.image_pos_y}%` }}
+                          />
                         </div>
-                      )}
-                    </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[10.5px] text-[#999]">Kéo ảnh để chỉnh vị trí hiển thị — khung này đúng tỷ lệ thẻ thật</span>
+                          <button onClick={() => setForm(f => ({ ...f, image_pos_x: 50, image_pos_y: 50 }))} className="inline-flex items-center gap-1 text-[10.5px] text-blue-600 hover:underline shrink-0">
+                            <RotateCcw size={10} /> Về giữa
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Bản đồ (link Google Maps)</label>
+                      <input value={form.map_link} onChange={e => setForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[11px] text-[#888]">Website</label>
                       <input value={form.website_url} onChange={e => setForm(f => ({ ...f, website_url: e.target.value }))} placeholder="https://…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
@@ -350,6 +402,17 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                       <label className="text-[11px] text-[#888]">Mạng xã hội khác</label>
                       <input value={form.social_other_url} onChange={e => setForm(f => ({ ...f, social_other_url: e.target.value }))} placeholder="https://…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     </div>
+                    {linkTypes.filter(t => !t.field).map(t => (
+                      <div key={t.id} className="flex flex-col gap-1">
+                        <label className="text-[11px] text-[#888]">{t.label}</label>
+                        <input
+                          value={customLinkDrafts[t.key] ?? ''}
+                          onChange={e => setCustomLinkDrafts(d => ({ ...d, [t.key]: e.target.value }))}
+                          placeholder="https://…"
+                          className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]"
+                        />
+                      </div>
+                    ))}
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Điểm mạnh</label>
@@ -368,23 +431,26 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                   <div className="flex justify-between"><span className="text-[#888]">Nguồn tuyển</span><span className="font-medium text-[#111]">{competitor.recruitment_source || '—'}</span></div>
                   <div className="flex justify-between items-center"><span className="text-[#888] flex items-center gap-1"><User size={11} /> Giám đốc</span><span className="font-medium text-[#111]">{competitor.director || '—'}</span></div>
                   <div>
-                    <div className="text-[#888] mb-1.5">Liên kết</div>
-                    {(competitor.website_url || competitor.facebook_url || competitor.tiktok_url || competitor.social_other_url) ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {competitor.website_url && (
-                          <a href={competitor.website_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition"><Globe size={11} /> Website <ExternalLink size={9} className="text-[#999]" /></a>
-                        )}
-                        {competitor.facebook_url && (
-                          <a href={competitor.facebook_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Facebook <ExternalLink size={9} className="text-[#999]" /></a>
-                        )}
-                        {competitor.tiktok_url && (
-                          <a href={competitor.tiktok_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">TikTok <ExternalLink size={9} className="text-[#999]" /></a>
-                        )}
-                        {competitor.social_other_url && (
-                          <a href={competitor.social_other_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Khác <ExternalLink size={9} className="text-[#999]" /></a>
-                        )}
-                      </div>
-                    ) : <span className="text-[11.5px] text-[#aaa]">Chưa có</span>}
+                    <div className="text-[#888] mb-1.5">Liên kết nhanh</div>
+                    {(() => {
+                      const activeLinks = linkTypes.map(t => ({ t, url: getLinkUrl(competitor, t) })).filter(x => x.url);
+                      if (activeLinks.length === 0 && !competitor.social_other_url) return <span className="text-[11.5px] text-[#aaa]">Chưa có</span>;
+                      return (
+                        <div className="flex flex-wrap gap-1.5">
+                          {activeLinks.map(({ t, url }) => {
+                            const Icon = iconForLinkKey(t.key);
+                            return (
+                              <a key={t.id} href={url!} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">
+                                <Icon size={11} /> {t.label} <ExternalLink size={9} className="text-[#999]" />
+                              </a>
+                            );
+                          })}
+                          {competitor.social_other_url && (
+                            <a href={competitor.social_other_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Khác <ExternalLink size={9} className="text-[#999]" /></a>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div>
                     <div className="text-[#888] mb-1">Điểm mạnh</div>
