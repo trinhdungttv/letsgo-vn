@@ -32,12 +32,6 @@ export default function IndustrySeasonality({ levels, notes, onChange }: Props) 
     onChange(levels, next);
   };
 
-  // Click vòng qua các mức 0→5→0, giữ Shift để lùi — nhập nhanh cả năm không cần mở menu
-  const cycle = (i: number, back: boolean) => {
-    setLevel(i, back ? (levels[i] + 5) % 6 : (levels[i] + 1) % 6);
-    setSel(i);
-  };
-
   const peak = levels.map((v, i) => ({ v, i })).filter(x => x.v >= 4).map(x => x.i + 1);
   const nextMonth = (thisMonth + 1) % 12;
   const alert = levels[nextMonth] >= 4
@@ -49,7 +43,7 @@ export default function IndustrySeasonality({ levels, notes, onChange }: Props) 
       <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
         <CalendarRange size={13} className="text-orange-600" />
         <div className="text-[12.5px] font-semibold text-[#111]">Lịch mùa vụ · nhu cầu lao động 12 tháng</div>
-        <span className="text-[10.5px] text-[#999]">click để tăng mức · shift+click để giảm</span>
+        <span className="text-[10.5px] text-[#999]">click chọn tháng, rồi bấm đúng mức muốn đặt — tránh lỡ tay đổi mức</span>
         <div className="ml-auto flex items-center gap-2">
           {SEASON_LEVELS.slice(1).map(l => (
             <span key={l.v} className="inline-flex items-center gap-1 text-[10px] text-[#888]">
@@ -64,7 +58,7 @@ export default function IndustrySeasonality({ levels, notes, onChange }: Props) 
           {levels.map((v, i) => {
             const L = SEASON_LEVELS[v] ?? SEASON_LEVELS[0];
             return (
-              <button key={i} onClick={e => cycle(i, e.shiftKey)}
+              <button key={i} onClick={() => setSel(sel === i ? null : i)}
                 title={notes[i] || L.label}
                 className={`relative rounded-lg py-2 transition ${L.bg} ${sel === i ? 'ring-2 ring-blue-500' : ''} ${i === thisMonth ? 'outline outline-1 outline-offset-1 outline-[#111]' : ''} hover:opacity-80`}>
                 <div className={`text-[11px] font-medium ${L.text}`}>T{i + 1}</div>
@@ -87,8 +81,17 @@ export default function IndustrySeasonality({ levels, notes, onChange }: Props) 
         )}
 
         {sel != null && (
-          <div className="mt-2">
-            <label className="text-[11px] text-[#888]">Ghi chú tháng {sel + 1} — vì sao tăng/giảm, khách nào bị ảnh hưởng</label>
+          <div className="mt-2 p-2.5 rounded-lg bg-[#F9F9F7] border border-[#E8E7E2]">
+            <label className="text-[11px] text-[#888]">Đặt mức cho tháng {sel + 1} — bấm đúng mức muốn chọn</label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {SEASON_LEVELS.map(l => (
+                <button key={l.v} onClick={() => setLevel(sel, l.v)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${l.bg} ${l.text} ${levels[sel] === l.v ? 'border-blue-500 ring-1 ring-blue-500' : 'border-transparent hover:opacity-80'}`}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <label className="text-[11px] text-[#888] mt-2 block">Ghi chú tháng {sel + 1} — vì sao tăng/giảm, khách nào bị ảnh hưởng</label>
             <textarea value={notes[sel] || ''} onChange={e => setNote(sel, e.target.value)} rows={2}
               placeholder="VD: Vào mùa hàng Tết, 3 KH tăng 30% quân số, cần tuyển thời vụ từ giữa T8"
               title={notes[sel] || ''}

@@ -14,6 +14,7 @@ import { fetchIndustries, addIndustry } from './industries';
 import { fetchCountries, addCountry } from './countries';
 import SearchSelect from './SearchSelect';
 import { type RegionZone, REGION_ZONES, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls, fmtRegionWage } from './regionWage';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -81,6 +82,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [addForm, setAddForm] = useState(emptyAddForm);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<MarketZone> | null>(null);
+  const [initialEditForm, setInitialEditForm] = useState<Partial<MarketZone> | null>(null);
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
@@ -115,7 +117,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
   useEffect(() => {
     if (selected) {
-      setEditForm({
+      const snapshot = {
         location: selected.location,
         operator: selected.operator, area: selected.area, established_year: selected.established_year,
         characteristics: selected.characteristics, strengths: selected.strengths, weaknesses: selected.weaknesses,
@@ -123,11 +125,18 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         notes: selected.notes, industries: selected.industries || [], countries: selected.countries || [],
         map_link: selected.map_link ?? null,
         image_url: selected.image_url ?? null,
-      });
+      };
+      setEditForm(snapshot);
+      setInitialEditForm(snapshot);
     } else {
       setEditForm(null);
+      setInitialEditForm(null);
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cảnh báo F5/đóng tab khi hồ sơ khu vực đang sửa mà chưa bấm "Lưu".
+  const zoneDirty = editForm != null && initialEditForm != null && JSON.stringify(editForm) !== JSON.stringify(initialEditForm);
+  useBeforeUnloadWarning(zoneDirty);
 
   const handleAddZone = async () => {
     const name = addForm.name.trim();
@@ -212,6 +221,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         oldData: selected, newData: { ...selected, ...updates },
       });
       await onRefresh();
+      setInitialEditForm(editForm);
       toast('Đã lưu hồ sơ: ' + selected.name);
     } catch (e: any) { toast('Lỗi: ' + e.message); }
     setSaving(false);

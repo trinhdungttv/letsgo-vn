@@ -13,6 +13,7 @@ import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wa
 import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls } from './regionWage';
 import { fmtTr } from './shared';
 import type { Client } from '../../lib/types';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
 const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-700' : s === 'Đang TH' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700';
@@ -72,6 +73,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const [addTab, setAddTab] = useState<'client' | 'lead' | null>(null);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
   const [clientForm, setClientForm] = useState(emptyClientSetupForm);
+  // Cảnh báo F5/đóng tab khi đang gõ dở form thêm KH/dự án mới mà chưa bấm "Thêm".
+  useBeforeUnloadWarning(!!addTab && (
+    addTab === 'client' ? JSON.stringify(clientForm) !== JSON.stringify(emptyClientSetupForm) : JSON.stringify(leadForm) !== JSON.stringify(emptyLeadForm)
+  ));
   const [saving, setSaving] = useState(false);
   const [industries, setIndustries] = useState<string[]>([]);
   const [wageFields, setWageFields] = useState<string[]>([]);
@@ -711,6 +716,7 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   onDeleteWageField: (name: string) => void;
 }) {
   const [patch, setPatch] = useState<EditPatch>(initial);
+  useBeforeUnloadWarning(JSON.stringify(patch) !== JSON.stringify(initial));
   return (
     <div className="px-4 py-3 bg-blue-50/30 border-b border-[#E8E7E2] grid grid-cols-2 gap-2.5">
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Ngành nghề</label>

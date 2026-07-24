@@ -59,6 +59,11 @@ export const TABLE_LABELS: Record<string, string> = {
   loan_rate_history: 'Lịch sử lãi suất',
   loan_renewals: 'Đáo hạn khoản vay',
   loan_schedules: 'Lịch trả nợ',
+  industries: 'Ngành nghề',
+  industry_positions: 'Vị trí tuyển dụng ngành',
+  industry_metrics: 'Chỉ số ngành theo quý',
+  industry_value_chain: 'Chuỗi giá trị ngành',
+  industry_terms: 'Thuật ngữ ngành',
 };
 
 export function tableLabel(name: string): string {

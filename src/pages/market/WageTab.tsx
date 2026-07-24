@@ -12,6 +12,7 @@ import {
   fetchRegionWageRows, fetchRegionWageBatches, saveRegionWageBatch, updateRegionWageBatch, deleteRegionWageBatch,
   bulkAssignRegionZone, regionZoneLabel, regionWageOf, regionZoneColorCls, fmtRegionWage,
 } from './regionWage';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 const emptyForm = {
   zone_name: '', industry: '', pt_min: '', pt_max: '', tv_min: '', tv_max: '', ct_min: '', ct_max: '',
@@ -103,6 +104,21 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
       III: String(regionWageRows.III.amount / 1_000_000), IV: String(regionWageRows.IV.amount / 1_000_000),
     });
   };
+  // Cảnh báo F5/đóng tab khi đang gõ dở lương tối thiểu vùng mà chưa bấm "Lưu".
+  const regionDraftBaseline = editingBatchId
+    ? (() => {
+        const b = regionBatches.find(x => x.id === editingBatchId);
+        return b ? {
+          I: String(b.wages.I / 1_000_000), II: String(b.wages.II / 1_000_000),
+          III: String(b.wages.III / 1_000_000), IV: String(b.wages.IV / 1_000_000),
+        } : regionDraft;
+      })()
+    : {
+        I: String(regionWageRows.I.amount / 1_000_000), II: String(regionWageRows.II.amount / 1_000_000),
+        III: String(regionWageRows.III.amount / 1_000_000), IV: String(regionWageRows.IV.amount / 1_000_000),
+      };
+  useBeforeUnloadWarning(JSON.stringify(regionDraft) !== JSON.stringify(regionDraftBaseline));
+
   const handleDeleteBatch = async (id: string) => {
     if (!confirm('Xoá lần nhập lương này? Không thể hoàn tác.')) return;
     const err = await deleteRegionWageBatch(id);

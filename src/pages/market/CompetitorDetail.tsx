@@ -8,6 +8,7 @@ import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import SearchSelect from './SearchSelect';
 import { type CompetitorLinkType, fetchLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 interface Props {
   competitor: Competitor;
@@ -47,6 +48,9 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     tiktok_url: competitor.tiktok_url ?? '',
     social_other_url: competitor.social_other_url ?? '',
   });
+  // Chốt lại snapshot ban đầu để cảnh báo F5/đóng tab khi đang sửa dở mà chưa bấm "Lưu".
+  const [initialForm, setInitialForm] = useState(form);
+  useBeforeUnloadWarning(JSON.stringify(form) !== JSON.stringify(initialForm));
   const [activeZones, setActiveZones] = useState<string[]>(competitor.active_zones ?? []);
 
   // Nút liên kết nhanh (Bản đồ/Website/Facebook/TikTok…) — cấu hình chung, quản lý ở tab
@@ -204,6 +208,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     if (error) { toast('Lỗi: ' + error.message); return; }
     Object.assign(competitor, patch);
     setEditing(false);
+    setInitialForm(form);
     toast('Đã lưu thông tin đối thủ');
   };
 

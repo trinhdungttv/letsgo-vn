@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Doughnut, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, ArrowLeft, Save, Factory, X, Users, Building2, Coins, Eye, Landmark, TrendingUp, FileText, ScrollText, FileDown } from 'lucide-react';
+import { Plus, ArrowLeft, Loader2, Check, Factory, X, Users, Building2, Coins, Eye, Landmark, TrendingUp, FileText, ScrollText, FileDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 import type {
   Industry, Client, MarketLead, MarketSurvey, Competitor,
   IndustryTerm, IndustryPosition, IndustryMetric, IndustryValueChainItem,
@@ -50,12 +51,66 @@ interface IndustryStats {
 export default function IndustryTab({ clients, marketLeads, marketSurveys, competitors, goTab, toast }: Props) {
   const [list, setList] = useState<Industry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const parseHashIndex = () => {
+    const parts = window.location.hash.replace('#/', '').split('/');
+    const raw = parts[0] === 'market' && parts[1] === 'industry' ? parts[2] : undefined;
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  };
+  const [selectedId, setSelectedIdRaw] = useState<string | null>(null);
+  const [pendingIndex, setPendingIndex] = useState<number | null>(parseHashIndex);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [form, setForm] = useState<Partial<Industry> | null>(null);
+  // Vừa quay lại trang ngành đã có dữ liệu từ trước — thao tác ĐẦU TIÊN làm đổi giá trị phải
+  // xác nhận lại (đề phòng lỡ tay); xác nhận 1 lần thì mở khoá, không hỏi lại tới khi rời trang.
+  const [lockedSnapshot, setLockedSnapshot] = useState(false);
+  const [confirmEditAction, setConfirmEditAction] = useState<{ run: () => void } | null>(null);
+  const [editResetKey, setEditResetKey] = useState(0);
+  const guard = (run: () => void) => {
+    if (lockedSnapshot) setConfirmEditAction({ run });
+    else run();
+  };
+
+  // Tự động lưu — gõ/click xong 700ms không thao tác gì thêm là tự ghi DB, không cần bấm nút
+  // "Lưu" nữa. skipAutosaveRef chặn việc tự lưu ngay lúc vừa nạp dữ liệu ngành (form mới set).
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved'>('idle');
+  useBeforeUnloadWarning(saveStatus === 'pending' || saveStatus === 'saving');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formRef = useRef<Partial<Industry> | null>(null);
+  formRef.current = form;
+  const skipAutosaveRef = useRef(true);
+
+  const persist = async (data: Partial<Industry>) => {
+    if (!selected) return;
+    setSaveStatus('saving');
+    const updates = {
+      overview: data.overview?.trim() || null,
+      policy_notes: data.policy_notes?.trim() || null,
+      tax_notes: data.tax_notes?.trim() || null,
+      trend_notes: data.trend_notes?.trim() || null,
+      season_levels: data.season_levels ?? emptySeason(),
+      season_notes: data.season_notes ?? emptyNotes(),
+      turnover_rate: data.turnover_rate ?? null,
+      quit_stage: data.quit_stage || null,
+      quit_reasons: data.quit_reasons ?? [],
+      retention_actions: data.retention_actions?.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('industries').update(updates).eq('id', selected.id);
+    if (error) { setSaveStatus('idle'); toast('Lỗi: ' + error.message); return; }
+    setList(prev => prev.map(i => i.id === selected.id ? { ...i, ...updates } : i));
+    setSaveStatus('saved');
+  };
+
+  const flushPendingSave = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      if (formRef.current) persist(formRef.current);
+    }
+  };
 
   const load = async () => {
     const { data, error } = await supabase.from('industries').select('*').order('name');
@@ -64,11 +119,29 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
   };
   useEffect(() => { load(); }, []);
 
+  // Khôi phục ngành đang xem từ URL hash sau khi danh sách tải xong (VD: F5 trang chi tiết ngành).
+  useEffect(() => {
+    if (pendingIndex != null && list.length) {
+      const item = list[pendingIndex];
+      if (item) setSelectedIdRaw(item.id);
+      setPendingIndex(null);
+    }
+  }, [pendingIndex, list]);
+
+  const setSelectedId = (id: string | null) => {
+    setSelectedIdRaw(id);
+    const idx = id ? list.findIndex(i => i.id === id) : -1;
+    const hash = idx >= 0 ? `#/market/industry/${idx}` : '#/market/industry';
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+  };
+
   const selected = list.find(i => i.id === selectedId) || null;
 
   useEffect(() => {
+    flushPendingSave();
+    skipAutosaveRef.current = true;
     if (selected) {
-      setForm({
+      const snapshot = {
         overview: selected.overview ?? '',
         policy_notes: selected.policy_notes ?? '',
         tax_notes: selected.tax_notes ?? '',
@@ -79,10 +152,35 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
         quit_stage: selected.quit_stage ?? null,
         quit_reasons: selected.quit_reasons ?? [],
         retention_actions: selected.retention_actions ?? '',
-      });
-    } else setForm(null);
+      };
+      setForm(snapshot);
+      setLockedSnapshot(!!(
+        snapshot.overview || snapshot.policy_notes || snapshot.tax_notes || snapshot.trend_notes ||
+        snapshot.turnover_rate != null || snapshot.quit_stage || snapshot.quit_reasons.length > 0 ||
+        snapshot.retention_actions || snapshot.season_levels.some(v => v > 0) || snapshot.season_notes.some(Boolean)
+      ));
+      setConfirmEditAction(null);
+    } else { setForm(null); setLockedSnapshot(false); setConfirmEditAction(null); }
+    setSaveStatus('idle');
+    const t = setTimeout(() => { skipAutosaveRef.current = false; }, 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+
+  // Gõ/click xong 700ms không đổi gì thêm là tự lưu — không cần bấm nút "Lưu".
+  useEffect(() => {
+    if (skipAutosaveRef.current || !form) return;
+    setSaveStatus('pending');
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { saveTimerRef.current = null; persist(form); }, 700);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
+
+  const handleBack = () => {
+    flushPendingSave();
+    setSelectedId(null);
+  };
 
   // Tổng hợp tự động theo ngành từ dữ liệu đã có: KH đang hợp tác, dự án đang tìm hiểu,
   // tổng LĐ, khoảng lương (khảo sát + lương ghi trên KH/dự án), số đối thủ đang phục vụ
@@ -173,29 +271,6 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
     toast('Đã tạo ngành nghề: ' + name);
   };
 
-  const handleSave = async () => {
-    if (!selected || !form) return;
-    setSaving(true);
-    const updates = {
-      overview: form.overview?.trim() || null,
-      policy_notes: form.policy_notes?.trim() || null,
-      tax_notes: form.tax_notes?.trim() || null,
-      trend_notes: form.trend_notes?.trim() || null,
-      season_levels: form.season_levels ?? emptySeason(),
-      season_notes: form.season_notes ?? emptyNotes(),
-      turnover_rate: form.turnover_rate ?? null,
-      quit_stage: form.quit_stage || null,
-      quit_reasons: form.quit_reasons ?? [],
-      retention_actions: form.retention_actions?.trim() || null,
-      updated_at: new Date().toISOString(),
-    };
-    const { error } = await supabase.from('industries').update(updates).eq('id', selected.id);
-    setSaving(false);
-    if (error) { toast('Lỗi: ' + error.message); return; }
-    setList(prev => prev.map(i => i.id === selected.id ? { ...i, ...updates } : i));
-    toast('Đã lưu ngành: ' + selected.name);
-  };
-
   // Xuất tài liệu chuẩn bị gặp khách — lấy thuật ngữ mới nhất từ DB rồi gom mọi dữ liệu ngành.
   const handleExport = async () => {
     if (!selected) return;
@@ -236,8 +311,9 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
       <div className={`bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden border-l-[3px] ${accent}`}>
         <div className="px-4 py-2.5 border-b border-[#F0EEE9] flex items-center gap-1.5 text-[12.5px] font-semibold text-[#111]">{icon} {label}</div>
         <RichTextEditor
+          key={`${key}-${editResetKey}`}
           value={form[key] || ''}
-          onChange={html => setForm(f => ({ ...f, [key]: html }))}
+          onChange={html => guard(() => setForm(f => ({ ...f, [key]: html })))}
           placeholder={hint}
         />
       </div>
@@ -246,17 +322,18 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <button onClick={() => setSelectedId(null)} className="p-1.5 rounded-lg border border-[#E8E7E2] hover:bg-[#F9F9F7]"><ArrowLeft size={14} /></button>
+          <button onClick={handleBack} className="p-1.5 rounded-lg border border-[#E8E7E2] hover:bg-[#F9F9F7]"><ArrowLeft size={14} /></button>
           <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0"><Factory size={14} /></div>
           <div>
             <div className="text-[13px] font-semibold text-[#111]">{selected.name}</div>
             <div className="text-[10.5px] text-[#999]">Hồ sơ ngành · quá khứ → hiện tại → tương lai</div>
           </div>
-          <button onClick={handleExport} disabled={exporting} className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E8E7E2] text-[#444] hover:bg-[#F9F9F7] disabled:opacity-60 transition">
+          <div className="ml-auto flex items-center gap-1 text-[11.5px] text-[#999]">
+            {(saveStatus === 'pending' || saveStatus === 'saving') && <><Loader2 size={12} className="animate-spin" /> Đang lưu…</>}
+            {saveStatus === 'saved' && <><Check size={12} className="text-emerald-600" /> Đã lưu</>}
+          </div>
+          <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E8E7E2] text-[#444] hover:bg-[#F9F9F7] disabled:opacity-60 transition">
             <FileDown size={13} /> {exporting ? 'Đang xuất...' : 'Chuẩn bị gặp khách'}
-          </button>
-          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60 transition">
-            <Save size={13} /> {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
         </div>
 
@@ -271,7 +348,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
         <IndustrySeasonality
           levels={form.season_levels ?? emptySeason()}
           notes={form.season_notes ?? emptyNotes()}
-          onChange={(season_levels, season_notes) => setForm(f => ({ ...f, season_levels, season_notes }))}
+          onChange={(season_levels, season_notes) => guard(() => setForm(f => ({ ...f, season_levels, season_notes })))}
         />
 
         <IndustryMatrix industryName={selected.name} clients={clients} marketLeads={marketLeads} competitors={competitors} />
@@ -283,7 +360,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
           quitStage={form.quit_stage ?? null}
           quitReasons={form.quit_reasons ?? []}
           retentionActions={form.retention_actions ?? null}
-          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          onChange={patch => guard(() => setForm(f => ({ ...f, ...patch })))}
         />
 
         <IndustryMetrics industryId={selected.id} toast={toast} />
@@ -340,6 +417,25 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
 
         {selected.updated_at && (
           <div className="px-3 py-1.5 bg-[#F9F9F7] rounded-lg text-[11px] text-[#aaa]">Cập nhật: {new Date(selected.updated_at).toLocaleDateString('vi-VN')}</div>
+        )}
+
+        {confirmEditAction && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-[12px] w-full max-w-sm p-5 shadow-xl">
+              <div className="text-[13.5px] font-semibold text-[#111]">Xác nhận thay đổi</div>
+              <div className="text-[12px] text-[#666] mt-1.5">Ngành "{selected.name}" đã có dữ liệu được lưu. Bạn có chắc muốn thay đổi? Xác nhận xong sẽ không hỏi lại nữa tới khi rời trang.</div>
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => { setConfirmEditAction(null); setEditResetKey(k => k + 1); }}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-[12px] font-medium text-gray-600 hover:bg-gray-50"
+                >Huỷ</button>
+                <button
+                  onClick={() => { confirmEditAction.run(); setLockedSnapshot(false); setConfirmEditAction(null); }}
+                  className="flex-1 px-3 py-2 bg-[#1D4ED8] text-white rounded-lg text-[12px] font-medium hover:bg-[#1E40AF]"
+                >Xác nhận</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );

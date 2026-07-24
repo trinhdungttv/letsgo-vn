@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from 'chart.js';
-import { LineChart, Plus, Trash2, Save, TrendingUp, TrendingDown } from 'lucide-react';
+import { LineChart, Plus, Trash2, Loader2, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { IndustryMetric } from '../../lib/types';
+import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 interface Props { industryId: string; toast: (m: string) => void; }
-type Row = Partial<IndustryMetric> & { _key: string };
+type Row = Partial<IndustryMetric> & { _key: string; _wageUnskilledText?: string; _wageSkilledText?: string };
 
 const currentQuarter = () => {
   const d = new Date();
@@ -23,46 +24,99 @@ const nextQuarter = (p: string) => {
 
 export default function IndustryMetrics({ industryId, toast }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
-  const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState<Row | null>(null);
+  // Chốt lại nội dung ngay sau khi tải/lưu — dùng để so sánh phát hiện thay đổi cần tự lưu.
+  const [savedRows, setSavedRows] = useState<Row[]>([]);
+  const canonical = (rs: Row[]) => JSON.stringify(rs.map(r => ({
+    key: r._key, period: r.period ?? '',
+    avg_wage_unskilled: r._wageUnskilledText ?? '', avg_wage_skilled: r._wageSkilledText ?? '',
+    service_fee_min: r.service_fee_min ?? null, service_fee_max: r.service_fee_max ?? null,
+    turnover_rate: r.turnover_rate ?? null, ot_hours: r.ot_hours ?? null,
+    demand_headcount: r.demand_headcount ?? null, note: r.note ?? '',
+  })));
+
+  // Tự động lưu — gõ/click xong 700ms không thao tác gì thêm là tự ghi DB, không cần bấm
+  // nút "Lưu" nữa (trước đây nút Lưu riêng của bảng này rất dễ bị quên, gây mất dữ liệu khi F5).
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved'>('idle');
+  useBeforeUnloadWarning(saveStatus === 'pending' || saveStatus === 'saving');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const skipAutosaveRef = useRef(true);
+
+  // Lương vẫn lưu VNĐ trong DB — chỉ đổi đơn vị hiển thị/nhập sang triệu (tr) cho dễ đọc,
+  // giống mọi ô nhập lương khác trong hệ thống (vd 6500000 ↔ hiển thị "6.5").
+  const trVal = (v: number | null | undefined) => v != null ? String(v / 1_000_000) : '';
+  const numTr = (v: string) => v.trim() === '' ? null : Math.round(Number(v) * 1_000_000);
+  // Giữ nguyên chuỗi đang gõ (kể cả dấu "." ở cuối) — nếu quy đổi qua số rồi hiển thị lại
+  // ngay lập tức thì gõ "6." sẽ bị ép về "6" và không bao giờ gõ tiếp được "6.5".
+  const sanitizeDecimal = (v: string) => {
+    let s = v.replace(/[^\d.]/g, '');
+    const dot = s.indexOf('.');
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, '');
+    return s;
+  };
+  const num = (v: string) => v.trim() === '' ? null : Number(v.replace(/[^\d.]/g, ''));
 
   const reload = async () => {
+    skipAutosaveRef.current = true;
     const { data } = await supabase.from('industry_metrics').select('*').eq('industry_id', industryId).order('period');
-    setRows(((data ?? []) as IndustryMetric[]).map(m => ({ ...m, _key: m.id })));
+    const loaded = ((data ?? []) as IndustryMetric[]).map(m => (
+      { ...m, _key: m.id, _wageUnskilledText: trVal(m.avg_wage_unskilled), _wageSkilledText: trVal(m.avg_wage_skilled) }
+    ));
+    setRows(loaded);
+    setSavedRows(loaded);
+    setSaveStatus('idle');
+    setTimeout(() => { skipAutosaveRef.current = false; }, 0);
   };
   useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [industryId]);
 
   const set = (key: string, patch: Partial<Row>) => setRows(prev => prev.map(r => r._key === key ? { ...r, ...patch } : r));
-  const num = (v: string) => v.trim() === '' ? null : Number(v.replace(/[^\d.]/g, ''));
-  // Lương vẫn lưu VNĐ trong DB — chỉ đổi đơn vị hiển thị/nhập sang triệu (tr) cho dễ đọc,
-  // giống mọi ô nhập lương khác trong hệ thống (vd 6500000 ↔ hiển thị "6.5").
-  const trVal = (v: number | null | undefined) => v != null ? String(v / 1_000_000) : '';
-  const numTr = (v: string) => v.trim() === '' ? null : Math.round(Number(v.replace(/[^\d.]/g, '')) * 1_000_000);
 
   const addRow = () => {
     const last = rows[rows.length - 1]?.period;
-    setRows(prev => [...prev, { _key: 'new-' + Date.now(), period: last ? nextQuarter(last) : currentQuarter() }]);
+    setRows(prev => [...prev, { _key: 'new-' + Date.now(), period: last ? nextQuarter(last) : currentQuarter(), _wageUnskilledText: '', _wageSkilledText: '' }]);
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    for (const r of rows.filter(x => (x.period ?? '').trim())) {
+  const persistRows = async () => {
+    const base = rowsRef.current.map(r => ({ ...r }));
+    const valid = base.filter(r => (r.period ?? '').trim());
+    if (valid.length === 0) { setSaveStatus('idle'); return; }
+    setSaveStatus('saving');
+    for (const r of valid) {
       const payload = {
         industry_id: industryId, period: (r.period ?? '').trim(),
-        avg_wage_unskilled: r.avg_wage_unskilled ?? null, avg_wage_skilled: r.avg_wage_skilled ?? null,
+        avg_wage_unskilled: numTr(r._wageUnskilledText ?? ''), avg_wage_skilled: numTr(r._wageSkilledText ?? ''),
         service_fee_min: r.service_fee_min ?? null, service_fee_max: r.service_fee_max ?? null,
         turnover_rate: r.turnover_rate ?? null, ot_hours: r.ot_hours ?? null,
         demand_headcount: r.demand_headcount ?? null, note: (r.note ?? '').trim() || null,
       };
-      const { error } = r.id
-        ? await supabase.from('industry_metrics').update(payload).eq('id', r.id)
-        : await supabase.from('industry_metrics').insert(payload);
-      if (error) { setSaving(false); toast('Lỗi: ' + error.message); return; }
+      r.avg_wage_unskilled = payload.avg_wage_unskilled;
+      r.avg_wage_skilled = payload.avg_wage_skilled;
+      if (r.id) {
+        const { error } = await supabase.from('industry_metrics').update(payload).eq('id', r.id);
+        if (error) { setSaveStatus('idle'); toast('Lỗi: ' + error.message); return; }
+      } else {
+        const { data, error } = await supabase.from('industry_metrics').insert(payload).select().single();
+        if (error) { setSaveStatus('idle'); toast('Lỗi: ' + error.message); return; }
+        r.id = data.id;
+        setRows(prev => prev.map(row => row._key === r._key ? { ...row, id: data.id, avg_wage_unskilled: r.avg_wage_unskilled, avg_wage_skilled: r.avg_wage_skilled } : row));
+      }
     }
-    setSaving(false);
-    toast('Đã lưu chỉ số ngành');
-    reload();
+    setSavedRows(base);
+    setSaveStatus('saved');
   };
+
+  // Gõ/click xong 700ms không đổi gì thêm là tự lưu.
+  useEffect(() => {
+    if (skipAutosaveRef.current) return;
+    if (canonical(rows) === canonical(savedRows)) return;
+    setSaveStatus('pending');
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { saveTimerRef.current = null; persistRows(); }, 700);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, savedRows]);
 
   const handleDelete = async () => {
     if (!confirmDel) return;
@@ -71,6 +125,7 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
       if (error) { toast('Lỗi: ' + error.message); return; }
     }
     setRows(prev => prev.filter(r => r._key !== confirmDel._key));
+    setSavedRows(prev => prev.filter(r => r._key !== confirmDel._key));
     setConfirmDel(null);
     toast('Đã xoá kỳ');
   };
@@ -98,9 +153,12 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
             Lương {delta.from}→{delta.to}: {delta.pct >= 0 ? '+' : ''}{delta.pct.toFixed(1)}%
           </span>
         )}
-        <div className="ml-auto flex gap-1.5">
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1 text-[11px] text-[#999]">
+            {(saveStatus === 'pending' || saveStatus === 'saving') && <><Loader2 size={12} className="animate-spin" /> Đang lưu…</>}
+            {saveStatus === 'saved' && <><Check size={12} className="text-emerald-600" /> Đã lưu</>}
+          </div>
           <button onClick={addRow} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] hover:bg-[#F9F9F7]"><Plus size={12} /> Thêm kỳ</button>
-          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60"><Save size={12} /> {saving ? 'Đang lưu…' : 'Lưu'}</button>
         </div>
       </div>
 
@@ -149,8 +207,8 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
           {rows.map(r => (
             <tr key={r._key} className="hover:bg-[#FBFBF9]">
               <td className="px-3 py-1"><input value={r.period ?? ''} onChange={e => set(r._key, { period: e.target.value })} placeholder="2026-Q3" className={cell + ' font-medium'} /></td>
-              <td className="px-1 py-1"><input value={trVal(r.avg_wage_unskilled)} onChange={e => set(r._key, { avg_wage_unskilled: numTr(e.target.value) })} placeholder="6.5" className={cell} /></td>
-              <td className="px-1 py-1"><input value={trVal(r.avg_wage_skilled)} onChange={e => set(r._key, { avg_wage_skilled: numTr(e.target.value) })} placeholder="8.5" className={cell} /></td>
+              <td className="px-1 py-1"><input value={r._wageUnskilledText ?? ''} onChange={e => set(r._key, { _wageUnskilledText: sanitizeDecimal(e.target.value) })} placeholder="6.5" className={cell} /></td>
+              <td className="px-1 py-1"><input value={r._wageSkilledText ?? ''} onChange={e => set(r._key, { _wageSkilledText: sanitizeDecimal(e.target.value) })} placeholder="8.5" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_min ?? ''} onChange={e => set(r._key, { service_fee_min: num(e.target.value) })} placeholder="350000" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_max ?? ''} onChange={e => set(r._key, { service_fee_max: num(e.target.value) })} placeholder="500000" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.turnover_rate ?? ''} onChange={e => set(r._key, { turnover_rate: num(e.target.value) })} placeholder="12" className={cell} /></td>
