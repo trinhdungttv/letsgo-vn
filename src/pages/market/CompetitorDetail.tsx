@@ -41,6 +41,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     image_url: competitor.image_url ?? '',
     image_pos_x: competitor.image_pos_x ?? 50,
     image_pos_y: competitor.image_pos_y ?? 50,
+    image_fit: competitor.image_fit ?? 'cover',
     director: competitor.director ?? '',
     map_link: competitor.map_link ?? '',
     website_url: competitor.website_url ?? '',
@@ -195,6 +196,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
       image_url: form.image_url.trim() || null,
       image_pos_x: form.image_pos_x,
       image_pos_y: form.image_pos_y,
+      image_fit: form.image_fit,
       director: form.director.trim() || null,
       map_link: form.map_link.trim() || null,
       website_url: form.website_url.trim() || null,
@@ -282,7 +284,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
         </button>
         {competitor.image_url && (
           <div className="w-9 h-9 rounded-lg overflow-hidden border border-gray-200 shrink-0">
-            <img src={competitor.image_url} alt="" className="w-full h-full object-cover" style={{ objectPosition: `${competitor.image_pos_x ?? 50}% ${competitor.image_pos_y ?? 50}%` }} />
+            <img src={competitor.image_url} alt="" className={`w-full h-full ${competitor.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`} style={{ objectPosition: `${competitor.image_pos_x ?? 50}% ${competitor.image_pos_y ?? 50}%` }} />
           </div>
         )}
         <div className="text-[15px] font-semibold text-[#111]">{competitor.company_name}</div>
@@ -364,24 +366,44 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                     <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="Dán link ảnh…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     {form.image_url && (
                       <div className="mt-1">
+                        <div className="flex items-center gap-1 mb-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, image_fit: 'cover' }))}
+                            className={`px-2 py-1 rounded-lg text-[10.5px] font-medium border transition ${form.image_fit !== 'contain' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}
+                          >
+                            Lấp đầy (cắt ảnh)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, image_fit: 'contain' }))}
+                            className={`px-2 py-1 rounded-lg text-[10.5px] font-medium border transition ${form.image_fit === 'contain' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}
+                          >
+                            Tự khớp (giữ nguyên ảnh)
+                          </button>
+                        </div>
                         <div
                           ref={imgBoxRef}
-                          onMouseDown={handleImgDragStart}
-                          className={`h-32 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
+                          onMouseDown={form.image_fit === 'contain' ? undefined : handleImgDragStart}
+                          className={`h-32 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${form.image_fit === 'contain' ? '' : draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
                         >
                           <img
                             src={form.image_url}
                             alt=""
                             draggable={false}
-                            className="w-full h-full object-cover pointer-events-none select-none"
+                            className={`w-full h-full pointer-events-none select-none ${form.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
                             style={{ objectPosition: `${form.image_pos_x}% ${form.image_pos_y}%` }}
                           />
                         </div>
                         <div className="flex items-center justify-between mt-1">
-                          <span className="text-[10.5px] text-[#999]">Kéo ảnh để chỉnh vị trí hiển thị — khung này đúng tỷ lệ thẻ thật</span>
-                          <button onClick={() => setForm(f => ({ ...f, image_pos_x: 50, image_pos_y: 50 }))} className="inline-flex items-center gap-1 text-[10.5px] text-blue-600 hover:underline shrink-0">
-                            <RotateCcw size={10} /> Về giữa
-                          </button>
+                          <span className="text-[10.5px] text-[#999]">
+                            {form.image_fit === 'contain' ? 'Chế độ tự khớp: hiện toàn bộ ảnh, không cắt' : 'Kéo ảnh để chỉnh vị trí hiển thị — khung này đúng tỷ lệ thẻ thật'}
+                          </span>
+                          {form.image_fit !== 'contain' && (
+                            <button onClick={() => setForm(f => ({ ...f, image_pos_x: 50, image_pos_y: 50 }))} className="inline-flex items-center gap-1 text-[10.5px] text-blue-600 hover:underline shrink-0">
+                              <RotateCcw size={10} /> Về giữa
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}

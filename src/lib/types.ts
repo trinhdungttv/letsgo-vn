@@ -360,6 +360,8 @@ export interface Competitor {
   image_pos_y?: number;
   map_link?: string | null;
   custom_links?: Record<string, string>;
+  // Chế độ hiển thị ảnh cover: 'cover' cắt lấp đầy khung, 'contain' tự khớp hiện toàn bộ ảnh (migration 116)
+  image_fit?: 'cover' | 'contain' | null;
 }
 
 export interface CompetitorClient {

@@ -230,7 +230,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                     <img
                       src={c.image_url}
                       alt={c.company_name}
-                      className="w-full h-full object-cover"
+                      className={`w-full h-full ${c.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
                       style={{ objectPosition: `${c.image_pos_x ?? 50}% ${c.image_pos_y ?? 50}%` }}
                     />
                   </div>
