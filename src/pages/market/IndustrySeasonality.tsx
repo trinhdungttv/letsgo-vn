@@ -89,9 +89,10 @@ export default function IndustrySeasonality({ levels, notes, onChange }: Props) 
         {sel != null && (
           <div className="mt-2">
             <label className="text-[11px] text-[#888]">Ghi chú tháng {sel + 1} — vì sao tăng/giảm, khách nào bị ảnh hưởng</label>
-            <input value={notes[sel] || ''} onChange={e => setNote(sel, e.target.value)}
+            <textarea value={notes[sel] || ''} onChange={e => setNote(sel, e.target.value)} rows={2}
               placeholder="VD: Vào mùa hàng Tết, 3 KH tăng 30% quân số, cần tuyển thời vụ từ giữa T8"
-              className="w-full text-[12.5px] px-2.5 py-1.5 rounded-lg border border-[#E8E7E2] outline-none focus:border-blue-500" />
+              title={notes[sel] || ''}
+              className="w-full text-[12.5px] px-2.5 py-1.5 rounded-lg border border-[#E8E7E2] outline-none focus:border-blue-500 resize-y leading-relaxed" />
           </div>
         )}
       </div>

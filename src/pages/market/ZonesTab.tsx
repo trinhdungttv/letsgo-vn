@@ -370,13 +370,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               </select>
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Đặc thù</span>
-              <textarea value={editForm.characteristics || ''} onChange={e => setEditForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-none" />
+              <textarea value={editForm.characteristics || ''} onChange={e => setEditForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-emerald-600 w-[150px] shrink-0 pt-1">✓ Điểm mạnh</span>
-              <textarea value={editForm.strengths || ''} onChange={e => setEditForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-none" />
+              <textarea value={editForm.strengths || ''} onChange={e => setEditForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-red-500 w-[150px] shrink-0 pt-1">✗ Điểm yếu</span>
-              <textarea value={editForm.weaknesses || ''} onChange={e => setEditForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-none" />
+              <textarea value={editForm.weaknesses || ''} onChange={e => setEditForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
             </div>
             <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">P. Kinh Doanh</span>
               <div className="flex items-center gap-2 text-[12.5px]">
@@ -385,7 +385,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               </div>
             </div>
             <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Ghi chú chiến lược</span>
-              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-none" />
+              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
             </div>
           </div>
         </div>
@@ -579,7 +579,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
                 <input value={addForm.map_link} onChange={e => setAddForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Đặc thù sơ bộ</label>
-                <textarea value={addForm.characteristics} onChange={e => setAddForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-none" /></div>
+                <textarea value={addForm.characteristics} onChange={e => setAddForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowAdd(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-[12px] font-medium text-gray-600">Hủy</button>

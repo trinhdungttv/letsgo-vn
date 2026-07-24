@@ -7,7 +7,7 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacMacSystemFont, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', 'Inter', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -147,7 +147,7 @@ body {
   font-style: italic;
 }
 .lgmap-region-tooltip {
-  font-family: 'Inter', -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', 'Inter', Arial, sans-serif;
   font-size: 11.5px;
   padding: 6px 9px;
   border-radius: 6px;
@@ -188,7 +188,7 @@ body {
   box-shadow: 0 0 0 2px #1D4ED8, 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 .lgmap-popup {
-  font-family: 'Inter', -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', 'Inter', Arial, sans-serif;
 }
 .lgmap-popup-title {
   font-size: 13px;

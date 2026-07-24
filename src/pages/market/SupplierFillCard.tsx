@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, X, Pencil, Trash2 } from 'lucide-react';
+import { Plus, X, Pencil, Trash2, Scale } from 'lucide-react';
 import type { MarketLeadSupplier, Competitor } from '../../lib/types';
 import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
@@ -10,6 +10,64 @@ const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', 
 
 const wageFmt = (min: number | null | undefined, max: number | null | undefined) =>
   min != null && max != null ? `${(min / 1_000_000).toFixed(1)}–${(max / 1_000_000).toFixed(1)}tr` : null;
+
+const tr = (v: number | null | undefined) => v != null ? (v / 1_000_000).toFixed(2).replace(/\.?0+$/, '') : '—';
+const detailTotal = (s: MarketLeadSupplier) => Object.values(s.wage_detail ?? {}).reduce((a, b) => a + (b || 0), 0);
+
+/** Bảng so sánh lương giữa các NCC (kể cả Let's Go VN) tại cùng 1 công ty/dự án — chọn NCC
+ * muốn so, LGVN luôn ghim cột đầu để dễ đối chiếu, có dòng "So với LGVN" tính chênh lệch. */
+function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSupplier[]; selected: MarketLeadSupplier[] }) {
+  const lgvn = suppliers.find(s => s.is_us);
+  const cols = [...selected].sort((a, b) => (b.is_us ? 1 : 0) - (a.is_us ? 1 : 0));
+  const fieldNames = [...new Set(cols.flatMap(s => Object.keys(s.wage_detail ?? {})))];
+  const lgvnTotal = lgvn ? detailTotal(lgvn) : 0;
+
+  if (cols.length === 0) return <div className="text-[11px] text-[#aaa] px-1 py-2">Chọn ít nhất 1 NCC để so sánh.</div>;
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="text-[11.5px] border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left px-2 py-1 text-[#888] font-medium sticky left-0 bg-white">Khoản</th>
+            {cols.map((s, i) => (
+              <th key={i} className={`text-right px-2 py-1 font-medium whitespace-nowrap ${s.is_us ? 'text-blue-700' : 'text-[#333]'}`}>
+                {s.is_us ? '● ' : ''}{s.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-t border-[#F0EEE9]">
+            <td className="px-2 py-1 text-[#666] sticky left-0 bg-white">Lương (khoảng)</td>
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{wageFmt(s.wage_min, s.wage_max) ?? '—'}</td>)}
+          </tr>
+          {fieldNames.map(f => (
+            <tr key={f} className="border-t border-[#F0EEE9]">
+              <td className="px-2 py-1 text-[#666] sticky left-0 bg-white truncate max-w-[140px]">{f}</td>
+              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{tr(s.wage_detail?.[f])}</td>)}
+            </tr>
+          ))}
+          <tr className="border-t border-[#E8E7E2] font-medium">
+            <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng chi tiết lương</td>
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s))}tr</td>)}
+          </tr>
+          {lgvn && (
+            <tr className="border-t border-[#F0EEE9]">
+              <td className="px-2 py-1 text-[#888] sticky left-0 bg-white">So với LGVN</td>
+              {cols.map((s, i) => {
+                if (s.is_us) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
+                const diff = detailTotal(s) - lgvnTotal;
+                const cls = diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-[#999]';
+                return <td key={i} className={`text-right px-2 py-1 font-medium ${cls}`}>{diff > 0 ? '+' : ''}{tr(diff)}tr</td>;
+              })}
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
 function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, wageFields, onAddWageField, onDeleteWageField }: {
@@ -82,6 +140,13 @@ export default function SupplierFillCard({
   const [addForm, setAddForm] = useState<SupForm>(emptySupForm);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<SupForm>(emptySupForm);
+  const [showCompare, setShowCompare] = useState(false);
+  const [excludedFromCompare, setExcludedFromCompare] = useState<Set<number>>(new Set());
+  const toggleCompare = (i: number) => setExcludedFromCompare(prev => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    return next;
+  });
 
   const total = suppliers.reduce((s, x) => s + x.qty, 0);
   const remaining = Math.max(workersNeeded - total, 0);
@@ -137,7 +202,29 @@ export default function SupplierFillCard({
           <div className="text-[10px] text-[#aaa] mb-1">{pct}% fill</div>
           <div className="h-1.5 bg-[#F0EEE9] rounded-full overflow-hidden"><div className="h-1.5 bg-emerald-500 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} /></div>
         </div>
+        {suppliers.length > 1 && (
+          <button
+            onClick={() => setShowCompare(v => !v)}
+            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition shrink-0 ${showCompare ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}
+          >
+            <Scale size={12} /> So sánh lương
+          </button>
+        )}
       </div>
+      {showCompare && suppliers.length > 1 && (
+        <div className="mb-3 border border-[#E8E7E2] rounded-lg overflow-hidden">
+          <div className="px-2.5 py-1.5 bg-[#F9F9F7] border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
+            <span className="text-[10.5px] text-[#888] shrink-0">So sánh NCC (đối thủ) với nhau hoặc với LGVN:</span>
+            {suppliers.map((s, i) => (
+              <label key={i} className="flex items-center gap-1 text-[11px] text-[#555] cursor-pointer">
+                <input type="checkbox" checked={!excludedFromCompare.has(i)} onChange={() => toggleCompare(i)} />
+                {s.is_us ? '● LGVN' : s.name}
+              </label>
+            ))}
+          </div>
+          <WageCompareTable suppliers={suppliers} selected={suppliers.filter((_, i) => !excludedFromCompare.has(i))} />
+        </div>
+      )}
       <div className="space-y-1.5">
         {suppliers.map((s, i) => {
           if (editIndex === i) {

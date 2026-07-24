@@ -321,7 +321,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Đang cung cấp cho (ngăn cách dấu phẩy)</label>
                 <input value={form.supplying_for} onChange={e => setForm(f => ({ ...f, supplying_for: e.target.value }))} placeholder="Cty A, Cty B" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
-                <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowAdd(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-[12px] font-medium text-gray-600">Hủy</button>

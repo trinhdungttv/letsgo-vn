@@ -34,6 +34,10 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
 
   const set = (key: string, patch: Partial<Row>) => setRows(prev => prev.map(r => r._key === key ? { ...r, ...patch } : r));
   const num = (v: string) => v.trim() === '' ? null : Number(v.replace(/[^\d.]/g, ''));
+  // Lương vẫn lưu VNĐ trong DB — chỉ đổi đơn vị hiển thị/nhập sang triệu (tr) cho dễ đọc,
+  // giống mọi ô nhập lương khác trong hệ thống (vd 6500000 ↔ hiển thị "6.5").
+  const trVal = (v: number | null | undefined) => v != null ? String(v / 1_000_000) : '';
+  const numTr = (v: string) => v.trim() === '' ? null : Math.round(Number(v.replace(/[^\d.]/g, '')) * 1_000_000);
 
   const addRow = () => {
     const last = rows[rows.length - 1]?.period;
@@ -130,8 +134,8 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
         <thead>
           <tr className="text-[10.5px] text-[#888] bg-[#FBFBF9]">
             <th className="text-left font-medium px-3 py-1.5 w-[11%]">Kỳ</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương PT</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương tay nghề</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương PT (tr)</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương tay nghề (tr)</th>
             <th className="text-left font-medium px-1 py-1.5 w-[10%]">Phí từ</th>
             <th className="text-left font-medium px-1 py-1.5 w-[10%]">Phí đến</th>
             <th className="text-left font-medium px-1 py-1.5 w-[8%]">Nghỉ %</th>
@@ -145,8 +149,8 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
           {rows.map(r => (
             <tr key={r._key} className="hover:bg-[#FBFBF9]">
               <td className="px-3 py-1"><input value={r.period ?? ''} onChange={e => set(r._key, { period: e.target.value })} placeholder="2026-Q3" className={cell + ' font-medium'} /></td>
-              <td className="px-1 py-1"><input value={r.avg_wage_unskilled ?? ''} onChange={e => set(r._key, { avg_wage_unskilled: num(e.target.value) })} placeholder="6500000" className={cell} /></td>
-              <td className="px-1 py-1"><input value={r.avg_wage_skilled ?? ''} onChange={e => set(r._key, { avg_wage_skilled: num(e.target.value) })} placeholder="8500000" className={cell} /></td>
+              <td className="px-1 py-1"><input value={trVal(r.avg_wage_unskilled)} onChange={e => set(r._key, { avg_wage_unskilled: numTr(e.target.value) })} placeholder="6.5" className={cell} /></td>
+              <td className="px-1 py-1"><input value={trVal(r.avg_wage_skilled)} onChange={e => set(r._key, { avg_wage_skilled: numTr(e.target.value) })} placeholder="8.5" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_min ?? ''} onChange={e => set(r._key, { service_fee_min: num(e.target.value) })} placeholder="350000" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_max ?? ''} onChange={e => set(r._key, { service_fee_max: num(e.target.value) })} placeholder="500000" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.turnover_rate ?? ''} onChange={e => set(r._key, { turnover_rate: num(e.target.value) })} placeholder="12" className={cell} /></td>

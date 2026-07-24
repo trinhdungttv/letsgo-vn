@@ -5,13 +5,15 @@ import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
  * `fields` là danh sách trường global (bảng wage_detail_fields) — thêm/xoá 1 trường ở đây
  * ảnh hưởng đến MỌI nơi dùng bảng này (Let's Go VN lẫn từng NCC, ở mọi công ty/dự án).
  * `value`/`onChange` chỉ là giá trị RIÊNG của đối tượng đang sửa (đơn vị: triệu). */
-export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, defaultOpen = false }: {
+export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, defaultOpen = false, label = 'Chi tiết lương' }: {
   fields: string[];
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
   onAddField: (name: string) => Promise<void> | void;
   onDeleteField: (name: string) => Promise<void> | void;
   defaultOpen?: boolean;
+  /** Tiêu đề hiển thị — dùng khi có nhiều bảng chi tiết lương trên cùng 1 form (vd 2 phía LGVN/Công ty). */
+  label?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [newField, setNewField] = useState('');
@@ -45,7 +47,7 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
       <button type="button" onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11.5px] font-medium text-[#666] bg-[#F9F9F7] hover:bg-[#F3F2EE]">
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        Chi tiết lương{filled > 0 ? ` (${filled} mục)` : ''}
+        {label}{filled > 0 ? ` (${filled} mục)` : ''}
       </button>
       {open && (
         <div className="p-2 space-y-1">

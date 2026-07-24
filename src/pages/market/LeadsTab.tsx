@@ -19,12 +19,53 @@ const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-7
 
 const emptyLeadForm = {
   company_name: '', region: '', industry: '', workers_needed: '', source: '', lgv_qty: '0', map_link: '',
-  wage_min: '', wage_max: '', allowance_notes: '', wage_detail: {} as Record<string, string>,
+  wage_min: '', wage_max: '', allowance_notes: '', wage_detail: {} as Record<string, string>, wage_detail_client: {} as Record<string, string>,
 };
 const emptyClientSetupForm = {
   client_id: '', industry: '', workers_needed: '', lgv_qty: '0',
-  wage_min: '', wage_max: '', allowance_notes: '', map_link: '', wage_detail: {} as Record<string, string>,
+  wage_min: '', wage_max: '', allowance_notes: '', map_link: '', wage_detail: {} as Record<string, string>, wage_detail_client: {} as Record<string, string>,
 };
+
+// Lương 2 phía: wage_detail (LGVN trả NLĐ) vs wage_detail_client (Công ty trả LGVN) — cùng
+// bộ trường nên so được từng khoản. Chỉ tính khi CẢ HAI phía đã có ít nhất 1 số liệu.
+function computeWageMargin(lgvn: Record<string, string>, company: Record<string, string>) {
+  const hasLgvn = Object.values(lgvn).some(v => v.trim());
+  const hasCompany = Object.values(company).some(v => v.trim());
+  if (!hasLgvn || !hasCompany) return null;
+  const allFields = [...new Set([...Object.keys(lgvn), ...Object.keys(company)])];
+  const rows = allFields
+    .map(field => {
+      const l = parseFloat(lgvn[field] || '0') || 0;
+      const c = parseFloat(company[field] || '0') || 0;
+      return { field, lgvn: l, company: c, diff: c - l };
+    })
+    .filter(r => r.lgvn || r.company);
+  const totalLgvn = rows.reduce((s, r) => s + r.lgvn, 0);
+  const totalCompany = rows.reduce((s, r) => s + r.company, 0);
+  return { rows, totalLgvn, totalCompany, totalDiff: totalCompany - totalLgvn };
+}
+
+function WageMarginSummary({ lgvn, company }: { lgvn: Record<string, string>; company: Record<string, string> }) {
+  const margin = computeWageMargin(lgvn, company);
+  if (!margin) return null;
+  const diffCls = (d: number) => d > 0 ? 'text-emerald-700' : d < 0 ? 'text-red-600' : 'text-[#999]';
+  const fmtDiff = (d: number) => `${d > 0 ? '+' : ''}${d.toFixed(2)}tr`;
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-2.5 py-2 space-y-1">
+      <div className="text-[11px] font-semibold text-emerald-800">Chênh lệch (Công ty trả − LGVN trả)</div>
+      {margin.rows.map(r => (
+        <div key={r.field} className="flex items-center justify-between text-[11px] text-[#555]">
+          <span className="truncate">{r.field}</span>
+          <span className={`shrink-0 font-medium ${diffCls(r.diff)}`}>{fmtDiff(r.diff)}</span>
+        </div>
+      ))}
+      <div className="flex items-center justify-between text-[11.5px] font-semibold pt-1 mt-1 border-t border-emerald-200">
+        <span className="text-[#333]">Tổng</span>
+        <span className={diffCls(margin.totalDiff)}>{fmtDiff(margin.totalDiff)}</span>
+      </div>
+    </div>
+  );
+}
 
 export default function LeadsTab({ marketLeads, clients, competitors, marketZones, zoneFilter, setZoneFilter, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
@@ -173,6 +214,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_max: toNum(leadForm.wage_max),
         allowance_notes: leadForm.allowance_notes.trim() || null,
         wage_detail: wageDetailToNumbers(leadForm.wage_detail),
+        wage_detail_client: wageDetailToNumbers(leadForm.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).select().single();
       if (error) throw error;
@@ -201,6 +243,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         allowance_notes: patch.allowance_notes.trim() || null,
         map_link: patch.map_link.trim() || null,
         wage_detail: wageDetailToNumbers(patch.wage_detail),
+        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', leadId);
       if (error) throw error;
@@ -316,6 +359,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         allowance_notes: clientForm.allowance_notes.trim() || null,
         map_link: clientForm.map_link.trim() || null,
         wage_detail: wageDetailToNumbers(clientForm.wage_detail),
+        wage_detail_client: wageDetailToNumbers(clientForm.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       };
       const { error } = await supabase.from('clients').update(patch).eq('id', clientForm.client_id);
@@ -346,6 +390,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         allowance_notes: patch.allowance_notes.trim() || null,
         map_link: patch.map_link.trim() || null,
         wage_detail: wageDetailToNumbers(patch.wage_detail),
+        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', clientId);
       if (error) throw error;
@@ -596,12 +641,15 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="0.1" value={clientForm.wage_min} onChange={e => setClientForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (tr)</label>
                   <input type="number" step="0.1" value={clientForm.wage_max} onChange={e => setClientForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="col-span-2">
-                  <WageDetailTable fields={wageFields} value={clientForm.wage_detail} onChange={v => setClientForm(f => ({ ...f, wage_detail: v }))}
+                <div className="col-span-2 space-y-1.5">
+                  <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={clientForm.wage_detail} onChange={v => setClientForm(f => ({ ...f, wage_detail: v }))}
                     onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                  <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={clientForm.wage_detail_client} onChange={v => setClientForm(f => ({ ...f, wage_detail_client: v }))}
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                  <WageMarginSummary lgvn={clientForm.wage_detail} company={clientForm.wage_detail_client} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
-                  <input value={clientForm.allowance_notes} onChange={e => setClientForm(f => ({ ...f, allowance_notes: e.target.value }))} placeholder="Phụ cấp chuyên cần 300k, xăng xe 200k…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <textarea value={clientForm.allowance_notes} onChange={e => setClientForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần 300k, xăng xe 200k…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
                   <input value={clientForm.map_link} onChange={e => setClientForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               </div>
@@ -624,12 +672,15 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="0.1" value={leadForm.wage_min} onChange={e => setLeadForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (tr)</label>
                   <input type="number" step="0.1" value={leadForm.wage_max} onChange={e => setLeadForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="col-span-2">
-                  <WageDetailTable fields={wageFields} value={leadForm.wage_detail} onChange={v => setLeadForm(f => ({ ...f, wage_detail: v }))}
+                <div className="col-span-2 space-y-1.5">
+                  <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={leadForm.wage_detail} onChange={v => setLeadForm(f => ({ ...f, wage_detail: v }))}
                     onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                  <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={leadForm.wage_detail_client} onChange={v => setLeadForm(f => ({ ...f, wage_detail_client: v }))}
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                  <WageMarginSummary lgvn={leadForm.wage_detail} company={leadForm.wage_detail_client} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
-                  <input value={leadForm.allowance_notes} onChange={e => setLeadForm(f => ({ ...f, allowance_notes: e.target.value }))} placeholder="Phụ cấp chuyên cần, xăng xe…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <textarea value={leadForm.allowance_notes} onChange={e => setLeadForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần, xăng xe…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
                   <input value={leadForm.map_link} onChange={e => setLeadForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               </div>
@@ -646,7 +697,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   );
 }
 
-interface EditPatch { industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string; wage_detail: Record<string, string> }
+interface EditPatch { industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string; wage_detail: Record<string, string>; wage_detail_client: Record<string, string> }
 
 function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField }: {
   initial: EditPatch;
@@ -672,14 +723,21 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
         <input type="number" step="0.1" value={patch.wage_min} onChange={e => setPatch(p => ({ ...p, wage_min: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
       <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương đến (tr)</label>
         <input type="number" step="0.1" value={patch.wage_max} onChange={e => setPatch(p => ({ ...p, wage_max: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-      <div className="col-span-2">
+      <div className="col-span-2 space-y-1.5">
         <WageDetailTable
+          label="Chi tiết lương · LGVN trả NLĐ"
           fields={wageFields} value={patch.wage_detail} onChange={v => setPatch(p => ({ ...p, wage_detail: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
         />
+        <WageDetailTable
+          label="Chi tiết lương · Công ty trả LGVN"
+          fields={wageFields} value={patch.wage_detail_client} onChange={v => setPatch(p => ({ ...p, wage_detail_client: v }))}
+          onAddField={onAddWageField} onDeleteField={onDeleteWageField}
+        />
+        <WageMarginSummary lgvn={patch.wage_detail} company={patch.wage_detail_client} />
       </div>
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
-        <input value={patch.allowance_notes} onChange={e => setPatch(p => ({ ...p, allowance_notes: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+        <textarea value={patch.allowance_notes} onChange={e => setPatch(p => ({ ...p, allowance_notes: e.target.value }))} rows={2} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Link Google Maps</label>
         <input value={patch.map_link} onChange={e => setPatch(p => ({ ...p, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
       <div className="col-span-2 flex gap-2 mt-1">
@@ -701,6 +759,7 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
     allowance_notes: client.allowance_notes ?? '',
     map_link: client.map_link ?? '',
     wage_detail: wageDetailToStrings(client.wage_detail),
+    wage_detail_client: wageDetailToStrings(client.wage_detail_client),
   }} {...rest} />;
 }
 
@@ -713,5 +772,6 @@ function LeadEditForm({ lead, ...rest }: { lead: import('../../lib/types').Marke
     allowance_notes: lead.allowance_notes ?? '',
     map_link: lead.map_link ?? '',
     wage_detail: wageDetailToStrings(lead.wage_detail),
+    wage_detail_client: wageDetailToStrings(lead.wage_detail_client),
   }} {...rest} />;
 }

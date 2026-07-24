@@ -110,6 +110,9 @@ export interface Client {
   allowance_notes?: string | null;
   // Chi tiết lương Let's Go VN trả cho khách hàng này, theo từng trường dùng chung (migration 101)
   wage_detail?: Record<string, number> | null;
+  // Chi tiết lương/phí PHÍA CÔNG TY trả cho Let's Go VN, cùng bộ trường với wage_detail để
+  // so sánh chênh lệch từng khoản (migration 115)
+  wage_detail_client?: Record<string, number> | null;
 }
 
 // Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
@@ -525,6 +528,9 @@ export interface MarketLead {
   allowance_notes?: string | null;
   // Chi tiết lương Let's Go VN dự kiến trả, theo từng trường dùng chung (migration 101)
   wage_detail?: Record<string, number> | null;
+  // Chi tiết lương/phí PHÍA CÔNG TY trả cho Let's Go VN, cùng bộ trường với wage_detail để
+  // so sánh chênh lệch từng khoản (migration 115)
+  wage_detail_client?: Record<string, number> | null;
 }
 
 export interface Quote {

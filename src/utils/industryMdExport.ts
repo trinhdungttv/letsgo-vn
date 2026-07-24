@@ -2,6 +2,7 @@ import type {
   Industry, IndustryTerm, IndustryPosition, IndustryMetric, IndustryValueChainItem,
   Client, MarketLead, Competitor,
 } from '../lib/types';
+import { htmlToMarkdown } from '../lib/htmlText';
 
 const MISSING = '⚠ chưa nhập';
 const tr = (v: number | null | undefined) => v != null ? (v / 1_000_000).toFixed(1) + 'tr' : null;
@@ -148,7 +149,9 @@ export function buildIndustryBriefMd({ industry, terms, positions, metrics, valu
   else L.push(MISSING);
 
   h('11. Bối cảnh ngành');
-  const block = (title: string, v?: string | null) => { L.push(`### ${title}`); L.push(''); L.push(v || MISSING); L.push(''); };
+  // 4 mục này giờ nhập qua RichTextEditor (lưu HTML) — đổi sang markdown cho file xuất sạch,
+  // không lẫn thẻ HTML thô.
+  const block = (title: string, v?: string | null) => { L.push(`### ${title}`); L.push(''); L.push(htmlToMarkdown(v) || MISSING); L.push(''); };
   block('Đánh giá tổng quan thị trường', industry.overview);
   block('Chính sách & FDI', industry.policy_notes);
   block('Thuế & tác động', industry.tax_notes);

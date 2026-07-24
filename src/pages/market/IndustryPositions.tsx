@@ -26,6 +26,9 @@ export default function IndustryPositions({ industryId, toast }: Props) {
     setRows(prev => prev.map(r => r._key === key ? { ...r, ...patch } : r));
 
   const num = (v: string) => v.trim() === '' ? null : Number(v.replace(/[^\d.]/g, ''));
+  // Lương vẫn lưu VNĐ trong DB — chỉ đổi đơn vị hiển thị/nhập sang triệu (tr) cho dễ đọc.
+  const trVal = (v: number | null | undefined) => v != null ? String(v / 1_000_000) : '';
+  const numTr = (v: string) => v.trim() === '' ? null : Math.round(Number(v.replace(/[^\d.]/g, '')) * 1_000_000);
 
   const addRow = () => setRows(prev => [...prev, { _key: 'new-' + Date.now(), position: '', sort_order: prev.length }]);
 
@@ -105,8 +108,8 @@ export default function IndustryPositions({ industryId, toast }: Props) {
           <tr className="text-[10.5px] text-[#888] bg-[#FBFBF9]">
             <th className="text-left font-medium px-3 py-1.5 w-[20%]">Vị trí</th>
             <th className="text-left font-medium px-1 py-1.5 w-[8%]">Tỷ lệ %</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[11%]">Lương từ</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[11%]">Lương đến</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[11%]">Lương từ (tr)</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[11%]">Lương đến (tr)</th>
             <th className="text-left font-medium px-1 py-1.5 w-[13%]">Độ khó tuyển</th>
             <th className="text-left font-medium px-1 py-1.5">Yêu cầu đặc thù</th>
             <th className="w-8" />
@@ -117,8 +120,8 @@ export default function IndustryPositions({ industryId, toast }: Props) {
             <tr key={r._key} className="hover:bg-[#FBFBF9]">
               <td className="px-3 py-1"><input value={r.position ?? ''} onChange={e => set(r._key, { position: e.target.value })} placeholder="VD: Công nhân đóng gói" className={cell + ' font-medium'} /></td>
               <td className="px-1 py-1"><input value={r.ratio_pct ?? ''} onChange={e => set(r._key, { ratio_pct: num(e.target.value) })} placeholder="—" className={cell} /></td>
-              <td className="px-1 py-1"><input value={r.wage_min ?? ''} onChange={e => set(r._key, { wage_min: num(e.target.value) })} placeholder="6500000" className={cell} /></td>
-              <td className="px-1 py-1"><input value={r.wage_max ?? ''} onChange={e => set(r._key, { wage_max: num(e.target.value) })} placeholder="8500000" className={cell} /></td>
+              <td className="px-1 py-1"><input value={trVal(r.wage_min)} onChange={e => set(r._key, { wage_min: numTr(e.target.value) })} placeholder="6.5" className={cell} /></td>
+              <td className="px-1 py-1"><input value={trVal(r.wage_max)} onChange={e => set(r._key, { wage_max: numTr(e.target.value) })} placeholder="8.5" className={cell} /></td>
               <td className="px-1 py-1">
                 <select value={r.difficulty ?? 0} onChange={e => set(r._key, { difficulty: Number(e.target.value) || null })}
                   className={`${cell} ${DIFF_STYLE[r.difficulty ?? 0]} cursor-pointer`}>

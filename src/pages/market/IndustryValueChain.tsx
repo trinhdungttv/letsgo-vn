@@ -62,7 +62,7 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
             <div className={`bg-[#F9F9F7] rounded-lg border-l-[3px] ${c.accent} px-2.5 py-2 h-full`}>
               <div className="flex items-center gap-1 text-[11.5px] font-medium text-[#111]">{c.icon} {c.label}</div>
               <div className="text-[10px] text-[#999] mb-1.5">{c.hint}</div>
-              <div className="space-y-1">
+              <div className="space-y-1 max-h-[220px] overflow-y-auto pr-0.5">
                 {items.filter(i => i.kind === c.kind).map(it => (
                   <div key={it.id} className="bg-white rounded px-2 py-1 group">
                     <div className="flex items-center gap-1">

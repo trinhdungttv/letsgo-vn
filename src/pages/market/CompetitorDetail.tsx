@@ -416,11 +416,11 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Điểm mạnh</label>
-                    <textarea value={form.strengths} onChange={e => setForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-none" />
+                    <textarea value={form.strengths} onChange={e => setForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-y leading-relaxed" />
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Điểm yếu</label>
-                    <textarea value={form.weaknesses} onChange={e => setForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-none" />
+                    <textarea value={form.weaknesses} onChange={e => setForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-y leading-relaxed" />
                   </div>
                 </div>
               ) : (
@@ -470,7 +470,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
             <div className="p-4 space-y-3">
               <div className="space-y-2">
                 <textarea value={logNote} onChange={e => setLogNote(e.target.value)} placeholder="Ghi chú mới..." rows={2}
-                  className="w-full text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-none" />
+                  className="w-full text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] resize-y leading-relaxed" />
                 <div className="flex gap-2">
                   <input value={logSource} onChange={e => setLogSource(e.target.value)} placeholder="Nguồn tin..."
                     className="flex-1 text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />

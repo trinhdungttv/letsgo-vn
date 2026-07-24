@@ -19,6 +19,8 @@ import IndustryMetrics from './IndustryMetrics';
 import IndustryValueChain from './IndustryValueChain';
 import { buildIndustryBriefMd } from '../../utils/industryMdExport';
 import { downloadMarkdown } from '../../utils/clientMdExport';
+import RichTextEditor from './RichTextEditor';
+import { htmlToPlainText } from '../../lib/htmlText';
 
 const emptySeason = () => Array(12).fill(0) as number[];
 const emptyNotes = () => Array(12).fill('') as string[];
@@ -233,9 +235,11 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
     ) => (
       <div className={`bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden border-l-[3px] ${accent}`}>
         <div className="px-4 py-2.5 border-b border-[#F0EEE9] flex items-center gap-1.5 text-[12.5px] font-semibold text-[#111]">{icon} {label}</div>
-        <textarea value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} rows={4}
+        <RichTextEditor
+          value={form[key] || ''}
+          onChange={html => setForm(f => ({ ...f, [key]: html }))}
           placeholder={hint}
-          className="w-full text-[13px] px-4 py-2.5 outline-none resize-y min-h-[90px] leading-relaxed" />
+        />
       </div>
     );
 
@@ -419,7 +423,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
                 <div className="text-[12.5px] font-medium text-[#111]">{ind.name}</div>
               </div>
               <div className="text-[11px] text-[#888] mt-1.5 line-clamp-2">
-                {ind.overview || ind.policy_notes || ind.trend_notes || ind.tax_notes || 'Chưa có ghi chú'}
+                {htmlToPlainText(ind.overview || ind.policy_notes || ind.trend_notes || ind.tax_notes) || 'Chưa có ghi chú'}
               </div>
               <div className="flex justify-between text-[10.5px] text-[#888] mt-2 pt-2 border-t border-[#F0EEE9]">
                 <span className="inline-flex items-center gap-1"><Users size={10} /> {st?.clientCount ?? 0} KH</span>
