@@ -80,9 +80,15 @@ export function buildIndustryBriefMd({ industry, terms, positions, metrics, valu
 
   h('4. Giữ chân lao động');
   L.push(`- Tỷ lệ nghỉ việc: **${industry.turnover_rate != null ? industry.turnover_rate + '%/tháng' : MISSING}**`);
-  L.push(`- Nghỉ nhiều nhất ở: **${industry.quit_stage || MISSING}**`);
+  const stages = industry.quit_stages?.length ? industry.quit_stages : (industry.quit_stage ? [industry.quit_stage] : []);
+  L.push(`- Nghỉ nhiều nhất ở: **${stages.length ? stages.join(' · ') : MISSING}**`);
   const reasons = industry.quit_reasons ?? [];
   L.push(`- Lý do chính: ${reasons.length ? reasons.map((r, i) => `${i + 1}. ${r}`).join(' · ') : MISSING}`);
+  const reasonNotes = industry.quit_reason_notes ?? {};
+  for (const r of reasons) {
+    const n = (reasonNotes[r] ?? '').trim();
+    if (n) L.push(`  - **${r}:** ${n.replace(/\s*\n\s*/g, ' ')}`);
+  }
   L.push('');
   L.push('**Biện pháp đã dùng và kết quả:**');
   L.push('');
@@ -127,7 +133,7 @@ export function buildIndustryBriefMd({ industry, terms, positions, metrics, valu
   h('8. Chuỗi giá trị — đọc trước biến động');
   const chain = (kind: string, label: string) => {
     const rows = valueChain.filter(v => v.kind === kind);
-    L.push(`**${label}:** ${rows.length ? rows.map(r => r.name + (r.note ? ` (${r.note})` : '')).join(' · ') : MISSING}`);
+    L.push(`**${label}:** ${rows.length ? rows.map(r => htmlToMarkdown(r.name) + (r.note ? ` (${r.note})` : '')).join(' · ') : MISSING}`);
     L.push('');
   };
   chain('input', 'Đầu vào');

@@ -97,7 +97,9 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
       season_notes: data.season_notes ?? emptyNotes(),
       turnover_rate: data.turnover_rate ?? null,
       quit_stage: data.quit_stage || null,
+      quit_stages: data.quit_stages ?? [],
       quit_reasons: data.quit_reasons ?? [],
+      quit_reason_notes: data.quit_reason_notes ?? {},
       retention_actions: data.retention_actions?.trim() || null,
       updated_at: new Date().toISOString(),
     };
@@ -153,13 +155,15 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
         season_notes: selected.season_notes?.length === 12 ? [...selected.season_notes] : emptyNotes(),
         turnover_rate: selected.turnover_rate ?? null,
         quit_stage: selected.quit_stage ?? null,
+        quit_stages: selected.quit_stages ?? [],
         quit_reasons: selected.quit_reasons ?? [],
+        quit_reason_notes: selected.quit_reason_notes ?? {},
         retention_actions: selected.retention_actions ?? '',
       };
       setForm(snapshot);
       setLockedSnapshot(!!(
         snapshot.overview || snapshot.policy_notes || snapshot.tax_notes || snapshot.trend_notes ||
-        snapshot.turnover_rate != null || snapshot.quit_stage || snapshot.quit_reasons.length > 0 ||
+        snapshot.turnover_rate != null || snapshot.quit_stage || snapshot.quit_stages.length > 0 || snapshot.quit_reasons.length > 0 ||
         snapshot.retention_actions || snapshot.season_levels.some(v => v > 0) || snapshot.season_notes.some(Boolean)
       ));
       setConfirmEditAction(null);
@@ -360,8 +364,9 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
 
         <IndustryRetention
           turnoverRate={form.turnover_rate ?? null}
-          quitStage={form.quit_stage ?? null}
+          quitStages={form.quit_stages ?? []}
           quitReasons={form.quit_reasons ?? []}
+          quitReasonNotes={form.quit_reason_notes ?? {}}
           retentionActions={form.retention_actions ?? null}
           onChange={patch => guard(() => setForm(f => ({ ...f, ...patch })))}
         />

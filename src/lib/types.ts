@@ -442,6 +442,10 @@ export interface Industry {
   quit_stage?: string | null;
   quit_reasons?: string[] | null;
   retention_actions?: string | null;
+  // Nhiều giai đoạn hay nghỉ + ghi chú chi tiết theo từng lý do (migration 120).
+  // quit_stage vẫn được ghi = phần tử đầu của quit_stages cho dữ liệu/báo cáo cũ.
+  quit_stages?: string[] | null;
+  quit_reason_notes?: Record<string, string> | null;
   // Ô tổng quan Chuỗi giá trị ngành (migration 117), mặc định ẩn trên UI
   value_chain_input_summary?: string | null;
   value_chain_customer_summary?: string | null;

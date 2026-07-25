@@ -1,7 +1,18 @@
-import { useEffect, useState } from 'react';
-import { Workflow, Plus, Trash2, ArrowRight, PackageSearch, Building2, Globe2, Eye, EyeOff } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
+import { Workflow, Plus, Trash2, ArrowRight, PackageSearch, Building2, Globe2, Eye, EyeOff, Bold } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { IndustryValueChainItem, ValueChainKind } from '../../lib/types';
+
+// Tên mắt xích lưu dạng HTML (in đậm / bôi màu từ khoá quan trọng) — chỉ giữ thẻ định dạng inline.
+const NAME_TAGS = { ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'span', 'mark', 'font'], ALLOWED_ATTR: ['style', 'color'] };
+const cleanName = (html: string) => DOMPurify.sanitize(html, NAME_TAGS).replace(/<br\s*\/?>/gi, ' ').trim();
+const plainName = (html: string) => {
+  const el = document.createElement('div');
+  el.innerHTML = DOMPurify.sanitize(html, NAME_TAGS);
+  return el.textContent ?? '';
+};
+const HL_COLORS = ['#FEF08A', '#BBF7D0', '#BFDBFE', '#FBCFE8'];
 
 const COLS: { kind: ValueChainKind; label: string; hint: string; icon: React.ReactNode; accent: string; summaryField: 'value_chain_input_summary' | 'value_chain_customer_summary' | 'value_chain_market_summary' }[] = [
   { kind: 'input', label: 'Đầu vào', hint: 'Nguyên liệu, linh kiện nhập từ đâu', icon: <PackageSearch size={12} />, accent: 'border-l-slate-400', summaryField: 'value_chain_input_summary' },
@@ -17,6 +28,9 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
   const [confirmDel, setConfirmDel] = useState<IndustryValueChainItem | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState<Record<ValueChainKind, boolean>>({ input: false, customer: false, market: false });
+  // Mắt xích đang sửa tên — chỉ mắt xích này mới hiện thanh định dạng (nổi lên trên, không đẩy layout).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const nameRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     supabase.from('industry_value_chain').select('*').eq('industry_id', industryId).order('created_at')
@@ -29,7 +43,8 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
       }));
   }, [industryId]);
 
-  const saveSummary = async (field: string, html: string) => {
+  const saveSummary = async (field: string, raw: string) => {
+    const html = DOMPurify.sanitize(raw).trim();
     if ((summaries[field] ?? '') === html) return;
     setSummaries(prev => ({ ...prev, [field]: html }));
     const { error } = await supabase.from('industries').update({ [field]: html || null }).eq('id', industryId);
@@ -44,6 +59,24 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
     if (error) { toast('Lỗi: ' + error.message); return; }
     setItems(prev => [...prev, data as IndustryValueChainItem]);
     setDraft(d => ({ ...d, [kind]: '' }));
+  };
+
+  const saveName = async (it: IndustryValueChainItem, raw: string) => {
+    const name = cleanName(raw);
+    // Xoá sạch tên thì giữ nguyên tên cũ — muốn bỏ mắt xích thì dùng nút xoá (có hỏi lại).
+    if (!plainName(name).trim()) {
+      if (nameRefs.current[it.id]) nameRefs.current[it.id]!.innerHTML = it.name;
+      return;
+    }
+    if (it.name === name) return;
+    setItems(prev => prev.map(x => x.id === it.id ? { ...x, name } : x));
+    const { error } = await supabase.from('industry_value_chain').update({ name }).eq('id', it.id);
+    if (error) toast('Lỗi: ' + error.message);
+  };
+
+  const exec = (id: string, cmd: string, val?: string) => {
+    nameRefs.current[id]?.focus();
+    document.execCommand(cmd, false, val);
   };
 
   const saveNote = async (it: IndustryValueChainItem, note: string) => {
@@ -90,7 +123,7 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
                 <div
                   contentEditable
                   suppressContentEditableWarning
-                  onBlur={e => saveSummary(c.summaryField, e.currentTarget.innerHTML.trim())}
+                  onBlur={e => saveSummary(c.summaryField, e.currentTarget.innerHTML)}
                   dangerouslySetInnerHTML={{ __html: summaries[c.summaryField] ?? '' }}
                   data-placeholder="Tổng quan tình hình… (Ctrl+B để in đậm)"
                   className="w-full min-h-[9.5em] max-h-[220px] overflow-y-auto text-[10.5px] text-[#555] leading-snug outline-none bg-white border border-dashed border-[#D8D6D0] rounded px-1.5 py-1 mb-1.5 focus:border-blue-500 empty:before:content-[attr(data-placeholder)] empty:before:text-[#999]"
@@ -98,10 +131,31 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
               )}
               <div className="space-y-1 max-h-[220px] overflow-y-auto pr-0.5">
                 {items.filter(i => i.kind === c.kind).map(it => (
-                  <div key={it.id} className="bg-white rounded px-2 py-1 group">
+                  <div key={it.id} className="bg-white rounded px-2 py-1 group relative">
+                    {editingId === it.id && (
+                      <div className="absolute -top-3 right-1 z-20 flex items-center gap-0.5 bg-white border border-[#E8E7E2] rounded-md shadow px-1 py-0.5">
+                        <button onMouseDown={e => { e.preventDefault(); exec(it.id, 'bold'); }} title="In đậm (Ctrl+B)" className="p-0.5 rounded hover:bg-gray-100 text-[#555]"><Bold size={10} /></button>
+                        {HL_COLORS.map(hc => (
+                          <button key={hc} onMouseDown={e => { e.preventDefault(); exec(it.id, 'hiliteColor', hc); }}
+                            title="Bôi màu từ khoá" className="w-3 h-3 rounded-full border border-gray-300" style={{ backgroundColor: hc }} />
+                        ))}
+                        <button onMouseDown={e => { e.preventDefault(); exec(it.id, 'hiliteColor', 'transparent'); }}
+                          title="Bỏ bôi màu" className="px-0.5 rounded hover:bg-gray-100 text-[9px] text-[#999]">✕</button>
+                      </div>
+                    )}
                     <div className="flex items-center gap-1">
-                      <span className="text-[11.5px] font-medium text-[#111] flex-1 truncate">{it.name}</span>
-                      <button onClick={() => setConfirmDel(it)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#ccc] hover:text-red-600"><Trash2 size={11} /></button>
+                      <div
+                        ref={el => { nameRefs.current[it.id] = el; }}
+                        contentEditable
+                        suppressContentEditableWarning
+                        onFocus={() => setEditingId(it.id)}
+                        onBlur={e => { setEditingId(null); saveName(it, e.currentTarget.innerHTML); }}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                        dangerouslySetInnerHTML={{ __html: it.name }}
+                        title="Click để sửa · bôi đen từ khoá rồi bấm B hoặc chọn màu"
+                        className="text-[11.5px] font-medium text-[#111] flex-1 break-words outline-none rounded px-0.5 -mx-0.5 focus:bg-blue-50/60"
+                      />
+                      <button onClick={() => setConfirmDel(it)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#ccc] hover:text-red-600 shrink-0"><Trash2 size={11} /></button>
                     </div>
                     <input defaultValue={it.note ?? ''} onBlur={e => saveNote(it, e.target.value.trim())}
                       placeholder="ghi chú…" className="w-full text-[10.5px] text-[#777] outline-none bg-transparent" />
@@ -124,7 +178,7 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[12px] w-full max-w-sm p-5 shadow-xl">
             <div className="text-[14px] font-semibold text-[#111] mb-1.5">Xoá mắt xích?</div>
-            <div className="text-[12px] text-[#666] leading-relaxed"><b>{confirmDel.name}</b> và ghi chú kèm theo sẽ bị xoá vĩnh viễn.</div>
+            <div className="text-[12px] text-[#666] leading-relaxed"><b>{plainName(confirmDel.name)}</b> và ghi chú kèm theo sẽ bị xoá vĩnh viễn.</div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setConfirmDel(null)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-[12px] font-medium text-gray-600">Hủy</button>
               <button onClick={handleDelete} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-medium hover:bg-red-700">Xoá</button>
