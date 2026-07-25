@@ -437,6 +437,10 @@ export interface Industry {
   quit_stage?: string | null;
   quit_reasons?: string[] | null;
   retention_actions?: string | null;
+  // Ô tổng quan Chuỗi giá trị ngành (migration 117), mặc định ẩn trên UI
+  value_chain_input_summary?: string | null;
+  value_chain_customer_summary?: string | null;
+  value_chain_market_summary?: string | null;
   updated_at?: string;
   created_at?: string;
 }
