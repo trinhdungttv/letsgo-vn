@@ -101,6 +101,11 @@ export interface Client {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Kênh online — Website/Facebook/YouTube/TikTok (migration 119)
+  website_url?: string | null;
+  facebook_url?: string | null;
+  youtube_url?: string | null;
+  tiktok_url?: string | null;
   // Hồ sơ thị trường: ngành nghề + theo dõi lấp đầy NCC + lương khảo sát (migration 100)
   industry?: string | null;
   market_workers_needed?: number | null;
@@ -486,6 +491,18 @@ export interface IndustryValueChainItem {
   created_at?: string;
 }
 
+// BD Battlecard & kịch bản tư vấn Sales (migration 118)
+export interface IndustryBattlecard {
+  id: string;
+  industry_id: string;
+  pain_point: string;
+  our_weapon: string;
+  pitching_script?: string | null;
+  category?: string | null;
+  sort_order?: number | null;
+  created_at?: string;
+}
+
 // Thuật ngữ ngành (migration 107) — industry_id null = thuật ngữ dùng chung mọi ngành
 export interface IndustryTerm {
   id: string;
@@ -528,6 +545,11 @@ export interface MarketLead {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Kênh online — Website/Facebook/YouTube/TikTok (migration 119)
+  website_url?: string | null;
+  facebook_url?: string | null;
+  youtube_url?: string | null;
+  tiktok_url?: string | null;
   // Lương khảo sát thực địa (migration 100)
   wage_min?: number | null;
   wage_max?: number | null;

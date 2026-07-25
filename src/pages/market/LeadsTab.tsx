@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/auth';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import SearchSelect from './SearchSelect';
 import SupplierFillCard from './SupplierFillCard';
+import SocialLinksRow from '../../components/SocialLinksRow';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
@@ -247,6 +248,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_max: toNum(patch.wage_max),
         allowance_notes: patch.allowance_notes.trim() || null,
         map_link: patch.map_link.trim() || null,
+        website_url: patch.website_url.trim() || null,
+        facebook_url: patch.facebook_url.trim() || null,
+        youtube_url: patch.youtube_url.trim() || null,
+        tiktok_url: patch.tiktok_url.trim() || null,
         wage_detail: wageDetailToNumbers(patch.wage_detail),
         wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
@@ -394,6 +399,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_max: toNum(patch.wage_max),
         allowance_notes: patch.allowance_notes.trim() || null,
         map_link: patch.map_link.trim() || null,
+        website_url: patch.website_url.trim() || null,
+        facebook_url: patch.facebook_url.trim() || null,
+        youtube_url: patch.youtube_url.trim() || null,
+        tiktok_url: patch.tiktok_url.trim() || null,
         wage_detail: wageDetailToNumbers(patch.wage_detail),
         wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
@@ -514,7 +523,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                     {c.allowance_notes ? ` · ${c.allowance_notes}` : ''}
                   </div>
                 </div>
-                <button onClick={() => setEditClientId(editClientId === c.id ? null : c.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] border border-[#E8E7E2] text-[#666] hover:bg-white shrink-0"><Pencil size={11} /> Sửa</button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <SocialLinksRow websiteUrl={c.website_url} facebookUrl={c.facebook_url} youtubeUrl={c.youtube_url} tiktokUrl={c.tiktok_url} />
+                  <button onClick={() => setEditClientId(editClientId === c.id ? null : c.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] border border-[#E8E7E2] text-[#666] hover:bg-white shrink-0"><Pencil size={11} /> Sửa</button>
+                </div>
               </div>
               {editClientId === c.id && (
                 <ClientEditForm client={c} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
@@ -580,7 +592,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                     {l.allowance_notes ? ` · ${l.allowance_notes}` : ''}
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
+                  <SocialLinksRow websiteUrl={l.website_url} facebookUrl={l.facebook_url} youtubeUrl={l.youtube_url} tiktokUrl={l.tiktok_url} />
                   <button onClick={() => setEditLeadId(editLeadId === l.id ? null : l.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] border border-[#E8E7E2] text-[#666] hover:bg-white"><Pencil size={11} /> Sửa</button>
                   <button onClick={() => handlePushCRM(l.company_name, l.region, l.workers_needed)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
                     Đẩy CRM <ArrowRight size={12} />
@@ -702,7 +715,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   );
 }
 
-interface EditPatch { industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string; wage_detail: Record<string, string>; wage_detail_client: Record<string, string> }
+interface EditPatch {
+  industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string;
+  website_url: string; facebook_url: string; youtube_url: string; tiktok_url: string;
+  wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
+}
 
 function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField }: {
   initial: EditPatch;
@@ -746,6 +763,15 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
         <textarea value={patch.allowance_notes} onChange={e => setPatch(p => ({ ...p, allowance_notes: e.target.value }))} rows={2} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Link Google Maps</label>
         <input value={patch.map_link} onChange={e => setPatch(p => ({ ...p, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+      <div className="col-span-2 flex flex-col gap-1.5">
+        <label className="text-[11px] text-[#666] font-medium">Kênh online — theo dõi hoạt động công ty</label>
+        <div className="grid grid-cols-2 gap-2">
+          <input value={patch.website_url} onChange={e => setPatch(p => ({ ...p, website_url: e.target.value }))} placeholder="Website https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+          <input value={patch.facebook_url} onChange={e => setPatch(p => ({ ...p, facebook_url: e.target.value }))} placeholder="Facebook https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+          <input value={patch.youtube_url} onChange={e => setPatch(p => ({ ...p, youtube_url: e.target.value }))} placeholder="YouTube https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+          <input value={patch.tiktok_url} onChange={e => setPatch(p => ({ ...p, tiktok_url: e.target.value }))} placeholder="TikTok https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+        </div>
+      </div>
       <div className="col-span-2 flex gap-2 mt-1">
         <button onClick={onCancel} className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-[11.5px] font-medium text-gray-600">Hủy</button>
         <button onClick={() => onSave(patch)} disabled={saving} className="flex-1 px-3 py-1.5 bg-[#1D4ED8] text-white rounded-lg text-[11.5px] font-medium hover:bg-[#1E40AF] disabled:opacity-60">{saving ? 'Đang lưu...' : 'Lưu'}</button>
@@ -764,6 +790,10 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
     wage_max: client.wage_max != null ? String(client.wage_max / 1_000_000) : '',
     allowance_notes: client.allowance_notes ?? '',
     map_link: client.map_link ?? '',
+    website_url: client.website_url ?? '',
+    facebook_url: client.facebook_url ?? '',
+    youtube_url: client.youtube_url ?? '',
+    tiktok_url: client.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(client.wage_detail),
     wage_detail_client: wageDetailToStrings(client.wage_detail_client),
   }} {...rest} />;
@@ -777,6 +807,10 @@ function LeadEditForm({ lead, ...rest }: { lead: import('../../lib/types').Marke
     wage_max: lead.wage_max != null ? String(lead.wage_max / 1_000_000) : '',
     allowance_notes: lead.allowance_notes ?? '',
     map_link: lead.map_link ?? '',
+    website_url: lead.website_url ?? '',
+    facebook_url: lead.facebook_url ?? '',
+    youtube_url: lead.youtube_url ?? '',
+    tiktok_url: lead.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(lead.wage_detail),
     wage_detail_client: wageDetailToStrings(lead.wage_detail_client),
   }} {...rest} />;

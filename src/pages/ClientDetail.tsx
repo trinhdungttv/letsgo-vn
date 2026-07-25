@@ -21,6 +21,7 @@ import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 import PaymentHistory from '../components/clients/PaymentHistory';
 import ExportMdModal from '../components/clients/ExportMdModal';
+import SocialLinksRow from '../components/SocialLinksRow';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
@@ -62,6 +63,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [editingProjectType, setEditingProjectType] = useState(false);
   const [tempProjectType, setTempProjectType] = useState<string>('contracted');
   const [tempLgPct, setTempLgPct] = useState(60);
+  const [editingSocialLinks, setEditingSocialLinks] = useState(false);
+  const [socialForm, setSocialForm] = useState({ website_url: '', facebook_url: '', youtube_url: '', tiktok_url: '' });
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
   const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
   const [laborInput, setLaborInput] = useState(String(client.current_workers || 0));
@@ -1065,6 +1068,50 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           </div>
         ) : (
           <>
+        {/* Kênh online — Website/Facebook/YouTube/TikTok */}
+        {(() => {
+          const [editSL, setEditSL] = [editingSocialLinks, setEditingSocialLinks];
+          const [temp, setTemp] = [socialForm, setSocialForm];
+          return (
+            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[12.5px] font-semibold text-[#111]">Kênh online</div>
+                {!editSL ? (
+                  <button onClick={() => { setEditSL(true); setTemp({ website_url: client.website_url || '', facebook_url: client.facebook_url || '', youtube_url: client.youtube_url || '', tiktok_url: client.tiktok_url || '' }); }}
+                    className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
+                    <Edit2 size={12} />
+                  </button>
+                ) : (
+                  <div className="flex gap-1.5">
+                    <button onClick={async () => {
+                      const updates = {
+                        website_url: temp.website_url.trim() || null,
+                        facebook_url: temp.facebook_url.trim() || null,
+                        youtube_url: temp.youtube_url.trim() || null,
+                        tiktok_url: temp.tiktok_url.trim() || null,
+                      };
+                      const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                      if (!error) { onClientUpdate({ ...client, ...updates }); toast('Đã lưu'); } else toast('Lỗi: ' + error.message);
+                      setEditSL(false);
+                    }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Lưu</button>
+                    <button onClick={() => setEditSL(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huỷ</button>
+                  </div>
+                )}
+              </div>
+              {editSL ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={temp.website_url} onChange={e => setTemp({ ...temp, website_url: e.target.value })} placeholder="Website https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <input value={temp.facebook_url} onChange={e => setTemp({ ...temp, facebook_url: e.target.value })} placeholder="Facebook https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <input value={temp.youtube_url} onChange={e => setTemp({ ...temp, youtube_url: e.target.value })} placeholder="YouTube https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <input value={temp.tiktok_url} onChange={e => setTemp({ ...temp, tiktok_url: e.target.value })} placeholder="TikTok https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                </div>
+              ) : (
+                <SocialLinksRow websiteUrl={client.website_url} facebookUrl={client.facebook_url} youtubeUrl={client.youtube_url} tiktokUrl={client.tiktok_url} />
+              )}
+            </div>
+          );
+        })()}
+
         {/* Health Score Card */}
         {(() => {
           const wHistory = hist.slice(-6).map(h => h.count);

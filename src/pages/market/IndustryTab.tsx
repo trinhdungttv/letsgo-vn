@@ -18,6 +18,8 @@ import IndustryPositions from './IndustryPositions';
 import IndustryRetention from './IndustryRetention';
 import IndustryMetrics from './IndustryMetrics';
 import IndustryValueChain from './IndustryValueChain';
+import IndustryBattlecards from './IndustryBattlecards';
+import IndustryCheatSheetModal from './IndustryCheatSheetModal';
 import { buildIndustryBriefMd } from '../../utils/industryMdExport';
 import { downloadMarkdown } from '../../utils/clientMdExport';
 import RichTextEditor from './RichTextEditor';
@@ -62,6 +64,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showCheatSheet, setShowCheatSheet] = useState(false);
   const [form, setForm] = useState<Partial<Industry> | null>(null);
   // Vừa quay lại trang ngành đã có dữ liệu từ trước — thao tác ĐẦU TIÊN làm đổi giá trị phải
   // xác nhận lại (đề phòng lỡ tay); xác nhận 1 lần thì mở khoá, không hỏi lại tới khi rời trang.
@@ -332,8 +335,8 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
             {(saveStatus === 'pending' || saveStatus === 'saving') && <><Loader2 size={12} className="animate-spin" /> Đang lưu…</>}
             {saveStatus === 'saved' && <><Check size={12} className="text-emerald-600" /> Đã lưu</>}
           </div>
-          <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E8E7E2] text-[#444] hover:bg-[#F9F9F7] disabled:opacity-60 transition">
-            <FileDown size={13} /> {exporting ? 'Đang xuất...' : 'Chuẩn bị gặp khách'}
+          <button onClick={() => setShowCheatSheet(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E8E7E2] text-[#444] hover:bg-[#F9F9F7] transition">
+            <FileDown size={13} /> Chuẩn bị gặp khách
           </button>
         </div>
 
@@ -362,6 +365,8 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
           retentionActions={form.retention_actions ?? null}
           onChange={patch => guard(() => setForm(f => ({ ...f, ...patch })))}
         />
+
+        <IndustryBattlecards industryId={selected.id} toast={toast} />
 
         <IndustryMetrics industryId={selected.id} toast={toast} />
 
@@ -417,6 +422,17 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
 
         {selected.updated_at && (
           <div className="px-3 py-1.5 bg-[#F9F9F7] rounded-lg text-[11px] text-[#aaa]">Cập nhật: {new Date(selected.updated_at).toLocaleDateString('vi-VN')}</div>
+        )}
+
+        {showCheatSheet && (
+          <IndustryCheatSheetModal
+            industry={{ ...selected, ...form }}
+            wageRangeText={wageRange(st)}
+            exporting={exporting}
+            onDownloadFull={handleExport}
+            onClose={() => setShowCheatSheet(false)}
+            toast={toast}
+          />
         )}
 
         {confirmEditAction && (
