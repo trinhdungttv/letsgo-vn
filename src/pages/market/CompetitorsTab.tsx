@@ -1,4 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend,
+} from 'chart.js';
 import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, type MarketTabProps } from './shared';
@@ -8,10 +12,40 @@ import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
 import { type CompetitorLinkType, fetchLinkTypes, addLinkType, deleteLinkType, reorderLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
+
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
   fee_per_shift: '', trend: 'stable', supplying_for: '', notes: '',
 };
+
+// Bật/tắt + sắp xếp trên/dưới các biểu đồ tổng quan đối thủ — lưu localStorage, không cần migration.
+interface CompChartItem { key: string; label: string; visible: boolean }
+const COMP_CHART_LABELS: Record<string, string> = {
+  feeCompare: 'So sánh phí dịch vụ giữa đối thủ',
+  wageVsMarket: 'Lương trả LĐ so với mặt bằng thị trường',
+  densityByZone: 'Mật độ đối thủ theo khu vực',
+  trendMix: 'Xu hướng chung của thị trường đối thủ',
+  workersByZone: 'Tổng LĐ đối thủ theo khu vực',
+};
+const DEFAULT_COMP_CHARTS: CompChartItem[] = Object.keys(COMP_CHART_LABELS).map(key => ({ key, label: COMP_CHART_LABELS[key], visible: true }));
+const COMP_DASH_KEY = 'market_competitors_dash_charts';
+const loadCompCharts = (): CompChartItem[] => {
+  try {
+    const raw = localStorage.getItem(COMP_DASH_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw) as CompChartItem[];
+      const savedKeys = new Set(saved.map(c => c.key));
+      const merged = saved.filter(c => COMP_CHART_LABELS[c.key]).map(c => ({ ...c, label: COMP_CHART_LABELS[c.key] }));
+      Object.keys(COMP_CHART_LABELS).forEach(key => { if (!savedKeys.has(key)) merged.push({ key, label: COMP_CHART_LABELS[key], visible: true }); });
+      return merged;
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_COMP_CHARTS;
+};
+// Cùng màu với trendIcon() bên dưới — up = emerald, down = đỏ, stable = xám.
+const TREND_COLORS: Record<string, string> = { up: '#059669', down: '#DC2626', stable: '#9CA3AF' };
+const TREND_LABELS: Record<string, string> = { up: 'Đang tăng lương', down: 'Đang giảm lương', stable: 'Ổn định' };
 
 const trendIcon = (trend: string) => {
   if (trend === 'up') return <span className="text-emerald-600 inline-flex items-center gap-0.5 text-[11.5px] font-medium"><TrendingUp size={11} /> Tăng</span>;
@@ -27,6 +61,17 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_competitors_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_competitors_view_mode', viewMode); }, [viewMode]);
+  const [compCharts, setCompCharts] = useState<CompChartItem[]>(loadCompCharts);
+  const [showChartSettings, setShowChartSettings] = useState(false);
+  useEffect(() => { localStorage.setItem(COMP_DASH_KEY, JSON.stringify(compCharts)); }, [compCharts]);
+  const toggleCompChart = (key: string) => setCompCharts(list => list.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+  const moveCompChart = (i: number, dir: -1 | 1) => setCompCharts(list => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return list;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
 
   // Danh sách "nút link nhanh" (Bản đồ/Website/Facebook/TikTok…) — cấu hình chung, hiển thị
   // trên mọi thẻ đối thủ. Sắp xếp/thêm/xoá ở đây áp dụng ngay cho toàn bộ danh sách.
@@ -77,6 +122,45 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : overallAvg;
   };
 
+  // Đề xuất #1 — so sánh 4 mức phí dịch vụ giữa các đối thủ đang lọc.
+  const feeCompareData = useMemo(() =>
+    list.filter(c => c.fee_unskilled != null || c.fee_skilled != null || c.fee_tech != null || c.fee_per_shift != null),
+  [list]);
+
+  // Đề xuất #2 — % lương trả LĐ chênh lệch so với mặt bằng thị trường khu vực, xếp giảm dần (dùng lại đúng ngưỡng ±3% của bảng).
+  const wageVsMarketData = useMemo(() => {
+    return list
+      .map(c => {
+        const avg = avgForZone(c.zone_name || '');
+        const diff = avg && c.wage_paid ? Math.round(((c.wage_paid - avg) / avg) * 100) : null;
+        return { name: c.company_name, diff };
+      })
+      .filter((c): c is { name: string; diff: number } => c.diff != null)
+      .sort((a, b) => b.diff - a.diff);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, marketSurveys]);
+
+  // Đề xuất #3 — số đối thủ theo từng khu vực đang lọc.
+  const densityByZoneData = useMemo(() => {
+    const map = new Map<string, number>();
+    list.forEach(c => { const z = c.zone_name || 'Chưa rõ'; map.set(z, (map.get(z) ?? 0) + 1); });
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [list]);
+
+  // Đề xuất #4 — phân bố xu hướng lương (tăng/giảm/ổn định) của các đối thủ đang lọc.
+  const trendMixData = useMemo(() => {
+    const counts: Record<string, number> = { up: 0, down: 0, stable: 0 };
+    list.forEach(c => { counts[c.trend] = (counts[c.trend] ?? 0) + 1; });
+    return (['up', 'down', 'stable'] as const).map(k => ({ key: k, label: TREND_LABELS[k], count: counts[k] ?? 0 })).filter(r => r.count > 0);
+  }, [list]);
+
+  // Đề xuất #5 — tổng lao động đối thủ đang cung ứng theo khu vực.
+  const workersByZoneData = useMemo(() => {
+    const map = new Map<string, number>();
+    list.forEach(c => { const z = c.zone_name || 'Chưa rõ'; map.set(z, (map.get(z) ?? 0) + (c.total_workers ?? 0)); });
+    return [...map.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  }, [list]);
+
   const handleAdd = async () => {
     if (!form.company_name.trim()) { toast('Nhập tên đối thủ'); return; }
     setSaving(true);
@@ -111,10 +195,184 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
     return <CompetitorDetail competitor={selectedCompetitor} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={() => setSelectedCompetitor(null)} onRefresh={onRefresh} toast={toast} />;
   }
 
+  const renderCompChart = (key: string) => {
+    switch (key) {
+      case 'feeCompare':
+        if (feeCompareData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">So sánh phí dịch vụ giữa đối thủ (₫)</div>
+            <div style={{ height: Math.max(160, feeCompareData.length * 34) }}>
+              <Bar
+                data={{
+                  labels: feeCompareData.map(c => c.company_name),
+                  datasets: [
+                    { label: 'Phí PT', data: feeCompareData.map(c => c.fee_unskilled), backgroundColor: '#9CA3AF', borderRadius: 4 },
+                    { label: 'Phí TN', data: feeCompareData.map(c => c.fee_skilled), backgroundColor: '#1D4ED8', borderRadius: 4 },
+                    { label: 'Phí KTV', data: feeCompareData.map(c => c.fee_tech), backgroundColor: '#059669', borderRadius: 4 },
+                    { label: 'Phí/công', data: feeCompareData.map(c => c.fee_per_shift), backgroundColor: '#D97706', borderRadius: 4 },
+                  ],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'top', labels: { font: { size: 10.5 }, boxWidth: 10, boxHeight: 10 } },
+                    tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${(ctx.raw as number).toLocaleString('vi-VN')}₫` } },
+                  },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, callback: (v) => Number(v).toLocaleString('vi-VN') }, grid: { color: '#F0EEE9' } },
+                    y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'wageVsMarket':
+        if (wageVsMarketData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Lương trả LĐ so với mặt bằng thị trường (%)</div>
+            <div style={{ height: Math.max(160, wageVsMarketData.length * 30) }}>
+              <Bar
+                data={{
+                  labels: wageVsMarketData.map(c => c.name),
+                  datasets: [{
+                    data: wageVsMarketData.map(c => c.diff),
+                    backgroundColor: wageVsMarketData.map(c => c.diff < -3 ? '#DC2626' : c.diff > 3 ? '#059669' : '#D97706'),
+                    borderRadius: 4,
+                  }],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (ctx) => `${ctx.raw as number > 0 ? '+' : ''}${ctx.raw}% so với TT` } },
+                  },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, callback: (v) => v + '%' }, grid: { color: '#F0EEE9' } },
+                    y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'densityByZone':
+        if (densityByZoneData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Mật độ đối thủ theo khu vực</div>
+            <div style={{ height: Math.max(120, densityByZoneData.length * 28) }}>
+              <Bar
+                data={{
+                  labels: densityByZoneData.map(([zone]) => zone),
+                  datasets: [{ data: densityByZoneData.map(([, v]) => v), backgroundColor: '#DC2626', borderRadius: 4, barThickness: 14 }],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.raw} đối thủ` } } },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, stepSize: 1, precision: 0 }, grid: { color: '#F0EEE9' } },
+                    y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'trendMix':
+        if (trendMixData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Xu hướng chung của thị trường đối thủ</div>
+            <div style={{ height: 180 }} className="flex justify-center">
+              <Doughnut
+                data={{
+                  labels: trendMixData.map(r => r.label),
+                  datasets: [{ data: trendMixData.map(r => r.count), backgroundColor: trendMixData.map(r => TREND_COLORS[r.key]), borderWidth: 2, borderColor: '#fff' }],
+                }}
+                options={{
+                  responsive: true, maintainAspectRatio: false, cutout: '58%',
+                  plugins: { legend: { position: 'right', labels: { font: { size: 10.5 }, boxWidth: 10, boxHeight: 10 } } },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'workersByZone':
+        if (workersByZoneData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Tổng LĐ đối thủ theo khu vực</div>
+            <div style={{ height: Math.max(120, workersByZoneData.length * 28) }}>
+              <Bar
+                data={{
+                  labels: workersByZoneData.map(([zone]) => zone),
+                  datasets: [{ data: workersByZoneData.map(([, v]) => v), backgroundColor: '#7C3AED', borderRadius: 4, barThickness: 14 }],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${(ctx.raw as number).toLocaleString('vi-VN')} LĐ` } } },
+                  scales: {
+                    x: { ticks: { font: { size: 10 } }, grid: { color: '#F0EEE9' } },
+                    y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="text-[11.5px] text-[#888] px-3 py-2 bg-[#F9F9F7] rounded-lg flex items-center gap-1.5">
         <Eye size={12} /> Lương trả LĐ: so với mặt bằng thị trường khu vực · Phí/công = chi phí bên họ trả mỗi ca lao động
+      </div>
+
+      <div className="bg-white border border-[#E8E7E2] rounded-[10px]">
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#E8E7E2]">
+          <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ tổng quan đối thủ</div>
+          <div className="relative shrink-0">
+            <button onClick={() => setShowChartSettings(v => !v)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showChartSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+              <Settings size={13} /> Tuỳ chọn hiển thị
+            </button>
+            {showChartSettings && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowChartSettings(false)} />
+                <div className="absolute right-0 top-full mt-1.5 z-20 w-[300px] max-w-[calc(100vw-2rem)] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ hiển thị</div>
+                    <button onClick={() => setShowChartSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
+                  </div>
+                  <div className="text-[10.5px] text-[#999]">Tích để hiện/ẩn, dùng mũi tên để đổi thứ tự trên–dưới.</div>
+                  <div className="space-y-1">
+                    {compCharts.map((c, i) => (
+                      <div key={c.key} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-[#F9F9F7]">
+                        <input type="checkbox" checked={c.visible} onChange={() => toggleCompChart(c.key)} />
+                        <span className="flex-1 text-[12px] text-[#444] truncate">{c.label}</span>
+                        <button onClick={() => moveCompChart(i, -1)} disabled={i === 0} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowUp size={12} /></button>
+                        <button onClick={() => moveCompChart(i, 1)} disabled={i === compCharts.length - 1} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowDown size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="p-3 space-y-3">
+          {compCharts.filter(c => c.visible).map(c => (
+            <div key={c.key}>{renderCompChart(c.key)}</div>
+          ))}
+          {compCharts.every(c => !c.visible) && (
+            <div className="text-center py-4 text-[11.5px] text-[#aaa]">Mọi biểu đồ đang tắt — mở "Tuỳ chọn hiển thị" để bật lại.</div>
+          )}
+        </div>
       </div>
 
       {/* Không dùng overflow-hidden ở đây — panel "Cài đặt nút liên kết" là absolute, sẽ bị

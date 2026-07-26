@@ -1,7 +1,54 @@
 import { Fragment, useState, useMemo, useEffect } from 'react';
-import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, RotateCcw } from 'lucide-react';
+import { Bar, Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend,
+} from 'chart.js';
+import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
+
+// Cùng màu badge vùng đang dùng ở regionZoneColorCls (shared.ts không có, định nghĩa hex tương ứng riêng cho Chart.js).
+const REGION_TREND_COLORS: Record<RegionZone, string> = { I: '#2563EB', II: '#0D9488', III: '#D97706', IV: '#64748B' };
+
+// Thang màu tuần tự (sequential, 1 tông xanh dương nhạt→đậm) cho bản đồ nhiệt lương — value càng cao càng đậm.
+function heatColor(v: number, min: number, max: number): string {
+  const t = max > min ? (v - min) / (max - min) : 0.5;
+  const c0 = [239, 246, 255], c1 = [29, 78, 216];
+  const r = Math.round(c0[0] + (c1[0] - c0[0]) * t);
+  const g = Math.round(c0[1] + (c1[1] - c0[1]) * t);
+  const b = Math.round(c0[2] + (c1[2] - c0[2]) * t);
+  return `rgb(${r},${g},${b})`;
+}
+function heatLum(v: number, min: number, max: number): number {
+  return max > min ? (v - min) / (max - min) : 0.5;
+}
+
+// Bật/tắt + sắp xếp trên/dưới các biểu đồ tổng quan lương — lưu localStorage, không cần migration.
+interface WageChartItem { key: string; label: string; visible: boolean }
+const WAGE_CHART_LABELS: Record<string, string> = {
+  industryRange: 'So sánh khoảng lương theo ngành',
+  regionTrend: 'Xu hướng lương tối thiểu vùng',
+  tierByZone: 'Bậc lương theo khu vực',
+  heatmap: 'Bản đồ nhiệt Khu vực × Ngành',
+  availability: 'Nguồn lao động theo khu vực',
+};
+const DEFAULT_WAGE_CHARTS: WageChartItem[] = Object.keys(WAGE_CHART_LABELS).map(key => ({ key, label: WAGE_CHART_LABELS[key], visible: true }));
+const WAGE_DASH_KEY = 'market_wage_dash_charts';
+const loadWageCharts = (): WageChartItem[] => {
+  try {
+    const raw = localStorage.getItem(WAGE_DASH_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw) as WageChartItem[];
+      const savedKeys = new Set(saved.map(c => c.key));
+      const merged = saved.filter(c => WAGE_CHART_LABELS[c.key]).map(c => ({ ...c, label: WAGE_CHART_LABELS[c.key] }));
+      Object.keys(WAGE_CHART_LABELS).forEach(key => { if (!savedKeys.has(key)) merged.push({ key, label: WAGE_CHART_LABELS[key], visible: true }); });
+      return merged;
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_WAGE_CHARTS;
+};
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import SearchSelect from './SearchSelect';
@@ -39,6 +86,17 @@ const loadWageSettings = (): WageSettings => {
 
 export default function WageTab({ marketZones, marketSurveys, marketLeads, clients, zoneFilter, setZoneFilter, goTab, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
+  const [wageCharts, setWageCharts] = useState<WageChartItem[]>(loadWageCharts);
+  const [showChartSettings, setShowChartSettings] = useState(false);
+  useEffect(() => { localStorage.setItem(WAGE_DASH_KEY, JSON.stringify(wageCharts)); }, [wageCharts]);
+  const toggleWageChart = (key: string) => setWageCharts(list => list.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+  const moveWageChart = (i: number, dir: -1 | 1) => setWageCharts(list => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return list;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -76,7 +134,8 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const [restoringWages, setRestoringWages] = useState(false);
   const reloadRegionWages = () => fetchRegionWageRows().then(setRegionWageRows);
   const loadBatches = () => { fetchRegionWageBatches().then(setRegionBatches); };
-  useEffect(() => { reloadRegionWages(); }, []);
+  // Tải cả lịch sử ngay từ đầu (không đợi mở "Tuỳ chọn") — biểu đồ "Xu hướng lương vùng" cần sẵn dữ liệu này.
+  useEffect(() => { reloadRegionWages(); loadBatches(); }, []);
   // Đồng bộ ô nhập theo giá trị đang áp dụng — sửa xong bấm nút "Lưu" mới ghi DB, gõ dở
   // dang không tự lưu. Chỉ đồng bộ khi KHÔNG đang sửa 1 lần nhập cũ (kẻo ghi đè input).
   useEffect(() => {
@@ -299,6 +358,65 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Đề xuất #1 — khoảng lương theo ngành, xếp giảm dần theo mức trần để dễ so sánh (industryWageSummary vẫn giữ sort theo tên cho khối thẻ hiện có).
+  const industryRangeData = useMemo(() => [...industryWageSummary].sort((a, b) => b.max - a.max), [industryWageSummary]);
+
+  // Đề xuất #2 — lịch sử lương tối thiểu vùng, xếp tăng dần theo ngày áp dụng.
+  const regionTrendBatches = useMemo(() => [...regionBatches].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)), [regionBatches]);
+
+  // Đề xuất #3 — điểm giữa khoảng lương Phổ thông/Thời vụ/Chính thức theo từng khu vực đang lọc.
+  const tierByZoneData = useMemo(() => {
+    const mid = (min: number | null, max: number | null) => (min != null && max != null) ? (min + max) / 2 : null;
+    const avg = (vals: (number | null)[]) => {
+      const v = vals.filter((x): x is number => x != null);
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    };
+    return zonesToShow.map(zone => {
+      const rows = marketSurveys.filter(s => s.zone_name === zone && matchesIndustry(s.industry));
+      return {
+        zone,
+        pt: avg(rows.map(r => mid(r.wage_unskilled_min, r.wage_unskilled_max))),
+        tv: avg(rows.map(r => mid(r.wage_seasonal_min, r.wage_seasonal_max))),
+        ct: avg(rows.map(r => mid(r.wage_skilled_min, r.wage_skilled_max))),
+      };
+    }).filter(z => z.pt != null || z.tv != null || z.ct != null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonesToShow, marketSurveys, industryFilter]);
+
+  // Đề xuất #4 — lương Chính thức trung bình theo cặp Khu vực × Ngành nghề đang lọc (null = chưa khảo sát).
+  const heatmapData = useMemo(() => {
+    const heatIndustries = industryFilter === 'all' ? industries : [industryFilter];
+    const cellVal = (zone: string, industry: string) => {
+      const vals = marketSurveys
+        .filter(s => s.zone_name === zone && s.industry === industry && s.wage_skilled_min != null && s.wage_skilled_max != null)
+        .map(s => (s.wage_skilled_min! + s.wage_skilled_max!) / 2);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    };
+    const rows = zonesToShow
+      .map(zone => ({ zone, cells: heatIndustries.map(ind => cellVal(zone, ind)) }))
+      .filter(r => r.cells.some(v => v != null));
+    const allVals = rows.flatMap(r => r.cells).filter((v): v is number => v != null);
+    return {
+      rows, industries: heatIndustries,
+      min: allVals.length ? Math.min(...allVals) : 0,
+      max: allVals.length ? Math.max(...allVals) : 1,
+    };
+  }, [zonesToShow, industries, industryFilter, marketSurveys]);
+
+  // Đề xuất #5 — số lượt khảo sát theo mức nguồn lao động, gộp theo khu vực đang lọc.
+  const availabilityData = useMemo(() => {
+    return zonesToShow.map(zone => {
+      const rows = marketSurveys.filter(s => s.zone_name === zone && matchesIndustry(s.industry));
+      return {
+        zone,
+        doi: rows.filter(r => r.labor_availability === 'Dồi dào').length,
+        tb: rows.filter(r => r.labor_availability === 'Trung bình').length,
+        khan: rows.filter(r => r.labor_availability === 'Khan hiếm').length,
+      };
+    }).filter(z => z.doi + z.tb + z.khan > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonesToShow, marketSurveys, industryFilter]);
+
   const handleAddIndustry = async (name: string) => {
     const err = await addIndustry(name);
     if (err) toast('Lỗi thêm ngành (bảng industries chưa tạo? Chạy migration 099): ' + err);
@@ -440,8 +558,210 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const filterZoneRegion = zoneFilter !== 'all' ? zoneToRegion[zoneFilter] : null;
   const filterZoneWage = regionWageOf(filterZoneRegion, regionWages);
 
+  const renderWageChart = (key: string) => {
+    switch (key) {
+      case 'industryRange':
+        if (industryRangeData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">So sánh khoảng lương theo ngành nghề</div>
+            <div style={{ height: Math.max(120, industryRangeData.length * 30) }}>
+              <Bar
+                data={{
+                  labels: industryRangeData.map(s => s.industry),
+                  datasets: [{
+                    data: industryRangeData.map(s => [s.min / 1_000_000, s.max / 1_000_000]),
+                    backgroundColor: '#1D4ED8', borderRadius: 6, barThickness: 14,
+                  }],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (ctx) => {
+                      const s = industryRangeData[ctx.dataIndex];
+                      return `${fmtTr(s.min)}–${fmtTr(s.max)}tr · ${s.count} nguồn`;
+                    } } },
+                  },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, callback: (v) => v + 'tr' }, grid: { color: '#F0EEE9' } },
+                    y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'regionTrend':
+        if (regionTrendBatches.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Xu hướng lương tối thiểu vùng theo thời gian</div>
+            <div style={{ height: 220 }}>
+              <Line
+                data={{
+                  labels: regionTrendBatches.map(b => new Date(b.effectiveDate).toLocaleDateString('vi-VN')),
+                  datasets: REGION_ZONES.map(z => ({
+                    label: 'Vùng ' + z.key,
+                    data: regionTrendBatches.map(b => b.wages[z.key] / 1_000_000),
+                    borderColor: REGION_TREND_COLORS[z.key], backgroundColor: REGION_TREND_COLORS[z.key],
+                    tension: 0, pointRadius: 4, borderWidth: 2.5,
+                  })),
+                }}
+                options={{
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'bottom', labels: { font: { size: 10.5 }, boxWidth: 10, boxHeight: 10 } },
+                    tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.formattedValue}tr` } },
+                  },
+                  scales: {
+                    x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+                    y: { ticks: { font: { size: 10 }, callback: (v) => v + 'tr' }, grid: { color: '#F0EEE9' } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'tierByZone':
+        if (tierByZoneData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Bậc lương theo khu vực</div>
+            <div className="text-[10.5px] text-[#999] mb-2">Điểm giữa khoảng lương đã khảo sát mỗi khu (triệu/tháng)</div>
+            <div style={{ height: Math.max(160, tierByZoneData.length * 34) }}>
+              <Bar
+                data={{
+                  labels: tierByZoneData.map(z => z.zone),
+                  datasets: [
+                    { label: 'Phổ thông', data: tierByZoneData.map(z => z.pt != null ? z.pt / 1_000_000 : null), backgroundColor: '#9CA3AF', borderRadius: 4 },
+                    { label: 'Thời vụ', data: tierByZoneData.map(z => z.tv != null ? z.tv / 1_000_000 : null), backgroundColor: '#1D4ED8', borderRadius: 4 },
+                    { label: 'Chính thức', data: tierByZoneData.map(z => z.ct != null ? z.ct / 1_000_000 : null), backgroundColor: '#059669', borderRadius: 4 },
+                  ],
+                }}
+                options={{
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { position: 'top', labels: { font: { size: 10.5 }, boxWidth: 10, boxHeight: 10 } } },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 30 }, grid: { display: false } },
+                    y: { ticks: { font: { size: 10 }, callback: (v) => v + 'tr' }, grid: { color: '#F0EEE9' } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      case 'heatmap':
+        if (heatmapData.rows.length === 0 || heatmapData.industries.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Bản đồ nhiệt lương Chính thức · Khu vực × Ngành nghề</div>
+            <div className="p-3 overflow-x-auto">
+              <table className="text-[10.5px]" style={{ borderSpacing: '3px', borderCollapse: 'separate' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left font-normal text-[#999] pr-2"></th>
+                    {heatmapData.industries.map(ind => (
+                      <th key={ind} className="font-normal text-[#999] px-2 whitespace-nowrap">{ind}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {heatmapData.rows.map(r => (
+                    <tr key={r.zone}>
+                      <td className="text-[#444] font-medium pr-2 whitespace-nowrap">{r.zone}</td>
+                      {r.cells.map((v, i) => (
+                        <td key={i} title={v != null ? fmtTr(v) + 'tr' : 'Chưa khảo sát'}
+                          className="text-center rounded py-1.5 px-2 whitespace-nowrap"
+                          style={{
+                            background: v == null ? '#F4F3EF' : heatColor(v, heatmapData.min, heatmapData.max),
+                            color: v != null && heatLum(v, heatmapData.min, heatmapData.max) > 0.55 ? '#fff' : undefined,
+                          }}>
+                          {v != null ? fmtTr(v) : '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      case 'availability':
+        if (availabilityData.length === 0) return null;
+        return (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Nguồn lao động sẵn có theo khu vực</div>
+            <div style={{ height: Math.max(120, availabilityData.length * 30) }}>
+              <Bar
+                data={{
+                  labels: availabilityData.map(z => z.zone),
+                  datasets: [
+                    { label: 'Dồi dào', data: availabilityData.map(z => z.doi), backgroundColor: '#059669' },
+                    { label: 'Trung bình', data: availabilityData.map(z => z.tb), backgroundColor: '#D97706' },
+                    { label: 'Khan hiếm', data: availabilityData.map(z => z.khan), backgroundColor: '#DC2626' },
+                  ],
+                }}
+                options={{
+                  indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { position: 'top', labels: { font: { size: 10.5 }, boxWidth: 10, boxHeight: 10 } } },
+                  scales: {
+                    x: { stacked: true, ticks: { font: { size: 10 }, stepSize: 1, precision: 0 }, grid: { color: '#F0EEE9' } },
+                    y: { stacked: true, ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                  },
+                }}
+              />
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-3">
+      <div className="bg-white border border-[#E8E7E2] rounded-[10px]">
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#E8E7E2]">
+          <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ tổng quan lương thị trường</div>
+          <div className="relative shrink-0">
+            <button onClick={() => setShowChartSettings(v => !v)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showChartSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+              <Settings size={13} /> Tuỳ chọn hiển thị
+            </button>
+            {showChartSettings && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowChartSettings(false)} />
+                <div className="absolute right-0 top-full mt-1.5 z-20 w-[300px] max-w-[calc(100vw-2rem)] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ hiển thị</div>
+                    <button onClick={() => setShowChartSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
+                  </div>
+                  <div className="text-[10.5px] text-[#999]">Tích để hiện/ẩn, dùng mũi tên để đổi thứ tự trên–dưới.</div>
+                  <div className="space-y-1">
+                    {wageCharts.map((c, i) => (
+                      <div key={c.key} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-[#F9F9F7]">
+                        <input type="checkbox" checked={c.visible} onChange={() => toggleWageChart(c.key)} />
+                        <span className="flex-1 text-[12px] text-[#444] truncate">{c.label}</span>
+                        <button onClick={() => moveWageChart(i, -1)} disabled={i === 0} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowUp size={12} /></button>
+                        <button onClick={() => moveWageChart(i, 1)} disabled={i === wageCharts.length - 1} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowDown size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="p-3 space-y-3">
+          {wageCharts.filter(c => c.visible).map(c => (
+            <div key={c.key}>{renderWageChart(c.key)}</div>
+          ))}
+          {wageCharts.every(c => !c.visible) && (
+            <div className="text-center py-4 text-[11.5px] text-[#aaa]">Mọi biểu đồ đang tắt — mở "Tuỳ chọn hiển thị" để bật lại.</div>
+          )}
+        </div>
+      </div>
+
       {/* Không dùng overflow-hidden ở đây — panel "Tuỳ chọn" là absolute, bị cắt mất bởi
           overflow-hidden của thẻ cha (đặc biệt sau khi thẻ co lại do đổi bộ lọc), khiến
           bấm lại "Tuỳ chọn" không thấy ô tick nào để lọc. */}
