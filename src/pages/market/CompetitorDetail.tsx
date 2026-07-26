@@ -309,7 +309,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
               <span key={z} className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11.5px] font-medium border ${isKcn ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-violet-50 text-violet-700 border-violet-100'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${isKcn ? 'bg-blue-500' : 'bg-violet-500'}`} />
                 {z}
-                <button onClick={() => removeActiveZone(z)} className="p-0.5 rounded-full hover:bg-black/5 transition"><X size={10} /></button>
+                <button onClick={() => removeActiveZone(z)} className="p-1.5 sm:p-0.5 rounded-full hover:bg-black/5 transition"><X size={10} /></button>
               </span>
             );
           }) : (

@@ -1,8 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bar, Bubble } from 'react-chartjs-2';
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend,
+} from 'chart.js';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend);
+
+const CHART_COLORS = ['#1D4ED8', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2', '#DB2777', '#65A30D', '#EA580C', '#4F46E5', '#0D9488', '#9333EA'];
+
+// Cùng ngưỡng với occColor() ở shared.ts, chỉ đổi sang mã hex cho Chart.js.
+const occColorHex = (occ: number | null | undefined) => {
+  const o = occ ?? 0;
+  return o >= 90 ? '#10B981' : o >= 75 ? '#F59E0B' : '#EF4444';
+};
+
+// Bật/tắt từng biểu đồ tổng quan ở dashboard khu vực — lưu localStorage, không cần migration.
+// Mặc định chỉ bật "Tỷ lệ lấp đầy" (giá trị cao, ít rối mắt nhất), 3 cái còn lại tắt sẵn.
+interface ZoneDashSettings {
+  occupancyBar: boolean;
+  shareBar: boolean;
+  opportunityMatrix: boolean;
+  provinceBar: boolean;
+}
+const ZONE_DASH_SETTINGS_KEY = 'market_zones_dash_settings';
+const DEFAULT_ZONE_DASH_SETTINGS: ZoneDashSettings = { occupancyBar: true, shareBar: false, opportunityMatrix: false, provinceBar: false };
+const loadZoneDashSettings = (): ZoneDashSettings => {
+  try {
+    const raw = localStorage.getItem(ZONE_DASH_SETTINGS_KEY);
+    if (raw) return { ...DEFAULT_ZONE_DASH_SETTINGS, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { ...DEFAULT_ZONE_DASH_SETTINGS };
+};
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import { formatDate } from '../../lib/format';
@@ -86,6 +118,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
+  const [dashSettings, setDashSettings] = useState<ZoneDashSettings>(loadZoneDashSettings);
+  const [showDashSettings, setShowDashSettings] = useState(false);
+  useEffect(() => { localStorage.setItem(ZONE_DASH_SETTINGS_KEY, JSON.stringify(dashSettings)); }, [dashSettings]);
 
   // Chia đôi khối "Thông tin khu vực" thành 2 cột kéo được chiều ngang — tỉ lệ lưu
   // localStorage để F5 không mất (cùng pattern với LeadsTab).
@@ -118,6 +153,41 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const provinceOptions = sharedProvinces;
   const provinceNames = [ALL_OPTION, ...provinceOptions];
   const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
+
+  // Đề xuất #1 — Tỷ lệ lấp đầy theo khu vực, xếp giảm dần.
+  const occupancyChartData = useMemo(() =>
+    [...filteredZones].sort((a, b) => (b.occupancy_pct ?? 0) - (a.occupancy_pct ?? 0)),
+  [filteredZones]);
+
+  // Đề xuất #2 — Thị phần LĐ của mình / tổng LĐ toàn khu, xếp giảm dần.
+  const shareChartData = useMemo(() =>
+    filteredZones.map(z => ({
+      name: z.name,
+      share: z.total_workers ? Math.round((z.lgv_workers / z.total_workers) * 100) : 0,
+      lgv_workers: z.lgv_workers, total_workers: z.total_workers ?? 0,
+    })).sort((a, b) => b.share - a.share),
+  [filteredZones]);
+
+  // Đề xuất #3 — Ma trận cơ hội: X = mức tiềm năng (★), Y = thị phần %, kích thước = tổng LĐ toàn khu.
+  const matrixData = useMemo(() =>
+    filteredZones.map((z, i) => ({
+      name: z.name,
+      x: z.potential || 0,
+      y: z.total_workers ? Math.round((z.lgv_workers / z.total_workers) * 100) : 0,
+      r: Math.max(6, Math.sqrt(z.total_workers ?? 0) / 4 + 6),
+      color: CHART_COLORS[i % CHART_COLORS.length],
+    })),
+  [filteredZones]);
+
+  // Đề xuất #4 — Tổng LĐ theo tỉnh/thành, xếp giảm dần.
+  const provinceChartData = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const z of filteredZones) {
+      const key = z.location || 'Chưa rõ';
+      map.set(key, (map.get(key) ?? 0) + (z.total_workers ?? 0));
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [filteredZones]);
 
   const [industryOptions, setIndustryOptions] = useState<string[]>([]);
   const [countryOptions, setCountryOptions] = useState<string[]>([]);
@@ -512,11 +582,163 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
             <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
             <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
           </div>
+          <div className="relative shrink-0">
+            <button onClick={() => setShowDashSettings(v => !v)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showDashSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+              <Settings size={13} /> Tuỳ chọn hiển thị
+            </button>
+            {showDashSettings && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowDashSettings(false)} />
+                <div className="absolute right-0 top-full mt-1.5 z-20 w-[270px] max-w-[calc(100vw-2rem)] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ tổng quan</div>
+                    <button onClick={() => setShowDashSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
+                  </div>
+                  <div className="text-[10.5px] text-[#999]">Bật/tắt để đỡ rối mắt — lựa chọn được nhớ trên trình duyệt này.</div>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.occupancyBar} onChange={e => setDashSettings(s => ({ ...s, occupancyBar: e.target.checked }))} />
+                      Tỷ lệ lấp đầy theo khu vực
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.shareBar} onChange={e => setDashSettings(s => ({ ...s, shareBar: e.target.checked }))} />
+                      Thị phần LĐ của mình theo khu vực
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.opportunityMatrix} onChange={e => setDashSettings(s => ({ ...s, opportunityMatrix: e.target.checked }))} />
+                      Ma trận cơ hội khu vực
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.provinceBar} onChange={e => setDashSettings(s => ({ ...s, provinceBar: e.target.checked }))} />
+                      Tổng LĐ theo tỉnh/thành
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
             <Plus size={13} /> Thêm khu vực
           </button>
         </div>
       </div>
+
+      {dashSettings.occupancyBar && occupancyChartData.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Tỷ lệ lấp đầy theo khu vực</div>
+          <div style={{ height: Math.max(120, occupancyChartData.length * 28) }}>
+            <Bar
+              data={{
+                labels: occupancyChartData.map(z => z.name),
+                datasets: [{
+                  data: occupancyChartData.map(z => z.occupancy_pct ?? 0),
+                  backgroundColor: occupancyChartData.map(z => occColorHex(z.occupancy_pct)),
+                  borderRadius: 4, barThickness: 14,
+                }],
+              }}
+              options={{
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.raw}% lấp đầy` } } },
+                scales: {
+                  x: { min: 0, max: 100, ticks: { font: { size: 10 }, callback: (v) => v + '%' }, grid: { color: '#F0EEE9' } },
+                  y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                },
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {dashSettings.shareBar && shareChartData.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Thị phần lao động của mình theo khu vực</div>
+          <div className="text-[10.5px] text-[#999] mb-2">LĐ của P. Kinh Doanh / Tổng LĐ toàn khu (%)</div>
+          <div style={{ height: Math.max(120, shareChartData.length * 28) }}>
+            <Bar
+              data={{
+                labels: shareChartData.map(z => z.name),
+                datasets: [{ data: shareChartData.map(z => z.share), backgroundColor: '#1D4ED8', borderRadius: 4, barThickness: 14 }],
+              }}
+              options={{
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                  tooltip: { callbacks: { label: (ctx) => {
+                    const d = shareChartData[ctx.dataIndex];
+                    return `${d.share}% · ${d.lgv_workers.toLocaleString('vi-VN')}/${d.total_workers.toLocaleString('vi-VN')} LĐ`;
+                  } } },
+                },
+                scales: {
+                  x: { min: 0, ticks: { font: { size: 10 }, callback: (v) => v + '%' }, grid: { color: '#F0EEE9' } },
+                  y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                },
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {dashSettings.opportunityMatrix && matrixData.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Ma trận cơ hội khu vực</div>
+          <div className="text-[10.5px] text-[#999] mb-2">Trục ngang: mức tiềm năng (★) · Trục dọc: thị phần LĐ hiện tại (%) · Kích thước chấm: tổng LĐ toàn khu</div>
+          <div style={{ height: 240 }}>
+            <Bubble
+              data={{
+                datasets: [{
+                  data: matrixData.map(d => ({ x: d.x, y: d.y, r: d.r })),
+                  backgroundColor: matrixData.map(d => d.color + 'CC'),
+                  borderColor: matrixData.map(d => d.color),
+                  borderWidth: 1.5,
+                }],
+              }}
+              options={{
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                  tooltip: { callbacks: { label: (ctx) => {
+                    const d = matrixData[ctx.dataIndex];
+                    return `${d.name}: ${d.x}★ tiềm năng · ${d.y}% thị phần`;
+                  } } },
+                },
+                scales: {
+                  x: { min: 0, max: 5.5, title: { display: true, text: 'Mức tiềm năng (★)', font: { size: 10 } }, ticks: { font: { size: 10 }, stepSize: 1, precision: 0 }, grid: { color: '#F0EEE9' } },
+                  y: { min: 0, title: { display: true, text: 'Thị phần hiện tại (%)', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: (v) => v + '%' }, grid: { color: '#F0EEE9' } },
+                },
+              }}
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+            {matrixData.map(d => (
+              <span key={d.name} className="inline-flex items-center gap-1 text-[10px] text-[#888]">
+                <span className="w-2 h-2 rounded-full" style={{ background: d.color }} /> {d.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {dashSettings.provinceBar && provinceChartData.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Tổng lao động theo tỉnh/thành</div>
+          <div style={{ height: Math.max(120, provinceChartData.length * 28) }}>
+            <Bar
+              data={{
+                labels: provinceChartData.map(([name]) => name),
+                datasets: [{ data: provinceChartData.map(([, v]) => v), backgroundColor: '#65A30D', borderRadius: 4, barThickness: 14 }],
+              }}
+              options={{
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                  x: { ticks: { font: { size: 10 } }, grid: { color: '#F0EEE9' } },
+                  y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                },
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {viewMode === 'list' && (
         <div className="grid grid-cols-3 gap-3">

@@ -49,8 +49,10 @@ export default function Login() {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="admin · ketoan · kinhdoanh · bdh"
-                className="text-[13px] px-3 py-2 rounded-lg border border-gray-300 outline-none focus:border-[#1D4ED8] focus:ring-2 focus:ring-blue-100 transition"
+                className="text-[16px] sm:text-[13px] px-3 py-2 rounded-lg border border-gray-300 outline-none focus:border-[#1D4ED8] focus:ring-2 focus:ring-blue-100 transition"
                 autoFocus
+                autoCapitalize="none"
+                autoCorrect="off"
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -60,7 +62,7 @@ export default function Login() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="text-[13px] px-3 py-2 rounded-lg border border-gray-300 outline-none focus:border-[#1D4ED8] focus:ring-2 focus:ring-blue-100 transition"
+                className="text-[16px] sm:text-[13px] px-3 py-2 rounded-lg border border-gray-300 outline-none focus:border-[#1D4ED8] focus:ring-2 focus:ring-blue-100 transition"
               />
             </div>
           </div>

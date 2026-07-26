@@ -930,7 +930,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       {!isFullscreen && controls}
 
       <div ref={mapWrapperRef} className={`relative bg-white border border-[#E8E7E2] overflow-hidden ${isFullscreen ? '' : 'rounded-[10px]'}`}>
-        <div ref={mapDivRef} style={{ height: isFullscreen ? '100vh' : 'calc(100vh - 260px)', minHeight: 420 }} />
+        <div ref={mapDivRef} style={{ height: isFullscreen ? '100dvh' : 'calc(100dvh - 260px)', minHeight: 420 }} />
         {isFullscreen && <FullscreenControlsOverlay>{controls}</FullscreenControlsOverlay>}
         <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
           <button onClick={locateMe} disabled={locating} title="Vị trí của tôi"

@@ -204,7 +204,7 @@ export default function IndustryTerms({ industryId, industryName, toast }: Props
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                  <div className="flex items-center gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
                     <button onClick={() => togglePin(t)} title={t.pinned ? 'Bỏ ghim' : 'Ghim lên đầu'} className="p-1 rounded hover:bg-[#F0EEE9] text-[#999]">
                       {t.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                     </button>

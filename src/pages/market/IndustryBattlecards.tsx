@@ -97,11 +97,11 @@ export default function IndustryBattlecards({ industryId, toast }: Props) {
             <div key={it.id} className="bg-[#F9F9F7] rounded-lg border-l-[3px] border-l-red-400 p-3 group">
               <div className="flex items-start justify-between gap-2">
                 {it.category && <span className="text-[10px] font-medium text-red-700 bg-red-50 rounded-full px-2 py-0.5">{it.category}</span>}
-                <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                  <button onClick={() => copyCard(it)} title="Copy lời thoại" className="p-1 rounded text-[#999] hover:text-blue-600 hover:bg-white">
+                <div className="ml-auto flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
+                  <button onClick={() => copyCard(it)} title="Copy lời thoại" className="p-2 sm:p-1 rounded text-[#999] hover:text-blue-600 hover:bg-white">
                     {copiedId === it.id ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
                   </button>
-                  <button onClick={() => setConfirmDel(it)} title="Xoá" className="p-1 rounded text-[#999] hover:text-red-600 hover:bg-white"><Trash2 size={12} /></button>
+                  <button onClick={() => setConfirmDel(it)} title="Xoá" className="p-2 sm:p-1 rounded text-[#999] hover:text-red-600 hover:bg-white"><Trash2 size={12} /></button>
                 </div>
               </div>
               <div className="mt-1.5">

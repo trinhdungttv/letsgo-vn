@@ -155,7 +155,7 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
                         title="Click để sửa · bôi đen từ khoá rồi bấm B hoặc chọn màu"
                         className="text-[11.5px] font-medium text-[#111] flex-1 break-words outline-none rounded px-0.5 -mx-0.5 focus:bg-blue-50/60"
                       />
-                      <button onClick={() => setConfirmDel(it)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#ccc] hover:text-red-600 shrink-0"><Trash2 size={11} /></button>
+                      <button onClick={() => setConfirmDel(it)} className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-0.5 rounded text-[#ccc] hover:text-red-600 shrink-0"><Trash2 size={11} /></button>
                     </div>
                     <input defaultValue={it.note ?? ''} onBlur={e => saveNote(it, e.target.value.trim())}
                       placeholder="ghi chú…" className="w-full text-[10.5px] text-[#777] outline-none bg-transparent" />

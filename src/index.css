@@ -12,6 +12,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* iOS Safari auto-zooms the viewport on focus for any form field under 16px.
+   App-wide inputs use 11-13px per the compact desktop design, so force 16px
+   on touch-sized screens instead of chasing this per-component. */
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Doughnut, Bar } from 'react-chartjs-2';
+import { Doughnut, Bar, Bubble } from 'react-chartjs-2';
 import {
-  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend,
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, PointElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, ArrowLeft, Loader2, Check, Factory, X, Users, Building2, Coins, Eye, Landmark, TrendingUp, FileText, ScrollText, FileDown } from 'lucide-react';
+import { Plus, ArrowLeft, Loader2, Check, Factory, X, Users, Building2, Coins, Eye, Landmark, TrendingUp, FileText, ScrollText, FileDown, Settings } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 import type {
@@ -12,7 +12,7 @@ import type {
 } from '../../lib/types';
 import type { MarketTab } from '../Market';
 import IndustryTerms from './IndustryTerms';
-import IndustrySeasonality from './IndustrySeasonality';
+import IndustrySeasonality, { SEASON_LEVELS } from './IndustrySeasonality';
 import IndustryMatrix from './IndustryMatrix';
 import IndustryPositions from './IndustryPositions';
 import IndustryRetention from './IndustryRetention';
@@ -28,9 +28,29 @@ import { htmlToPlainText } from '../../lib/htmlText';
 const emptySeason = () => Array(12).fill(0) as number[];
 const emptyNotes = () => Array(12).fill('') as string[];
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, Tooltip, Legend);
 
 const CHART_COLORS = ['#1D4ED8', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2', '#DB2777', '#65A30D', '#EA580C', '#4F46E5', '#0D9488', '#9333EA'];
+
+// Bật/tắt từng biểu đồ tổng quan ở dashboard ngành — lưu localStorage, không cần migration.
+// Mặc định chỉ bật "Tổng LĐ theo ngành" (giá trị cao, ít rối mắt nhất), 3 cái còn lại tắt sẵn.
+interface DashChartSettings {
+  workersBar: boolean;
+  seasonHeatmap: boolean;
+  opportunityMatrix: boolean;
+  turnoverBar: boolean;
+}
+const DASH_SETTINGS_KEY = 'market_industry_dash_settings';
+const DEFAULT_DASH_SETTINGS: DashChartSettings = { workersBar: true, seasonHeatmap: false, opportunityMatrix: false, turnoverBar: false };
+const loadDashSettings = (): DashChartSettings => {
+  try {
+    const raw = localStorage.getItem(DASH_SETTINGS_KEY);
+    if (raw) return { ...DEFAULT_DASH_SETTINGS, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { ...DEFAULT_DASH_SETTINGS };
+};
+
+const turnoverColor = (r: number) => r >= 15 ? '#DC2626' : r >= 8 ? '#D97706' : '#059669';
 
 interface Props {
   clients: Client[];
@@ -65,6 +85,9 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
+  const [dashSettings, setDashSettings] = useState<DashChartSettings>(loadDashSettings);
+  const [showDashSettings, setShowDashSettings] = useState(false);
+  useEffect(() => { localStorage.setItem(DASH_SETTINGS_KEY, JSON.stringify(dashSettings)); }, [dashSettings]);
   const [form, setForm] = useState<Partial<Industry> | null>(null);
   // Vừa quay lại trang ngành đã có dữ liệu từ trước — thao tác ĐẦU TIÊN làm đổi giá trị phải
   // xác nhận lại (đề phòng lỡ tay); xác nhận 1 lần thì mở khoá, không hỏi lại tới khi rời trang.
@@ -253,6 +276,34 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
       workers: rows.map(([, s]) => s.workers),
     };
   }, [statsByIndustry]);
+
+  // Đề xuất #1 — Tổng LĐ theo ngành, mọi ngành đã tạo (kể cả 0 LĐ), xếp giảm dần.
+  const workersChartData = useMemo(() => {
+    return [...list]
+      .map(ind => ({ name: ind.name, workers: statsByIndustry.get(ind.name)?.workers ?? 0 }))
+      .sort((a, b) => b.workers - a.workers);
+  }, [list, statsByIndustry]);
+
+  // Đề xuất #3 — Ma trận cơ hội: X = dự án tìm hiểu, Y = KH hợp tác, kích thước = số đối thủ.
+  const matrixData = useMemo(() => {
+    return list.map((ind, i) => {
+      const s = statsByIndustry.get(ind.name);
+      return {
+        name: ind.name,
+        x: s?.leadCount ?? 0,
+        y: s?.clientCount ?? 0,
+        r: Math.max(6, (s?.competitorCount ?? 0) * 3 + 6),
+        color: CHART_COLORS[i % CHART_COLORS.length],
+      };
+    });
+  }, [list, statsByIndustry]);
+
+  // Đề xuất #4 — Tỷ lệ nghỉ việc, chỉ ngành đã nhập turnover_rate, xếp giảm dần.
+  const turnoverChartData = useMemo(() => {
+    return list
+      .filter((ind): ind is Industry & { turnover_rate: number } => ind.turnover_rate != null)
+      .sort((a, b) => b.turnover_rate - a.turnover_rate);
+  }, [list]);
 
   const totals = useMemo(() => {
     let clientTotal = 0, leadTotal = 0, workerTotal = 0;
@@ -470,9 +521,46 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
           <div className="text-[12.5px] font-medium text-[#111]">Ngành nghề</div>
           <div className="text-[11px] text-[#888]">Dashboard thị trường theo ngành · click ngành để xem hồ sơ chi tiết</div>
         </div>
-        <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-          <Plus size={13} /> Thêm ngành nghề
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative shrink-0">
+            <button onClick={() => setShowDashSettings(v => !v)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showDashSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+              <Settings size={13} /> Tuỳ chọn hiển thị
+            </button>
+            {showDashSettings && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowDashSettings(false)} />
+                <div className="absolute right-0 top-full mt-1.5 z-20 w-[270px] max-w-[calc(100vw-2rem)] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ tổng quan</div>
+                    <button onClick={() => setShowDashSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
+                  </div>
+                  <div className="text-[10.5px] text-[#999]">Bật/tắt để đỡ rối mắt — lựa chọn được nhớ trên trình duyệt này.</div>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.workersBar} onChange={e => setDashSettings(s => ({ ...s, workersBar: e.target.checked }))} />
+                      Tổng lao động theo ngành
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.seasonHeatmap} onChange={e => setDashSettings(s => ({ ...s, seasonHeatmap: e.target.checked }))} />
+                      Bản đồ nhiệt mùa vụ (ngành × 12 tháng)
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.opportunityMatrix} onChange={e => setDashSettings(s => ({ ...s, opportunityMatrix: e.target.checked }))} />
+                      Ma trận cơ hội ngành
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-[#444] cursor-pointer">
+                      <input type="checkbox" checked={dashSettings.turnoverBar} onChange={e => setDashSettings(s => ({ ...s, turnoverBar: e.target.checked }))} />
+                      Tỷ lệ nghỉ việc theo ngành
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+            <Plus size={13} /> Thêm ngành nghề
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-2">
@@ -528,6 +616,146 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
             </div>
           </div>
         </div>
+      )}
+
+      {dashSettings.workersBar && list.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Tổng lao động theo ngành</div>
+          <div style={{ height: Math.max(120, workersChartData.length * 30) }}>
+            <Bar
+              data={{
+                labels: workersChartData.map(r => r.name),
+                datasets: [{ data: workersChartData.map(r => r.workers), backgroundColor: '#1D4ED8', borderRadius: 4, barThickness: 14 }],
+              }}
+              options={{
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                  x: { ticks: { font: { size: 10 } }, grid: { color: '#F0EEE9' } },
+                  y: { ticks: { font: { size: 10.5 } }, grid: { display: false } },
+                },
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {dashSettings.seasonHeatmap && list.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
+            <div className="text-[12.5px] font-semibold text-[#111]">Bản đồ nhiệt mùa vụ · ngành × 12 tháng</div>
+            <div className="ml-auto flex items-center gap-2">
+              {SEASON_LEVELS.slice(1).map(l => (
+                <span key={l.v} className="inline-flex items-center gap-1 text-[10px] text-[#888]">
+                  <span className="w-2.5 h-2.5 rounded-sm" style={{ background: l.dot }} /> {l.label}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="p-3 overflow-x-auto">
+            <table className="w-full text-[10.5px]" style={{ borderSpacing: '3px', borderCollapse: 'separate' }}>
+              <thead>
+                <tr>
+                  <th className="text-left font-normal text-[#999] pr-2"></th>
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <th key={i} className="font-normal text-[#999] text-center w-8">T{i + 1}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {list.map(ind => {
+                  const levels = ind.season_levels?.length === 12 ? ind.season_levels : emptySeason();
+                  return (
+                    <tr key={ind.id}>
+                      <td className="text-[#444] font-medium pr-2 whitespace-nowrap">{ind.name}</td>
+                      {levels.map((v, i) => {
+                        const L = SEASON_LEVELS[v] ?? SEASON_LEVELS[0];
+                        return <td key={i} title={L.label} className={`rounded ${L.bg} text-center py-1.5`}>{v || ''}</td>;
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {dashSettings.opportunityMatrix && list.length > 0 && (
+        <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+          <div className="text-[12.5px] font-semibold text-[#111] mb-2">Ma trận cơ hội ngành</div>
+          <div className="text-[10.5px] text-[#999] mb-2">Trục ngang: dự án tìm hiểu · Trục dọc: KH hợp tác · Kích thước chấm: số đối thủ</div>
+          <div style={{ height: 240 }}>
+            <Bubble
+              data={{
+                datasets: [{
+                  data: matrixData.map(d => ({ x: d.x, y: d.y, r: d.r })),
+                  backgroundColor: matrixData.map(d => d.color + 'CC'),
+                  borderColor: matrixData.map(d => d.color),
+                  borderWidth: 1.5,
+                }],
+              }}
+              options={{
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                  tooltip: { callbacks: { label: (ctx) => {
+                    const d = matrixData[ctx.dataIndex];
+                    return `${d.name}: ${d.x} dự án · ${d.y} KH · đối thủ ~${Math.round((d.r - 6) / 3)}`;
+                  } } },
+                },
+                scales: {
+                  x: { title: { display: true, text: 'Dự án tìm hiểu', font: { size: 10 } }, ticks: { font: { size: 10 }, stepSize: 1, precision: 0 }, grid: { color: '#F0EEE9' } },
+                  y: { title: { display: true, text: 'KH hợp tác', font: { size: 10 } }, ticks: { font: { size: 10 }, stepSize: 1, precision: 0 }, grid: { color: '#F0EEE9' } },
+                },
+              }}
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+            {matrixData.map(d => (
+              <span key={d.name} className="inline-flex items-center gap-1 text-[10px] text-[#888]">
+                <span className="w-2 h-2 rounded-full" style={{ background: d.color }} /> {d.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {dashSettings.turnoverBar && (
+        turnoverChartData.length > 0 ? (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+            <div className="text-[12.5px] font-semibold text-[#111] mb-2">Tỷ lệ nghỉ việc theo ngành (%/tháng)</div>
+            <div style={{ height: 200 }}>
+              <Bar
+                data={{
+                  labels: turnoverChartData.map(i => i.name),
+                  datasets: [{
+                    data: turnoverChartData.map(i => i.turnover_rate),
+                    backgroundColor: turnoverChartData.map(i => turnoverColor(i.turnover_rate)),
+                    borderRadius: 4,
+                  }],
+                }}
+                options={{
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 30 }, grid: { display: false } },
+                    y: { ticks: { font: { size: 10 }, callback: (v) => v + '%' }, grid: { color: '#F0EEE9' } },
+                  },
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-3 mt-2 text-[10.5px] text-[#888] flex-wrap">
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-600" /> Dưới 8% · thấp</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-600" /> 8–15% · trung bình</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-600" /> Từ 15% · cao</span>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4 text-[11.5px] text-[#999] text-center">
+            Chưa có ngành nào nhập tỷ lệ nghỉ việc — vào từng ngành, mục "Hồ sơ giữ chân lao động" để nhập.
+          </div>
+        )
       )}
 
       <div className="grid grid-cols-3 gap-3">

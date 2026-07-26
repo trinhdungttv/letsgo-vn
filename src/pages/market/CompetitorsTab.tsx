@@ -134,7 +134,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
               {showLinkSettings && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowLinkSettings(false)} />
-                  <div className="absolute right-0 top-full mt-1.5 z-20 w-[300px] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-3">
+                  <div className="absolute right-0 top-full mt-1.5 z-20 w-[300px] max-w-[calc(100vw-2rem)] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="text-[12.5px] font-semibold text-[#111]">Nút liên kết nhanh</div>
                       <button onClick={() => setShowLinkSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
@@ -144,9 +144,9 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                       {linkTypes.map((t, i) => (
                         <div key={t.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-gray-200">
                           <span className="text-[12px] text-[#333] flex-1 truncate">{t.label}</span>
-                          <button onClick={() => moveLinkType(i, -1)} disabled={i === 0} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowUp size={12} /></button>
-                          <button onClick={() => moveLinkType(i, 1)} disabled={i === linkTypes.length - 1} className="p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowDown size={12} /></button>
-                          <button onClick={() => handleDeleteLinkType(t)} className="p-0.5 text-[#aaa] hover:text-red-500"><Trash2 size={12} /></button>
+                          <button onClick={() => moveLinkType(i, -1)} disabled={i === 0} className="p-1.5 sm:p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowUp size={12} /></button>
+                          <button onClick={() => moveLinkType(i, 1)} disabled={i === linkTypes.length - 1} className="p-1.5 sm:p-0.5 text-[#999] hover:text-[#333] disabled:opacity-30"><ArrowDown size={12} /></button>
+                          <button onClick={() => handleDeleteLinkType(t)} className="p-1.5 sm:p-0.5 text-[#aaa] hover:text-red-500"><Trash2 size={12} /></button>
                         </div>
                       ))}
                       {linkTypes.length === 0 && <div className="text-[11px] text-[#aaa] py-1">Chưa có nút liên kết nào.</div>}

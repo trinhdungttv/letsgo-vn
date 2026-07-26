@@ -461,7 +461,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
             {showSettings && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowSettings(false)} />
-                <div className="absolute right-0 top-full mt-1.5 z-20 w-[340px] max-h-[80vh] overflow-y-auto bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-3.5">
+                <div className="absolute right-0 top-full mt-1.5 z-20 w-[340px] max-w-[calc(100vw-2rem)] max-h-[80vh] overflow-y-auto bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3.5 space-y-3.5">
                   <div className="flex items-center justify-between">
                     <div className="text-[12.5px] font-semibold text-[#111]">Tuỳ chọn hiển thị lương</div>
                     <button onClick={() => setShowSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={13} /></button>
@@ -793,7 +793,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
                           ) : (
                             <span className={`inline-flex items-center gap-1.5 group ${d.industry ? 'text-[#333]' : 'text-amber-600'}`}>
                               └ {d.industry || 'Chưa gán ngành nghề'}
-                              <button onClick={() => startEditIndustry(d.id, d.industry)} className="opacity-40 group-hover:opacity-100 text-[#999] hover:text-blue-600 transition"><Pencil size={11} /></button>
+                              <button onClick={() => startEditIndustry(d.id, d.industry)} className="opacity-100 sm:opacity-40 sm:group-hover:opacity-100 text-[#999] hover:text-blue-600 transition"><Pencil size={11} /></button>
                             </span>
                           )}
                         </td>

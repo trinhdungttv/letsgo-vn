@@ -251,7 +251,7 @@ export default function SupplierFillCard({
               {wage && <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">{wage}</span>}
               {detailCount > 0 && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{detailCount} chi tiết</span>}
               {(onEditSupplier || onDeleteSupplier) && (
-                <span className="flex items-center gap-1 shrink-0 opacity-40 group-hover:opacity-100 transition">
+                <span className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-40 sm:group-hover:opacity-100 transition">
                   {onEditSupplier && (
                     <button onClick={() => startEdit(i, s)} className="text-[#999] hover:text-blue-600" title="Sửa"><Pencil size={11} /></button>
                   )}
