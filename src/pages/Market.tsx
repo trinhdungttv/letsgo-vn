@@ -76,8 +76,10 @@ export default function Market({ marketSurveys, competitors, marketZones, market
         {tab === 'quote' && (
           <Quotes
             key={zoneFilter}
-            marketSurveys={marketSurveys}
+            marketZones={marketZones}
             competitors={competitors}
+            clients={clients}
+            marketLeads={marketLeads}
             toast={toast}
             initialZone={zoneFilter !== 'all' ? zoneFilter : undefined}
           />

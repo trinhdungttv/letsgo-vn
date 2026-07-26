@@ -728,7 +728,7 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
       )}
 
       {/* ==== Modals thao tác nhanh ==== */}
-      {showQuoteModal && <QuoteModal toast={toast} onClose={() => setShowQuoteModal(false)} />}
+      {showQuoteModal && <QuoteModal clients={clients} toast={toast} onClose={() => setShowQuoteModal(false)} />}
       {showGiaoViec && (
         <GiaoViecModal
           clients={clients}

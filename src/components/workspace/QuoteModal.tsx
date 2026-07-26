@@ -2,20 +2,23 @@ import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import Quotes from '../../pages/Quotes'
-import type { MarketSurvey, Competitor } from '../../lib/types'
+import type { Competitor, MarketZone, MarketLead, Client } from '../../lib/types'
 
 interface Props {
+  clients: Client[]
   toast: (msg: string) => void
   onClose: () => void
 }
 
-export function QuoteModal({ toast, onClose }: Props) {
-  const [marketSurveys, setMarketSurveys] = useState<MarketSurvey[]>([])
+export function QuoteModal({ clients, toast, onClose }: Props) {
+  const [marketZones, setMarketZones] = useState<MarketZone[]>([])
   const [competitors, setCompetitors] = useState<Competitor[]>([])
+  const [marketLeads, setMarketLeads] = useState<MarketLead[]>([])
 
   useEffect(() => {
-    supabase.from('market_surveys').select('*').then(({ data }) => { if (data) setMarketSurveys(data as MarketSurvey[]) })
+    supabase.from('market_zones').select('*').order('name').then(({ data }) => { if (data) setMarketZones(data as MarketZone[]) })
     supabase.from('competitors').select('*').then(({ data }) => { if (data) setCompetitors(data as Competitor[]) })
+    supabase.from('market_leads').select('*').then(({ data }) => { if (data) setMarketLeads(data as MarketLead[]) })
   }, [])
 
   return (
@@ -28,7 +31,7 @@ export function QuoteModal({ toast, onClose }: Props) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <Quotes marketSurveys={marketSurveys} competitors={competitors} toast={toast} />
+          <Quotes marketZones={marketZones} competitors={competitors} clients={clients} marketLeads={marketLeads} toast={toast} />
         </div>
       </div>
     </div>

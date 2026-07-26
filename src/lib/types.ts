@@ -578,6 +578,9 @@ export interface Quote {
   price_tech: number | null;
   status: string;
   created_at: string;
+  // Ngành nghề + liên kết Dự án được tạo từ báo giá này khi "Thắng" (migration 121)
+  industry?: string | null;
+  converted_lead_id?: string | null;
 }
 
 export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans';
