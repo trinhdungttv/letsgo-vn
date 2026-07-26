@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2 } from 'lucide-react';
+import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus } from 'lucide-react';
 import { createPopulationLayer, createCommuneLayer, createDensityLegend } from './populationDensity';
 import { fetchCommunes } from './populationData';
 import type { CommuneRow } from './populationData';
@@ -88,6 +88,27 @@ function loadMapPrefs(): MapPrefs {
 
 const VN_CENTER: [number, number] = [16.05, 107.5];
 
+// Vùng hoạt động chính (miền Nam: Đông Nam Bộ + Tây Nam Bộ + rìa Tây Nguyên) — dùng
+// làm khung nhìn mặc định mỗi lần mở Bản đồ, thay vì zoom hết toàn Việt Nam.
+const SOUTH_VN_BOUNDS: L.LatLngBoundsExpression = [
+  [8.2, 103.3],
+  [14.6, 109.6],
+];
+
+// Khung nhìn mặc định do người dùng tự đặt (Công cụ → Đặt view hiện tại làm mặc định)
+// — lưu localStorage, ghi đè SOUTH_VN_BOUNDS ở lần mở sau. Không có thì dùng mặc định gốc.
+const DEFAULT_VIEW_KEY = 'lgmap_default_view';
+type SavedMapView = { center: [number, number]; zoom: number };
+function loadDefaultView(): SavedMapView | null {
+  try {
+    const raw = localStorage.getItem(DEFAULT_VIEW_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (Array.isArray(v.center) && v.center.length === 2 && typeof v.zoom === 'number') return v;
+  } catch { /* ignore */ }
+  return null;
+}
+
 // Zoom >= mức này thì hiện tên cố định cạnh marker (không cần click/hover).
 const LABEL_ZOOM = 12;
 
@@ -135,6 +156,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const [groupIcons, setGroupIcons] = useState<Record<Group, string>>(() => loadGroupIcons());
   const [showIconSettings, setShowIconSettings] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [hasCustomDefaultView, setHasCustomDefaultView] = useState(() => !!loadDefaultView());
   const [locating, setLocating] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [densityOn, setDensityOn] = useState(prefsLoaded.densityOn);
@@ -156,7 +178,6 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const mapRef = useRef<L.Map | null>(null);
   const myLocationMarkerRef = useRef<L.Marker | L.Circle | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
-  const didFitRef = useRef(false);
   const osmLayerRef = useRef<L.TileLayer | null>(null);
   const satLayerRef = useRef<L.TileLayer | null>(null);
   const boundaryLayerRef = useRef<L.TileLayer | null>(null);
@@ -315,6 +336,9 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   useEffect(() => {
     if (!mapDivRef.current || mapRef.current) return;
     const map = L.map(mapDivRef.current, { center: VN_CENTER, zoom: 6, scrollWheelZoom: true });
+    const savedView = loadDefaultView();
+    if (savedView) map.setView(savedView.center, savedView.zoom);
+    else map.fitBounds(SOUTH_VN_BOUNDS);
     osmLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -412,12 +436,6 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       marker.bindPopup(el, { closeButton: true, minWidth: 180 });
       cluster.addLayer(marker);
     });
-    // Chỉ tự zoom lần đầu có dữ liệu — bấm filter chip không làm nhảy khung nhìn
-    if (shown.length && !didFitRef.current) {
-      didFitRef.current = true;
-      const bounds = L.latLngBounds(shown.map(p => [p.lat, p.lng] as [number, number]));
-      map.fitBounds(bounds.pad(0.15), { maxZoom: 12 });
-    }
   }, [points, activeGroups, showLabels, labelMode, groupIcons, wageLayerOn]);
 
   const setGroupIcon = (g: Group, value: string) => {
@@ -430,6 +448,23 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const resetGroupIcons = () => {
     setGroupIcons({ ...DEFAULT_GROUP_ICONS });
     localStorage.removeItem(GROUP_ICONS_KEY);
+  };
+
+  // Lưu khung nhìn hiện tại (tâm + zoom) làm mặc định mỗi lần mở lại Bản đồ.
+  const saveCurrentViewAsDefault = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const c = map.getCenter();
+    const view: SavedMapView = { center: [c.lat, c.lng], zoom: map.getZoom() };
+    localStorage.setItem(DEFAULT_VIEW_KEY, JSON.stringify(view));
+    setHasCustomDefaultView(true);
+    toast('Đã đặt khung nhìn hiện tại làm mặc định');
+  };
+  const resetDefaultView = () => {
+    localStorage.removeItem(DEFAULT_VIEW_KEY);
+    setHasCustomDefaultView(false);
+    mapRef.current?.fitBounds(SOUTH_VN_BOUNDS);
+    toast('Đã khôi phục khung nhìn mặc định gốc (miền Nam)');
   };
 
   // Bật/tắt nền vệ tinh + lớp ranh giới/địa danh
@@ -829,11 +864,27 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
             </button>
             <button
               onClick={() => setShowIconSettings(true)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7]">
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7] border-b border-[#F0EEE9]">
               <Settings size={13} className="text-[#666]" />
               <span className="flex-1">Icon theo loại</span>
               <ChevronRight size={13} className="text-[#ccc]" />
             </button>
+            <button
+              onClick={() => { saveCurrentViewAsDefault(); setShowToolsMenu(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-[#333] hover:bg-[#F9F9F7]">
+              <BookmarkPlus size={13} className="text-[#666]" />
+              <div className="flex-1">
+                <div>Đặt view hiện tại làm mặc định</div>
+                <div className="text-[10.5px] text-[#999] mt-0.5">Mỗi lần mở Bản đồ sẽ quay lại đúng khung nhìn này</div>
+              </div>
+            </button>
+            {hasCustomDefaultView && (
+              <button
+                onClick={() => { resetDefaultView(); setShowToolsMenu(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 pl-8 text-left text-[11.5px] text-[#666] hover:bg-[#F9F9F7] hover:text-[#333]">
+                <RotateCcw size={11} /> Về mặc định gốc (miền Nam)
+              </button>
+            )}
           </div>
         )}
 

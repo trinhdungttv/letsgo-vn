@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
@@ -13,7 +13,7 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchCountries, addCountry } from './countries';
 import SearchSelect from './SearchSelect';
-import { type RegionZone, REGION_ZONES, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls, fmtRegionWage } from './regionWage';
+import { REGION_ZONES, regionZoneLabel, regionZoneColorCls } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 function normalizeZoneName(s: string): string {
@@ -86,9 +86,32 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
-  // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
-  const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
-  useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
+
+  // Chia đôi khối "Thông tin khu vực" thành 2 cột kéo được chiều ngang — tỉ lệ lưu
+  // localStorage để F5 không mất (cùng pattern với LeadsTab).
+  const infoSplitRef = useRef<HTMLDivElement>(null);
+  const [infoLeftPct, setInfoLeftPct] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('market_zone_info_split_pct'));
+    return saved >= 20 && saved <= 80 ? saved : 50;
+  });
+  const [infoDragging, setInfoDragging] = useState(false);
+  useEffect(() => {
+    if (!infoDragging) return;
+    const onMove = (e: MouseEvent) => {
+      if (!infoSplitRef.current) return;
+      const rect = infoSplitRef.current.getBoundingClientRect();
+      const pct = ((e.clientX - rect.left) / rect.width) * 100;
+      setInfoLeftPct(Math.min(80, Math.max(20, pct)));
+    };
+    const onUp = () => setInfoDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [infoDragging]);
+  useEffect(() => { localStorage.setItem('market_zone_info_split_pct', String(infoLeftPct)); }, [infoLeftPct]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
   const { provinces: sharedProvinces, addProvince } = useProvinces();
@@ -125,6 +148,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         notes: selected.notes, industries: selected.industries || [], countries: selected.countries || [],
         map_link: selected.map_link ?? null,
         image_url: selected.image_url ?? null,
+        region_zone: selected.region_zone ?? null,
       };
       setEditForm(snapshot);
       setInitialEditForm(snapshot);
@@ -296,106 +320,117 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Thông tin khu vực <span className="text-[11px] font-normal text-[#aaa]">· Click ô để sửa</span></div>
-          <div className="p-4 space-y-2.5">
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Tỉnh / Thành phố</span>
-              <select value={editForm.location || ''} onChange={e => {
-                if (e.target.value === '__new__') {
-                  const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
-                  if (v && v.trim()) { addProvince(v.trim()); setEditForm(f => ({ ...f, location: v.trim() })); }
-                  return;
-                }
-                setEditForm(f => ({ ...f, location: e.target.value || null }));
-              }} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
-                <option value="">—</option>
-                {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
-                <option value="__new__">+ Thêm tỉnh/thành mới…</option>
-              </select>
-            </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Vùng lương tối thiểu</span>
-              <select value={editForm.region_zone || ''} onChange={e => setEditForm(f => ({ ...f, region_zone: e.target.value || null }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
-                <option value="">— Chưa gán vùng —</option>
-                {REGION_ZONES.map(z => <option key={z.key} value={z.key}>{z.label} · Vùng {z.key} ({fmtRegionWage(regionWages[z.key])}tr)</option>)}
-              </select>
-              {regionZoneLabel(editForm.region_zone) && (
-                <span className={`text-[10.5px] font-semibold w-7 h-5 inline-flex items-center justify-center rounded ${regionZoneColorCls(editForm.region_zone)}`}>
-                  {regionZoneLabel(editForm.region_zone)}
-                </span>
-              )}
-              {regionZoneLabel(editForm.region_zone) && (
-                <span className="text-[11px] text-[#888]">{fmtRegionWage(regionWageOf(editForm.region_zone, regionWages))}tr</span>
-              )}
-            </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Link Google Maps</span>
-              <div className="flex gap-2 flex-1 items-center">
-                <input value={editForm.map_link || ''} onChange={e => setEditForm(f => ({ ...f, map_link: e.target.value }))}
-                  placeholder="Dán link Google Maps (…/@lat,lng…) → tự định vị lên Bản đồ"
-                  className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
-                {editForm.map_link && (
-                  <a href={editForm.map_link} target="_blank" rel="noopener noreferrer"
-                    className="text-[10.5px] px-1.5 py-0.5 rounded border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0 inline-flex items-center gap-1">
-                    <MapPin size={10} /> Mở
-                  </a>
-                )}
-                {selected.lat != null && selected.lng != null && (
-                  <span className="text-[10.5px] text-emerald-600 shrink-0">✓ đã định vị</span>
+          <div ref={infoSplitRef} className={`p-4 flex items-start ${infoDragging ? 'select-none' : ''}`}>
+            <div className="space-y-2.5 min-w-0" style={{ width: `${infoLeftPct}%` }}>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Tỉnh / Thành phố</span>
+                <select value={editForm.location || ''} onChange={e => {
+                  if (e.target.value === '__new__') {
+                    const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
+                    if (v && v.trim()) { addProvince(v.trim()); setEditForm(f => ({ ...f, location: v.trim() })); }
+                    return;
+                  }
+                  setEditForm(f => ({ ...f, location: e.target.value || null }));
+                }} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
+                  <option value="">—</option>
+                  {provinceOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                  <option value="__new__">+ Thêm tỉnh/thành mới…</option>
+                </select>
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Vùng lương tối thiểu</span>
+                <select value={editForm.region_zone || ''} onChange={e => setEditForm(f => ({ ...f, region_zone: e.target.value || null }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
+                  <option value="">— Chưa gán vùng —</option>
+                  {REGION_ZONES.map(z => <option key={z.key} value={z.key}>{z.label} · Vùng {z.key}</option>)}
+                </select>
+                {regionZoneLabel(editForm.region_zone) && (
+                  <span className={`text-[10.5px] font-semibold w-7 h-5 inline-flex items-center justify-center rounded shrink-0 ${regionZoneColorCls(editForm.region_zone)}`}>
+                    {regionZoneLabel(editForm.region_zone)}
+                  </span>
                 )}
               </div>
-            </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ảnh cover (link)</span>
-              <div className="flex gap-2 flex-1 items-center">
-                <input value={editForm.image_url || ''} onChange={e => setEditForm(f => ({ ...f, image_url: e.target.value }))}
-                  placeholder="Dán link ảnh cổng KCN…"
-                  className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
-                {editForm.image_url && (
-                  <div className="w-14 h-10 rounded overflow-hidden border border-gray-200 shrink-0">
-                    <img src={editForm.image_url} alt="" className="w-full h-full object-cover" />
-                  </div>
-                )}
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Google Maps</span>
+                <div className="flex gap-1.5 flex-1 min-w-0 items-center">
+                  <input value={editForm.map_link || ''} onChange={e => setEditForm(f => ({ ...f, map_link: e.target.value }))}
+                    title={editForm.map_link || ''} placeholder="Dán link → tự định vị lên Bản đồ"
+                    className="text-[12.5px] flex-1 min-w-0 truncate px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                  {editForm.map_link && (
+                    <a href={editForm.map_link} target="_blank" rel="noopener noreferrer" title="Mở link"
+                      className="p-1 rounded border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition shrink-0">
+                      <MapPin size={11} />
+                    </a>
+                  )}
+                  {selected.lat != null && selected.lng != null && (
+                    <span title="Đã định vị" className="text-emerald-600 shrink-0 text-[11px]">✓</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Ảnh cover</span>
+                <div className="flex gap-1.5 flex-1 min-w-0 items-center">
+                  <input value={editForm.image_url || ''} onChange={e => setEditForm(f => ({ ...f, image_url: e.target.value }))}
+                    title={editForm.image_url || ''} placeholder="Dán link ảnh cổng KCN…"
+                    className="text-[12.5px] flex-1 min-w-0 truncate px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                  {editForm.image_url && (
+                    <div className="w-8 h-8 rounded overflow-hidden border border-gray-200 shrink-0">
+                      <img src={editForm.image_url} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Ban quản lý</span>
+                <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Diện tích · Năm TL</span>
+                <div className="flex gap-2 flex-1 min-w-0">
+                  <input value={editForm.area || ''} onChange={e => setEditForm(f => ({ ...f, area: e.target.value }))} className="text-[12.5px] w-20 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                  <input value={editForm.established_year || ''} onChange={e => setEditForm(f => ({ ...f, established_year: e.target.value }))} className="text-[12.5px] w-16 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                </div>
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Nguồn lao động</span>
+                <select value={editForm.labor_availability} onChange={e => setEditForm(f => ({ ...f, labor_availability: e.target.value }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
+                  {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
+                </select>
               </div>
             </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Ban quản lý</span>
-              <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+
+            <div
+              onMouseDown={() => setInfoDragging(true)}
+              className="relative w-3 shrink-0 self-stretch flex items-center justify-center cursor-col-resize group"
+              title="Kéo để đổi chiều rộng"
+            >
+              <div className={`w-1 h-full min-h-[80px] rounded-full transition ${infoDragging ? 'bg-blue-400' : 'bg-[#E8E7E2] group-hover:bg-blue-300'}`} />
+              <GripVertical size={12} className="absolute text-[#bbb] group-hover:text-blue-500 pointer-events-none" />
             </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Diện tích · Năm thành lập</span>
-              <div className="flex gap-2 flex-1">
-                <input value={editForm.area || ''} onChange={e => setEditForm(f => ({ ...f, area: e.target.value }))} className="text-[12.5px] w-24 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
-                <input value={editForm.established_year || ''} onChange={e => setEditForm(f => ({ ...f, established_year: e.target.value }))} className="text-[12.5px] w-20 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+
+            <div className="space-y-2.5 min-w-0" style={{ width: `${100 - infoLeftPct}%` }}>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Ngành nghề chủ yếu</span>
+                <MultiPicker tags={editForm.industries || []} options={industryOptions} color="bg-blue-50 text-blue-700"
+                  placeholder="+ chọn ngành nghề…" onAddOption={handleAddIndustryOption}
+                  onAdd={v => setEditForm(f => ({ ...f, industries: [...(f?.industries || []), v] }))}
+                  onRemove={i => setEditForm(f => ({ ...f, industries: (f?.industries || []).filter((_, idx) => idx !== i) }))} />
               </div>
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Ngành nghề chủ yếu</span>
-              <MultiPicker tags={editForm.industries || []} options={industryOptions} color="bg-blue-50 text-blue-700"
-                placeholder="+ chọn ngành nghề…" onAddOption={handleAddIndustryOption}
-                onAdd={v => setEditForm(f => ({ ...f, industries: [...(f?.industries || []), v] }))}
-                onRemove={i => setEditForm(f => ({ ...f, industries: (f?.industries || []).filter((_, idx) => idx !== i) }))} />
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">FDI từ quốc gia</span>
-              <MultiPicker tags={editForm.countries || []} options={countryOptions} color="bg-violet-50 text-violet-700"
-                placeholder="+ chọn quốc gia…" onAddOption={handleAddCountryOption}
-                onAdd={v => setEditForm(f => ({ ...f, countries: [...(f?.countries || []), v] }))}
-                onRemove={i => setEditForm(f => ({ ...f, countries: (f?.countries || []).filter((_, idx) => idx !== i) }))} />
-            </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">Nguồn lao động</span>
-              <select value={editForm.labor_availability} onChange={e => setEditForm(f => ({ ...f, labor_availability: e.target.value }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white">
-                {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
-              </select>
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Đặc thù</span>
-              <textarea value={editForm.characteristics || ''} onChange={e => setEditForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-emerald-600 w-[150px] shrink-0 pt-1">✓ Điểm mạnh</span>
-              <textarea value={editForm.strengths || ''} onChange={e => setEditForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-red-500 w-[150px] shrink-0 pt-1">✗ Điểm yếu</span>
-              <textarea value={editForm.weaknesses || ''} onChange={e => setEditForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
-            </div>
-            <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0">P. Kinh Doanh</span>
-              <div className="flex items-center gap-2 text-[12.5px]">
-                <input type="number" value={editForm.lgv_clients ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_clients: parseInt(e.target.value) || 0 }))} className="w-16 px-2 py-1 rounded border border-gray-200 outline-none" /> KH ·
-                <input type="number" value={editForm.lgv_workers ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_workers: parseInt(e.target.value) || 0 }))} className="w-20 px-2 py-1 rounded border border-gray-200 outline-none" /> LĐ
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">FDI từ quốc gia</span>
+                <MultiPicker tags={editForm.countries || []} options={countryOptions} color="bg-violet-50 text-violet-700"
+                  placeholder="+ chọn quốc gia…" onAddOption={handleAddCountryOption}
+                  onAdd={v => setEditForm(f => ({ ...f, countries: [...(f?.countries || []), v] }))}
+                  onRemove={i => setEditForm(f => ({ ...f, countries: (f?.countries || []).filter((_, idx) => idx !== i) }))} />
               </div>
-            </div>
-            <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[150px] shrink-0 pt-1">Ghi chú chiến lược</span>
-              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[12.5px] flex-1 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Đặc thù</span>
+                <textarea value={editForm.characteristics || ''} onChange={e => setEditForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
+              </div>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-emerald-600 w-[130px] shrink-0 pt-1">✓ Điểm mạnh</span>
+                <textarea value={editForm.strengths || ''} onChange={e => setEditForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
+              </div>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-red-500 w-[130px] shrink-0 pt-1">✗ Điểm yếu</span>
+                <textarea value={editForm.weaknesses || ''} onChange={e => setEditForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
+              </div>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">P. Kinh Doanh</span>
+                <div className="flex items-center gap-2 text-[12.5px] min-w-0">
+                  <input type="number" value={editForm.lgv_clients ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_clients: parseInt(e.target.value) || 0 }))} className="w-14 min-w-0 px-2 py-1 rounded border border-gray-200 outline-none" /> KH ·
+                  <input type="number" value={editForm.lgv_workers ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_workers: parseInt(e.target.value) || 0 }))} className="w-16 min-w-0 px-2 py-1 rounded border border-gray-200 outline-none" /> LĐ
+                </div>
+              </div>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Ghi chú chiến lược</span>
+                <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
+              </div>
             </div>
           </div>
         </div>
