@@ -10,11 +10,13 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
-import type { Client, WorkTask, TaskStatus, WorkTaskComment } from '../../lib/types'
+import { logActivity } from '../../lib/audit'
+import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact } from '../../lib/types'
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
 import { queueGoogleSync, syncGoogleNow, pulledChanges } from '../../lib/googleSync'
 import { GoogleSyncCard } from './GoogleSyncCard'
+import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -46,9 +48,13 @@ const DOC_STATUS_BTN: Record<string, string> = {
 }
 
 // ---- Phân loại hiển thị (chip lọc) ----
-type Category = 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
-const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
+// 'Khách mới' = việc BD tìm hiểu/theo đuổi công ty CHƯA ký (nguồn: crm_pipeline_tasks,
+// gộp đọc từ CRM Pipeline — xem phần "Việc BD (CRM Pipeline)" bên dưới). Khác với 'Hợp đồng'
+// (Tái ký HĐ) vốn chỉ áp dụng cho khách ĐANG hợp tác.
+type Category = 'Khách mới' | 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
+const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
 const CATEGORY_TAG: Record<Category, string> = {
+  'Khách mới': 'bg-rose-50 text-rose-700 border-rose-200',
   'Hợp đồng': 'bg-blue-50 text-blue-700 border-blue-200',
   'Báo giá':  'bg-amber-50 text-amber-700 border-amber-200',
   'Thăm quan / KH': 'bg-teal-50 text-teal-700 border-teal-200',
@@ -68,13 +74,14 @@ function workCategory(taskType: string | null): Category {
 
 interface FeedItem {
   key: string
-  source: 'work' | 'ws'
+  source: 'work' | 'ws' | 'pipeline'
   id: string
   title: string
   due: string | null
   category: Category
   work?: WorkTask
   ws?: WorkspaceTask
+  pipeline?: CRMPipelineTask
 }
 
 type GroupKey = 'overdue' | 'today' | 'week' | 'later'
@@ -116,6 +123,9 @@ export interface FeedStats {
 
 interface Props {
   clients: Client[]
+  /** Dữ liệu CRM Pipeline — dùng để mở hồ sơ công ty (CompanyProfileModal) ngay tại Workspace. */
+  pipelineEntries: CRMPipelineEntry[]
+  products: CRMProduct[]
   onClientUpdate: (client: Client) => void
   toast: (msg: string) => void
   onStatsChange?: (stats: FeedStats) => void
@@ -127,7 +137,7 @@ interface Props {
   hideHistory?: boolean
 }
 
-export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
+export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
   const { user, token } = useAuth()
   const isAdmin = user?.role === 'admin'
 
@@ -164,8 +174,66 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
   const [wsTasks, setWsTasks] = useState<WorkspaceTask[]>([])
   const [doneWork, setDoneWork] = useState<WorkTask[]>([])
   const [doneWs, setDoneWs] = useState<WorkspaceTask[]>([])
+  // Việc BD (CRM Pipeline) — crm_pipeline_tasks không có user_id (việc chung của team BD,
+  // không thuộc riêng ai), nên đọc TẤT CẢ chứ không lọc theo user như work_tasks.
+  const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([])
+  const [donePipeline, setDonePipeline] = useState<CRMPipelineTask[]>([])
   const [comments, setComments] = useState<Record<string, WorkTaskComment[]>>({})
   const [loading, setLoading] = useState(true)
+
+  // ---- Hồ sơ công ty (CompanyProfileModal) — mở ngay từ 1 việc "Khách mới", logic giống CRM Pipeline BD ----
+  const [localPipelineEntries, setLocalPipelineEntries] = useState<CRMPipelineEntry[]>(pipelineEntries)
+  useEffect(() => { setLocalPipelineEntries(pipelineEntries) }, [pipelineEntries])
+  const [contacts, setContacts] = useState<Contact[]>([])
+  useEffect(() => {
+    supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
+      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]) })
+  }, [])
+  const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null)
+
+  function openCompanyProfile(crmId: string) {
+    const entry = localPipelineEntries.find(e => e.id === crmId)
+    if (entry) setProfileEntry(entry)
+  }
+
+  function handleProfileUpdate(updated: CRMPipelineEntry) {
+    setLocalPipelineEntries(prev => prev.map(e => e.id === updated.id ? updated : e))
+    setProfileEntry(updated)
+  }
+
+  async function handleProfileDelete() {
+    const entry = profileEntry
+    if (!entry) return
+    setLocalPipelineEntries(prev => prev.filter(e => e.id !== entry.id))
+    setPipelineTasks(prev => prev.filter(t => t.crm_id !== entry.id))
+    setDonePipeline(prev => prev.filter(t => t.crm_id !== entry.id))
+    setProfileEntry(null)
+    const { error } = await supabase.from('crm_pipeline').delete().eq('id', entry.id)
+    if (error) { toast('Lỗi: ' + error.message); return }
+    toast('Đã xóa')
+    await logActivity({
+      user, action: 'delete', table: 'crm_pipeline', recordId: entry.id,
+      description: `Xóa công ty "${entry.company_name}" khỏi pipeline`,
+      oldData: entry,
+    })
+  }
+
+  // Đổi giai đoạn pipeline ngay tại Workspace — cùng 1 logic update crm_pipeline.stage dùng ở Kanban CRM Pipeline BD.
+  async function changePipelineStage(crmId: string, stage: string) {
+    const entry = localPipelineEntries.find(e => e.id === crmId)
+    if (!entry || entry.stage === stage) return
+    const stageLabel = STAGES.find(s => s.id === stage)?.label || stage
+    setLocalPipelineEntries(prev => prev.map(e => e.id === crmId ? { ...e, stage } : e))
+    if (profileEntry?.id === crmId) setProfileEntry(prev => prev ? { ...prev, stage } : prev)
+    const { error } = await supabase.from('crm_pipeline').update({ stage }).eq('id', crmId)
+    if (error) { toast('Lỗi: ' + error.message); return }
+    toast(`${entry.company_name} → ${stageLabel}`)
+    await logActivity({
+      user, action: 'update', table: 'crm_pipeline', recordId: crmId,
+      description: `Chuyển "${entry.company_name}" sang giai đoạn "${stageLabel}"`,
+      oldData: entry, newData: { ...entry, stage },
+    })
+  }
 
   useEffect(() => {
     if (!user) return
@@ -173,17 +241,21 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     const since = new Date(Date.now() - 30 * 86400000).toISOString()
     ;(async () => {
       setLoading(true)
-      const [my, ws, dw, dws] = await Promise.all([
+      const [my, ws, dw, dws, pl, dpl] = await Promise.all([
         supabase.from('work_tasks').select('*').eq('user_id', user.id).neq('status', 'done').order('due_date', { ascending: true }),
         supabase.from('workspace_tasks').select('*').neq('status', 'done').order('deadline', { ascending: true }),
         supabase.from('work_tasks').select('*').eq('user_id', user.id).eq('status', 'done').gte('completed_at', since).order('completed_at', { ascending: false }),
         supabase.from('workspace_tasks').select('*').eq('status', 'done').gte('created_at', since).order('created_at', { ascending: false }),
+        supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
+        supabase.from('crm_pipeline_tasks').select('*').eq('status', 'done').gte('updated_at', since).order('updated_at', { ascending: false }),
       ])
       if (cancelled) return
       if (my.data) setMyTasks(my.data as WorkTask[])
       if (ws.data) setWsTasks(ws.data as WorkspaceTask[])
       if (dw.data) setDoneWork(dw.data as WorkTask[])
       if (dws.data) setDoneWs(dws.data as WorkspaceTask[])
+      if (pl.data) setPipelineTasks(pl.data as CRMPipelineTask[])
+      if (dpl.data) setDonePipeline(dpl.data as CRMPipelineTask[])
       setLoading(false)
       const ids = ((my.data as WorkTask[]) || []).map(t => t.id)
       if (ids.length) {
@@ -229,7 +301,11 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       key: `ws_${t.id}`, source: 'ws', id: t.id, title: t.title,
       due: t.deadline, category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ', ws: t,
     })),
-  ], [visibleWork, wsTasks])
+    ...pipelineTasks.map((t): FeedItem => ({
+      key: `pl_${t.id}`, source: 'pipeline', id: t.id, title: `${t.company_name} — ${t.title}`,
+      due: t.due_date, category: 'Khách mới', pipeline: t,
+    })),
+  ], [visibleWork, wsTasks, pipelineTasks])
 
   // Việc còn "sống" — loại việc đã Hoàn tất/Ngưng HĐ đang trong ngày ân hạn
   const isDocFinished = (it: FeedItem) => !!it.work && (it.work.doc_status === 'hoan_tat' || it.work.doc_status === 'ngung_hd')
@@ -317,22 +393,25 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     const stillActive = visibleWork.filter(t => t.doc_status !== 'hoan_tat' && t.doc_status !== 'ngung_hd')
     const overdue =
       stillActive.filter(t => t.due_date && t.due_date < today).length +
-      wsTasks.filter(t => t.deadline && t.deadline < today).length
+      wsTasks.filter(t => t.deadline && t.deadline < today).length +
+      pipelineTasks.filter(t => t.due_date && t.due_date < today).length
     const todayCount =
       stillActive.filter(t => t.due_date === today).length +
-      wsTasks.filter(t => t.deadline === today).length
+      wsTasks.filter(t => t.deadline === today).length +
+      pipelineTasks.filter(t => t.due_date === today).length
     const doneThisWeek =
       doneWork.filter(t => t.completed_at && new Date(t.completed_at) >= monday).length +
-      doneWs.filter(t => new Date(t.created_at) >= monday).length
+      doneWs.filter(t => new Date(t.created_at) >= monday).length +
+      donePipeline.filter(t => new Date(t.updated_at) >= monday).length
     const renewalClientIds = visibleWork.filter(t => t.task_type === 'Tái ký HĐ' && t.client_id).map(t => t.client_id as string)
     onStatsChange({ overdue, today: todayCount, doneThisWeek, renewalClientIds })
-  }, [visibleWork, wsTasks, doneWork, doneWs, onStatsChange])
+  }, [visibleWork, wsTasks, doneWork, doneWs, pipelineTasks, donePipeline, onStatsChange])
 
   // ---- Thêm việc nhanh ----
   const [quickOpen, setQuickOpen] = useState(false)
   const [qTitle, setQTitle] = useState('')
   const [qDue, setQDue] = useState(todayStr())
-  const [qKind, setQKind] = useState<'work' | 'ws_task' | 'ws_doc'>('work')
+  const [qKind, setQKind] = useState<'work' | 'ws_task' | 'ws_doc' | 'pipeline'>('work')
   const [qAssignee, setQAssignee] = useState('')
   const [qSaving, setQSaving] = useState(false)
   const quickInputRef = useRef<HTMLInputElement>(null)
@@ -353,6 +432,24 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
         due_date: qDue || todayStr(), priority: 'medium', kcn: null, notes: null, status: 'pending',
       }).select().single()
       if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]); pingGoogle() }
+    } else if (qKind === 'pipeline') {
+      // Gõ tên công ty mới → tạo 1 dòng crm_pipeline (giai đoạn "Tiềm năng") + 1 việc theo dõi đầu
+      // tiên + 1 dòng market_leads liên kết (crm_id). Cùng 1 dữ liệu gốc nên hiện ngay ở cả
+      // Workspace, CRM Pipeline lẫn Thị trường > Công ty/Dự án — không phải đồng bộ giả 2 chiều.
+      const { data: entry, error: e1 } = await supabase.from('crm_pipeline').insert({
+        company_name: qTitle.trim(), stage: 'tiem-nang', last_contact: todayStr(),
+      }).select().single()
+      if (!e1 && entry) {
+        const { data: task, error: e2 } = await supabase.from('crm_pipeline_tasks').insert({
+          crm_id: entry.id, company_name: entry.company_name,
+          title: 'Tìm hiểu / liên hệ ban đầu', due_date: qDue || todayStr(),
+        }).select().single()
+        if (!e2 && task) setPipelineTasks(prev => [task as CRMPipelineTask, ...prev])
+        await supabase.from('market_leads').insert({
+          company_name: entry.company_name, source: 'Workspace', status: 'Chưa LH',
+          suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }], crm_id: entry.id,
+        })
+      }
     } else {
       const { data, error } = await supabase.from('workspace_tasks').insert({
         title: qTitle.trim(), type: qKind === 'ws_doc' ? 'doc' : 'task',
@@ -362,7 +459,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     }
     setQSaving(false)
     setQTitle('')
-    toast('Đã thêm việc')
+    toast(qKind === 'pipeline' ? 'Đã thêm công ty vào CRM Pipeline' : 'Đã thêm việc')
   }
 
   // ---- Form đầy đủ (quy tắc bản cũ — WorkTasksCard): khách hàng / loại việc / ưu tiên / KCN / ghi chú ----
@@ -453,6 +550,53 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       await supabase.from('clients').update({ contract_end: newContractEnd }).eq('id', t.client_id)
       const client = clients.find(c => c.id === t.client_id)
       if (client) onClientUpdate({ ...client, contract_end: newContractEnd })
+    }
+  }
+
+  // ---- Việc BD (CRM Pipeline) — pending/in_progress đổi trực tiếp; done cần ghi kết quả ----
+  const [pipelineReportItem, setPipelineReportItem] = useState<CRMPipelineTask | null>(null)
+  const [pipelineReportText, setPipelineReportText] = useState('')
+
+  function startPipelineDone(t: CRMPipelineTask) {
+    setPipelineReportItem(t)
+    setPipelineReportText('')
+  }
+
+  async function submitPipelineReport() {
+    const t = pipelineReportItem
+    if (!t || !pipelineReportText.trim()) return
+    const now = new Date().toISOString()
+    setPipelineTasks(prev => prev.filter(x => x.id !== t.id))
+    setDonePipeline(prev => [{ ...t, status: 'done', result_note: pipelineReportText.trim(), updated_at: now }, ...prev])
+    setPipelineReportItem(null)
+    await supabase.from('crm_pipeline_tasks').update({ status: 'done', result_note: pipelineReportText.trim(), updated_at: now }).eq('id', t.id)
+  }
+
+  async function changePipelineStatus(t: CRMPipelineTask, status: PipelineTaskStatus) {
+    if (status === 'done') { startPipelineDone(t); return }
+    const now = new Date().toISOString()
+    setPipelineTasks(prev => prev.map(x => x.id === t.id ? { ...x, status, updated_at: now } : x))
+    await supabase.from('crm_pipeline_tasks').update({ status, updated_at: now }).eq('id', t.id)
+  }
+
+  async function deletePipelineTask(id: string) {
+    const t = pipelineTasks.find(x => x.id === id)
+    setPipelineTasks(prev => prev.filter(x => x.id !== id))
+    await supabase.from('crm_pipeline_tasks').delete().eq('id', id)
+    if (!t) return
+    // Nếu đây là việc DUY NHẤT của công ty này và công ty chưa có hoạt động gì khác (mới tạo từ
+    // Workspace, chưa liên hệ/tặng quà/gắn thành khách) — dọn luôn công ty khỏi CRM Pipeline +
+    // Thị trường, tránh để lại "công ty ma" không ai thấy nhưng vẫn nằm trên Kanban mãi mãi.
+    const [{ count: otherTasks }, { count: interactions }, { count: gifts }, { data: entry }] = await Promise.all([
+      supabase.from('crm_pipeline_tasks').select('id', { count: 'exact', head: true }).eq('crm_id', t.crm_id),
+      supabase.from('crm_interactions').select('id', { count: 'exact', head: true }).eq('crm_id', t.crm_id),
+      supabase.from('crm_gifts').select('id', { count: 'exact', head: true }).eq('crm_id', t.crm_id),
+      supabase.from('crm_pipeline').select('client_id').eq('id', t.crm_id).single(),
+    ])
+    if (!otherTasks && !interactions && !gifts && !entry?.client_id) {
+      await supabase.from('market_leads').delete().eq('crm_id', t.crm_id)
+      await supabase.from('crm_pipeline').delete().eq('id', t.crm_id)
+      toast(`Đã xoá luôn "${t.company_name}" khỏi CRM Pipeline (chưa có hoạt động nào khác)`)
     }
   }
 
@@ -554,6 +698,9 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
     } else if (it.ws) {
       setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, deadline: nd } : x))
       await supabase.from('workspace_tasks').update({ deadline: nd }).eq('id', it.id)
+    } else if (it.pipeline) {
+      setPipelineTasks(prev => prev.map(x => x.id === it.id ? { ...x, due_date: nd } : x))
+      await supabase.from('crm_pipeline_tasks').update({ due_date: nd }).eq('id', it.id)
     }
     toast(days === 1 ? 'Đã hoãn sang ngày mai' : 'Đã hoãn 1 tuần')
   }
@@ -631,9 +778,14 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ',
       doneAt: t.created_at ?? null, notes: null, assignee: t.assignee ?? null, kcn: null,
     })),
-  ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs])
+    ...donePipeline.map(t => ({
+      id: t.id, key: `pl_${t.id}`, title: `${t.company_name} — ${t.title}`,
+      category: 'Khách mới',
+      doneAt: t.updated_at ?? null, notes: t.result_note ?? null, assignee: null, kcn: null,
+    })),
+  ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs, donePipeline])
 
-  const HIST_CATS = ['Tất cả', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
+  const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
   const filteredHistory = doneHistory.filter(t =>
     (histCat === 'all' || t.category === histCat) &&
     (!histSearch.trim() || t.title.toLowerCase().includes(histSearch.toLowerCase()))
@@ -653,14 +805,27 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
       <div key={it.key} className="border-t border-[#F0EFEB]">
         <div className="group relative flex items-center gap-2.5 px-4 py-2 hover:bg-[#FBFAF7] cursor-pointer" onClick={() => setExpandedKey(expanded ? null : it.key)}>
           <button
-            onClick={e => { e.stopPropagation(); it.source === 'ws' ? markWsDone(it.ws!) : startWorkDone(it.work!) }}
+            onClick={e => { e.stopPropagation(); it.source === 'ws' ? markWsDone(it.ws!) : it.source === 'pipeline' ? startPipelineDone(it.pipeline!) : startWorkDone(it.work!) }}
             title="Đánh dấu hoàn thành"
             className={`w-[19px] h-[19px] rounded-full border-[1.8px] shrink-0 flex items-center justify-center transition-colors hover:border-green-500 hover:bg-green-50 ${isOverdue ? 'border-red-300' : 'border-[#cfccc2]'}`}
           >
             <Check size={11} className="opacity-0 hover:opacity-100 text-green-600" />
           </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] font-semibold text-[#111] truncate">{it.title}</div>
+            <div className="text-[12.5px] font-semibold text-[#111] truncate">
+              {it.pipeline ? (
+                <>
+                  <button
+                    onClick={e => { e.stopPropagation(); openCompanyProfile(it.pipeline!.crm_id) }}
+                    className="hover:underline hover:text-blue-600 transition"
+                    title="Xem hồ sơ công ty"
+                  >
+                    {it.pipeline.company_name}
+                  </button>
+                  <span className="text-[#888] font-normal"> — {it.pipeline.title}</span>
+                </>
+              ) : it.title}
+            </div>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[it.category]}`}>{it.category}</span>
               {/* Badge trạng thái hồ sơ luôn hiện (yêu cầu GĐ) — chỉ với việc Tái ký HĐ */}
@@ -698,7 +863,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             className="absolute right-10 top-1/2 -translate-y-1/2 hidden lg:group-hover:flex items-center gap-1 bg-white border border-[#E8E7E2] rounded-[10px] px-1.5 py-1 shadow-[0_6px_18px_rgba(12,35,64,0.14)] z-10"
             onClick={e => e.stopPropagation()}
           >
-            <button onClick={() => it.source === 'ws' ? markWsDone(it.ws!) : startWorkDone(it.work!)}
+            <button onClick={() => it.source === 'ws' ? markWsDone(it.ws!) : it.source === 'pipeline' ? startPipelineDone(it.pipeline!) : startWorkDone(it.work!)}
               className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition">✓ Xong</button>
             <button onClick={() => snoozeItem(it, 1)}
               className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB] hover:border-blue-300 transition">+1 ngày</button>
@@ -750,6 +915,41 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
                       : 'Xoá công việc này?'
                     if (confirm(msg)) deleteWork(it.id)
                   }}
+                  className="ml-auto p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
+                  title="Xoá"
+                ><Trash2 size={13} /></button>
+              </div>
+            )}
+
+            {/* --- Việc BD (CRM Pipeline): giai đoạn / trạng thái / xem hồ sơ / xoá --- */}
+            {it.pipeline && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={localPipelineEntries.find(e => e.id === it.pipeline!.crm_id)?.stage || 'tiem-nang'}
+                  onChange={e => changePipelineStage(it.pipeline!.crm_id, e.target.value)}
+                  title="Giai đoạn pipeline"
+                  className="text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium bg-indigo-50 text-indigo-700 border-indigo-200"
+                >
+                  {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+                <select
+                  value={it.pipeline.status}
+                  onChange={e => changePipelineStatus(it.pipeline!, e.target.value as PipelineTaskStatus)}
+                  className="text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium bg-rose-50 text-rose-700 border-rose-200"
+                >
+                  <option value="pending">Chưa xử lý</option>
+                  <option value="in_progress">Đang xử lý</option>
+                  <option value="done">Đã xong</option>
+                </select>
+                <span className="text-[10.5px] text-[#999]">Hạn: {formatDate(it.pipeline.due_date)}</span>
+                <button
+                  onClick={() => openCompanyProfile(it.pipeline!.crm_id)}
+                  className="text-[10.5px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition"
+                >
+                  Xem hồ sơ →
+                </button>
+                <button
+                  onClick={() => { if (confirm('Xoá việc này? (nếu công ty chưa có hoạt động nào khác, sẽ xoá luôn khỏi CRM Pipeline)')) deletePipelineTask(it.id) }}
                   className="ml-auto p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
                   title="Xoá"
                 ><Trash2 size={13} /></button>
@@ -949,7 +1149,7 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             <div className="flex flex-col gap-1.5">
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
-                  ref={quickInputRef} autoFocus placeholder="Tên công việc..."
+                  ref={quickInputRef} autoFocus placeholder={qKind === 'pipeline' ? 'Tên công ty...' : 'Tên công việc...'}
                   value={qTitle} onChange={e => setQTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') saveQuickTask(); if (e.key === 'Escape') setQuickOpen(false) }}
                   className="flex-1 text-[12.5px] px-3 py-1.5 rounded-[9px] border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400"
@@ -957,11 +1157,12 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
                 <div className="flex gap-2 flex-wrap">
                   <select value={qKind} onChange={e => setQKind(e.target.value as typeof qKind)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none">
                     <option value="work">Việc của tôi</option>
+                    <option value="pipeline">Công ty mới (CRM)</option>
                     <option value="ws_task">Task nội bộ (chung)</option>
                     <option value="ws_doc">Hồ sơ · HĐ (chung)</option>
                   </select>
                   <input type="date" value={qDue} onChange={e => setQDue(e.target.value)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none" />
-                  {qKind !== 'work' && (
+                  {qKind !== 'work' && qKind !== 'pipeline' && (
                     <input placeholder="Người phụ trách" value={qAssignee} onChange={e => setQAssignee(e.target.value)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none w-28" />
                   )}
                   <button onClick={saveQuickTask} disabled={!qTitle.trim() || qSaving} className="text-[11.5px] px-3 py-1 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40">Lưu</button>
@@ -1164,6 +1365,30 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
         </div>
       )}
 
+      {/* Modal báo cáo hoàn thành (việc BD / CRM Pipeline) */}
+      {pipelineReportItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPipelineReportItem(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h2 className="text-[14px] font-semibold text-gray-900">Hoàn thành việc BD</h2>
+              <p className="text-[11.5px] text-gray-500 mt-0.5 truncate">{pipelineReportItem.company_name} — {pipelineReportItem.title}</p>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Kết quả <span className="text-red-500">*</span></label>
+                <textarea rows={3} autoFocus value={pipelineReportText} onChange={e => setPipelineReportText(e.target.value)}
+                  placeholder="Nội dung đã trao đổi/kết quả..."
+                  className="w-full text-[12.5px] border border-[#E8E7E2] rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 resize-none" />
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => setPipelineReportItem(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Huỷ</button>
+              <button onClick={submitPipelineReport} disabled={!pipelineReportText.trim()} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition">Hoàn thành</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal yêu cầu ngưng HĐ */}
       {suspendTask && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSuspendTask(null)}>
@@ -1197,6 +1422,20 @@ export function MyWorkFeed({ clients, onClientUpdate, toast, onStatsChange, refr
             </div>
           </div>
         </div>
+      )}
+
+      {/* Hồ sơ công ty (CRM Pipeline) — cùng CompanyProfileModal dùng ở CRM Pipeline BD */}
+      {profileEntry && (
+        <CompanyProfileModal
+          entry={profileEntry}
+          contacts={contacts}
+          products={products}
+          onClose={() => setProfileEntry(null)}
+          onUpdate={handleProfileUpdate}
+          onDelete={handleProfileDelete}
+          toast={toast}
+          isAdmin={isAdmin}
+        />
       )}
     </>
   )

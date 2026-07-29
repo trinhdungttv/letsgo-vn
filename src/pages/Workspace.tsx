@@ -21,7 +21,7 @@ import { supabase } from '../lib/supabase';
 import { queueGoogleSync } from '../lib/googleSync';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
-import type { Client, FinanceRecord, CRMPipelineEntry, Page, KCNSummary, Branch } from '../lib/types';
+import type { Client, FinanceRecord, CRMPipelineEntry, CRMProduct, Page, KCNSummary, Branch } from '../lib/types';
 import { ROLE_LABELS, CRM_STAGES } from '../lib/constants';
 import { formatDate, daysUntil } from '../lib/format';
 
@@ -29,6 +29,7 @@ interface WorkspaceProps {
   clients: Client[];
   finance: FinanceRecord[];
   pipeline: CRMPipelineEntry[];
+  products: CRMProduct[];
   onNavigate: (page: Page) => void;
   onClientUpdate: (client: Client) => void;
   toast: (msg: string) => void;
@@ -82,7 +83,7 @@ function RailCard({ title, icon, count, action, children }: {
   );
 }
 
-export default function Workspace({ clients, pipeline, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
+export default function Workspace({ clients, pipeline, products, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user, token } = useAuth();
   const { branches, updateBranch } = useBranchData();
 
@@ -521,6 +522,8 @@ export default function Workspace({ clients, pipeline, onNavigate, onClientUpdat
           <div className={`${mobileTab === 'viec' ? 'block' : 'hidden'} xl:block min-w-0`}>
             <MyWorkFeed
               clients={clients}
+              pipelineEntries={pipeline}
+              products={products}
               onClientUpdate={onClientUpdate}
               toast={toast}
               onStatsChange={handleStats}

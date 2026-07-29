@@ -125,6 +125,14 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         last_contact: new Date().toISOString().split('T')[0],
       }).select('*, contacts(name, phone), crm_products(name, category, price)').single();
       if (error) throw error;
+      // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
+      await supabase.from('market_leads').insert({
+        company_name: modalForm.name, region: modalForm.region || null,
+        workers_needed: parseInt(modalForm.estimate) || 0,
+        source: 'CRM Pipeline', status: 'Chưa LH',
+        suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }],
+        crm_id: data.id,
+      });
       await onRefresh();
       setModalForm({ name: '', region: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
       setShowModal(false);

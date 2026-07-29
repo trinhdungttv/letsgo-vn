@@ -563,6 +563,9 @@ export interface MarketLead {
   // Chi tiết lương/phí PHÍA CÔNG TY trả cho Let's Go VN, cùng bộ trường với wage_detail để
   // so sánh chênh lệch từng khoản (migration 115)
   wage_detail_client?: Record<string, number> | null;
+  // Liên kết sang crm_pipeline khi đã "Đẩy CRM" (hoặc được tạo sẵn liên kết từ CRM Pipeline/
+  // Workspace) — 1-1 tuỳ chọn, cùng mẫu với crm_pipeline.client_id (migration 122).
+  crm_id?: string | null;
 }
 
 export interface Quote {

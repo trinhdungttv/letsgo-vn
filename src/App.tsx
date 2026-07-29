@@ -338,7 +338,7 @@ function AppInner() {
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'loans' && <Loans toast={toast} />}
         {page === 'workspace' && (
-          <Workspace clients={clients} finance={finance} pipeline={pipeline} onNavigate={navigate} onClientUpdate={handleClientUpdate} toast={toast} />
+          <Workspace clients={clients} finance={finance} pipeline={pipeline} products={products} onNavigate={navigate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}
         {/* CRM Module */}
         {page === 'crm-dash' && (

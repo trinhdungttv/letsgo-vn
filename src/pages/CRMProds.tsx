@@ -22,23 +22,23 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-// 2 loại hình dịch vụ chính của công ty + 1 loại "Tuỳ chỉnh" cho giá thoả thuận riêng
-// (có thể cao hơn hoặc thấp hơn giá chuẩn đã cài sẵn cho 2 loại hình trên).
-const PRESET_CATEGORIES = ['Cho thuê lao động (thời vụ)', 'Giới thiệu việc làm', 'Tuỳ chỉnh'];
+// Danh mục dịch vụ mặc định — có thể gõ thêm danh mục mới ngay trong form (không giới hạn ở đây).
+const PRESET_CATEGORIES = ['Cho thuê lao động', 'Giới thiệu lao động', 'HOH - Gia công'];
 
 const CATEGORY_COLORS: Record<string, string> = {
-  'Cho thuê lao động (thời vụ)': 'bg-blue-100 text-blue-700',
-  'Giới thiệu việc làm': 'bg-emerald-100 text-emerald-700',
-  'Tuỳ chỉnh': 'bg-purple-100 text-purple-700',
+  'Cho thuê lao động': 'bg-blue-100 text-blue-700',
+  'Giới thiệu lao động': 'bg-emerald-100 text-emerald-700',
+  'HOH - Gia công': 'bg-purple-100 text-purple-700',
 };
 
 const PRICE_HINTS: Record<string, string> = {
-  'Cho thuê lao động (thời vụ)': 'VNĐ / ngày công thực tế của lao động',
-  'Giới thiệu việc làm': 'VNĐ / lần (thu 1 lần khi giới thiệu thành công)',
-  'Tuỳ chỉnh': 'Giá thoả thuận riêng, có thể cao hơn hoặc thấp hơn giá chuẩn của 2 loại hình trên',
+  'Cho thuê lao động': 'VNĐ / ngày công thực tế của lao động',
+  'Giới thiệu lao động': 'VNĐ / lần (thu 1 lần khi giới thiệu thành công)',
 };
 
-const emptyForm = { name: '', price: 0, category: PRESET_CATEGORIES[0], industry: '', description: '' };
+const NO_INDUSTRY_LABEL = 'Áp dụng chung';
+
+const emptyForm = { price: 0, category: PRESET_CATEGORIES[0], industry: '', description: '' };
 
 const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProductUpdate, onProductDelete, toast }) => {
   const { user } = useAuth();
@@ -67,7 +67,6 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
   const openEditModal = (product: CRMProduct) => {
     setEditingProduct(product);
     setFormData({
-      name: product.name,
       price: product.price || 0,
       category: product.category || PRESET_CATEGORIES[0],
       industry: product.industry || '',
@@ -77,17 +76,20 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
   };
 
   const handleSave = async () => {
-    if (!formData.name.trim()) {
-      toast('Vui lòng nhập tên sản phẩm');
+    if (!formData.category.trim()) {
+      toast('Vui lòng chọn danh mục dịch vụ');
       return;
     }
+
+    // Cột `name` trong DB bắt buộc phải có giá trị; dùng ngành nghề (hoặc nhãn mặc định) làm tên hiển thị nội bộ.
+    const displayName = formData.industry.trim() || NO_INDUSTRY_LABEL;
 
     try {
       if (editingProduct) {
         const { data, error } = await supabase
           .from('crm_products')
           .update({
-            name: formData.name,
+            name: displayName,
             price: formData.price,
             category: formData.category,
             industry: formData.industry || null,
@@ -102,7 +104,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         toast('Cập nhật sản phẩm thành công');
         await logActivity({
           user, action: 'update', table: 'crm_products', recordId: editingProduct.id,
-          description: `Cập nhật sản phẩm "${formData.name}"`,
+          description: `Cập nhật sản phẩm "${formData.category}"`,
           oldData: editingProduct, newData: data,
         });
       } else {
@@ -110,7 +112,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
           .from('crm_products')
           .insert([
             {
-              name: formData.name,
+              name: displayName,
               price: formData.price,
               category: formData.category,
               industry: formData.industry || null,
@@ -126,7 +128,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         if (data) {
           await logActivity({
             user, action: 'insert', table: 'crm_products', recordId: data.id,
-            description: `Thêm sản phẩm "${formData.name}"`,
+            description: `Thêm sản phẩm "${formData.category}"`,
             newData: data,
           });
         }
@@ -204,7 +206,9 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                     <div key={product.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
                       <div className="p-4">
                         <div className="flex items-start justify-between mb-2">
-                          <h3 className="text-sm font-semibold text-gray-900 flex-1">{product.name}</h3>
+                          <h3 className="text-sm font-semibold text-gray-900 flex-1">
+                            {product.industry || NO_INDUSTRY_LABEL}
+                          </h3>
                           {isAdmin && (
                             <div className="flex items-center gap-1 flex-shrink-0 ml-2">
                               <button
@@ -224,14 +228,6 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                             </div>
                           )}
                         </div>
-
-                        {product.industry && (
-                          <div className="mb-2">
-                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
-                              {product.industry}
-                            </span>
-                          </div>
-                        )}
 
                         <div className="mb-1">
                           <div className="text-2xl font-bold text-gray-900">{formatCurrency(product.price || 0)}</div>
@@ -273,19 +269,8 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
             <div className="px-6 py-4 space-y-4 max-h-96 overflow-y-auto">
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1">
-                  Khu vực báo giá <span className="text-red-500">*</span>
+                  Danh mục dịch vụ <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Ví dụ: Bình Dương, Đồng Nai..."
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Danh mục dịch vụ</label>
                 <input
                   type="text"
                   value={formData.category}
@@ -297,6 +282,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                 <datalist id="category-options">
                   {categoryOptions.map(c => <option key={c} value={c} />)}
                 </datalist>
+                <div className="text-[11px] text-gray-400 mt-1">Gõ tên danh mục mới để tự thêm dịch vụ khác ngoài danh sách.</div>
               </div>
 
               <div>

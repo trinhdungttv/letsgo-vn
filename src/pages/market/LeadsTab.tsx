@@ -342,14 +342,19 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handlePushCRM = async (companyName: string, region: string | null, workersNeeded: number) => {
+  // Ghi lại crm_id sau khi tạo — nếu không, bấm 2 lần sẽ tạo 2 dòng CRM trùng cho cùng 1 dự án.
+  const handlePushCRM = async (lead: import('../../lib/types').MarketLead) => {
+    if (lead.crm_id) return;
     try {
-      const { error } = await supabase.from('crm_pipeline').insert({
-        company_name: companyName, region, worker_estimate: workersNeeded || null,
+      const { data, error } = await supabase.from('crm_pipeline').insert({
+        company_name: lead.company_name, region: lead.region, worker_estimate: lead.workers_needed || null,
         stage: 'tiem-nang', notes: 'Phát hiện từ Module Thị trường',
-      });
+      }).select().single();
       if (error) throw error;
-      toast('Đã đẩy "' + companyName + '" sang CRM!');
+      const { error: linkError } = await supabase.from('market_leads').update({ crm_id: data.id }).eq('id', lead.id);
+      if (linkError) throw linkError;
+      await onRefresh();
+      toast('Đã đẩy "' + lead.company_name + '" sang CRM!');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
@@ -595,9 +600,13 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 <div className="flex items-center gap-2 shrink-0">
                   <SocialLinksRow websiteUrl={l.website_url} facebookUrl={l.facebook_url} youtubeUrl={l.youtube_url} tiktokUrl={l.tiktok_url} />
                   <button onClick={() => setEditLeadId(editLeadId === l.id ? null : l.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] border border-[#E8E7E2] text-[#666] hover:bg-white"><Pencil size={11} /> Sửa</button>
-                  <button onClick={() => handlePushCRM(l.company_name, l.region, l.workers_needed)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
-                    Đẩy CRM <ArrowRight size={12} />
-                  </button>
+                  {l.crm_id ? (
+                    <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Đã ở CRM</span>
+                  ) : (
+                    <button onClick={() => handlePushCRM(l)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+                      Đẩy CRM <ArrowRight size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
               {editLeadId === l.id && (
@@ -676,7 +685,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Tên công ty *</label>
                   <input value={leadForm.company_name} onChange={e => setLeadForm(f => ({ ...f, company_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Khu vực</label>
-                  <input value={leadForm.region} onChange={e => setLeadForm(f => ({ ...f, region: e.target.value }))} placeholder="KCN Biên Hòa 2" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <SearchSelect value={leadForm.region} onChange={v => setLeadForm(f => ({ ...f, region: v }))}
+                    options={zoneNames.map(z => ({ value: z, label: z }))} placeholder="Chọn KCN…" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Ngành nghề</label>
                   <SearchSelect value={leadForm.industry} onChange={v => setLeadForm(f => ({ ...f, industry: v }))}
                     options={industries.map(i => ({ value: i, label: i }))} placeholder="Chọn ngành…" allowAdd onAdd={handleAddIndustry} /></div>
