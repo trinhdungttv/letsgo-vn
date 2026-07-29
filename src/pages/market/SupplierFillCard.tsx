@@ -4,14 +4,17 @@ import type { MarketLeadSupplier, Competitor } from '../../lib/types';
 import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
 import { wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { fmtVnd } from '../../lib/payroll/format';
 
 interface SupForm { name: string; qty: string; wage_min: string; wage_max: string; wage_detail: Record<string, string> }
 const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', wage_detail: {} };
 
+// Khoảng lương vẫn hiển thị gọn bằng "tr" vì nằm trong 1 hàng chật, nhưng Ô NHẬP thì bằng
+// ĐỒNG (migration 126) để khớp đơn vị với Tính bảng lương — xem wageFields.ts.
 const wageFmt = (min: number | null | undefined, max: number | null | undefined) =>
   min != null && max != null ? `${(min / 1_000_000).toFixed(1)}–${(max / 1_000_000).toFixed(1)}tr` : null;
 
-const tr = (v: number | null | undefined) => v != null ? (v / 1_000_000).toFixed(2).replace(/\.?0+$/, '') : '—';
+const tr = (v: number | null | undefined) => v != null ? fmtVnd(v) : '—';
 const detailTotal = (s: MarketLeadSupplier) => Object.values(s.wage_detail ?? {}).reduce((a, b) => a + (b || 0), 0);
 
 /** Bảng so sánh lương giữa các NCC (kể cả Let's Go VN) tại cùng 1 công ty/dự án — chọn NCC
@@ -50,7 +53,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
           ))}
           <tr className="border-t border-[#E8E7E2] font-medium">
             <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng chi tiết lương</td>
-            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s))}tr</td>)}
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s))}đ</td>)}
           </tr>
           {lgvn && (
             <tr className="border-t border-[#F0EEE9]">
@@ -59,7 +62,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
                 if (s.is_us) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
                 const diff = detailTotal(s) - lgvnTotal;
                 const cls = diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-[#999]';
-                return <td key={i} className={`text-right px-2 py-1 font-medium ${cls}`}>{diff > 0 ? '+' : ''}{tr(diff)}tr</td>;
+                return <td key={i} className={`text-right px-2 py-1 font-medium ${cls}`}>{diff > 0 ? '+' : ''}{tr(diff)}đ</td>;
               })}
             </tr>
           )}
@@ -93,15 +96,16 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
             onChange={v => setForm({ ...form, name: v })}
             options={competitorNames.map(n => ({ value: n, label: n }))}
             placeholder="Chọn NCC (Đối thủ)…"
-            allowAdd
             className="flex-1 min-w-[160px]"
           />
         ) : (
-          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Tên NCC" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none flex-1 min-w-[160px]" />
+          <span className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex-1 min-w-[160px]">
+            Chưa có hồ sơ Đối thủ nào — tạo ở tab "Đối thủ" trước khi thêm NCC.
+          </span>
         )}
         <input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="Số LĐ" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-16" />
-        <input type="number" step="0.1" value={form.wage_min} onChange={e => setForm({ ...form, wage_min: e.target.value })} placeholder="Lương từ (tr)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-24" />
-        <input type="number" step="0.1" value={form.wage_max} onChange={e => setForm({ ...form, wage_max: e.target.value })} placeholder="đến (tr)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-20" />
+        <input type="number" step="100000" value={form.wage_min} onChange={e => setForm({ ...form, wage_min: e.target.value })} placeholder="Lương từ (đ)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-28 text-right" />
+        <input type="number" step="100000" value={form.wage_max} onChange={e => setForm({ ...form, wage_max: e.target.value })} placeholder="đến (đ)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-28 text-right" />
         <button onClick={onSubmit} disabled={saving} className="px-2.5 py-1 rounded bg-[#1D4ED8] text-white text-[12px]">Lưu</button>
         <button onClick={onCancel} className="px-2 py-1 rounded border border-gray-300 text-[12px]"><X size={12} /></button>
       </div>
@@ -157,11 +161,11 @@ export default function SupplierFillCard({
   const setAddFormWithSuggest = (f: SupForm) => {
     if (f.name === addForm.name || addForm.wage_min || addForm.wage_max) { setAddForm(f); return; }
     const match = competitors?.find(c => c.company_name === f.name && c.wage_paid != null);
-    const suggested = match ? (match.wage_paid! / 1_000_000).toFixed(1) : '';
+    const suggested = match ? String(match.wage_paid!) : '';
     setAddForm(suggested ? { ...f, wage_min: suggested, wage_max: suggested } : f);
   };
 
-  const toNum = (v: string) => v.trim() ? parseFloat(v) * 1_000_000 : null;
+  const toNum = (v: string) => v.trim() ? parseFloat(v) || null : null;
 
   const submitAdd = async () => {
     if (!addForm.name.trim()) return;
@@ -175,8 +179,8 @@ export default function SupplierFillCard({
     setEditIndex(i);
     setEditForm({
       name: s.name, qty: String(s.qty),
-      wage_min: s.wage_min != null ? String(s.wage_min / 1_000_000) : '',
-      wage_max: s.wage_max != null ? String(s.wage_max / 1_000_000) : '',
+      wage_min: s.wage_min != null ? String(s.wage_min) : '',
+      wage_max: s.wage_max != null ? String(s.wage_max) : '',
       wage_detail: wageDetailToStrings(s.wage_detail),
     });
   };

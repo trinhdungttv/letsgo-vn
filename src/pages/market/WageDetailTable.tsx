@@ -4,7 +4,8 @@ import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 /** Bảng chi tiết lương theo từng trường DÙNG CHUNG toàn hệ thống (Lương cơ bản, Phụ cấp…).
  * `fields` là danh sách trường global (bảng wage_detail_fields) — thêm/xoá 1 trường ở đây
  * ảnh hưởng đến MỌI nơi dùng bảng này (Let's Go VN lẫn từng NCC, ở mọi công ty/dự án).
- * `value`/`onChange` chỉ là giá trị RIÊNG của đối tượng đang sửa (đơn vị: triệu). */
+ * `value`/`onChange` chỉ là giá trị RIÊNG của đối tượng đang sửa.
+ * ĐƠN VỊ: ĐỒNG (từ migration 126) — khớp với "Tính bảng lương", xem wageFields.ts. */
 export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, defaultOpen = false, label = 'Chi tiết lương' }: {
   fields: string[];
   value: Record<string, string>;
@@ -55,11 +56,12 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
             <div key={f} className="flex items-center gap-1.5">
               <span className="text-[11.5px] text-[#555] flex-1 truncate">{f}</span>
               <input
-                type="number" step="0.1"
+                type="number" step="1000"
                 value={value[f] ?? ''}
                 onChange={e => setField(f, e.target.value)}
-                placeholder="tr"
-                className="w-20 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none"
+                placeholder="đ"
+                title="Nhập bằng ĐỒNG (vd 250000), khớp đơn vị với Tính bảng lương"
+                className="w-28 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none text-right"
               />
               <button type="button" onClick={() => removeField(f)} disabled={busy} title="Xoá trường này khỏi hệ thống"
                 className="text-[#ccc] hover:text-red-500"><X size={12} /></button>

@@ -356,6 +356,9 @@ export interface Competitor {
   active_zones?: string[] | null;
   // Giám đốc + mạng xã hội (migration 105)
   director?: string | null;
+  // SĐT liên hệ của Giám đốc — tối đa 2 số (migration 123)
+  director_phone?: string | null;
+  director_phone2?: string | null;
   website_url?: string | null;
   facebook_url?: string | null;
   tiktok_url?: string | null;

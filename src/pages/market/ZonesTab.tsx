@@ -149,7 +149,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   useEffect(() => { localStorage.setItem('market_zone_info_split_pct', String(infoLeftPct)); }, [infoLeftPct]);
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
-  const { provinces: sharedProvinces, addProvince } = useProvinces();
+  const { provinces: sharedProvinces, addProvince } = useProvinces(marketZones);
   const provinceOptions = sharedProvinces;
   const provinceNames = [ALL_OPTION, ...provinceOptions];
   const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));

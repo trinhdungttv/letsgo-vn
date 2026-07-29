@@ -8,6 +8,13 @@ import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import SearchSelect from './SearchSelect';
 import { type CompetitorLinkType, fetchLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
+import { FOCUS_PROVINCES } from './populationData';
+
+// Tên tỉnh cũ (trước sáp nhập 01/07/2025) của 1 tỉnh MỚI — dùng để hiện tooltip khi hover.
+function oldNamesOfProvince(name: string): string[] {
+  const match = FOCUS_PROVINCES.find(p => p.name === name);
+  return match ? match.oldNames.map(o => o.replace(/\s*\(cũ\)\s*$/, '').trim()) : [];
+}
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 interface Props {
@@ -43,6 +50,8 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     image_pos_y: competitor.image_pos_y ?? 50,
     image_fit: competitor.image_fit ?? 'cover',
     director: competitor.director ?? '',
+    director_phone: competitor.director_phone ?? '',
+    director_phone2: competitor.director_phone2 ?? '',
     map_link: competitor.map_link ?? '',
     website_url: competitor.website_url ?? '',
     facebook_url: competitor.facebook_url ?? '',
@@ -93,9 +102,26 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
 
   const zoneOptions = useMemo(() => {
     const kcnNames = marketZones.map(z => z.name);
-    const all = [...new Set([...kcnNames, ...provinces])].sort((a, b) => a.localeCompare(b, 'vi'));
+    // `provinces` (useProvinces) là tên tỉnh CŨ đang dùng phổ biến trong dữ liệu hiện có — vẫn giữ
+    // nguyên để chọn. Thêm tên tỉnh MỚI sau sáp nhập (FOCUS_PROVINCES) làm lựa chọn bổ sung.
+    const focusNew = FOCUS_PROVINCES.map(p => p.name);
+    const all = [...new Set([...kcnNames, ...provinces, ...focusNew])].sort((a, b) => a.localeCompare(b, 'vi'));
     return all.filter(z => !activeZones.includes(z)).map(z => ({ value: z, label: z }));
   }, [marketZones, provinces, activeZones]);
+
+  // Nhóm các khu vực hoạt động thành cột theo tỉnh — KCN thì lấy tỉnh đã gán sẵn lúc tạo KCN
+  // (marketZones.location); mục nhập kiểu "tỉnh thành" (gõ tay, không phải KCN) tự làm cột riêng.
+  const groupedZones = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const z of activeZones) {
+      const key = kcnNameSet.has(z) ? (marketZones.find(m => m.name === z)?.location || 'Chưa gắn tỉnh') : z;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(z);
+    }
+    return Array.from(map.entries())
+      .map(([province, items]) => ({ province, items }))
+      .sort((a, b) => a.province.localeCompare(b.province, 'vi'));
+  }, [activeZones, kcnNameSet, marketZones]);
 
   const addActiveZone = async (zone: string) => {
     const next = [...activeZones, zone];
@@ -198,6 +224,8 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
       image_pos_y: form.image_pos_y,
       image_fit: form.image_fit,
       director: form.director.trim() || null,
+      director_phone: form.director_phone.trim() || null,
+      director_phone2: form.director_phone2.trim() || null,
       map_link: form.map_link.trim() || null,
       website_url: form.website_url.trim() || null,
       facebook_url: form.facebook_url.trim() || null,
@@ -302,15 +330,31 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
           </div>
           <SearchSelect value="" onChange={addActiveZone} options={zoneOptions} placeholder="+ Chọn KCN / Tỉnh thành…" className="w-56" />
         </div>
-        <div className="p-3.5 flex flex-wrap gap-1.5">
-          {activeZones.length ? activeZones.map(z => {
-            const isKcn = kcnNameSet.has(z);
+        <div className="p-3.5 flex gap-4 overflow-x-auto">
+          {activeZones.length ? groupedZones.map(g => {
+            const oldNames = oldNamesOfProvince(g.province);
             return (
-              <span key={z} className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11.5px] font-medium border ${isKcn ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-violet-50 text-violet-700 border-violet-100'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${isKcn ? 'bg-blue-500' : 'bg-violet-500'}`} />
-                {z}
-                <button onClick={() => removeActiveZone(z)} className="p-1.5 sm:p-0.5 rounded-full hover:bg-black/5 transition"><X size={10} /></button>
-              </span>
+              <div key={g.province} className="flex flex-col gap-1.5 min-w-[136px] shrink-0">
+                <div
+                  className="text-[11px] font-semibold text-[#666] flex items-center gap-1 pb-1.5 border-b border-[#F0EEE9]"
+                  title={oldNames.length ? `Tên cũ: ${oldNames.join(', ')}` : undefined}
+                >
+                  <MapPin size={10} className="text-[#999] shrink-0" />
+                  <span className="truncate">{g.province}</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {g.items.map(z => {
+                    const isKcn = kcnNameSet.has(z);
+                    return (
+                      <span key={z} className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11.5px] font-medium border ${isKcn ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-violet-50 text-violet-700 border-violet-100'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isKcn ? 'bg-blue-500' : 'bg-violet-500'}`} />
+                        <span className="truncate">{z}</span>
+                        <button onClick={() => removeActiveZone(z)} className="p-1.5 sm:p-0.5 rounded-full hover:bg-black/5 transition shrink-0"><X size={10} /></button>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
             );
           }) : (
             <span className="text-[11.5px] text-[#aaa]">Chưa chọn khu vực hoạt động nào</span>
@@ -343,8 +387,8 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                       <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[#888]">Khu vực</label>
-                      <input value={form.zone_name} onChange={e => setForm(f => ({ ...f, zone_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                      <label className="text-[11px] text-[#888]">Trụ sở chính</label>
+                      <input value={form.zone_name} onChange={e => setForm(f => ({ ...f, zone_name: e.target.value }))} placeholder="VD: Biên Hòa - Đồng Nai" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
@@ -357,9 +401,19 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                       <input value={form.recruitment_source} onChange={e => setForm(f => ({ ...f, recruitment_source: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] text-[#888]">Giám đốc</label>
-                    <input value={form.director} onChange={e => setForm(f => ({ ...f, director: e.target.value }))} placeholder="Tên giám đốc / người phụ trách" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Giám đốc</label>
+                      <input value={form.director} onChange={e => setForm(f => ({ ...f, director: e.target.value }))} placeholder="Tên giám đốc / người phụ trách" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">SĐT liên hệ 1</label>
+                      <input value={form.director_phone} onChange={e => setForm(f => ({ ...f, director_phone: e.target.value }))} placeholder="09xx xxx xxx" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">SĐT liên hệ 2 (tuỳ chọn)</label>
+                      <input value={form.director_phone2} onChange={e => setForm(f => ({ ...f, director_phone2: e.target.value }))} placeholder="09xx xxx xxx" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Ảnh cover (link)</label>
@@ -453,10 +507,20 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
               ) : (
                 <div className="space-y-2 text-[12.5px]">
                   <div className="flex justify-between"><span className="text-[#888]">Tên</span><span className="font-medium text-[#111]">{competitor.company_name}</span></div>
-                  <div className="flex justify-between"><span className="text-[#888]">Khu vực</span><span className="font-medium text-[#111]">{competitor.zone_name}</span></div>
+                  <div className="flex justify-between"><span className="text-[#888]">Trụ sở chính</span><span className="font-medium text-[#111]">{competitor.zone_name}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Tổng LĐ ước tính</span><span className="font-medium text-[#111]">{(competitor.total_workers ?? 0).toLocaleString('vi-VN')}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Nguồn tuyển</span><span className="font-medium text-[#111]">{competitor.recruitment_source || '—'}</span></div>
                   <div className="flex justify-between items-center"><span className="text-[#888] flex items-center gap-1"><User size={11} /> Giám đốc</span><span className="font-medium text-[#111]">{competitor.director || '—'}</span></div>
+                  {(competitor.director_phone || competitor.director_phone2) && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[#888]">SĐT liên hệ</span>
+                      <span className="font-medium text-[#1D4ED8] flex items-center gap-2">
+                        {[competitor.director_phone, competitor.director_phone2].filter(Boolean).map((p, i) => (
+                          <a key={i} href={`tel:${p}`} className="hover:underline">{p}</a>
+                        ))}
+                      </span>
+                    </div>
+                  )}
                   <div>
                     <div className="text-[#888] mb-1.5">Liên kết nhanh</div>
                     {(() => {

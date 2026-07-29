@@ -198,7 +198,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   );
   const untrackedClients = clients.filter(c => c.market_workers_needed == null);
 
-  const toNum = (v: string) => v.trim() ? parseFloat(v) * 1_000_000 : null;
+  // Nhập bằng ĐỒNG (migration 126) — khớp đơn vị với "Tính bảng lương"; DB vốn đã lưu bằng đồng.
+  const toNum = (v: string) => v.trim() ? parseFloat(v) || null : null;
 
   // ── Dự án/Công ty đang tìm hiểu (market_leads) ──
 
@@ -664,10 +665,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" value={clientForm.workers_needed} onChange={e => setClientForm(f => ({ ...f, workers_needed: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Let's Go VN đang cung cấp</label>
                   <input type="number" value={clientForm.lgv_qty} onChange={e => setClientForm(f => ({ ...f, lgv_qty: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương từ (tr)</label>
-                  <input type="number" step="0.1" value={clientForm.wage_min} onChange={e => setClientForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (tr)</label>
-                  <input type="number" step="0.1" value={clientForm.wage_max} onChange={e => setClientForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương từ (đ)</label>
+                  <input type="number" step="100000" value={clientForm.wage_min} onChange={e => setClientForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (đ)</label>
+                  <input type="number" step="100000" value={clientForm.wage_max} onChange={e => setClientForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={clientForm.wage_detail} onChange={v => setClientForm(f => ({ ...f, wage_detail: v }))}
                     onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
@@ -696,10 +697,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input value={leadForm.source} onChange={e => setLeadForm(f => ({ ...f, source: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Let's Go VN đang cung cấp</label>
                   <input type="number" value={leadForm.lgv_qty} onChange={e => setLeadForm(f => ({ ...f, lgv_qty: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương từ (tr)</label>
-                  <input type="number" step="0.1" value={leadForm.wage_min} onChange={e => setLeadForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (tr)</label>
-                  <input type="number" step="0.1" value={leadForm.wage_max} onChange={e => setLeadForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương từ (đ)</label>
+                  <input type="number" step="100000" value={leadForm.wage_min} onChange={e => setLeadForm(f => ({ ...f, wage_min: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương đến (đ)</label>
+                  <input type="number" step="100000" value={leadForm.wage_max} onChange={e => setLeadForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={leadForm.wage_detail} onChange={v => setLeadForm(f => ({ ...f, wage_detail: v }))}
                     onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
@@ -752,10 +753,10 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
       <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Nhu cầu LĐ</label>
         <input type="number" value={patch.workers_needed} onChange={e => setPatch(p => ({ ...p, workers_needed: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
       <div />
-      <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương từ (tr)</label>
-        <input type="number" step="0.1" value={patch.wage_min} onChange={e => setPatch(p => ({ ...p, wage_min: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-      <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương đến (tr)</label>
-        <input type="number" step="0.1" value={patch.wage_max} onChange={e => setPatch(p => ({ ...p, wage_max: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+      <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương từ (đ)</label>
+        <input type="number" step="100000" value={patch.wage_min} onChange={e => setPatch(p => ({ ...p, wage_min: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+      <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương đến (đ)</label>
+        <input type="number" step="100000" value={patch.wage_max} onChange={e => setPatch(p => ({ ...p, wage_max: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
       <div className="col-span-2 space-y-1.5">
         <WageDetailTable
           label="Chi tiết lương · LGVN trả NLĐ"
@@ -796,8 +797,8 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
   return <EditFormFields initial={{
     industry: client.industry ?? '',
     workers_needed: String(client.market_workers_needed ?? ''),
-    wage_min: client.wage_min != null ? String(client.wage_min / 1_000_000) : '',
-    wage_max: client.wage_max != null ? String(client.wage_max / 1_000_000) : '',
+    wage_min: client.wage_min != null ? String(client.wage_min) : '',
+    wage_max: client.wage_max != null ? String(client.wage_max) : '',
     allowance_notes: client.allowance_notes ?? '',
     map_link: client.map_link ?? '',
     website_url: client.website_url ?? '',
@@ -813,8 +814,8 @@ function LeadEditForm({ lead, ...rest }: { lead: import('../../lib/types').Marke
   return <EditFormFields initial={{
     industry: lead.industry ?? '',
     workers_needed: String(lead.workers_needed ?? ''),
-    wage_min: lead.wage_min != null ? String(lead.wage_min / 1_000_000) : '',
-    wage_max: lead.wage_max != null ? String(lead.wage_max / 1_000_000) : '',
+    wage_min: lead.wage_min != null ? String(lead.wage_min) : '',
+    wage_max: lead.wage_max != null ? String(lead.wage_max) : '',
     allowance_notes: lead.allowance_notes ?? '',
     map_link: lead.map_link ?? '',
     website_url: lead.website_url ?? '',

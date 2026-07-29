@@ -58,6 +58,9 @@ export default function SearchSelect({ value, onChange, options, placeholder, cl
   const q = query.trim().toLowerCase();
   const filtered = q ? options.filter(o => o.label.toLowerCase().includes(q)) : options;
   const selected = options.find(o => o.value === value);
+  // `value` có thể là 1 tên vừa gõ/thêm mới (allowAdd) chưa kịp có trong `options` — vẫn phải
+  // hiển thị đúng tên đó thay vì rơi về placeholder, nếu không sẽ trông như chưa chọn được gì.
+  const displayLabel = selected?.label ?? value;
   const canAdd = !!allowAdd && !!query.trim() && !options.some(o => o.label.toLowerCase() === q);
   const rowCount = filtered.length + (canAdd ? 1 : 0);
 
@@ -67,7 +70,7 @@ export default function SearchSelect({ value, onChange, options, placeholder, cl
     <div className={className}>
       <button ref={triggerRef} type="button" onClick={toggle}
         className="w-full flex items-center justify-between gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:border-gray-400 transition text-left">
-        <span className={`truncate ${selected ? 'text-[#222]' : 'text-[#999]'}`}>{selected?.label ?? placeholder ?? 'Chọn…'}</span>
+        <span className={`truncate ${displayLabel ? 'text-[#222]' : 'text-[#999]'}`}>{displayLabel || placeholder || 'Chọn…'}</span>
         <ChevronDown size={13} className="text-[#999] flex-none" />
       </button>
       {open && rect && createPortal(

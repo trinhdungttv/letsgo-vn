@@ -8,13 +8,14 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FileText, Send, ClipboardList, FileWarning, Phone, MapPin, ChevronDown,
   Settings, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
 import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
 import { QuoteModal } from '../components/workspace/QuoteModal';
+import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
@@ -105,6 +106,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
+  const [showPayrollCalc, setShowPayrollCalc] = useState(false);
 
   // ---- Rail: HĐ cần xử lý ----
   const [contractThreshold, setContractThreshold] = usePersistedState('lgvn_contract_threshold_days', 17);
@@ -499,9 +501,9 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
         {/* ==== QUICK ACTIONS ==== */}
         {!hidden('quick_actions') && (
           <div className={`${mobileTab === 'viec' ? 'grid' : 'hidden'} xl:grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4`}>
-            <button onClick={() => { setQuickAddSignal(s => s + 1); setMobileTab('viec'); }}
+            <button onClick={() => setShowPayrollCalc(true)}
               className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 border border-blue-600 text-[12px] font-semibold text-white hover:bg-blue-700 transition-colors">
-              <Plus size={14} /> Thêm việc
+              <Calculator size={14} /> Tính bảng lương
             </button>
             {[
               { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
@@ -741,6 +743,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
         />
       )}
       {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}
+      {showPayrollCalc && <PayrollCalculatorModal clients={clients} toast={toast} onClose={() => setShowPayrollCalc(false)} />}
     </>
   );
 }

@@ -10,6 +10,7 @@ import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
+import { shortId, expandId } from '../../hooks/useHashSubRoute';
 import { type CompetitorLinkType, fetchLinkTypes, addLinkType, deleteLinkType, reorderLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
@@ -53,12 +54,47 @@ const trendIcon = (trend: string) => {
   return <span className="text-[#888] inline-flex items-center gap-0.5 text-[11.5px]"><Minus size={11} /> Ổn định</span>;
 };
 
+// Hồ sơ đối thủ đang xem cần có link riêng (#/market/comp/{shortId}) — nếu không, F5 sẽ mất vị
+// trí và quay về danh sách. parts[0]='market', parts[1]='comp' (do useHashTab quản lý), parts[2]=id.
+function competitorIdFromHash(competitors: Competitor[]): string | null {
+  const parts = window.location.hash.replace('#/', '').split('/');
+  if (parts[0] !== 'market' || parts[1] !== 'comp' || !parts[2]) return null;
+  return expandId(parts[2], competitors) || competitors.find(c => c.id === parts[2])?.id || null;
+}
+
 export default function CompetitorsTab({ marketZones, marketSurveys, competitors, clients, marketLeads, zoneFilter, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
+  const [selectedCompetitorId, setSelectedCompetitorIdRaw] = useState<string | null>(() => competitorIdFromHash(competitors));
+  const selectedCompetitor = competitors.find(c => c.id === selectedCompetitorId) || null;
+
+  // Danh sách competitors chỉ có sau khi Market tải xong — re-resolve id từ URL 1 lần khi data về.
+  useEffect(() => {
+    if (selectedCompetitorId || !competitors.length) return;
+    const id = competitorIdFromHash(competitors);
+    if (id) setSelectedCompetitorIdRaw(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competitors]);
+
+  // Nút Back/Forward của trình duyệt (pushState không tự bắn sự kiện, chỉ back/forward mới có).
+  useEffect(() => {
+    const onNav = () => setSelectedCompetitorIdRaw(competitorIdFromHash(competitors));
+    window.addEventListener('popstate', onNav);
+    return () => window.removeEventListener('popstate', onNav);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competitors]);
+
+  const openCompetitor = (c: Competitor) => {
+    setSelectedCompetitorIdRaw(c.id);
+    const hash = `#/market/comp/${shortId(c.id)}`;
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+  };
+  const closeCompetitor = () => {
+    setSelectedCompetitorIdRaw(null);
+    if (window.location.hash !== '#/market/comp') window.history.pushState(null, '', '#/market/comp');
+  };
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_competitors_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_competitors_view_mode', viewMode); }, [viewMode]);
   const [compCharts, setCompCharts] = useState<CompChartItem[]>(loadCompCharts);
@@ -192,7 +228,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   };
 
   if (selectedCompetitor) {
-    return <CompetitorDetail competitor={selectedCompetitor} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={() => setSelectedCompetitor(null)} onRefresh={onRefresh} toast={toast} />;
+    return <CompetitorDetail competitor={selectedCompetitor} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={closeCompetitor} onRefresh={onRefresh} toast={toast} />;
   }
 
   const renderCompChart = (key: string) => {
@@ -443,7 +479,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 return (
                   <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
                     <td className="px-3 py-2">
-                      <button onClick={() => setSelectedCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
+                      <button onClick={() => openCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
                       {c.notes && <div className={`text-[10.5px] ${c.notes.includes('⚠') ? 'text-red-500' : 'text-[#aaa]'}`}>{c.notes}</div>}
                     </td>
                     <td className="px-3 py-2 text-[11.5px]">{c.zone_name}</td>
@@ -482,7 +518,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
               : diff > 3 ? { cls: 'bg-emerald-50 text-emerald-700', txt: `▲ Cao hơn TT ${diff}%` }
                 : { cls: 'bg-amber-50 text-amber-700', txt: '≈ Bằng TT' };
             return (
-              <div key={c.id} onClick={() => setSelectedCompetitor(c)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
+              <div key={c.id} onClick={() => openCompetitor(c)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
                 {c.image_url ? (
                   <div className="h-32 w-full overflow-hidden bg-gray-100">
                     <img

@@ -7,7 +7,12 @@ const SEED_PROVINCES = [
   'Đà Nẵng', 'Hà Nội', 'Hải Phòng', 'Bắc Ninh', 'Hưng Yên',
 ];
 
-export function useProvinces() {
+/**
+ * `zonesForCount` (tuỳ chọn): danh sách KCN (marketZones) — khi truyền vào, tỉnh/thành nào có
+ * nhiều KCN hơn sẽ hiện lên đầu danh sách (thay vì xếp theo A-Z), giúp chọn nhanh hơn ở các nơi
+ * "chọn tỉnh thành để phân loại/lọc". Không truyền thì giữ nguyên thứ tự A-Z như trước.
+ */
+export function useProvinces(zonesForCount?: { location?: string | null }[]) {
   const [extras, setExtras] = useState<string[]>([]);
 
   useEffect(() => {
@@ -23,10 +28,19 @@ export function useProvinces() {
     })();
   }, []);
 
+  const zoneCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const z of zonesForCount ?? []) if (z.location) map.set(z.location, (map.get(z.location) ?? 0) + 1);
+    return map;
+  }, [zonesForCount]);
+
   const provinces = useMemo(() => {
     const set = new Set([...SEED_PROVINCES, ...extras]);
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
-  }, [extras]);
+    return Array.from(set).sort((a, b) => {
+      const diff = (zoneCounts.get(b) ?? 0) - (zoneCounts.get(a) ?? 0);
+      return diff !== 0 ? diff : a.localeCompare(b, 'vi');
+    });
+  }, [extras, zoneCounts]);
 
   const addProvince = useCallback((name: string) => {
     if (!name.trim()) return;
