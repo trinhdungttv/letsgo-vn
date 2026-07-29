@@ -214,8 +214,22 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     syncInFlight.current = true;
     (async () => {
       try {
+        // Chống trùng: dữ liệu missing tính từ state có thể cũ (nhiều tab, nhiều
+        // người cùng vào) — kiểm tra lại NGAY TRƯỚC KHI insert bằng query mới nhất,
+        // thu hẹp tối đa khoảng hở race giữa lúc đọc và lúc ghi.
+        const { data: freshExisting } = await supabase
+          .from('work_tasks')
+          .select('client_id')
+          .eq('task_type', 'Tái ký HĐ')
+          .in('client_id', missing.map(c => c.id))
+          .or(`status.neq.done,completed_at.gte.${new Date(Date.now() - 60 * 86400000).toISOString()}`);
+        const stillMissingIds = new Set(missing.map(c => c.id));
+        for (const row of freshExisting || []) stillMissingIds.delete((row as { client_id: string }).client_id);
+        const stillMissing = missing.filter(c => stillMissingIds.has(c.id));
+        if (!stillMissing.length) return;
+
         const today = new Date().toISOString().slice(0, 10);
-        const { error } = await supabase.from('work_tasks').insert(missing.map(c => {
+        const { error } = await supabase.from('work_tasks').insert(stillMissing.map(c => {
           const d = daysUntil(c.contract_end);
           return {
             user_id: (user as any).id,
