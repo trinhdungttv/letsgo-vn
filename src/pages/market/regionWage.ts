@@ -3,15 +3,39 @@
 // bảng region_wages (migration 111), được tính lại tự động từ region_wage_batches
 // (migration 113) — nơi lưu từng lần đổi lương, sửa/xoá trực tiếp được.
 import { supabase } from '../../lib/supabase';
+import {
+  MIN_WAGE_BATCHES, resolveMinWageBatch, resolveMinWage, minWageStaleNotice, isMinWageStale,
+  REGION_ZONES as MIN_WAGE_REGIONS, type MinWageBatch, type RegionZone as MinWageRegionZone,
+} from '../../lib/minWage';
 
-export type RegionZone = 'I' | 'II' | 'III' | 'IV';
+export type RegionZone = MinWageRegionZone;
 
-// Nghị định 74/2024/NĐ-CP, áp dụng từ 01/7/2024 (đồng/tháng) — dùng làm giá trị mặc định
-// khi bảng chưa có dữ liệu, và cho nút "Khôi phục mức 2024".
-export const OFFICIAL_REGION_WAGES: Record<RegionZone, number> = {
-  I: 4_960_000, II: 4_410_000, III: 3_860_000, IV: 3_450_000,
+// ── Nguồn mức lương tối thiểu ─────────────────────────────────────────────────────────────
+// Bảng số nằm ở src/lib/minWage.ts dạng BATCH có effectiveFrom + decree (không phải 1 bộ số
+// "hiện hành"), để hợp đồng cũ vẫn tra được mức áp dụng lúc ký. Batch xác thực cuối cùng là
+// NĐ 74/2024/NĐ-CP.
+//
+// THỨ TỰ ƯU TIÊN: region_wage_batches (DB — người dùng tự nhập ở tab Lương TT) THẮNG hardcode.
+// Hardcode chỉ là seed dự phòng khi DB trống. Xem mergeBatches() trong lib/minWage.ts.
+//
+// ⚠ KHÔNG tự điền số nghị định mới vào lib/minWage.ts. Nếu batch mới nhất đã quá 12 tháng,
+// isMinWageStale() trả true và UI phải hiện cảnh báo lỗi thời (MinWageStaleBanner) thay vì âm
+// thầm dùng số cũ như thể còn hiệu lực.
+export {
+  MIN_WAGE_BATCHES, resolveMinWageBatch, resolveMinWage, minWageStaleNotice, isMinWageStale,
+  type MinWageBatch,
 };
-export const OFFICIAL_EFFECTIVE_DATE = '2024-07-01';
+
+/** Batch seed mới nhất, dạng Record — GIỮ cho nút "Khôi phục mức đã xác thực" và giá trị mặc
+ *  định của tab Lương TT. Là số DẪN XUẤT từ MIN_WAGE_BATCHES, không phải nguồn riêng. */
+const LATEST_SEED = MIN_WAGE_BATCHES[MIN_WAGE_BATCHES.length - 1];
+
+export const OFFICIAL_REGION_WAGES: Record<RegionZone, number> = Object.fromEntries(
+  MIN_WAGE_REGIONS.map(z => [z, LATEST_SEED.wages[z]?.monthly ?? 0]),
+) as Record<RegionZone, number>;
+
+export const OFFICIAL_EFFECTIVE_DATE = LATEST_SEED.effectiveFrom;
+export const OFFICIAL_DECREE = LATEST_SEED.decree;
 
 export const REGION_ZONES: { key: RegionZone; label: string }[] = [
   { key: 'I', label: 'V1' }, { key: 'II', label: 'V2' }, { key: 'III', label: 'V3' }, { key: 'IV', label: 'V4' },
@@ -63,6 +87,35 @@ export async function fetchRegionWageBatches(): Promise<RegionWageBatch[]> {
   const { data, error } = await supabase.from('region_wage_batches').select('*').order('effective_date', { ascending: false });
   if (error || !data) return [];
   return data.map(rowToBatch);
+}
+
+/** Các lần nhập lương vùng ở DB, quy về dạng MinWageBatch để đưa vào resolveMinWage().
+ *  Bảng region_wage_batches CHỈ có mức THÁNG (migration 113) — mức GIỜ để null, mergeBatches()
+ *  sẽ kế thừa mức giờ của seed cùng mốc hiệu lực nếu có. Muốn DB giữ luôn mức giờ thì chạy
+ *  migration template supabase/migrations/*_region_wage_batch.sql. */
+export async function fetchMinWageBatches(): Promise<MinWageBatch[]> {
+  const { data, error } = await supabase.from('region_wage_batches').select('*')
+    .order('effective_date', { ascending: false });
+  if (error || !data) return [];
+  // Cột mức giờ có thể CHƯA tồn tại (migration 113 chỉ có mức tháng) — đọc phòng thủ để hàm này
+  // chạy được cả trước và sau khi migration thêm cột, không cần deploy đồng bộ.
+  const hourly = (row: Record<string, unknown>, key: string): number | null => {
+    const v = row[key];
+    return v == null ? null : Number(v) || null;
+  };
+  return data.map(r => {
+    const row = r as Record<string, unknown>;
+    return {
+      effectiveFrom: String(row.effective_date),
+      decree: String(row.note ?? '').trim() || `Lần nhập ${row.effective_date}`,
+      wages: {
+        I: { monthly: Number(row.wage_i), hourly: hourly(row, 'wage_i_hourly') },
+        II: { monthly: Number(row.wage_ii), hourly: hourly(row, 'wage_ii_hourly') },
+        III: { monthly: Number(row.wage_iii), hourly: hourly(row, 'wage_iii_hourly') },
+        IV: { monthly: Number(row.wage_iv), hourly: hourly(row, 'wage_iv_hourly') },
+      },
+    };
+  });
 }
 
 // Thêm/gộp 1 lần nhập — nếu đã có batch đúng ngày này thì cập nhật đè (coi như "sửa" batch

@@ -5,7 +5,9 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import type { MarketZone, Competitor, Client, MarketLead, IndustryMetric } from '../lib/types';
-import { fetchRegionWages, regionZoneLabel, regionZoneColorCls, type RegionZone } from './market/regionWage';
+import { fetchRegionWages, regionZoneLabel, regionZoneColorCls, type RegionZone,
+  fetchMinWageBatches, type MinWageBatch } from './market/regionWage';
+import MinWageStaleBanner from '../components/MinWageStaleBanner';
 import { fetchIndustries } from './market/industries';
 import QuoteHistory from './market/QuoteHistory';
 
@@ -50,9 +52,11 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
   const [industries, setIndustries] = useState<string[]>([]);
   const [industryIds, setIndustryIds] = useState<Record<string, string>>({});
   const [industryMetric, setIndustryMetric] = useState<IndustryMetric | null>(null);
+  const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
 
   useEffect(() => {
     fetchRegionWages().then(setRegionWages);
+    fetchMinWageBatches().then(setMinWageBatches);
     fetchIndustries().then(setIndustries);
     supabase.from('industries').select('id, name').then(({ data }) => {
       if (data) setIndustryIds(Object.fromEntries(data.map((d: { id: string; name: string }) => [d.name, d.id])));
@@ -199,6 +203,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
     <>
       <PageHeader title="Báo giá tự động" subtitle="Điền thông tin → Xem trước → Tải Excel" />
       <div className="flex-1 overflow-y-auto p-5">
+        <MinWageStaleBanner dbBatches={minWageBatches} className="mb-3" />
         <div className="flex gap-1.5 mb-4">
           <button onClick={() => setView('form')} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${view === 'form' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
             <FileText size={13} /> Tạo báo giá

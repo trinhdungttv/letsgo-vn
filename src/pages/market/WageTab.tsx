@@ -5,6 +5,7 @@ import {
 } from 'chart.js';
 import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
@@ -58,6 +59,7 @@ import {
   OFFICIAL_REGION_WAGES, OFFICIAL_EFFECTIVE_DATE, REGION_ZONES,
   fetchRegionWageRows, fetchRegionWageBatches, saveRegionWageBatch, updateRegionWageBatch, deleteRegionWageBatch,
   bulkAssignRegionZone, regionZoneLabel, regionWageOf, regionZoneColorCls, fmtRegionWage,
+  fetchMinWageBatches, type MinWageBatch,
 } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
@@ -133,6 +135,9 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   const [savingAllWages, setSavingAllWages] = useState(false);
   const [restoringWages, setRestoringWages] = useState(false);
   const reloadRegionWages = () => fetchRegionWageRows().then(setRegionWageRows);
+  // Batch lương tối thiểu (DB thắng hardcode) — chỉ để biết dữ liệu có lỗi thời hay không.
+  const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
+  useEffect(() => { fetchMinWageBatches().then(setMinWageBatches); }, []);
   const loadBatches = () => { fetchRegionWageBatches().then(setRegionBatches); };
   // Tải cả lịch sử ngay từ đầu (không đợi mở "Tuỳ chọn") — biểu đồ "Xu hướng lương vùng" cần sẵn dữ liệu này.
   useEffect(() => { reloadRegionWages(); loadBatches(); }, []);
@@ -721,6 +726,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
 
   return (
     <div className="space-y-3">
+      <MinWageStaleBanner dbBatches={minWageBatches} />
       <div className="bg-white border border-[#E8E7E2] rounded-[10px]">
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#E8E7E2]">
           <div className="text-[12.5px] font-semibold text-[#111]">Biểu đồ tổng quan lương thị trường</div>

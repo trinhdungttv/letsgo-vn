@@ -11,7 +11,9 @@ import SocialLinksRow from '../../components/SocialLinksRow';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
-import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls } from './regionWage';
+import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls,
+  fetchMinWageBatches, type MinWageBatch } from './regionWage';
+import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr } from './shared';
 import type { Client } from '../../lib/types';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
@@ -88,6 +90,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
   const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
   useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
+  // Lương tối thiểu vùng hiện ở đây (cột lương của từng KCN) nên cũng phải cảnh báo khi lỗi thời.
+  const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
+  useEffect(() => { fetchMinWageBatches().then(setMinWageBatches); }, []);
 
   // Chia đôi "Khách hàng đang hợp tác" / "Dự án/Công ty đang tìm hiểu" thành 2 khối kéo
   // được chiều ngang — tỉ lệ lưu vào localStorage để F5 không mất, khỏi kéo lại.
@@ -476,6 +481,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 
   return (
     <div className="space-y-5">
+      <MinWageStaleBanner dbBatches={minWageBatches} />
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="text-[12px] text-[#888]">Phát hiện khi khảo sát · Xem thị phần nhà cung ứng</div>
         <button onClick={() => { setAddTab('lead'); setLeadForm(emptyLeadForm); setClientForm(emptyClientSetupForm); }} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
