@@ -104,9 +104,17 @@ export function migrateV1toV2(d: LegacyDraft): Scenario {
     taxable: false,                     // v1 không có khái niệm này; false là phía an toàn
   }));
 
+  // ⚠ VÁCH DOANH THU (BUG-4) chỉ đúng khi doanh thu CHÍNH LÀ phí giới thiệu.
+  // Ở v1, bật "nhập thẳng giá khách trả" nghĩa là doanh thu đến từ giá khách — một hợp đồng cung
+  // ứng thường xuyên, KHÔNG hết hạn — còn ô loại phí lúc đó không được dùng tới. Bê nguyên loại
+  // phí giới thiệu sang v2 sẽ cắt doanh thu từ tháng N+1 và biến một hợp đồng đang lời thành lỗ
+  // nặng, mà người dùng không hề đổi gì. Ép về phí lâu dài để giữ ĐÚNG ngữ nghĩa doanh thu của v1.
+  const revenueFromCustomerPrice = !!d.customerPriceMode || Object.keys(clientRates).length > 0;
+  const rawFeeType = (['per_day_worked', 'referral_hourly', 'referral_daily_limited'] as const)
+    .includes(d.serviceFeeType as ServiceFeeType) ? d.serviceFeeType as ServiceFeeType : 'per_day_worked';
+
   const serviceFee: ServiceFeeConfig = {
-    type: (['per_day_worked', 'referral_hourly', 'referral_daily_limited'] as const)
-      .includes(d.serviceFeeType as ServiceFeeType) ? d.serviceFeeType as ServiceFeeType : 'per_day_worked',
+    type: revenueFromCustomerPrice ? 'per_day_worked' : rawFeeType,
     value: num(d.serviceFeeValue),
     durationMode: (d.referralDurationMode === 'recurring_months' ? 'recurring_months' : 'one_time') as ReferralDurationMode,
     months: Math.max(1, num(d.referralMonths, 3)),

@@ -130,6 +130,29 @@ describe('AT-18 — hai đường doanh thu cũ quy về một Price Book', () =
     expect(pnl.revenueMonth).toBeGreaterThan(0);
   });
 
+  it('doanh thu là GIÁ KHÁCH thì KHÔNG bị vách phí giới thiệu cắt oan', () => {
+    // Cùng một nháp v1, chỉ khác chỗ bật "nhập thẳng giá khách trả".
+    const s = migrate({
+      ...DRAFT_AT14, customerPriceMode: true, clientRates: { day_wage_8h: '450000' },
+      serviceFeeType: 'referral_hourly', referralDurationMode: 'recurring_months', referralMonths: 6,
+    });
+    expect(s.serviceFee.type).toBe('per_day_worked');
+    const pnl = computePnL(s.us.basis, s.volume, s.priceBook, s.us.allowances, s.overhead, s.serviceFee);
+    // Tháng 7 vẫn phải có doanh thu — hợp đồng cung ứng thường xuyên không hết hạn.
+    expect(pnl.timeline[6].revenue).toBeGreaterThan(0);
+    expect(pnl.timeline.every(m => m.revenue > 0)).toBe(true);
+  });
+
+  it('có gõ cột "Khách trả ta" cũng vậy — doanh thu không hết hạn', () => {
+    const s = migrate({
+      ...DRAFT_AT14, clientRates: { day_wage_8h: '450000' },
+      serviceFeeType: 'referral_daily_limited', referralMonths: 3,
+    });
+    expect(s.serviceFee.type).toBe('per_day_worked');
+    const pnl = computePnL(s.us.basis, s.volume, s.priceBook, s.us.allowances, s.overhead, s.serviceFee);
+    expect(pnl.timeline.every(m => m.revenue > 0)).toBe(true);
+  });
+
   it('giữ nguyên serviceFee để còn biết mốc hết hạn (BUG-4)', () => {
     const s = migrate(DRAFT_AT14);
     expect(s.serviceFee.type).toBe('referral_hourly');
