@@ -33,7 +33,15 @@ import { pickPayrollInputFromWageDetail, allowancesFromWageDetail } from '../../
 import { fmtVnd } from '../../../lib/payroll/format';
 import { PREF_KEYS, readPref, writePref } from '../../../lib/payroll/prefs';
 import type { WageField } from '../../../pages/market/wageFields';
-import type { Client, MarketZone, MarketLeadSupplier } from '../../../lib/types';
+import type { Client, MarketZone, MarketLead, MarketLeadSupplier } from '../../../lib/types';
+
+// "client:<id>" (Khách hàng đang hợp tác) hoặc "lead:<id>" (Công ty/Dự án đang tìm hiểu) — 2
+// nguồn khác bảng/cột (clients.market_suppliers vs market_leads.suppliers), cùng shape dữ liệu.
+function parseCompanyPick(v: string): { type: 'client' | 'lead'; id: string } | null {
+  if (v.startsWith('client:')) return { type: 'client', id: v.slice(7) };
+  if (v.startsWith('lead:')) return { type: 'lead', id: v.slice(5) };
+  return null;
+}
 
 const REGION_OPTIONS: { value: RegionZone; label: string }[] = [
   { value: 'I', label: 'Vùng I' }, { value: 'II', label: 'Vùng II' }, { value: 'III', label: 'Vùng III' }, { value: 'IV', label: 'Vùng IV' },
@@ -70,25 +78,34 @@ interface SavedQuote {
 }
 
 // Quy 1 báo giá đã lưu (quote_requests) về đúng mô hình số của bảng so sánh.
-// - Chế độ "nhập thẳng giá khách trả": lấy nguyên giá/ngày + tách phụ phí theo cờ "Trả NLĐ".
+// - Chế độ "nhập thẳng giá khách trả": lấy nguyên giá/ngày + tách phụ phí ra 2 mặt khách trả/NLĐ nhận.
 // - Chế độ phí dịch vụ theo công thức: không có giá/ngày tường minh, nên quy đổi từ tổng invoice
 //   trước VAT (= chi phí LĐ + phí dịch vụ) về 1 mức giá/ngày tương đương. Cách này cho ra đúng
 //   lại con số phí dịch vụ ban đầu khi ngày công không đổi.
 function quoteToImport(q: SavedQuote): CompareImport {
   const days = q.working_days_per_month || 26;
   const rj = q.result_json ?? {};
-  const feeItems: { amount?: string | number; passThrough?: boolean }[] = Array.isArray(rj.customerFeeItems) ? rj.customerFeeItems : [];
-  const sumFees = (only?: boolean) => feeItems
-    .filter(it => only === undefined || !!it.passThrough === only)
-    .reduce((s, it) => s + (parseFloat(String(it.amount ?? 0)) || 0), 0);
+  // Phụ cấp được lưu ở result_json.allowances. Bản ghi CŨ dùng 1 số + cờ passThrough, bản mới
+  // tách hẳn 2 mặt (amountClient/amountWorker) — đọc được cả hai để báo giá cũ không mất số.
+  const items: { amount?: string | number; passThrough?: boolean; amountClient?: string; amountWorker?: string }[] =
+    Array.isArray(rj.allowances) ? rj.allowances : [];
+  const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+  const sumFees = (side: 'client' | 'worker') => items.reduce((s, it) => {
+    if (it.amountClient !== undefined || it.amountWorker !== undefined) {
+      return s + num(side === 'client' ? it.amountClient : it.amountWorker);
+    }
+    // Bản cũ: passThrough=true ⇒ NLĐ nhận trọn; false ⇒ khách trả nhưng công ty giữ lại hết.
+    const amount = num(it.amount);
+    return s + (side === 'client' ? amount : (it.passThrough ? amount : 0));
+  }, 0);
 
   let customerPriceValue = 0;
   let workerSupport = 0;
   let clientSupportPaid = 0;
   if (q.service_fee_type === 'customer_price_direct') {
     customerPriceValue = Number(q.service_fee_value) || 0;
-    workerSupport = sumFees(true);   // các khoản đánh dấu "Trả NLĐ"
-    clientSupportPaid = sumFees();   // toàn bộ phụ phí khách trả
+    workerSupport = sumFees('worker');     // phần thực trả cho NLĐ
+    clientSupportPaid = sumFees('client'); // toàn bộ phụ phí khách trả
   } else {
     const subtotal = Number(rj?.invoice?.subtotal) || 0;
     customerPriceValue = days > 0 ? subtotal / days : 0;
@@ -107,13 +124,15 @@ interface Props {
   toast: (msg: string) => void;
   /** Danh sách khách hàng — để kéo cả dàn NCC đang phục vụ 1 công ty vào bảng so sánh. */
   clients: Client[];
+  /** Công ty/Dự án đang tìm hiểu — cùng mục đích như clients, đọc từ market_leads.suppliers. */
+  marketLeads: MarketLead[];
   /** Trường lương chi tiết + loại đơn giá tương ứng (migration 126) — để đọc bảng lương NCC. */
   wageFields: WageField[];
   getSingleTabSnapshot: () => CompareImport | null;
   onUseForQuote: (input: CompareImport & { kcnZoneId: string; kcnName: string }) => void;
 }
 
-export default function RegionPriceCompare({ marketZones, regionWages, toast, clients, wageFields, getSingleTabSnapshot, onUseForQuote }: Props) {
+export default function RegionPriceCompare({ marketZones, regionWages, toast, clients, marketLeads, wageFields, getSingleTabSnapshot, onUseForQuote }: Props) {
   const { user } = useAuth();
   const [kcnSelect, setKcnSelect] = useState('');
   const [kcnName, setKcnName] = useState('');
@@ -216,18 +235,27 @@ export default function RegionPriceCompare({ marketZones, regionWages, toast, cl
   // Kéo TẤT CẢ NCC đang phục vụ 1 công ty (bảng lương ở Thị trường) vào đây thành từng dòng —
   // đúng nhu cầu "cùng công ty AMPACS, xem mỗi NCC đang trả bao nhiêu". Giá khách trả để trống
   // vì bảng lương NCC không chứa thông tin đó; nhập thêm thì mới ra được phí dịch vụ.
+  // Áp dụng cho cả Khách hàng đang hợp tác (clients.market_suppliers) và Công ty/Dự án đang
+  // tìm hiểu (market_leads.suppliers) — cùng shape dữ liệu, chỉ khác bảng/cột đọc.
   async function importCompanySuppliers() {
-    const client = clients.find(c => c.id === companyForImport);
-    if (!client) { toast('Chọn 1 khách hàng để lấy danh sách NCC'); return; }
+    const sel = parseCompanyPick(companyForImport);
+    if (!sel) { toast('Chọn 1 khách hàng / công ty đang tìm hiểu để lấy danh sách NCC'); return; }
+    const table = sel.type === 'client' ? 'clients' : 'market_leads';
+    const column = sel.type === 'client' ? 'market_suppliers' : 'suppliers';
+    const companyLabel = sel.type === 'client'
+      ? clients.find(c => c.id === sel.id)?.name
+      : marketLeads.find(l => l.id === sel.id)?.company_name;
+    if (!companyLabel) { toast('Không tìm thấy hồ sơ đã chọn'); return; }
     setImportingSuppliers(true);
-    const { data, error } = await supabase.from('clients').select('market_suppliers').eq('id', client.id).maybeSingle();
+    const { data, error } = await supabase.from(table).select(column).eq('id', sel.id).maybeSingle();
     setImportingSuppliers(false);
     if (error) { toast('Không đọc được danh sách NCC: ' + error.message); return; }
-    const list = ((data?.market_suppliers ?? []) as MarketLeadSupplier[]);
+    // `column` là tên cột động (market_suppliers | suppliers) nên supabase không suy được kiểu.
+    const list = ((data as Record<string, MarketLeadSupplier[] | null> | null)?.[column] ?? []);
     const usable = list
       .map(s => ({ s, picked: pickPayrollInputFromWageDetail(s.wage_detail, wageFields) }))
       .filter((x): x is { s: MarketLeadSupplier; picked: NonNullable<ReturnType<typeof pickPayrollInputFromWageDetail>> } => x.picked !== null);
-    if (usable.length === 0) { toast(`${client.name} chưa có NCC nào có bảng lương gán được loại đơn giá`); return; }
+    if (usable.length === 0) { toast(`${companyLabel} chưa có NCC nào có bảng lương gán được loại đơn giá`); return; }
 
     const newRows: CompareRow[] = usable.map(({ s, picked }) => ({
       id: nextRowId(),
@@ -236,7 +264,7 @@ export default function RegionPriceCompare({ marketZones, regionWages, toast, cl
       workerSupport: Object.values(allowancesFromWageDetail(s.wage_detail, wageFields)).reduce((a, b) => a + b, 0),
       clientSupportPaid: 0, customerPriceValue: 0,
       ours: !!s.is_us,
-      importedNote: `${client.name} · ${picked.fieldName}`,
+      importedNote: `${companyLabel} · ${picked.fieldName}`,
     }));
     // Nếu đã có dòng "của mình" trong danh sách kéo về thì bỏ cờ ours ở các dòng cũ để không trùng.
     const hasOurs = newRows.some(r => r.ours);
@@ -245,7 +273,7 @@ export default function RegionPriceCompare({ marketZones, regionWages, toast, cl
       const kept = prev.filter(r => !isBlank(r)).map(r => hasOurs ? { ...r, ours: false } : r);
       return [...kept, ...newRows];
     });
-    toast(`Đã thêm ${newRows.length} NCC của ${client.name} vào bảng so sánh`);
+    toast(`Đã thêm ${newRows.length} NCC của ${companyLabel} vào bảng so sánh`);
   }
 
   // ── Tính toán từng dòng (công thức nằm ở compareEngine.ts, có unit test riêng) ─────────────
@@ -431,7 +459,10 @@ export default function RegionPriceCompare({ marketZones, regionWages, toast, cl
         <div className="flex-1 min-w-[200px]">
           <label className="text-[11px] font-medium text-gray-700 block mb-1">Lấy cả dàn NCC đang phục vụ 1 công ty</label>
           <SearchSelect value={companyForImport} onChange={setCompanyForImport}
-            options={clients.map(c => ({ value: c.id, label: c.name }))} placeholder="Chọn khách hàng…" />
+            options={[
+              ...clients.map(c => ({ value: `client:${c.id}`, label: c.name })),
+              ...marketLeads.map(l => ({ value: `lead:${l.id}`, label: `${l.company_name} (đang tìm hiểu)` })),
+            ]} placeholder="Chọn khách hàng hoặc công ty/dự án…" />
         </div>
         <button onClick={importCompanySuppliers} disabled={!companyForImport || importingSuppliers}
           className="px-3 py-1.5 text-[11.5px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 rounded-lg transition whitespace-nowrap">

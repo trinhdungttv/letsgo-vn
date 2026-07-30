@@ -41,6 +41,8 @@ export type PayrollInputType =
   | 'base_salary'
   | 'day_wage_8h'
   | 'night_wage_8h'
+  | 'sunday_day_wage_8h'
+  | 'sunday_night_wage_8h'
   | 'holiday_wage_8h'
   | 'ot_day_weekday'
   | 'ot_night_weekday'
@@ -57,6 +59,8 @@ export const PAYROLL_INPUT_LABELS: Record<PayrollInputType, string> = {
   base_salary: 'Lương cơ bản (cả 1 tháng)',
   day_wage_8h: 'Lương ngày (8 tiếng)',
   night_wage_8h: 'Lương đêm (8 tiếng)',
+  sunday_day_wage_8h: 'Lương ngày Chủ nhật (8 tiếng)',
+  sunday_night_wage_8h: 'Lương đêm Chủ nhật (8 tiếng)',
   holiday_wage_8h: 'Lương ngày Lễ, Tết (8 tiếng)',
   ot_day_weekday: 'OT ngày thường (1 tiếng)',
   ot_night_weekday: 'OT đêm ngày thường (1 tiếng)',
@@ -75,11 +79,12 @@ export const PAYROLL_INPUT_LABELS: Record<PayrollInputType, string> = {
 // nghĩa — xem SHIFT_12H_DAY/NIGHT).
 export function basisHoursOf(type: PayrollInputType, workingDaysPerMonth: number): number {
   if (type === 'base_salary') return workingDaysPerMonth * 8;
-  if (type === 'day_wage_8h' || type === 'night_wage_8h' || type === 'holiday_wage_8h') return 8;
+  if (type === 'day_wage_8h' || type === 'night_wage_8h' || type === 'holiday_wage_8h'
+    || type === 'sunday_day_wage_8h' || type === 'sunday_night_wage_8h') return 8;
   return 1;
 }
 
-export const NIGHT_OT_TYPES = new Set<PayrollInputType>(['ot_night_weekday', 'ot_night_sunday', 'ot_night_holiday']);
+export const NIGHT_OT_TYPES = new Set<PayrollInputType>(['ot_night_weekday', 'ot_night_sunday', 'ot_night_holiday', 'sunday_night_wage_8h']);
 
 // Hệ số quy đổi của 1 loại đơn giá nhập vào, so với SHR (Standard Hourly Rate). priorDayOt
 // chỉ ảnh hưởng tới 'ot_night_weekday' (theo mục 2.2 — 2 mốc PRIOR/NOPRIOR chỉ định nghĩa cho
@@ -89,6 +94,11 @@ export function coefficientOf(type: PayrollInputType, priorDayOt: boolean): numb
     case 'base_salary': return NORM_DAY;
     case 'day_wage_8h': return NORM_DAY;
     case 'night_wage_8h': return NORM_NIGHT;
+    // Làm đủ 8h vào ngày nghỉ hằng tuần (Chủ nhật) tính OT cho CẢ 8 tiếng, không chỉ phần vượt
+    // — cùng hệ số với ot_day_sunday/ot_night_sunday (Điều 98.1.b BLLĐ 2019), chỉ khác đơn vị
+    // hiển thị (nguyên ca 8h thay vì từng giờ).
+    case 'sunday_day_wage_8h': return OT_DAY_SUNDAY;
+    case 'sunday_night_wage_8h': return OT_NIGHT_SUNDAY;
     case 'holiday_wage_8h': return OT_DAY_HOLIDAY;
     case 'ot_day_weekday': return OT_DAY_WEEKDAY;
     case 'ot_night_weekday': return computeNightOTCoefficient(OT_DAY_WEEKDAY, priorDayOt);

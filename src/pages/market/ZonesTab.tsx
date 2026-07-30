@@ -3,7 +3,7 @@ import { Bar, Bubble } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical } from 'lucide-react';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical, Star } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
@@ -122,6 +122,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const [dashSettings, setDashSettings] = useState<ZoneDashSettings>(loadZoneDashSettings);
   const [showDashSettings, setShowDashSettings] = useState(false);
   const [showZoneMenu, setShowZoneMenu] = useState(false);
+  const [showOnlyPriority, setShowOnlyPriority] = useState(false);
   useEffect(() => { localStorage.setItem(ZONE_DASH_SETTINGS_KEY, JSON.stringify(dashSettings)); }, [dashSettings]);
 
   // Chia đôi khối "Thông tin khu vực" thành 2 cột kéo được chiều ngang — tỉ lệ lưu
@@ -182,7 +183,21 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const { provinces: sharedProvinces, addProvince } = useProvinces(marketZones);
   const provinceOptions = sharedProvinces;
   const provinceNames = [ALL_OPTION, ...provinceOptions];
-  const filteredZones = marketZones.filter(z => activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''));
+  const priorityCount = marketZones.filter(z => z.is_priority).length;
+  const filteredZones = marketZones.filter(z =>
+    (activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''))
+    && (!showOnlyPriority || z.is_priority),
+  );
+
+  // Bật/tắt cờ "đặc biệt quan tâm" ngay trên thẻ — khác "Mức tiềm năng" 1-5 sao (chi tiết trong
+  // hồ sơ, xem handleSetPotential); cờ này chỉ để đánh dấu nhanh + lọc, không cần mở hồ sơ.
+  const handleTogglePriority = async (z: MarketZone, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = !z.is_priority;
+    const { error } = await supabase.from('market_zones').update({ is_priority: next }).eq('id', z.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    await onRefresh();
+  };
 
   // Đề xuất #1 — Tỷ lệ lấp đầy theo khu vực, xếp giảm dần.
   const occupancyChartData = useMemo(() =>
@@ -778,6 +793,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         </div>
         <div className="flex items-center gap-2">
           <FilterDropdown label="Tỉnh/Thành" options={provinceNames} selected={activeProvinces} onChange={setActiveProvinces} />
+          <button
+            onClick={() => setShowOnlyPriority(v => !v)}
+            title="Chỉ hiện khu vực đã đánh dấu đặc biệt quan tâm"
+            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showOnlyPriority ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}
+          >
+            <Star size={13} className={showOnlyPriority ? 'fill-amber-400 text-amber-500' : ''} /> Đã đánh dấu{priorityCount > 0 ? ` (${priorityCount})` : ''}
+          </button>
           <div className="flex border border-gray-300 rounded-lg overflow-hidden">
             <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
             <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
@@ -944,7 +966,12 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         <div className="grid grid-cols-3 gap-3">
           {filteredZones.map(z => (
             <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 cursor-pointer hover:border-blue-300 transition">
-              <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
+              <div className="flex items-start justify-between gap-1">
+                <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
+                <button onClick={e => handleTogglePriority(z, e)} title={z.is_priority ? 'Bỏ đánh dấu' : 'Đánh dấu đặc biệt quan tâm'} className="shrink-0 -mt-0.5 -mr-0.5 p-0.5 rounded hover:bg-amber-50">
+                  <Star size={13} className={z.is_priority ? 'fill-amber-400 text-amber-500' : 'text-gray-300'} />
+                </button>
+              </div>
               <div className="text-[11px] text-[#888] mb-1.5">{z.location || '—'}</div>
               <div className="h-1 bg-[#F0EEE9] rounded-full overflow-hidden mb-1.5">
                 <div className={`h-1 rounded-full ${occColor(z.occupancy_pct).split(' ')[1]}`} style={{ width: `${z.occupancy_pct ?? 0}%` }} />
@@ -965,7 +992,11 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
       {viewMode === 'card' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredZones.map(z => (
-            <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
+            <div key={z.id} onClick={() => setSelectedId(z.id)} className="relative bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
+              <button onClick={e => handleTogglePriority(z, e)} title={z.is_priority ? 'Bỏ đánh dấu' : 'Đánh dấu đặc biệt quan tâm'}
+                className="absolute top-2 right-2 z-10 p-1.5 rounded-full bg-white/90 shadow hover:bg-white transition">
+                <Star size={15} className={z.is_priority ? 'fill-amber-400 text-amber-500' : 'text-gray-400'} />
+              </button>
               {z.image_url ? (
                 <div className="h-36 w-full overflow-hidden bg-gray-100">
                   <img src={z.image_url} alt={z.name} className={`w-full h-full ${z.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`} style={{ objectPosition: `${z.image_pos_x ?? 50}% ${z.image_pos_y ?? 50}%` }} />
@@ -999,7 +1030,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         <div className="text-center py-8 text-[12px] text-[#aaa]">Chưa có hồ sơ khu vực nào. Bấm "Thêm khu vực" để bắt đầu.</div>
       )}
       {marketZones.length > 0 && filteredZones.length === 0 && (
-        <div className="text-center py-8 text-[12px] text-[#aaa]">Không có khu vực nào thuộc tỉnh/thành đã chọn.</div>
+        <div className="text-center py-8 text-[12px] text-[#aaa]">
+          {showOnlyPriority ? 'Chưa có khu vực nào được đánh dấu ⭐ trong lựa chọn hiện tại.' : 'Không có khu vực nào thuộc tỉnh/thành đã chọn.'}
+        </div>
       )}
 
       {showAdd && (

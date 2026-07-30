@@ -436,6 +436,9 @@ export interface MarketZone {
   region_zone?: string | null;
   // Ô "Tổng quan" tự do, rich text (migration 129)
   overview_notes?: string | null;
+  // Cờ đánh dấu "đặc biệt quan tâm" — bật tắt nhanh trên thẻ, khác "Mức tiềm năng" 1-5 sao
+  // (chi tiết trong hồ sơ); dùng để lọc nhanh (migration 133)
+  is_priority?: boolean;
 }
 
 export interface Industry {

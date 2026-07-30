@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyRateOverrides, monthlyGrossFromOverrides, inputValueForMonthlyGross,
-  toWageDetail, pickPayrollInputFromWageDetail, allowancesFromWageDetail,
+  toWageDetail, toClientWageDetail, pickPayrollInputFromWageDetail, allowancesFromWageDetail,
   sumAllowances, allowanceRecord, type WageFieldMapping, type AllowanceItem,
 } from './rateCard';
 import { computePayrollMatrix } from './reverseCalcEngine';
@@ -152,20 +152,48 @@ describe('Đồng bộ 2 chiều với bảng lương NCC ở Thị trường', 
   });
 });
 
-describe('Phụ cấp 2 mặt (NLĐ nhận / công ty giữ lại)', () => {
+describe('Phụ cấp 2 mặt (khách trả ta / ta trả NLĐ)', () => {
   const items: AllowanceItem[] = [
-    { id: 'a', label: 'Ăn ca', amount: '730000', passThrough: true },
-    { id: 'b', label: 'Phí quản lý', amount: '200000', passThrough: false },
-    { id: 'c', label: '', amount: '', passThrough: true },
+    // Trả toàn phần: khách trả bao nhiêu, NLĐ nhận đúng bấy nhiêu.
+    { id: 'a', label: 'Ăn ca', amountClient: '730000', amountWorker: '730000' },
+    // Khách trả nhưng công ty giữ lại hoàn toàn.
+    { id: 'b', label: 'Phí quản lý', amountClient: '200000', amountWorker: '' },
+    // Khách trả 500k, ta chỉ chi 300k cho NLĐ → giữ lại 200k (mô hình cũ 1 số + cờ không tả được).
+    { id: 'c', label: 'Hỗ trợ nhà trọ', amountClient: '500000', amountWorker: '300000' },
+    { id: 'd', label: '', amountClient: '', amountWorker: '' },
   ];
 
-  it('14. Tổng và phần về tay NLĐ tách đúng', () => {
-    expect(sumAllowances(items)).toBe(930_000);
-    expect(sumAllowances(items, true)).toBe(730_000);
-    expect(sumAllowances(items, false)).toBe(200_000);
+  it('14. Hai mặt doanh thu / chi phí tách đúng, kể cả khoản trả bớt', () => {
+    expect(sumAllowances(items, 'client')).toBe(1_430_000);
+    expect(sumAllowances(items, 'worker')).toBe(1_030_000);
+    // Chênh lệch = phần công ty giữ lại
+    expect(sumAllowances(items, 'client') - sumAllowances(items, 'worker')).toBe(400_000);
   });
 
-  it('15. Chỉ khoản có tên và có số mới đem đi đồng bộ', () => {
-    expect(allowanceRecord(items)).toEqual({ 'Ăn ca': 730_000, 'Phí quản lý': 200_000 });
+  it('15. Chỉ khoản có tên và có số ở đúng mặt đó mới đem đi đồng bộ', () => {
+    expect(allowanceRecord(items, 'client')).toEqual({ 'Ăn ca': 730_000, 'Phí quản lý': 200_000, 'Hỗ trợ nhà trọ': 500_000 });
+    // "Phí quản lý" không về tay NLĐ nên KHÔNG được ghi vào bảng lương NLĐ.
+    expect(allowanceRecord(items, 'worker')).toEqual({ 'Ăn ca': 730_000, 'Hỗ trợ nhà trọ': 300_000 });
+  });
+});
+
+describe('toClientWageDetail — bảng lương KHÁCH TRẢ CHO TA', () => {
+  it('16. Chỉ ghi khoản đã gõ số, không tự điền 0 cho khoản bỏ trống', () => {
+    const out = toClientWageDetail(
+      { base_salary: 7_000_000, day_wage_8h: 300_000, night_wage_8h: 0 },
+      FIELDS,
+      { 'Ăn ca': 800_000 },
+    );
+    expect(out).toEqual({ 'Lương cơ bản': 7_000_000, 'Ca ngày 8h (Ca 1+2)': 300_000, 'Ăn ca': 800_000 });
+    expect(out).not.toHaveProperty('Ca đêm 8h (130%)');
+  });
+
+  it('17. Đặt cạnh bảng NLĐ nhận thì so được từng khoản để ra lãi/lỗ', () => {
+    const r = computePayrollMatrix({ ...baseInput, inputType: 'day_wage_8h', inputValue: 230_000 });
+    const ours = toWageDetail(applyRateOverrides(r.rateCard, {}, 26), FIELDS, { 'Ăn ca': 730_000 });
+    const client = toClientWageDetail({ day_wage_8h: 300_000 }, FIELDS, { 'Ăn ca': 800_000 });
+    // Cùng key ⇒ trừ thẳng ra chênh lệch từng khoản, không cần map lại tên trường.
+    expect(client['Ca ngày 8h (Ca 1+2)'] - ours['Ca ngày 8h (Ca 1+2)']).toBe(70_000);
+    expect(client['Ăn ca'] - ours['Ăn ca']).toBe(70_000);
   });
 });

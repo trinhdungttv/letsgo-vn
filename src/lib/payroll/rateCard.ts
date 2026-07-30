@@ -10,17 +10,31 @@ import type { RateCardRow } from './reverseCalcEngine';
 /** Đơn giá từng loại giờ do người dùng gõ đè lên kết quả tính theo luật. */
 export type RateOverrides = Partial<Record<PayrollInputType, number>>;
 
-/** 1 khoản phụ cấp/phụ phí kèm theo lương. `passThrough` = khoản này về tay NLĐ (chi phí thật),
- *  ngược lại là phần công ty giữ lại (doanh thu) — cùng quy ước với bảng So sánh giá dịch vụ. */
-export interface AllowanceItem { id: string; label: string; amount: string; passThrough: boolean }
+/** 1 khoản phụ cấp/phụ phí kèm theo lương — luôn có 2 MẶT, bắt buộc tách riêng:
+ *   • amountClient = KHÁCH TRẢ cho ta khoản đó → DOANH THU.
+ *   • amountWorker = ta THỰC TRẢ cho NLĐ       → CHI PHÍ.
+ *  Bằng nhau ⇒ trả toàn phần, khoản này trung lập với lợi nhuận. amountClient lớn hơn ⇒ phần
+ *  chênh là tiền công ty giữ lại. Mô hình cũ (1 số + cờ "về tay NLĐ") KHÔNG diễn tả được trường
+ *  hợp khách trả 500k mà ta chỉ chi 300k cho NLĐ — cùng quy ước 2 mặt với bảng So sánh giá vùng
+ *  (workerSupport / clientSupportPaid ở RegionPriceCompare). */
+export interface AllowanceItem { id: string; label: string; amountClient: string; amountWorker: string }
 
-export const sumAllowances = (items: AllowanceItem[], onlyPassThrough?: boolean): number =>
-  items
-    .filter(it => onlyPassThrough === undefined || it.passThrough === onlyPassThrough)
-    .reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+/** 'client' = tiền khách trả ta (doanh thu) · 'worker' = tiền ta trả NLĐ (chi phí).
+ *  Bắt buộc truyền để nơi gọi luôn phải nói rõ đang cộng mặt nào — cộng nhầm mặt là sai lãi/lỗ. */
+export type AllowanceSide = 'client' | 'worker';
 
-export const allowanceRecord = (items: AllowanceItem[]): Record<string, number> =>
-  Object.fromEntries(items.filter(it => it.label.trim() && (parseFloat(it.amount) || 0) > 0).map(it => [it.label.trim(), parseFloat(it.amount)]));
+const allowanceAmount = (it: AllowanceItem, side: AllowanceSide): number =>
+  parseFloat(side === 'client' ? it.amountClient : it.amountWorker) || 0;
+
+export const sumAllowances = (items: AllowanceItem[], side: AllowanceSide): number =>
+  items.reduce((s, it) => s + allowanceAmount(it, side), 0);
+
+export const allowanceRecord = (items: AllowanceItem[], side: AllowanceSide): Record<string, number> =>
+  Object.fromEntries(
+    items
+      .map(it => [it.label.trim(), allowanceAmount(it, side)] as const)
+      .filter(([label, amount]) => label && amount > 0),
+  );
 
 // CẢNH BÁO ĐƠN VỊ (đây là chỗ đã từng sai): computePayrollMatrix trả rateCard[].rate luôn là
 // ĐỒNG/GIỜ, trong khi bảng lương bên Thị trường ghi theo ĐƠN VỊ TỰ NHIÊN của từng khoản —
@@ -38,7 +52,8 @@ export interface EffectiveRateRow extends RateCardRow {
 
 export function unitLabelOf(type: PayrollInputType): string {
   if (type === 'base_salary') return 'đ/tháng';
-  if (type === 'day_wage_8h' || type === 'night_wage_8h' || type === 'holiday_wage_8h') return 'đ/ca 8h';
+  if (type === 'day_wage_8h' || type === 'night_wage_8h' || type === 'holiday_wage_8h'
+    || type === 'sunday_day_wage_8h' || type === 'sunday_night_wage_8h') return 'đ/ca 8h';
   if (type === 'shift12_day' || type === 'shift12_night') return 'đ/giờ (b/q ca 12h)';
   return 'đ/giờ';
 }
@@ -107,6 +122,27 @@ export function toWageDetail(
     if (f.payrollInputType && byType.has(f.payrollInputType)) {
       out[f.name] = Math.round(byType.get(f.payrollInputType)!);
     }
+  }
+  for (const [name, amount] of Object.entries(allowances)) {
+    if (amount > 0) out[name] = Math.round(amount);
+  }
+  return out;
+}
+
+/** Bảng đơn giá KHÁCH TRẢ CHO TA (mặt doanh thu) + phụ phí khách trả → wage_detail_client.
+ *  Cùng cấu trúc/đơn vị với toWageDetail() để 2 bảng đặt cạnh nhau là so được từng khoản, nhưng
+ *  nguồn số khác hẳn: đây là số người dùng gõ tay ở cột "Khách trả cho ta" (không suy ra được từ
+ *  luật — luật chỉ chi phối phần trả NLĐ), nên khoản nào chưa gõ thì bỏ qua, không tự điền 0. */
+export function toClientWageDetail(
+  clientRates: Partial<Record<PayrollInputType, number>>,
+  fields: WageFieldMapping[],
+  allowances: Record<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of fields) {
+    if (!f.payrollInputType) continue;
+    const v = clientRates[f.payrollInputType];
+    if (v != null && v > 0) out[f.name] = Math.round(v);
   }
   for (const [name, amount] of Object.entries(allowances)) {
     if (amount > 0) out[name] = Math.round(amount);
