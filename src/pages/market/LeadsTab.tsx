@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X, ArrowRight, Pencil, Users, GripVertical } from 'lucide-react';
+import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -243,6 +243,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     try {
       const mapPos = parseLatLngFromLink(patch.map_link);
       const { error } = await supabase.from('market_leads').update({
+        region: patch.region || null,
         industry: patch.industry || null,
         workers_needed: parseInt(patch.workers_needed) || 0,
         wage_min: toNum(patch.wage_min),
@@ -591,9 +592,18 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                     {(() => { const r = regionInfoFor([l.region]); return r && (
                       <span className={`text-[10px] font-semibold w-6 h-4 inline-flex items-center justify-center rounded ${regionZoneColorCls(r.zone)}`}>{r.label}</span>
                     ); })()}
+                    {l.region ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-medium border border-blue-100">
+                        <MapPin size={9} /> {l.region}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-medium border border-amber-100">
+                        ⚠ Chưa gán KCN
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-[#888] mt-0.5">
-                    {l.region || '—'} · {l.industry || '—'} · {l.source || '—'} · {new Date(l.lead_date).toLocaleDateString('vi-VN')}
+                    {l.industry || '—'} · {l.source || '—'} · {new Date(l.lead_date).toLocaleDateString('vi-VN')}
                     {wageFmt(l.wage_min, l.wage_max) ? ` · Lương ${wageFmt(l.wage_min, l.wage_max)}` : ''}
                     {l.allowance_notes ? ` · ${l.allowance_notes}` : ''}
                   </div>
@@ -611,7 +621,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 </div>
               </div>
               {editLeadId === l.id && (
-                <LeadEditForm lead={l} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
+                <LeadEditForm lead={l} regionOptions={zoneNames} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
                   onCancel={() => setEditLeadId(null)} onSave={patch => handleEditLead(l.id, patch)} />
               )}
@@ -727,12 +737,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 }
 
 interface EditPatch {
-  industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string;
+  region?: string; industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string;
   website_url: string; facebook_url: string; youtube_url: string; tiktok_url: string;
   wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
 }
 
-function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField }: {
+function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, regionOptions }: {
   initial: EditPatch;
   industries: string[];
   onAddIndustry: (name: string) => void;
@@ -742,11 +752,17 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   wageFields: string[];
   onAddWageField: (name: string) => void;
   onDeleteWageField: (name: string) => void;
+  regionOptions?: string[];
 }) {
   const [patch, setPatch] = useState<EditPatch>(initial);
   useBeforeUnloadWarning(JSON.stringify(patch) !== JSON.stringify(initial));
   return (
     <div className="px-4 py-3 bg-blue-50/30 border-b border-[#E8E7E2] grid grid-cols-2 gap-2.5">
+      {regionOptions && (
+        <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Khu vực</label>
+          <SearchSelect value={patch.region ?? ''} onChange={v => setPatch(p => ({ ...p, region: v }))}
+            options={regionOptions.map(z => ({ value: z, label: z }))} placeholder="Chọn KCN…" /></div>
+      )}
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Ngành nghề</label>
         <SearchSelect value={patch.industry} onChange={v => setPatch(p => ({ ...p, industry: v }))}
           options={industries.map(i => ({ value: i, label: i }))} placeholder="Chọn ngành…" allowAdd onAdd={onAddIndustry} /></div>
@@ -810,8 +826,9 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
   }} {...rest} />;
 }
 
-function LeadEditForm({ lead, ...rest }: { lead: import('../../lib/types').MarketLead } & EditFormExtraProps) {
-  return <EditFormFields initial={{
+function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../lib/types').MarketLead; regionOptions: string[] } & EditFormExtraProps) {
+  return <EditFormFields regionOptions={regionOptions} initial={{
+    region: lead.region ?? '',
     industry: lead.industry ?? '',
     workers_needed: String(lead.workers_needed ?? ''),
     wage_min: lead.wage_min != null ? String(lead.wage_min) : '',

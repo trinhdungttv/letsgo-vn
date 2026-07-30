@@ -3,7 +3,7 @@ import { Bar, Bubble } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings } from 'lucide-react';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
@@ -45,6 +45,7 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchCountries, addCountry } from './countries';
 import SearchSelect from './SearchSelect';
+import RichTextEditor from './RichTextEditor';
 import { REGION_ZONES, regionZoneLabel, regionZoneColorCls } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
@@ -120,6 +121,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
   const [dashSettings, setDashSettings] = useState<ZoneDashSettings>(loadZoneDashSettings);
   const [showDashSettings, setShowDashSettings] = useState(false);
+  const [showZoneMenu, setShowZoneMenu] = useState(false);
   useEffect(() => { localStorage.setItem(ZONE_DASH_SETTINGS_KEY, JSON.stringify(dashSettings)); }, [dashSettings]);
 
   // Chia đôi khối "Thông tin khu vực" thành 2 cột kéo được chiều ngang — tỉ lệ lưu
@@ -147,6 +149,34 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
     };
   }, [infoDragging]);
   useEffect(() => { localStorage.setItem('market_zone_info_split_pct', String(infoLeftPct)); }, [infoLeftPct]);
+
+  // Kéo ảnh cover để chỉnh object-position — cùng cơ chế với Đối thủ (CompetitorDetail); khung
+  // xem trước cao h-36 khớp đúng chiều cao thumbnail thẻ KCN thật (ZonesTab card view).
+  const imgBoxRef = useRef<HTMLDivElement>(null);
+  const [draggingImg, setDraggingImg] = useState(false);
+  const handleImgDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDraggingImg(true);
+    const box = imgBoxRef.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    const onMove = (ev: MouseEvent) => {
+      const dxPct = (ev.movementX / rect.width) * 100;
+      const dyPct = (ev.movementY / rect.height) * 100;
+      setEditForm(f => f && ({
+        ...f,
+        image_pos_x: Math.min(100, Math.max(0, (f.image_pos_x ?? 50) - dxPct)),
+        image_pos_y: Math.min(100, Math.max(0, (f.image_pos_y ?? 50) - dyPct)),
+      }));
+    };
+    const onUp = () => {
+      setDraggingImg(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
   const { provinces: sharedProvinces, addProvince } = useProvinces(marketZones);
@@ -218,7 +248,11 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         notes: selected.notes, industries: selected.industries || [], countries: selected.countries || [],
         map_link: selected.map_link ?? null,
         image_url: selected.image_url ?? null,
+        image_fit: selected.image_fit ?? 'cover',
+        image_pos_x: selected.image_pos_x ?? 50,
+        image_pos_y: selected.image_pos_y ?? 50,
         region_zone: selected.region_zone ?? null,
+        overview_notes: selected.overview_notes ?? '',
       };
       setEditForm(snapshot);
       setInitialEditForm(snapshot);
@@ -321,6 +355,95 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
     setSaving(false);
   };
 
+  // Đổi tên KCN — vì tên KCN được nhiều nơi khác lưu dưới dạng CHỮ (không phải FK), đổi
+  // tên ở đây phải cập nhật lại các nơi đang khớp đúng theo tên cũ, nếu không dữ liệu ở đó
+  // sẽ "rơi mất" (không còn khớp với KCN nào, dù dữ liệu gốc vẫn còn).
+  const handleRenameZone = async () => {
+    if (!selected) return;
+    const input = prompt('Tên khu vực mới:', selected.full_name || selected.name);
+    if (input == null) return;
+    const name = input.trim();
+    if (!name || name === selected.name) return;
+
+    const normalizedNew = normalizeZoneName(name);
+    const exactDup = marketZones.find(z => z.id !== selected.id && normalizeZoneName(z.name) === normalizedNew);
+    if (exactDup) { toast(`Tên "${name}" đã tồn tại (trùng với "${exactDup.name}") — vui lòng đặt tên khác`); return; }
+
+    setSaving(true);
+    try {
+      const oldName = selected.name;
+      const { error } = await supabase.from('market_zones').update({ name, updated_at: new Date().toISOString() }).eq('id', selected.id);
+      if (error) throw error;
+
+      // Cập nhật các nơi khác đang lưu đúng tên cũ (so khớp tuyệt đối) — không đụng tới
+      // các giá trị gõ tay gần giống nhưng không khớp tuyệt đối (an toàn hơn, tránh sửa nhầm).
+      await Promise.all([
+        supabase.from('market_surveys').update({ zone_name: name }).eq('zone_name', oldName),
+        supabase.from('competitors').update({ zone_name: name }).eq('zone_name', oldName),
+        supabase.from('market_leads').update({ region: name }).eq('region', oldName),
+        supabase.from('clients').update({ region: name }).eq('region', oldName),
+        ...clients.filter(c => c.industrial_zones?.includes(oldName)).map(c =>
+          supabase.from('clients').update({ industrial_zones: c.industrial_zones.map(z => z === oldName ? name : z) }).eq('id', c.id),
+        ),
+      ]);
+
+      await logActivity({
+        user, action: 'update', table: 'market_zones', recordId: selected.id,
+        description: `Đổi tên khu vực "${oldName}" → "${name}"`,
+        oldData: selected, newData: { ...selected, name },
+      });
+      await onRefresh();
+      setShowZoneMenu(false);
+      toast(`Đã đổi tên thành "${name}"`);
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    setSaving(false);
+  };
+
+  // Xoá KCN — market_zones.id là FK thật của kcn_visits (ON DELETE CASCADE, sẽ mất theo)
+  // và payroll_calculator/region_price_comparison (ON DELETE SET NULL, chỉ gỡ liên kết,
+  // không mất dữ liệu). Cảnh báo rõ số lượng bản ghi liên quan trước khi xoá thật.
+  const handleDeleteZone = async () => {
+    if (!selected) return;
+    setShowZoneMenu(false);
+    try {
+      const [{ count: surveyCount }, { count: compCount }, { count: visitCount }] = await Promise.all([
+        supabase.from('market_surveys').select('id', { count: 'exact', head: true }).eq('zone_name', selected.name),
+        supabase.from('competitors').select('id', { count: 'exact', head: true }).eq('zone_name', selected.name),
+        supabase.from('kcn_visits').select('id', { count: 'exact', head: true }).eq('zone_id', selected.id),
+      ]);
+      const clientCount = clients.filter(c => c.industrial_zones?.includes(selected.name)).length;
+
+      const parts: string[] = [];
+      if (visitCount) parts.push(`${visitCount} lịch sử khảo sát KCN (sẽ xoá vĩnh viễn)`);
+      if (surveyCount) parts.push(`${surveyCount} lần khảo sát lương đang gắn tên KCN này (không xoá, chỉ không còn khớp KCN)`);
+      if (compCount) parts.push(`${compCount} đối thủ đang gắn KCN này`);
+      if (clientCount) parts.push(`${clientCount} khách hàng đang gắn KCN này (sẽ tự gỡ khỏi hồ sơ họ)`);
+      const warning = parts.length ? `\n\nDữ liệu liên quan:\n- ${parts.join('\n- ')}` : '';
+      if (!confirm(`Xoá vĩnh viễn khu vực "${selected.name}"? Không thể hoàn tác.${warning}`)) return;
+
+      setSaving(true);
+      // Gỡ tên KCN khỏi thẻ "Khu vực" của các khách hàng đang gắn — tránh để lại tag rác
+      // trỏ tới 1 KCN không còn tồn tại.
+      await Promise.all(
+        clients.filter(c => c.industrial_zones?.includes(selected.name)).map(c =>
+          supabase.from('clients').update({ industrial_zones: c.industrial_zones.filter(z => z !== selected.name) }).eq('id', c.id),
+        ),
+      );
+
+      const { error } = await supabase.from('market_zones').delete().eq('id', selected.id);
+      if (error) throw error;
+      await logActivity({
+        user, action: 'delete', table: 'market_zones', recordId: selected.id,
+        description: `Xoá khu vực "${selected.name}"`,
+        oldData: selected,
+      });
+      setSelectedId(null);
+      await onRefresh();
+      toast(`Đã xoá khu vực "${selected.name}"`);
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    setSaving(false);
+  };
+
   const handleSetPotential = async (n: number) => {
     if (!selected) return;
     try {
@@ -371,6 +494,24 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
             <button onClick={handleSaveZone} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60">
               <Check size={13} /> {saving ? 'Đang lưu...' : 'Lưu'}
             </button>
+            <div className="relative">
+              <button onClick={() => setShowZoneMenu(v => !v)} title="Đổi tên / Xoá khu vực" className={`p-1.5 rounded-lg border transition ${showZoneMenu ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
+                <MoreVertical size={14} />
+              </button>
+              {showZoneMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowZoneMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 z-20 w-48 bg-white border border-[#E8E7E2] rounded-[10px] shadow-xl py-1">
+                    <button onClick={handleRenameZone} className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-[#333] hover:bg-[#F9F9F7] text-left">
+                      <Pencil size={12} /> Đổi tên khu vực
+                    </button>
+                    <button onClick={handleDeleteZone} className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-red-600 hover:bg-red-50 text-left">
+                      <Trash2 size={12} /> Xoá khu vực
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -445,19 +586,78 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
                   )}
                 </div>
               </div>
+              {editForm.image_url && (
+                <div className="flex gap-3"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Chế độ hiển thị</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1 mb-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(f => f && ({ ...f, image_fit: 'cover' }))}
+                        className={`px-2 py-1 rounded-lg text-[10.5px] font-medium border transition ${editForm.image_fit !== 'contain' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}
+                      >
+                        Lấp đầy (cắt ảnh)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(f => f && ({ ...f, image_fit: 'contain' }))}
+                        className={`px-2 py-1 rounded-lg text-[10.5px] font-medium border transition ${editForm.image_fit === 'contain' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-gray-300 text-[#666] hover:bg-[#F9F9F7]'}`}
+                      >
+                        Tự khớp (giữ nguyên ảnh)
+                      </button>
+                    </div>
+                    <div
+                      ref={imgBoxRef}
+                      onMouseDown={editForm.image_fit === 'contain' ? undefined : handleImgDragStart}
+                      className={`h-36 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${editForm.image_fit === 'contain' ? '' : draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
+                    >
+                      <img
+                        src={editForm.image_url}
+                        alt=""
+                        draggable={false}
+                        className={`w-full h-full pointer-events-none select-none ${editForm.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                        style={{ objectPosition: `${editForm.image_pos_x ?? 50}% ${editForm.image_pos_y ?? 50}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-[10.5px] text-[#999]">
+                        {editForm.image_fit === 'contain' ? 'Chế độ tự khớp: hiện toàn bộ ảnh, không cắt' : 'Kéo ảnh để chỉnh vị trí hiển thị — khung này đúng tỷ lệ thẻ thật'}
+                      </span>
+                      {editForm.image_fit !== 'contain' && (
+                        <button onClick={() => setEditForm(f => f && ({ ...f, image_pos_x: 50, image_pos_y: 50 }))} className="inline-flex items-center gap-1 text-[10.5px] text-blue-600 hover:underline shrink-0">
+                          <RotateCcw size={10} /> Về giữa
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Ban quản lý</span>
                 <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
               </div>
               <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Diện tích · Năm TL</span>
-                <div className="flex gap-2 flex-1 min-w-0">
-                  <input value={editForm.area || ''} onChange={e => setEditForm(f => ({ ...f, area: e.target.value }))} className="text-[12.5px] w-20 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                <div className="flex gap-1.5 flex-1 min-w-0 items-center">
+                  <input value={editForm.area || ''} onChange={e => setEditForm(f => ({ ...f, area: e.target.value }))} className="text-[12.5px] w-16 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                  <span className="text-[11px] text-[#999] shrink-0">Ha</span>
                   <input value={editForm.established_year || ''} onChange={e => setEditForm(f => ({ ...f, established_year: e.target.value }))} className="text-[12.5px] w-16 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
+                  {(() => {
+                    const y = parseInt(editForm.established_year || '', 10);
+                    if (!y || y < 1900 || y > new Date().getFullYear()) return null;
+                    return <span className="text-[11px] text-[#999] shrink-0">({new Date().getFullYear() - y} năm)</span>;
+                  })()}
                 </div>
               </div>
               <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Nguồn lao động</span>
                 <select value={editForm.labor_availability} onChange={e => setEditForm(f => ({ ...f, labor_availability: e.target.value }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
                   {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select>
+              </div>
+              <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden border-l-[3px] border-l-blue-500">
+                <div className="px-4 py-2.5 border-b border-[#F0EEE9] flex items-center gap-1.5 text-[12.5px] font-semibold text-[#111]"><FileText size={13} className="text-blue-600" /> Tổng quan</div>
+                <RichTextEditor
+                  value={editForm.overview_notes || ''}
+                  onChange={html => setEditForm(f => f && ({ ...f, overview_notes: html }))}
+                  placeholder="Ghi tổng quan KCN — bất kỳ thông tin quan trọng nào bạn muốn lưu lại…"
+                />
               </div>
             </div>
 
@@ -768,7 +968,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
             <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden cursor-pointer hover:border-blue-300 hover:shadow-sm transition">
               {z.image_url ? (
                 <div className="h-36 w-full overflow-hidden bg-gray-100">
-                  <img src={z.image_url} alt={z.name} className="w-full h-full object-cover" />
+                  <img src={z.image_url} alt={z.name} className={`w-full h-full ${z.image_fit === 'contain' ? 'object-contain' : 'object-cover'}`} style={{ objectPosition: `${z.image_pos_x ?? 50}% ${z.image_pos_y ?? 50}%` }} />
                 </div>
               ) : (
                 <div className="h-36 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">

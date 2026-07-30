@@ -228,7 +228,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   };
 
   if (selectedCompetitor) {
-    return <CompetitorDetail competitor={selectedCompetitor} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={closeCompetitor} onRefresh={onRefresh} toast={toast} />;
+    return <CompetitorDetail competitor={selectedCompetitor} allCompetitors={competitors} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={closeCompetitor} onRefresh={onRefresh} toast={toast} />;
   }
 
   const renderCompChart = (key: string) => {

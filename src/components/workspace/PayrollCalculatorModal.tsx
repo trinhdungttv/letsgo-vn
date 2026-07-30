@@ -19,7 +19,16 @@ import Block3AgencyRevenue from './payroll/Block3AgencyRevenue';
 import Block4ClientInvoice from './payroll/Block4ClientInvoice';
 import RegionPriceCompare, { type CompareImport } from './payroll/RegionPriceCompare';
 import { PREF_KEYS, readPref, writePref } from '../../lib/payroll/prefs';
-import type { Client, Competitor, MarketZone, MarketLeadSupplier } from '../../lib/types';
+import type { Client, Competitor, MarketZone, MarketLead, MarketLeadSupplier } from '../../lib/types';
+
+// companySelect lưu 1 trong 2 nguồn — "client:<id>" (Khách hàng đang hợp tác) hoặc
+// "lead:<id>" (Công ty/Dự án đang tìm hiểu, market_leads) — để phân biệt bảng/cột cần
+// đọc-ghi khi lấy/đồng bộ bảng lương NCC (clients.market_suppliers vs market_leads.suppliers).
+function parseCompanySelect(v: string): { type: 'client' | 'lead'; id: string } | null {
+  if (v.startsWith('client:')) return { type: 'client', id: v.slice(7) };
+  if (v.startsWith('lead:')) return { type: 'lead', id: v.slice(5) };
+  return null;
+}
 
 interface Props {
   clients: Client[];
@@ -52,12 +61,14 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   const [marketZones, setMarketZones] = useState<MarketZone[]>([]);
   const [wageFields, setWageFields] = useState<WageField[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [marketLeads, setMarketLeads] = useState<MarketLead[]>([]);
 
   useEffect(() => {
     fetchRegionWages().then(setRegionWages);
     fetchWageFieldRows().then(setWageFields);
     supabase.from('market_zones').select('id, name').order('name').then(({ data }) => { if (data) setMarketZones(data as MarketZone[]); });
     supabase.from('competitors').select('id, company_name, wage_paid').then(({ data }) => { if (data) setCompetitors(data as Competitor[]); });
+    supabase.from('market_leads').select('id, company_name, suppliers').then(({ data }) => { if (data) setMarketLeads(data as MarketLead[]); });
   }, []);
 
   const [companySelect, setCompanySelect] = useState('');
@@ -68,6 +79,8 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   // 1 mức lương khác nhau, nên bảng lương LUÔN phải gắn với 1 NCC cụ thể mới so sánh được.
   const [supplierName, setSupplierName] = useState(US_NAME);
   const [companySuppliers, setCompanySuppliers] = useState<MarketLeadSupplier[]>([]);
+  // Tên + SĐT người đã liên hệ để lấy báo giá này — không bắt buộc, chỉ để tra lại sau.
+  const [contactNote, setContactNote] = useState('');
 
   const [inputType, setInputTypeState] = useState<PayrollInputType>(() => readPref(PREF_KEYS.inputType, 'base_salary') as PayrollInputType);
   const [inputSourceField, setInputSourceField] = useState<string | null>(null);
@@ -104,7 +117,10 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  const clientOptions = useMemo(() => clients.map(c => ({ value: c.id, label: c.name })), [clients]);
+  const companyOptions = useMemo(() => [
+    ...clients.map(c => ({ value: `client:${c.id}`, label: c.name })),
+    ...marketLeads.map(l => ({ value: `lead:${l.id}`, label: `${l.company_name} (đang tìm hiểu)` })),
+  ], [clients, marketLeads]);
   const zoneOptions = useMemo(() => marketZones.map(z => ({ value: z.id, label: z.name })), [marketZones]);
   const rateFields = useMemo(() => wageFields.filter(f => f.payrollInputType), [wageFields]);
   const allowanceSuggestions = useMemo(() => wageFields.filter(f => !f.payrollInputType).map(f => f.name), [wageFields]);
@@ -112,15 +128,25 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
     const names = new Set<string>([US_NAME]);
     competitors.forEach(c => { if (c.company_name) names.add(c.company_name); });
     companySuppliers.forEach(s => { if (s.name) names.add(s.name); });
-    return [...names].sort((a, b) => (a === US_NAME ? -1 : b === US_NAME ? 1 : a.localeCompare(b, 'vi'))).map(n => ({ value: n, label: n }));
+    const named = [...names].sort((a, b) => (a === US_NAME ? -1 : b === US_NAME ? 1 : a.localeCompare(b, 'vi'))).map(n => ({ value: n, label: n }));
+    // Có lúc mới lấy được đơn giá nhưng chưa rõ NCC nào báo — cho phép để trống, điền lại sau.
+    return [...named, { value: '', label: 'Chưa rõ NCC (điền sau)' }];
   }, [competitors, companySuppliers]);
 
   const isUs = supplierName.trim() === US_NAME;
 
   function handleCompanySelect(v: string) {
     setCompanySelect(v);
-    const match = clients.find(c => c.id === v);
-    setCompanyName(match ? match.name : v);
+    const sel = parseCompanySelect(v);
+    if (sel?.type === 'client') {
+      const match = clients.find(c => c.id === sel.id);
+      setCompanyName(match ? match.name : v);
+    } else if (sel?.type === 'lead') {
+      const match = marketLeads.find(l => l.id === sel.id);
+      setCompanyName(match ? match.company_name : v);
+    } else {
+      setCompanyName(v);
+    }
   }
 
   function handleKcnSelect(v: string) {
@@ -130,12 +156,18 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   }
 
   // Bảng NCC của công ty đang chọn (Thị trường) — nguồn cho nút "Lấy lương NCC này".
+  // clients dùng cột market_suppliers, market_leads dùng cột suppliers (cùng shape MarketLeadSupplier[]).
   useEffect(() => {
-    const match = clients.find(c => c.id === companySelect);
-    if (!match) { setCompanySuppliers([]); return; }
-    supabase.from('clients').select('market_suppliers').eq('id', match.id).maybeSingle()
-      .then(({ data }) => setCompanySuppliers(((data?.market_suppliers ?? []) as MarketLeadSupplier[])));
-  }, [companySelect, clients]);
+    const sel = parseCompanySelect(companySelect);
+    if (!sel) { setCompanySuppliers([]); return; }
+    if (sel.type === 'client') {
+      supabase.from('clients').select('market_suppliers').eq('id', sel.id).maybeSingle()
+        .then(({ data }) => setCompanySuppliers(((data?.market_suppliers ?? []) as MarketLeadSupplier[])));
+    } else {
+      supabase.from('market_leads').select('suppliers').eq('id', sel.id).maybeSingle()
+        .then(({ data }) => setCompanySuppliers(((data?.suppliers ?? []) as MarketLeadSupplier[])));
+    }
+  }, [companySelect, clients, marketLeads]);
 
   const inputValueNum = parseFloat(inputValue) || 0;
   const serviceFeeValueNum = parseFloat(serviceFeeValue) || 0;
@@ -209,16 +241,24 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   }
 
   // ── Ghi kết quả (đã gồm phần chỉnh tay) ngược lại bảng lương NCC bên Thị trường ────────────
+  // Đích ghi phụ thuộc nguồn đã chọn: Khách hàng đang hợp tác → clients.market_suppliers,
+  // Công ty/Dự án đang tìm hiểu → market_leads.suppliers (cùng shape MarketLeadSupplier[]).
   async function syncToMarket() {
-    const client = clients.find(c => c.id === companySelect);
-    if (!client) { toast('Chọn "Khách hàng có sẵn" trước khi đồng bộ sang Thị trường'); return; }
+    const sel = parseCompanySelect(companySelect);
+    if (!sel) { toast('Chọn "Khách hàng có sẵn / Công ty đang tìm hiểu" trước khi đồng bộ sang Thị trường'); return; }
+    const table = sel.type === 'client' ? 'clients' : 'market_leads';
+    const column = sel.type === 'client' ? 'market_suppliers' : 'suppliers';
+    const targetLabel = sel.type === 'client'
+      ? clients.find(c => c.id === sel.id)?.name
+      : marketLeads.find(l => l.id === sel.id)?.company_name;
+    if (!targetLabel) { toast('Không tìm thấy hồ sơ đã chọn'); return; }
     if (!result) return;
     const targetName = isUs ? US_NAME : supplierName.trim();
     if (!targetName) { toast('Chọn NCC trước khi đồng bộ'); return; }
 
-    const { data, error: readErr } = await supabase.from('clients').select('market_suppliers').eq('id', client.id).maybeSingle();
+    const { data, error: readErr } = await supabase.from(table).select(column).eq('id', sel.id).maybeSingle();
     if (readErr) { toast('Không đọc được bảng NCC hiện tại: ' + readErr.message); return; }
-    const list = ((data?.market_suppliers ?? []) as MarketLeadSupplier[]);
+    const list = (((data as any)?.[column] ?? []) as MarketLeadSupplier[]);
     const idx = list.findIndex(s => (isUs ? s.is_us : s.name === targetName));
     const previous = idx >= 0 ? (list[idx].wage_detail ?? {}) : {};
     const wageDetail = toWageDetail(rateRows, wageFields, allowanceRecord(allowances), previous);
@@ -230,7 +270,7 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
       .map(k => `• ${k}: ${previous[k] != null ? `${previous[k].toLocaleString('vi-VN')} → ` : ''}${wageDetail[k].toLocaleString('vi-VN')}đ`)
       .join('\n');
     const ok = confirm(
-      `Ghi bảng lương của "${targetName}" tại ${client.name} (Thị trường):\n\n${summary}` +
+      `Ghi bảng lương của "${targetName}" tại ${targetLabel} (Thị trường):\n\n${summary}` +
       (changed.length > 8 ? `\n… và ${changed.length - 8} khoản nữa` : '') +
       (willOverwrite.length > 0 ? `\n\n⚠ ${willOverwrite.length} khoản đang có số cũ sẽ bị GHI ĐÈ.` : '') +
       `\n\nTiếp tục?`,
@@ -241,7 +281,7 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
     const next: MarketLeadSupplier[] = idx >= 0
       ? list.map((s, i) => i === idx ? { ...s, wage_detail: wageDetail } : s)
       : [...list, { name: targetName, qty: 0, is_us: isUs, wage_min: null, wage_max: null, wage_detail: wageDetail }];
-    const { error } = await supabase.from('clients').update({ market_suppliers: next }).eq('id', client.id);
+    const { error } = await supabase.from(table).update({ [column]: next }).eq('id', sel.id);
     setSyncing(false);
     if (error) { toast('Đồng bộ lỗi: ' + error.message); return; }
     setCompanySuppliers(next);
@@ -251,15 +291,17 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
   async function save() {
     if (!result || blocked || !companyName.trim()) return;
     setSaving(true);
-    const match = clients.find(c => c.id === companySelect);
+    const sel = parseCompanySelect(companySelect);
     const zoneMatch = marketZones.find(z => z.id === kcnSelect);
     const { error } = await supabase.from('quote_requests').insert({
       company_name: companyName.trim(),
       kcn_name: kcnName.trim() || null,
       kcn_zone_id: zoneMatch?.id ?? null,
-      client_id: match?.id ?? null,
+      client_id: sel?.type === 'client' ? sel.id : null,
+      market_lead_id: sel?.type === 'lead' ? sel.id : null,
       supplier_name: isUs ? null : supplierName.trim() || null,
       is_us: isUs,
+      contact_note: contactNote.trim() || null,
       input_type: inputType,
       input_value: Math.round(effectiveInputValue),
       prior_day_ot: priorDayOt,
@@ -368,8 +410,8 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
           {/* ==== FORM NHẬP LIỆU ==== */}
           <div className="space-y-3">
             <div>
-              <label className="text-[11.5px] font-medium text-gray-700 block mb-1">Khách hàng có sẵn (để lấy/đồng bộ bảng lương NCC)</label>
-              <SearchSelect value={companySelect} onChange={handleCompanySelect} options={clientOptions} placeholder="Tìm khách hàng…" />
+              <label className="text-[11.5px] font-medium text-gray-700 block mb-1">Khách hàng / Công ty đang tìm hiểu có sẵn (để lấy/đồng bộ bảng lương NCC)</label>
+              <SearchSelect value={companySelect} onChange={handleCompanySelect} options={companyOptions} placeholder="Tìm khách hàng hoặc công ty/dự án…" />
             </div>
             <div>
               <label className="text-[11.5px] font-medium text-gray-700 block mb-1">Tên công ty *</label>
@@ -380,7 +422,11 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
               <label className="text-[11.5px] font-medium text-gray-700 block mb-1">Bảng lương này của NCC nào?</label>
               <SearchSelect value={supplierName} onChange={setSupplierName} options={supplierOptions} placeholder="Chọn NCC / đối thủ…" allowAdd />
               <div className="text-[10.5px] text-[#999] mt-0.5">
-                {isUs ? 'Đang tính bảng lương của chính mình.' : `Đang mô tả mức "${supplierName}" trả tại công ty này — để nghiên cứu giá đối thủ.`}
+                {isUs
+                  ? 'Đang tính bảng lương của chính mình.'
+                  : supplierName.trim()
+                    ? `Đang mô tả mức "${supplierName}" trả tại công ty này — để nghiên cứu giá đối thủ.`
+                    : 'Chưa rõ NCC nào báo giá này — có thể điền lại sau khi biết rõ.'}
               </div>
               {companySelect && (
                 <button type="button" onClick={pullFromMarket}
@@ -388,6 +434,12 @@ export function PayrollCalculatorModal({ clients, toast, onClose }: Props) {
                   <Download size={12} /> Lấy lương NCC này từ Thị trường
                 </button>
               )}
+            </div>
+            <div>
+              <label className="text-[11.5px] font-medium text-gray-700 block mb-1">Ghi chú người liên hệ (tuỳ chọn)</label>
+              <input value={contactNote} onChange={e => setContactNote(e.target.value)} placeholder="VD: Chị Hoa - 0909xxxxxx"
+                className="w-full text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+              <div className="text-[10.5px] text-[#999] mt-0.5">Tên + SĐT người bạn đã liên hệ để lấy báo giá này, để tra lại sau nếu cần hỏi thêm.</div>
             </div>
             <div>
               <label className="text-[11.5px] font-medium text-gray-700 block mb-1">KCN / Vị trí</label>

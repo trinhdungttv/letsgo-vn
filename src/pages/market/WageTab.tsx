@@ -224,8 +224,8 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
   }, [marketZones]);
 
   const zoneToImage = useMemo(() => {
-    const map: Record<string, string | null | undefined> = {};
-    marketZones.forEach(z => { map[z.name] = z.image_url; });
+    const map: Record<string, { url: string | null | undefined; fit?: string | null; posX?: number; posY?: number }> = {};
+    marketZones.forEach(z => { map[z.name] = { url: z.image_url, fit: z.image_fit, posX: z.image_pos_x, posY: z.image_pos_y }; });
     return map;
   }, [marketZones]);
 
@@ -1163,9 +1163,9 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
             const img = zoneToImage[zone];
             return (
               <div key={zone} className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden">
-                {img ? (
+                {img?.url ? (
                   <div className="h-32 w-full overflow-hidden bg-gray-100">
-                    <img src={img} alt={zone} className="w-full h-full object-cover" />
+                    <img src={img.url} alt={zone} className={`w-full h-full ${img.fit === 'contain' ? 'object-contain' : 'object-cover'}`} style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </div>
                 ) : (
                   <div className="h-32 w-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">

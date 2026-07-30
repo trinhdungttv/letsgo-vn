@@ -359,6 +359,8 @@ export interface Competitor {
   // SĐT liên hệ của Giám đốc — tối đa 2 số (migration 123)
   director_phone?: string | null;
   director_phone2?: string | null;
+  // Danh sách nhân sự liên hệ (tên + SĐT), không giới hạn số lượng (migration 127)
+  contacts?: { name: string; phone: string }[] | null;
   website_url?: string | null;
   facebook_url?: string | null;
   tiktok_url?: string | null;
@@ -426,8 +428,14 @@ export interface MarketZone {
   geocoded_at?: string | null;
   // Ảnh cover (migration 102)
   image_url?: string | null;
+  // Vị trí (%) + chế độ hiển thị ảnh cover: 'cover' cắt lấp đầy khung, 'contain' tự khớp hiện toàn bộ ảnh (migration 128)
+  image_pos_x?: number;
+  image_pos_y?: number;
+  image_fit?: 'cover' | 'contain' | null;
   // Vùng lương tối thiểu Vùng I–IV (migration 110) — mỗi KCN 1 vùng riêng
   region_zone?: string | null;
+  // Ô "Tổng quan" tự do, rich text (migration 129)
+  overview_notes?: string | null;
 }
 
 export interface Industry {

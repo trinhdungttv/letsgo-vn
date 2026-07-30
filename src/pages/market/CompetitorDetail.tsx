@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, User, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, User, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency } from '../../lib/format';
 import type { Competitor, CompetitorClient, CompetitorLog, MarketZone, Client, MarketLead } from '../../lib/types';
@@ -9,6 +9,18 @@ import { logActivity } from '../../lib/audit';
 import SearchSelect from './SearchSelect';
 import { type CompetitorLinkType, fetchLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 import { FOCUS_PROVINCES } from './populationData';
+import { type RecruitmentSource, fetchRecruitmentSources, addRecruitmentSource, deleteRecruitmentSource } from './recruitmentSources';
+
+interface Contact { name: string; phone: string }
+
+// Chưa nhập nhân sự nào theo danh sách mới (migration 127) — dùng tạm Giám đốc + tối đa 2 SĐT
+// cũ để không mất dữ liệu đã có, cho tới khi người dùng sửa & lưu lại theo danh sách mới.
+function legacyContactsOf(c: Competitor): Contact[] {
+  const list: Contact[] = [];
+  if (c.director || c.director_phone) list.push({ name: c.director ?? '', phone: c.director_phone ?? '' });
+  if (c.director_phone2) list.push({ name: '', phone: c.director_phone2 });
+  return list;
+}
 
 // Tên tỉnh cũ (trước sáp nhập 01/07/2025) của 1 tỉnh MỚI — dùng để hiện tooltip khi hover.
 function oldNamesOfProvince(name: string): string[] {
@@ -19,6 +31,7 @@ import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 interface Props {
   competitor: Competitor;
+  allCompetitors: Competitor[];
   marketZones: MarketZone[];
   clients: Client[];
   marketLeads: MarketLead[];
@@ -29,7 +42,7 @@ interface Props {
 
 interface LgClient { id: string; name: string; industrial_zones: string[] }
 
-export default function CompetitorDetail({ competitor, marketZones, clients, marketLeads, onBack, onRefresh, toast }: Props) {
+export default function CompetitorDetail({ competitor, allCompetitors, marketZones, clients, marketLeads, onBack, onRefresh, toast }: Props) {
   const { user } = useAuth();
   const [lgClients, setLgClients] = useState<LgClient[]>([]);
   const [compClients, setCompClients] = useState<CompetitorClient[]>([]);
@@ -49,9 +62,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     image_pos_x: competitor.image_pos_x ?? 50,
     image_pos_y: competitor.image_pos_y ?? 50,
     image_fit: competitor.image_fit ?? 'cover',
-    director: competitor.director ?? '',
-    director_phone: competitor.director_phone ?? '',
-    director_phone2: competitor.director_phone2 ?? '',
+    contacts: competitor.contacts?.length ? competitor.contacts : legacyContactsOf(competitor),
     map_link: competitor.map_link ?? '',
     website_url: competitor.website_url ?? '',
     facebook_url: competitor.facebook_url ?? '',
@@ -68,6 +79,29 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
   const [linkTypes, setLinkTypes] = useState<CompetitorLinkType[]>([]);
   useEffect(() => { fetchLinkTypes().then(setLinkTypes); }, []);
   const [customLinkDrafts, setCustomLinkDrafts] = useState<Record<string, string>>(competitor.custom_links ?? {});
+
+  const addContactRow = () => setForm(f => ({ ...f, contacts: [...f.contacts, { name: '', phone: '' }] }));
+  const removeContactRow = (i: number) => setForm(f => ({ ...f, contacts: f.contacts.filter((_, idx) => idx !== i) }));
+  const updateContactRow = (i: number, patch: Partial<Contact>) => setForm(f => ({ ...f, contacts: f.contacts.map((c, idx) => idx === i ? { ...c, ...patch } : c) }));
+
+  // Danh sách "Nguồn tuyển" dùng chung toàn hệ thống — thêm ở đây (kể cả gõ tự do trong ô
+  // chọn) sẽ lưu lại để lần sau chỉ việc chọn, không phải gõ lại.
+  const [sources, setSources] = useState<RecruitmentSource[]>([]);
+  const [showSourceSettings, setShowSourceSettings] = useState(false);
+  const loadSources = () => { fetchRecruitmentSources().then(setSources); };
+  useEffect(() => { loadSources(); }, []);
+  const sourceOptions = useMemo(() => sources.map(s => ({ value: s.label, label: s.label })), [sources]);
+  const handleAddSource = async (label: string) => {
+    const err = await addRecruitmentSource(label, sources);
+    if (err) { toast('Lỗi thêm nguồn tuyển: ' + err); return; }
+    loadSources();
+  };
+  const handleDeleteSource = async (s: RecruitmentSource) => {
+    if (!confirm(`Xoá nguồn tuyển "${s.label}"? Đối thủ đã chọn nguồn này vẫn giữ nguyên giá trị, chỉ không còn trong danh sách gợi ý.`)) return;
+    const err = await deleteRecruitmentSource(s.id);
+    if (err) { toast('Lỗi xoá: ' + err); return; }
+    loadSources();
+  };
 
   // Kéo ảnh cover để chỉnh object-position — khung xem trước cùng tỷ lệ với thẻ thật (h-32)
   // nên "vừa với khung hình" đúng như hiển thị thực tế, không cần biết ảnh ngang hay dọc.
@@ -130,6 +164,37 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
     if (error) { toast('Lỗi: ' + error.message); return; }
     competitor.active_zones = next;
   };
+
+  // Danh sách gợi ý cho "Trụ sở chính" — đếm số đối thủ khác đang dùng mỗi khu vực (Trụ sở chính +
+  // Khu vực hoạt động của họ) để khu vực nào đang tập trung nhiều đối thủ hiện lên đầu, dễ chọn
+  // nhanh hơn là phải gõ lại từ đầu. Vẫn cho gõ tự do (allowAdd) cho các trường hợp như "Toàn quốc".
+  const hqOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of allCompetitors) {
+      if (c.id === competitor.id) continue;
+      if (c.zone_name) counts.set(c.zone_name, (counts.get(c.zone_name) ?? 0) + 1);
+      for (const z of c.active_zones ?? []) counts.set(z, (counts.get(z) ?? 0) + 1);
+    }
+    const kcnNames = marketZones.map(z => z.name);
+    const focusNew = FOCUS_PROVINCES.map(p => p.name);
+    const all = new Set<string>(['Toàn quốc', ...counts.keys(), ...provinces, ...kcnNames, ...focusNew]);
+    return Array.from(all)
+      .sort((a, b) => {
+        const diff = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
+        return diff !== 0 ? diff : a.localeCompare(b, 'vi');
+      })
+      .map(z => ({ value: z, label: z }));
+  }, [allCompetitors, competitor.id, marketZones, provinces]);
+
+  // Danh sách KCN/Tỉnh thành để chọn cho "KH đang phục vụ" khi công ty chưa có hồ sơ gán sẵn
+  // KCN (industrial_zones/region) — tránh phải gõ tay, dữ liệu không đồng bộ được với các nơi
+  // khác đang dùng đúng tên KCN chính thức.
+  const kcnPickOptions = useMemo(() => {
+    const kcnNames = marketZones.map(z => z.name);
+    const focusNew = FOCUS_PROVINCES.map(p => p.name);
+    const all = [...new Set([...kcnNames, ...provinces, ...focusNew])].sort((a, b) => a.localeCompare(b, 'vi'));
+    return all.map(z => ({ value: z, label: z }));
+  }, [marketZones, provinces]);
 
   const removeActiveZone = async (zone: string) => {
     const next = activeZones.filter(z => z !== zone);
@@ -223,9 +288,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
       image_pos_x: form.image_pos_x,
       image_pos_y: form.image_pos_y,
       image_fit: form.image_fit,
-      director: form.director.trim() || null,
-      director_phone: form.director_phone.trim() || null,
-      director_phone2: form.director_phone2.trim() || null,
+      contacts: form.contacts.map(c => ({ name: c.name.trim(), phone: c.phone.trim() })).filter(c => c.name || c.phone),
       map_link: form.map_link.trim() || null,
       website_url: form.website_url.trim() || null,
       facebook_url: form.facebook_url.trim() || null,
@@ -388,7 +451,7 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[11px] text-[#888]">Trụ sở chính</label>
-                      <input value={form.zone_name} onChange={e => setForm(f => ({ ...f, zone_name: e.target.value }))} placeholder="VD: Biên Hòa - Đồng Nai" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                      <SearchSelect value={form.zone_name} onChange={v => setForm(f => ({ ...f, zone_name: v }))} options={hqOptions} placeholder="VD: Biên Hòa - Đồng Nai" allowAdd onAdd={() => {}} />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
@@ -397,23 +460,50 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                       <input type="number" min={0} value={form.total_workers} onChange={e => setForm(f => ({ ...f, total_workers: +e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[#888]">Nguồn tuyển</label>
-                      <input value={form.recruitment_source} onChange={e => setForm(f => ({ ...f, recruitment_source: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] text-[#888]">Nguồn tuyển</label>
+                        <div className="relative">
+                          <button type="button" onClick={() => setShowSourceSettings(v => !v)} title="Quản lý danh sách nguồn tuyển" className={`p-0.5 rounded transition ${showSourceSettings ? 'text-blue-700' : 'text-[#999] hover:text-[#333]'}`}>
+                            <Settings size={11} />
+                          </button>
+                          {showSourceSettings && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setShowSourceSettings(false)} />
+                              <div className="absolute right-0 top-full mt-1.5 z-20 w-[240px] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[11.5px] font-semibold text-[#111]">Danh sách nguồn tuyển</div>
+                                  <button onClick={() => setShowSourceSettings(false)} className="p-1 hover:bg-gray-100 rounded"><X size={12} /></button>
+                                </div>
+                                <div className="space-y-1 max-h-48 overflow-y-auto">
+                                  {sources.map(s => (
+                                    <div key={s.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-gray-200">
+                                      <span className="text-[11.5px] text-[#333] flex-1 truncate">{s.label}</span>
+                                      <button onClick={() => handleDeleteSource(s)} className="p-1.5 sm:p-0.5 text-[#aaa] hover:text-red-500"><Trash2 size={11} /></button>
+                                    </div>
+                                  ))}
+                                  {sources.length === 0 && <div className="text-[10.5px] text-[#aaa] py-1">Chưa có nguồn tuyển nào.</div>}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <SearchSelect value={form.recruitment_source} onChange={v => setForm(f => ({ ...f, recruitment_source: v }))} options={sourceOptions} placeholder="Chọn hoặc gõ để thêm mới…" allowAdd onAdd={handleAddSource} />
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[#888]">Giám đốc</label>
-                      <input value={form.director} onChange={e => setForm(f => ({ ...f, director: e.target.value }))} placeholder="Tên giám đốc / người phụ trách" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] text-[#888]">Nhân sự liên hệ</label>
+                      <button type="button" onClick={addContactRow} className="inline-flex items-center gap-1 text-[10.5px] text-blue-600 hover:underline"><Plus size={10} /> Thêm nhân sự</button>
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[#888]">SĐT liên hệ 1</label>
-                      <input value={form.director_phone} onChange={e => setForm(f => ({ ...f, director_phone: e.target.value }))} placeholder="09xx xxx xxx" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[#888]">SĐT liên hệ 2 (tuỳ chọn)</label>
-                      <input value={form.director_phone2} onChange={e => setForm(f => ({ ...f, director_phone2: e.target.value }))} placeholder="09xx xxx xxx" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
-                    </div>
+                    {form.contacts.length === 0 && <span className="text-[11px] text-[#aaa]">Chưa có nhân sự nào</span>}
+                    {form.contacts.map((c, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <input value={c.name} onChange={e => updateContactRow(i, { name: e.target.value })} placeholder="Tên nhân sự / chức vụ" className="flex-1 text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                        <input value={c.phone} onChange={e => updateContactRow(i, { phone: e.target.value })} placeholder="09xx xxx xxx" className="w-32 text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                        <button type="button" onClick={() => removeContactRow(i)} className="p-1.5 sm:p-1 rounded-lg text-[#aaa] hover:text-red-500 hover:bg-red-50 transition shrink-0"><X size={13} /></button>
+                      </div>
+                    ))}
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] text-[#888]">Ảnh cover (link)</label>
@@ -510,17 +600,23 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                   <div className="flex justify-between"><span className="text-[#888]">Trụ sở chính</span><span className="font-medium text-[#111]">{competitor.zone_name}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Tổng LĐ ước tính</span><span className="font-medium text-[#111]">{(competitor.total_workers ?? 0).toLocaleString('vi-VN')}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Nguồn tuyển</span><span className="font-medium text-[#111]">{competitor.recruitment_source || '—'}</span></div>
-                  <div className="flex justify-between items-center"><span className="text-[#888] flex items-center gap-1"><User size={11} /> Giám đốc</span><span className="font-medium text-[#111]">{competitor.director || '—'}</span></div>
-                  {(competitor.director_phone || competitor.director_phone2) && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-[#888]">SĐT liên hệ</span>
-                      <span className="font-medium text-[#1D4ED8] flex items-center gap-2">
-                        {[competitor.director_phone, competitor.director_phone2].filter(Boolean).map((p, i) => (
-                          <a key={i} href={`tel:${p}`} className="hover:underline">{p}</a>
-                        ))}
-                      </span>
-                    </div>
-                  )}
+                  <div>
+                    <div className="text-[#888] mb-1 flex items-center gap-1"><User size={11} /> Nhân sự liên hệ</div>
+                    {(() => {
+                      const list = competitor.contacts?.length ? competitor.contacts : legacyContactsOf(competitor);
+                      if (!list.length) return <span className="text-[11.5px] text-[#aaa]">Chưa có</span>;
+                      return (
+                        <div className="space-y-1">
+                          {list.map((c, i) => (
+                            <div key={i} className="flex items-center justify-between bg-[#F9F9F7] rounded-lg px-2.5 py-1.5">
+                              <span className="text-[#111] font-medium">{c.name || '—'}</span>
+                              {c.phone ? <a href={`tel:${c.phone}`} className="text-[#1D4ED8] font-medium hover:underline">{c.phone}</a> : <span className="text-[#aaa]">—</span>}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
                   <div>
                     <div className="text-[#888] mb-1.5">Liên kết nhanh</div>
                     {(() => {
@@ -628,11 +724,19 @@ export default function CompetitorDetail({ competitor, marketZones, clients, mar
                 <span className="text-[10.5px] text-[#999]">Không thấy trong danh sách? Gõ tên mới → sẽ tự thêm vào "Công ty/Dự án đang tìm hiểu"</span>
               </div>
               <div className="flex flex-col gap-1">
-                <input value={clientForm.kcn} readOnly={kcnFromProfile}
-                  onChange={e => setClientForm(f => ({ ...f, kcn: e.target.value }))}
-                  placeholder="KCN (chưa có hồ sơ → gõ tay)"
-                  className={`text-[12.5px] px-2.5 py-1.5 border rounded-lg outline-none ${kcnFromProfile ? 'bg-[#F5F4EF] border-[#E8E7E2] text-[#666]' : 'border-[#E8E7E2] focus:border-[#1D4ED8]'}`} />
-                {kcnFromProfile && <span className="text-[10px] text-emerald-600">✓ Tự động theo hồ sơ đã setup</span>}
+                {kcnFromProfile ? (
+                  <>
+                    <input value={clientForm.kcn} readOnly
+                      className="text-[12.5px] px-2.5 py-1.5 border rounded-lg outline-none bg-[#F5F4EF] border-[#E8E7E2] text-[#666]" />
+                    <span className="text-[10px] text-emerald-600">✓ Tự động theo hồ sơ đã setup</span>
+                  </>
+                ) : (
+                  <>
+                    <SearchSelect value={clientForm.kcn} onChange={v => setClientForm(f => ({ ...f, kcn: v }))}
+                      options={kcnPickOptions} placeholder="Chọn KCN…" allowAdd onAdd={() => {}} />
+                    <span className="text-[10px] text-[#999]">Công ty chưa gán KCN — chọn sẽ tự lưu ngược lại hồ sơ</span>
+                  </>
+                )}
               </div>
               <input type="number" min={0} value={clientForm.worker_count} onChange={e => setClientForm(f => ({ ...f, worker_count: e.target.value }))} placeholder="Số LĐ"
                 className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
