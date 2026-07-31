@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, X, Pencil, Trash2, Scale } from 'lucide-react';
+import { Plus, X, Pencil, Trash2, Scale, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MarketLeadSupplier, Competitor } from '../../lib/types';
 import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
@@ -145,9 +145,23 @@ export default function SupplierFillCard({
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<SupForm>(emptySupForm);
   const [showCompare, setShowCompare] = useState(false);
-  const [excludedFromCompare, setExcludedFromCompare] = useState<Set<number>>(new Set());
-  const toggleCompare = (i: number) => setExcludedFromCompare(prev => {
-    const next = new Set(prev);
+  const [showAllSuppliers, setShowAllSuppliers] = useState(false);
+  // null = chưa đụng vào → mặc định chọn hết nhóm được phép so (LGVN + TOP 5).
+  const [comparePick, setComparePick] = useState<Set<number> | null>(null);
+
+  // LGVN luôn ghim đầu danh sách; các NCC còn lại xếp theo số LĐ cung ứng giảm dần.
+  // Giữ kèm index gốc vì onEdit/onDeleteSupplier nhận vị trí trong mảng `suppliers`.
+  const rows = suppliers.map((s, i) => ({ s, i }));
+  const usRows = rows.filter(x => x.s.is_us);
+  const otherRows = rows.filter(x => !x.s.is_us).sort((a, b) => b.s.qty - a.s.qty);
+  const TOP_N = 5;
+  const topRows = otherRows.slice(0, TOP_N);
+  const restRows = otherRows.slice(TOP_N);
+  // Chỉ so sánh lương với TOP 5 NCC (kèm LGVN).
+  const compareRows = [...usRows, ...topRows];
+  const isPicked = (i: number) => comparePick ? comparePick.has(i) : true;
+  const toggleCompare = (i: number) => setComparePick(prev => {
+    const next = new Set(prev ?? compareRows.map(x => x.i));
     if (next.has(i)) next.delete(i); else next.add(i);
     return next;
   });
@@ -218,19 +232,19 @@ export default function SupplierFillCard({
       {showCompare && suppliers.length > 1 && (
         <div className="mb-3 border border-[#E8E7E2] rounded-lg overflow-hidden">
           <div className="px-2.5 py-1.5 bg-[#F9F9F7] border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
-            <span className="text-[10.5px] text-[#888] shrink-0">So sánh NCC (đối thủ) với nhau hoặc với LGVN:</span>
-            {suppliers.map((s, i) => (
+            <span className="text-[10.5px] text-[#888] shrink-0">So sánh LGVN với TOP {Math.min(TOP_N, otherRows.length)} NCC cung ứng nhiều nhất:</span>
+            {compareRows.map(({ s, i }) => (
               <label key={i} className="flex items-center gap-1 text-[11px] text-[#555] cursor-pointer">
-                <input type="checkbox" checked={!excludedFromCompare.has(i)} onChange={() => toggleCompare(i)} />
+                <input type="checkbox" checked={isPicked(i)} onChange={() => toggleCompare(i)} />
                 {s.is_us ? '● LGVN' : s.name}
               </label>
             ))}
           </div>
-          <WageCompareTable suppliers={suppliers} selected={suppliers.filter((_, i) => !excludedFromCompare.has(i))} />
+          <WageCompareTable suppliers={suppliers} selected={compareRows.filter(({ i }) => isPicked(i)).map(({ s }) => s)} />
         </div>
       )}
       <div className="space-y-1.5">
-        {suppliers.map((s, i) => {
+        {[...usRows, ...topRows, ...(showAllSuppliers ? restRows : [])].map(({ s, i }) => {
           if (editIndex === i) {
             return (
               <div key={i} className="py-1 px-1.5 -mx-1.5 bg-blue-50/40 rounded">
@@ -267,6 +281,16 @@ export default function SupplierFillCard({
             </div>
           );
         })}
+        {restRows.length > 0 && (
+          <button
+            onClick={() => setShowAllSuppliers(v => !v)}
+            className="inline-flex items-center gap-1 text-[11px] text-[#888] hover:text-blue-600 pt-0.5"
+          >
+            {showAllSuppliers
+              ? <><ChevronUp size={12} /> Thu gọn</>
+              : <><ChevronDown size={12} /> Xem thêm {restRows.length} NCC khác</>}
+          </button>
+        )}
       </div>
       {showAdd ? (
         <div className="mt-2">
