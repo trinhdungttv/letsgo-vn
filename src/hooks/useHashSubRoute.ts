@@ -24,6 +24,28 @@ export function expandId(short: string, items: { id: string }[]): string | null 
   return null;
 }
 
+/**
+ * Mã siêu ngắn cho URL: lấy vài ký tự ĐẦU của shortId(), độ dài vừa đủ để không
+ * trùng với item nào khác trong danh sách hiện tại (thường 3-4 ký tự thay vì 22).
+ * Vẫn tương thích ngược với link cũ dùng shortId() đầy đủ — vì chuỗi đầy đủ luôn
+ * "bắt đầu bằng chính nó", expandTinyId() bên dưới vẫn giải mã đúng.
+ */
+export function tinyId(id: string, items: { id: string }[], minLen = 3): string {
+  const full = shortId(id);
+  for (let len = minLen; len < full.length; len++) {
+    const prefix = full.slice(0, len);
+    const collides = items.some(it => it.id !== id && shortId(it.id).startsWith(prefix));
+    if (!collides) return prefix;
+  }
+  return full;
+}
+
+/** Giải mã tinyId() (hoặc shortId() cũ, đầy đủ) — khớp theo tiền tố duy nhất trong danh sách. */
+export function expandTinyId(short: string, items: { id: string }[]): string | null {
+  const matches = items.filter(it => shortId(it.id).startsWith(short));
+  return matches.length === 1 ? matches[0].id : null;
+}
+
 interface UseHashSubRouteOptions<T extends string> {
   page: string;
   validTabs: readonly T[];

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck } from 'lucide-react';
+import { Lock, CheckCircle, Circle, Check, X as XIcon, CalendarCheck, Settings } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import PnLProjectTab from '../components/finance/PnLProjectTab';
@@ -9,7 +9,7 @@ import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
-import { resolveDay, normalizeDayRange } from '../utils/timelineDays';
+import { EOM, resolveDay, normalizeDayRange } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
 import { isActiveInMonth, suspensionMonth, formatSuspensionDate } from '../utils/suspension';
 import { supabase } from '../lib/supabase';
@@ -33,6 +33,35 @@ function fmtDate(d: string) {
   const [y, m, day] = d.split('-');
   return `${day}/${m}/${y}`;
 }
+
+// ── Các mốc trên timeline: dùng chung cho chú thích, nút lọc và bảng bật/tắt ──
+type TimelinePhaseKey = 'cutoff' | 'calc' | 'invoice' | 'paydue' | 'salary';
+const TIMELINE_PHASES: { key: TimelinePhaseKey; label: string; dot: React.ReactNode }[] = [
+  { key: 'cutoff', label: 'Chốt công', dot: <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> },
+  { key: 'calc', label: 'Tính lương', dot: <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> },
+  { key: 'invoice', label: 'Xuất HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> },
+  { key: 'paydue', label: 'Kỳ TT', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
+  { key: 'salary', label: 'Phát lương', dot: <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> },
+];
+/**
+ * Giữ invoice_date (ngày cụ thể) khớp với invoice_day (quy tắc lặp hàng tháng).
+ * Giữ nguyên THÁNG của invoice_date cũ, chỉ đổi ngày; -1 = ngày cuối tháng đó,
+ * ngày 31 ở tháng 30 ngày thì lùi về 30. Chưa từng có invoice_date thì thôi,
+ * không tự bịa ra một tháng.
+ */
+function syncInvoiceDate(current: string | null | undefined, invoiceDay: number | null): string | null {
+  if (!current) return current ?? null;
+  if (invoiceDay == null) return null;
+  const [y, m] = current.slice(0, 10).split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const day = invoiceDay === EOM ? daysInMonth : Math.min(Math.max(invoiceDay, 1), daysInMonth);
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+const TIMELINE_VISIBLE_KEY = 'lgvn_finance_timeline_visible_phases';
+const ALL_PHASES_VISIBLE: Record<TimelinePhaseKey, boolean> = {
+  cutoff: true, calc: true, invoice: true, paydue: true, salary: true,
+};
 
 function TimelineStep({ label, day, done, isToday }: { label: string; day: number; done: boolean; isToday: boolean }) {
   return (
@@ -65,7 +94,8 @@ interface FinanceProps {
 
 export default function Finance({ finance, clients, onLoadFinance, onFinanceUpdate, onClientUpdate, toast }: FinanceProps) {
   const { user } = useAuth();
-  const [month, setMonth] = useState('2026-06');
+  // Tháng của Timeline KH — mặc định THÁNG HIỆN TẠI, nhớ lựa chọn qua F5.
+  const [month, setMonth] = usePersistedState('lgvn_finance_timelineMonth', todayStr.slice(0, 7));
   const FINANCE_TAB_KEYS = ['clients', 'pnl', 'performance', 'payment'] as const;
   const [activeTab, setActiveTab] = useHashTab<WorkspaceTab>('finance', FINANCE_TAB_KEYS, 'clients');
 
@@ -83,14 +113,37 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     while (cursor <= endMonth) { arr.push(cursor); cursor = shiftMonth(cursor, 1); }
     return arr;
   }, []);
+
+  // Danh sách tháng cho Timeline KH: từ 2026-01 đến tháng hiện tại + 3 (mở sẵn
+  // tháng tới để lên lịch trước). Luôn kèm tháng đang chọn phòng khi người dùng
+  // đã lưu một tháng nằm ngoài dải (vd xem lại tháng rất cũ).
+  const timelineMonths = useMemo(() => {
+    const arr: string[] = [];
+    let cursor = '2026-01';
+    const endMonth = shiftMonth(todayStr.slice(0, 7), 3);
+    while (cursor <= endMonth) { arr.push(cursor); cursor = shiftMonth(cursor, 1); }
+    if (!arr.includes(month)) arr.push(month);
+    return arr.sort().reverse();
+  }, [month]);
   const finData = useFinanceData();
 
   // ── Shared filters ────────────────────────────────────────────────
   const [filterRegion, setFilterRegion] = usePersistedState<string[]>('lgvn_finance_filterRegion', [ALL_OPTION]);
   const [filterManager, setFilterManager] = usePersistedState<string[]>('lgvn_finance_filterManager', [ALL_OPTION]);
 
-  type TimelinePhase = 'cutoff' | 'calc' | 'invoice' | 'paydue' | 'salary';
+  type TimelinePhase = TimelinePhaseKey;
   const [timelinePhase, setTimelinePhase] = useState<TimelinePhase | null>(null);
+  // Bật/tắt từng loại mốc trên timeline (nút bánh răng) — nhớ qua F5.
+  const [visiblePhases, setVisiblePhases] = usePersistedState<Record<TimelinePhaseKey, boolean>>(
+    TIMELINE_VISIBLE_KEY, ALL_PHASES_VISIBLE,
+  );
+  const [showPhaseSettings, setShowPhaseSettings] = useState(false);
+  const isPhaseOn = (k: TimelinePhaseKey) => visiblePhases[k] !== false;
+  const togglePhase = (k: TimelinePhaseKey) => {
+    setVisiblePhases({ ...visiblePhases, [k]: !isPhaseOn(k) });
+    // Đang lọc theo mốc vừa tắt thì bỏ luôn bộ lọc, tránh sắp xếp theo thứ không còn hiện.
+    if (isPhaseOn(k) && timelinePhase === k) setTimelinePhase(null);
+  };
 
   // ── Timeline edit modal (opened by clicking a company name) ──────
   const [editClient, setEditClient] = useState<Client | null>(null);
@@ -102,6 +155,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     salary_day: null as number | null, salary_day_end: null as number | null,
     extra_salary_days: [] as { start: number; end: number | null }[],
     extra_calc_days: [] as { start: number; end: number | null }[],
+    // Điều khoản thanh toán — cùng cột DB với "Điều khoản thanh toán" trong hồ sơ
+    // khách hàng, sửa ở đây hay ở đó đều ghi vào một chỗ nên luôn đồng bộ.
+    payment_group: 1 as number,
+    payment_days: 15 as number,
+    payment_fixed_day: 10 as number,
+    payment_cutoff: 5 as number,
   });
 
   // ── Date picker modal state ───────────────────────────────────────
@@ -183,6 +242,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       salary_day: c.salary_day, salary_day_end: c.salary_day_end,
       extra_salary_days: Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [],
       extra_calc_days: Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [],
+      payment_group: c.payment_group ?? 1,
+      payment_days: c.payment_days ?? 15,
+      payment_fixed_day: c.payment_fixed_day ?? 10,
+      payment_cutoff: c.payment_cutoff ?? 5,
     });
   };
 
@@ -201,10 +264,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       extra_calc_days: editForm.extra_calc_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
       extra_salary_days: editForm.extra_salary_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
     };
-    const updates = { ...normForm, updated_at: new Date().toISOString() };
+    // invoice_date là NGÀY CỤ THỂ (Lịch Thu Tiền & Điều khoản thanh toán đang đọc).
+    // Đổi "ngày xuất HĐ" ở đây thì kéo invoice_date theo cho khỏi lệch: giữ nguyên
+    // tháng cũ, chỉ thay ngày, quy đúng theo số ngày thực tế của tháng đó.
+    const invoiceDate = syncInvoiceDate(c.invoice_date, normForm.invoice_day);
+    const updates = { ...normForm, invoice_date: invoiceDate, updated_at: new Date().toISOString() };
     const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
     if (error) { toast('Lỗi: ' + error.message); return; }
-    onClientUpdate({ ...c, ...normForm });
+    onClientUpdate({ ...c, ...normForm, invoice_date: invoiceDate ?? undefined });
     setEditClient(null);
     toast('Đã cập nhật timeline!');
     await logActivity({
@@ -304,8 +371,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 onChange={e => { setMonth(e.target.value); setEditClient(null); }}
                 className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
               >
-                <option value="2026-06">Tháng 6/2026</option>
-                <option value="2026-05">Tháng 5/2026</option>
+                {timelineMonths.map(m => (
+                  <option key={m} value={m}>
+                    {monthLabel(m)}{m === todayStr.slice(0, 7) ? ' (tháng này)' : ''} · {new Date(+m.split('-')[0], +m.split('-')[1], 0).getDate()} ngày
+                  </option>
+                ))}
               </select>
             ) : (
               <select
@@ -400,18 +470,49 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
                 <span className="text-[12.5px] font-semibold text-[#111]">Timeline {monthTitle}</span>
                 <div className="flex items-center gap-1 text-[11px]">
-                  {([
-                    { key: 'cutoff' as TimelinePhase, label: 'Chốt công', dot: <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> },
-                    { key: 'calc' as TimelinePhase, label: 'Tính lương', dot: <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> },
-                    { key: 'invoice' as TimelinePhase, label: 'Xuất HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> },
-                    { key: 'paydue' as TimelinePhase, label: 'Kỳ TT', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
-                    { key: 'salary' as TimelinePhase, label: 'Phát lương', dot: <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> },
-                  ]).map(item => (
+                  {TIMELINE_PHASES.filter(p => isPhaseOn(p.key)).map(item => (
                     <button key={item.key} onClick={() => setTimelinePhase(timelinePhase === item.key ? null : item.key)}
+                      title={`Bấm để sắp xếp khách hàng theo mốc "${item.label}"`}
                       className={`flex items-center gap-1.5 px-2 py-1 rounded-full transition ${timelinePhase === item.key ? 'bg-gray-200 text-[#111] font-semibold' : 'text-[#888] hover:bg-gray-100'}`}>
                       {item.dot} {item.label}
                     </button>
                   ))}
+                  {/* Bánh răng: chọn mốc nào hiện / mốc nào ẩn trên timeline */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowPhaseSettings(v => !v)}
+                      title="Tuỳ chỉnh mốc hiển thị"
+                      className={`p-1.5 rounded-lg border transition ${showPhaseSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-transparent text-[#999] hover:bg-gray-100 hover:text-[#555]'}`}
+                    >
+                      <Settings size={13} />
+                    </button>
+                    {showPhaseSettings && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowPhaseSettings(false)} />
+                        <div className="absolute right-0 top-full mt-1.5 z-20 w-[210px] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3 space-y-1.5">
+                          <div className="text-[12px] font-semibold text-[#111] mb-1">Mốc hiển thị trên timeline</div>
+                          {TIMELINE_PHASES.map(p => (
+                            <label key={p.key} className="flex items-center gap-2 px-1 py-1 rounded-lg cursor-pointer hover:bg-[#F9F9F7]">
+                              <input
+                                type="checkbox"
+                                checked={isPhaseOn(p.key)}
+                                onChange={() => togglePhase(p.key)}
+                                className="w-3.5 h-3.5 accent-blue-600"
+                              />
+                              {p.dot}
+                              <span className="text-[12px] text-[#444]">{p.label}</span>
+                            </label>
+                          ))}
+                          <button
+                            onClick={() => { setVisiblePhases(ALL_PHASES_VISIBLE); setShowPhaseSettings(false); }}
+                            className="w-full mt-1 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#666] hover:bg-[#F9F9F7] transition"
+                          >
+                            Hiện lại tất cả
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -496,11 +597,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         {(() => {
                           type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean };
                           const markers: Mk[] = [];
-                          if (!isRecruitment && cutoffX != null && cutoffDay != null)
+                          if (isPhaseOn('cutoff') && !isRecruitment && cutoffX != null && cutoffDay != null)
                             markers.push({ x: cutoffX, day: cutoffDay, label: 'Chot cong', color: 'bg-orange-400', textCls: 'text-orange-600', shape: 'circle', endX: cutoffEndX ?? undefined, endDay: cutoffEndOk ?? undefined, dashCls: 'border-orange-300' });
-                          if (!isRecruitment && calcX != null && calcDay != null)
+                          if (isPhaseOn('calc') && !isRecruitment && calcX != null && calcDay != null)
                             markers.push({ x: calcX, day: calcDay, label: 'Tinh luong', color: 'bg-blue-400', textCls: 'text-blue-600', shape: 'diamond', endX: calcEndX ?? undefined, endDay: calcEndOk ?? undefined, dashCls: 'border-blue-300' });
-                          if (!isRecruitment) {
+                          if (isPhaseOn('calc') && !isRecruitment) {
                             const extraCalcs: { start: number; end: number | null }[] = Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [];
                             for (const ex of extraCalcs) {
                               const exR = nr(ex.start, ex.end);
@@ -513,13 +614,13 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                                 markers.push({ x: exX, day: exDay, label: 'Tinh luong', color: 'bg-blue-300', textCls: 'text-blue-500', shape: 'diamond', endX: exEndX ?? undefined, endDay: exEndOk ?? undefined, dashCls: 'border-blue-200' });
                             }
                           }
-                          if (invoiceX != null && invoiceDay != null)
+                          if (isPhaseOn('invoice') && invoiceX != null && invoiceDay != null)
                             markers.push({ x: invoiceX, day: invoiceDay, label: 'Xuat HD', color: 'bg-cyan-500', textCls: 'text-cyan-600', shape: 'square', endX: invoiceEndX ?? undefined, endDay: invoiceEndOk ?? undefined, dashCls: 'border-cyan-300', external: true });
-                          if (payDueX != null && payDueDay != null)
+                          if (isPhaseOn('paydue') && payDueX != null && payDueDay != null)
                             markers.push({ x: payDueX, day: payDueDay, label: c.paid_this_month ? 'Da TT' : 'Ky TT', color: 'bg-emerald-500', textCls: c.paid_this_month ? 'text-emerald-700' : 'text-emerald-600', shape: 'square', external: true });
-                          if (!isRecruitment && salaryX != null && salaryDay != null)
+                          if (isPhaseOn('salary') && !isRecruitment && salaryX != null && salaryDay != null)
                             markers.push({ x: salaryX, day: salaryDay, label: 'Phat luong', color: 'bg-purple-500', textCls: 'text-purple-600', shape: 'circle', endX: salaryEndX ?? undefined, endDay: salaryEndOk ?? undefined, dashCls: 'border-purple-300' });
-                          if (!isRecruitment) {
+                          if (isPhaseOn('salary') && !isRecruitment) {
                             const extras: { start: number; end: number | null }[] = Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [];
                             for (const ex of extras) {
                               const exR = nr(ex.start, ex.end);
@@ -935,7 +1036,78 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               className="text-[10.5px] text-purple-500 hover:text-purple-700 mt-1.5 hover:underline">+ Them dot phat luong</button>
 
             <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay. Nut <strong>CT</strong> = cuoi thang, tu nhay theo so ngay thuc te (28/29/30/31).</div>
-            <div className="text-[11px] text-blue-500 mt-1">Xuat HD va Ky TT tu dong lay tu "Dieu khoan thanh toan" trong ho so khach hang.</div>
+
+            {/* ── Xuất HĐ + Kỳ TT: cùng cột DB với "Điều khoản thanh toán" trong
+                   hồ sơ khách hàng — sửa bên nào cũng vào một chỗ ── */}
+            <div className="mt-3 pt-3 border-t border-[#F0EEE9] space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-cyan-500" />
+                  Xuat HD
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay xuat hoa don</label>
+                  <DayCell value={editForm.invoice_day} onChange={v => setEditForm({ ...editForm, invoice_day: v })} />
+                </div>
+                <div className="flex-1 text-[10.5px] text-[#999] self-end pb-1.5">hang thang</div>
+              </div>
+
+              {(() => {
+                const g = editForm.payment_group;
+                // Xem trước Kỳ TT ngay trong tháng đang mở, dùng đúng hàm tính của
+                // Lịch Thu Tiền nên số hiện ở đây khớp với timeline sau khi lưu.
+                const invDay = resolveDay(editForm.invoice_day, daysInMonth);
+                const preview = invDay != null
+                  ? calcExpectedDue(
+                      { ...editClient, payment_group: g, payment_days: editForm.payment_days, payment_fixed_day: editForm.payment_fixed_day, payment_cutoff: editForm.payment_cutoff },
+                      new Date(calYear, calMonthNum - 1, invDay),
+                    )
+                  : null;
+                return (
+                  <div className="flex items-start gap-3">
+                    <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444] pt-4">
+                      <span className="inline-block w-2 h-2 rounded-sm bg-emerald-500" />
+                      Ky TT
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <label className="text-[10.5px] text-[#999] block mb-0.5">
+                        {g === 1 ? 'Sau bao nhieu ngay ke tu xuat HD' : g === 2 && !editClient.payment_weekday ? 'Thu tien ngay co dinh' : 'Dieu khoan'}
+                      </label>
+                      {g === 1 ? (
+                        <div className="flex items-center gap-1.5">
+                          <input type="number" min={1} max={90} value={editForm.payment_days}
+                            onChange={e => setEditForm({ ...editForm, payment_days: Math.max(1, Math.min(90, +e.target.value)) })}
+                            className="w-[70px] text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                          <span className="text-[11px] text-[#888]">ngay {editClient.payment_wday ? 'lam viec' : 'lich'}</span>
+                        </div>
+                      ) : g === 2 && !editClient.payment_weekday ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-[110px]">
+                            <DayCell value={editForm.payment_fixed_day} onChange={v => setEditForm({ ...editForm, payment_fixed_day: v ?? 10 })} />
+                          </div>
+                          <span className="text-[11px] text-[#888] whitespace-nowrap">chot truoc ngay</span>
+                          <input type="number" min={1} max={31} value={editForm.payment_cutoff}
+                            onChange={e => setEditForm({ ...editForm, payment_cutoff: Math.max(1, Math.min(31, +e.target.value)) })}
+                            className="w-[52px] text-[13px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                        </div>
+                      ) : (
+                        <div className="text-[11.5px] text-[#666] py-1.5">
+                          {g === 2 ? 'Thu theo thu co dinh hang tuan' : 'Chu ky nua thang (nhom 3)'}
+                          <span className="text-[10.5px] text-[#aaa]"> — sua trong ho so KH</span>
+                        </div>
+                      )}
+                      {preview && (
+                        <div className="text-[10.5px] text-emerald-700 mt-1">
+                          Thang nay: <strong>{preview.label}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="text-[11px] text-blue-500 mt-2">Xuat HD va Ky TT dung chung du lieu voi "Dieu khoan thanh toan" trong ho so khach hang — sua o day hay o do deu nhu nhau.</div>
 
             <div className="flex gap-2 mt-4">
               <button onClick={handleSaveEdit} className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg text-[13px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
