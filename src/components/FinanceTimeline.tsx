@@ -3,6 +3,7 @@ import type { Client } from '../lib/types';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import FilterDropdown, { ALL_OPTION } from './FilterDropdown';
+import { EOM } from '../utils/timelineDays';
 
 interface Props {
   clients: Client[];
@@ -20,7 +21,7 @@ function TimelinePill({
   return (
     <div className="flex flex-col items-center gap-0.5 min-w-[52px]">
       <div className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${styles[highlight]}`}>
-        {day != null ? `Ngày ${day}` : '—'}
+        {day == null ? '—' : day === EOM ? 'Cuối tháng' : `Ngày ${day}`}
       </div>
       <div className="text-[9.5px] text-[#999] whitespace-nowrap">{label}</div>
     </div>

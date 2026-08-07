@@ -23,11 +23,34 @@ import PaymentHistory from '../components/clients/PaymentHistory';
 import ExportMdModal from '../components/clients/ExportMdModal';
 import SocialLinksRow from '../components/SocialLinksRow';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
+import DayCell from '../components/DayCell';
+import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+type TimelineForm = {
+  cutoff_day: number | null; cutoff_day_end: number | null;
+  calc_day: number | null; calc_day_end: number | null;
+  payment_start: number | null; payment_end: number | null;
+  salary_day: number | null; salary_day_end: number | null;
+};
+
+/** Chỉ nhập 1 ô => mốc 1 ngày: dồn về ngày bắt đầu, bỏ ngày kết thúc. */
+function normalizeTimelineForm(f: TimelineForm): TimelineForm {
+  const cutoff = normalizeDayRange(f.cutoff_day, f.cutoff_day_end);
+  const calc = normalizeDayRange(f.calc_day, f.calc_day_end);
+  const pay = normalizeDayRange(f.payment_start, f.payment_end);
+  const salary = normalizeDayRange(f.salary_day, f.salary_day_end);
+  return {
+    cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
+    calc_day: calc.start, calc_day_end: calc.end,
+    payment_start: pay.start, payment_end: pay.end,
+    salary_day: salary.start, salary_day_end: salary.end,
+  };
 }
 
 const DOC_TYPE_LABELS: Record<ClientDocumentType, string> = {
@@ -495,7 +518,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         ...(isValidVnLatLng(mapPos)
           ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() }
           : linkCleared ? { lat: null, lng: null, geocoded_at: null } : {}),
-        ...timelineForm,
+        ...normalizeTimelineForm(timelineForm),
         updated_at: new Date().toISOString(),
       };
       if (form.service_type === 'recruitment') {
@@ -1348,20 +1371,18 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                             {row.label}
                           </div>
                           <div className="flex-1">
-                            <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày bắt đầu</label>
-                            <input type="number" min={1} max={31} value={timelineForm[row.start] ?? 1}
-                              onChange={e => setTimelineForm({ ...timelineForm, [row.start]: Math.max(1, Math.min(31, +e.target.value)) })}
-                              className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                            <label className="text-[10.5px] text-[#999] block mb-0.5">
+                              {timelineForm[row.start] != null && timelineForm[row.end] == null ? 'Ngày (1 ngày)' : 'Ngày bắt đầu'}
+                            </label>
+                            <DayCell value={timelineForm[row.start]} onChange={v => setTimelineForm({ ...timelineForm, [row.start]: v })} />
                           </div>
                           <div className="flex-1">
                             <label className="text-[10.5px] text-[#999] block mb-0.5">Ngày kết thúc</label>
-                            <input type="number" min={1} max={31} placeholder="—" value={timelineForm[row.end] ?? ''}
-                              onChange={e => { const v = e.target.value; setTimelineForm({ ...timelineForm, [row.end]: v === '' ? null : Math.max(1, Math.min(31, +v)) }); }}
-                              className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                            <DayCell value={timelineForm[row.end]} onChange={v => setTimelineForm({ ...timelineForm, [row.end]: v })} />
                           </div>
                         </div>
                       ))}
-                      <div className="text-[11px] text-[#aaa]">Để trống "Ngày kết thúc" nếu mốc chỉ diễn ra trong 1 ngày.</div>
+                      <div className="text-[11px] text-[#aaa]">Để trống "Ngày kết thúc" nếu mốc chỉ diễn ra trong 1 ngày. Nút <strong>CT</strong> = cuối tháng, tự nhảy theo số ngày thực tế của từng tháng (28/29/30/31).</div>
                     </div>
                   </div>
 
@@ -1485,7 +1506,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         { label: 'Phát lương', start: client.salary_day, end: client.salary_day_end, cls: 'bg-purple-50 border-purple-200 text-purple-700' },
                       ]).map(row => (
                         <span key={row.label} className={`px-2.5 py-1 rounded-full text-[11.5px] font-medium border ${row.cls}`}>
-                          {row.label}: ngày {row.start}{row.end ? `–${row.end}` : ''}
+                          {row.label}: ngày {formatDayRange(row.start, row.end)}
                         </span>
                       ))}
                     </div>

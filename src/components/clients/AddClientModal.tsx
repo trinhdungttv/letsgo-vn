@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
+import { normalizeDayRange } from '../../utils/timelineDays';
 
 interface AddClientModalProps {
   open: boolean;
@@ -35,7 +36,7 @@ function DayRangeField({
         <label className="text-[10px] text-[#999] block mb-0.5">Ngày bắt đầu</label>
         {isStartEOM ? (
           <div className="flex items-center gap-1">
-            <span className="text-[12px] text-blue-600 font-medium">Áp cuối tháng</span>
+            <span className="text-[12px] text-blue-600 font-medium">Cuối tháng</span>
             <button type="button" onClick={() => onChange({ ...value, start: null })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
           </div>
         ) : (
@@ -140,11 +141,14 @@ export default function AddClientModal({
     }
     setSubmitting(true);
     try {
+      const nCutoff = normalizeDayRange(cutoff.start, cutoff.end);
+      const nCalc = normalizeDayRange(calc.start, calc.end);
+      const nSalary = normalizeDayRange(salary.start, salary.end);
       const leasingFields = serviceType !== 'recruitment'
         ? {
-            cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
-            calc_day: calc.start, calc_day_end: calc.end,
-            salary_day: salary.start, salary_day_end: salary.end,
+            cutoff_day: nCutoff.start, cutoff_day_end: nCutoff.end,
+            calc_day: nCalc.start, calc_day_end: nCalc.end,
+            salary_day: nSalary.start, salary_day_end: nSalary.end,
           }
         : { cutoff_day: null, calc_day: null, salary_day: null, cutoff_day_end: null, calc_day_end: null, salary_day_end: null };
 
