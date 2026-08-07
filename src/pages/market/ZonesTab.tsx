@@ -48,6 +48,9 @@ import SearchSelect from './SearchSelect';
 import RichTextEditor from './RichTextEditor';
 import { REGION_ZONES, regionZoneLabel, regionZoneColorCls } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
+import { shortId, expandId } from '../../hooks/useHashSubRoute';
+import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
+import SearchBox from '../../components/SearchBox';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -108,21 +111,75 @@ function MultiPicker({ tags, options, onAdd, onRemove, onAddOption, color, place
   );
 }
 
+// Đọc KCN đang mở từ URL: #/market/zones/{shortId}
+// parts[0]='market', parts[1]='zones' (useHashTab quản lý), parts[2]=id rút gọn.
+function zoneIdFromHash(zones: MarketZone[]): string | null {
+  const parts = window.location.hash.replace('#/', '').split('/');
+  if (parts[0] !== 'market' || parts[1] !== 'zones' || !parts[2]) return null;
+  return expandId(parts[2], zones) || zones.find(z => z.id === parts[2])?.id || null;
+}
+
+// Bộ lọc của tab KCN — nhớ qua F5 để không phải chọn lại (URL vẫn giữ ngắn gọn).
+const ZONE_FILTER_KEY = 'market_zones_filters';
+type ZoneFilters = { provinces: string[]; onlyPriority: boolean; search: string };
+const loadZoneFilters = (): ZoneFilters => {
+  try {
+    const raw = localStorage.getItem(ZONE_FILTER_KEY);
+    if (raw) {
+      const f = JSON.parse(raw) as Partial<ZoneFilters>;
+      return {
+        provinces: Array.isArray(f.provinces) && f.provinces.length ? f.provinces : [ALL_OPTION],
+        onlyPriority: !!f.onlyPriority,
+        search: typeof f.search === 'string' ? f.search : '',
+      };
+    }
+  } catch { /* ignore */ }
+  return { provinces: [ALL_OPTION], onlyPriority: false, search: '' };
+};
+
 export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Hồ sơ KCN đang mở có link riêng #/market/zones/{shortId} — F5 quay lại đúng chỗ.
+  const [selectedId, setSelectedIdRaw] = useState<string | null>(() => zoneIdFromHash(marketZones));
+  // marketZones về sau khi Market tải xong → giải lại id từ URL đúng 1 lần.
+  useEffect(() => {
+    if (selectedId || !marketZones.length) return;
+    const id = zoneIdFromHash(marketZones);
+    if (id) setSelectedIdRaw(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketZones]);
+  // Back/Forward của trình duyệt (pushState không tự bắn sự kiện).
+  useEffect(() => {
+    const onNav = () => setSelectedIdRaw(zoneIdFromHash(marketZones));
+    window.addEventListener('popstate', onNav);
+    return () => window.removeEventListener('popstate', onNav);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketZones]);
+
+  const setSelectedId = (id: string | null) => {
+    setSelectedIdRaw(id);
+    const hash = id ? `#/market/zones/${shortId(id)}` : '#/market/zones';
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+  };
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(emptyAddForm);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<MarketZone> | null>(null);
   const [initialEditForm, setInitialEditForm] = useState<Partial<MarketZone> | null>(null);
-  const [activeProvinces, setActiveProvinces] = useState<string[]>([ALL_OPTION]);
+  const savedFilters = useRef(loadZoneFilters()).current;
+  const [activeProvinces, setActiveProvinces] = useState<string[]>(savedFilters.provinces);
+  const [search, setSearch] = useState(savedFilters.search);
+  const searchRef = useSlashSearch(() => setSearch(''));
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_zones_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
   const [dashSettings, setDashSettings] = useState<ZoneDashSettings>(loadZoneDashSettings);
   const [showDashSettings, setShowDashSettings] = useState(false);
   const [showZoneMenu, setShowZoneMenu] = useState(false);
-  const [showOnlyPriority, setShowOnlyPriority] = useState(false);
+  const [showOnlyPriority, setShowOnlyPriority] = useState(savedFilters.onlyPriority);
+  useEffect(() => {
+    localStorage.setItem(ZONE_FILTER_KEY, JSON.stringify({ provinces: activeProvinces, onlyPriority: showOnlyPriority, search }));
+  }, [activeProvinces, showOnlyPriority, search]);
   useEffect(() => { localStorage.setItem(ZONE_DASH_SETTINGS_KEY, JSON.stringify(dashSettings)); }, [dashSettings]);
 
   // Chia đôi khối "Thông tin khu vực" thành 2 cột kéo được chiều ngang — tỉ lệ lưu
@@ -186,7 +243,9 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   const priorityCount = marketZones.filter(z => z.is_priority).length;
   const filteredZones = marketZones.filter(z =>
     (activeProvinces.includes(ALL_OPTION) || activeProvinces.includes(z.location || ''))
-    && (!showOnlyPriority || z.is_priority),
+    && (!showOnlyPriority || z.is_priority)
+    // Gõ không dấu vẫn ra: "bien hoa" khớp "KCN Biên Hoà 2". Tìm cả theo tỉnh/thành.
+    && matchesSearch(search, z.name, z.location),
   );
 
   // Bật/tắt cờ "đặc biệt quan tâm" ngay trên thẻ — khác "Mức tiềm năng" 1-5 sao (chi tiết trong
@@ -792,6 +851,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
           <div className="text-[11px] text-[#888]">Click vào khu vực để xem & chỉnh sửa hồ sơ đầy đủ</div>
         </div>
         <div className="flex items-center gap-2">
+          <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên KCN..." />
           <FilterDropdown label="Tỉnh/Thành" options={provinceNames} selected={activeProvinces} onChange={setActiveProvinces} />
           <button
             onClick={() => setShowOnlyPriority(v => !v)}

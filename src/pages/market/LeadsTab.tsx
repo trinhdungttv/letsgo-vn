@@ -8,6 +8,8 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import SearchSelect from './SearchSelect';
 import SupplierFillCard from './SupplierFillCard';
 import SocialLinksRow from '../../components/SocialLinksRow';
+import SearchBox from '../../components/SearchBox';
+import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
@@ -87,6 +89,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const [provinceFilter, setProvinceFilter] = useState('all');
   const [industryFilter, setIndustryFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const searchRef = useSlashSearch(() => setSearch(''));
   // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
   const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
   useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
@@ -194,12 +198,18 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     return null;
   };
 
-  const list = marketLeads.filter(l => matchesProvince(l.region, undefined) && matchesZone(l.region, undefined) && matchesIndustry(l.industry));
+  // Ô tìm kiếm (phím "/") chạy chồng lên bộ lọc Tỉnh/KCN/Ngành — tìm theo tên,
+  // khu vực và ngành nghề, gõ không dấu vẫn ra.
+  const list = marketLeads.filter(l =>
+    matchesProvince(l.region, undefined) && matchesZone(l.region, undefined) && matchesIndustry(l.industry)
+    && matchesSearch(search, l.company_name, l.region, l.industry),
+  );
   const trackedClients = clients.filter(c =>
     c.market_workers_needed != null &&
     matchesProvince(c.region, c.industrial_zones ?? undefined) &&
     matchesZone(c.region, c.industrial_zones ?? undefined) &&
-    matchesIndustry(c.industry),
+    matchesIndustry(c.industry) &&
+    matchesSearch(search, c.name, c.region, c.industry, c.industrial_zones?.join(' ')),
   );
   const untrackedClients = clients.filter(c => c.market_workers_needed == null);
 
@@ -490,6 +500,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       </div>
 
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3 py-2 flex items-center gap-2 flex-wrap">
+        <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên công ty / dự án..." width="w-[230px]" />
         <span className="text-[12px] text-[#888] shrink-0">Tỉnh/TP:</span>
         <SearchSelect
           value={provinceFilter}
@@ -511,8 +522,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
           options={[{ value: 'all', label: `Tất cả (${industries.length})` }, ...industries.map(i => ({ value: i, label: i }))]}
           className="w-48"
         />
-        {(provinceFilter !== 'all' || zoneFilter !== 'all' || industryFilter !== 'all') && (
-          <button onClick={() => { setProvinceFilter('all'); setZoneFilter('all'); setIndustryFilter('all'); }} className="text-[11.5px] text-blue-600 hover:underline">Xoá lọc</button>
+        {(provinceFilter !== 'all' || zoneFilter !== 'all' || industryFilter !== 'all' || search) && (
+          <button onClick={() => { setProvinceFilter('all'); setZoneFilter('all'); setIndustryFilter('all'); setSearch(''); }} className="text-[11.5px] text-blue-600 hover:underline">Xoá lọc</button>
         )}
       </div>
 
