@@ -11,6 +11,7 @@
 
 import { supabase } from '../lib/supabase';
 import { formatDayRange } from './timelineDays';
+import { isSuspended, suspensionMonth, formatSuspensionDate, suspendedDuration } from './suspension';
 import { calcPnl, monthLabel, getManagerForMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
 import type {
@@ -267,7 +268,13 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
   L.push(`| Kỳ dữ liệu | ${monthLabel(opts.fromMonth)} → ${monthLabel(opts.toMonth)} (${months.length} tháng) |`);
   L.push(`| Loại hình dịch vụ | ${client.service_type === 'recruitment' ? 'Giới thiệu lao động' : client.service_type === 'hoh' ? 'HOH' : 'Cho thuê lao động'} |`);
   L.push(`| Loại dự án | ${client.project_type === 'managed' ? 'Công ty tự vận hành (managed)' : `Khoán chi nhánh (LG ${client.default_lg_pct}% / CN ${client.default_cn_pct}%)`} |`);
-  L.push(`| Trạng thái hợp tác | ${client.cooperation_status === 'suspended' ? `TẠM NGƯNG${client.suspension_reason ? ` — lý do: ${client.suspension_reason}` : ''}` : 'Đang hợp tác'} |`);
+  if (isSuspended(client)) {
+    const sm = suspensionMonth(client);
+    L.push(`| Trạng thái hợp tác | TẠM NGƯNG${formatSuspensionDate(client) ? ` từ ${formatSuspensionDate(client)}` : ''}${suspendedDuration(client) ? ` (đã ngưng ${suspendedDuration(client)})` : ''}${client.suspension_reason ? ` — lý do: ${client.suspension_reason}` : ''} |`);
+    if (sm) L.push(`| Tháng dữ liệu cuối cùng | ${monthLabel(sm)} — từ tháng sau không còn phát sinh doanh thu/lao động |`);
+  } else {
+    L.push('| Trạng thái hợp tác | Đang hợp tác |');
+  }
   L.push('');
 
   // ── 1. Completeness report ──

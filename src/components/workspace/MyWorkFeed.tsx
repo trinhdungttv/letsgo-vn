@@ -17,6 +17,7 @@ import { formatDate } from '../../lib/format'
 import { queueGoogleSync, syncGoogleNow, pulledChanges } from '../../lib/googleSync'
 import { GoogleSyncCard } from './GoogleSyncCard'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
+import { todayISO } from '../../utils/suspension'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -603,6 +604,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   // ---- Trạng thái / doc status / ngưng HĐ (port từ Morning Priority) ----
   const [suspendTask, setSuspendTask] = useState<WorkTask | null>(null)
   const [suspendReason, setSuspendReason] = useState('')
+  const [suspendFrom, setSuspendFrom] = useState('')
   const [suspendSaving, setSuspendSaving] = useState(false)
 
   async function changeWorkStatus(t: WorkTask, status: TaskStatus) {
@@ -614,7 +616,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
 
   async function changeDocStatus(t: WorkTask, step: typeof DOC_STATUS_STEPS[number]) {
     const now = new Date().toISOString()
-    if (step.key === 'ngung_hd') { setSuspendTask(t); setSuspendReason(''); return }
+    if (step.key === 'ngung_hd') { setSuspendTask(t); setSuspendReason(''); setSuspendFrom(todayISO()); return }
     if (step.key === 'hoan_tat') {
       // updated_at = mốc bắt đầu 1 ngày ân hạn trước khi ẩn khỏi feed
       await supabase.from('work_tasks').update({ doc_status: step.key, updated_at: now }).eq('id', t.id)
@@ -628,19 +630,25 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   }
 
   async function submitSuspend() {
-    if (!suspendTask || !suspendReason.trim() || !user) return
+    if (!suspendTask || !suspendReason.trim() || !suspendFrom || !user) return
     setSuspendSaving(true)
     const client = clients.find(c => c.id === suspendTask.client_id)
     if (!client) { setSuspendSaving(false); return }
     if (isAdmin) {
       const now = new Date().toISOString()
-      await supabase.from('clients').update({ cooperation_status: 'suspended', suspension_reason: suspendReason.trim(), suspended_at: now, updated_at: now }).eq('id', client.id)
-      onClientUpdate({ ...client, cooperation_status: 'suspended', suspension_reason: suspendReason.trim(), suspended_at: now })
+      const patch = {
+        cooperation_status: 'suspended' as const,
+        suspension_reason: suspendReason.trim(),
+        suspended_from: suspendFrom,
+        suspended_at: now,
+      }
+      await supabase.from('clients').update({ ...patch, updated_at: now }).eq('id', client.id)
+      onClientUpdate({ ...client, ...patch })
     } else {
       await supabase.from('cooperation_suspension_requests').insert({
         client_id: client.id, task_id: suspendTask.id, requester_id: user.id,
         requester_name: user.full_name || user.username || 'Người dùng',
-        reason: suspendReason.trim(), status: 'pending',
+        reason: suspendReason.trim(), suspended_from: suspendFrom, status: 'pending',
       })
     }
     // Đánh dấu task Ngưng HĐ — còn hiện 1 ngày (badge đỏ) rồi tự ẩn theo quy tắc ân hạn
@@ -1407,6 +1415,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                 </p>
               )}
               <div>
+                <label className="block text-[11px] font-semibold text-gray-700 mb-1">Ngày ngưng hợp tác <span className="text-red-500">*</span></label>
+                <input type="date" value={suspendFrom} onChange={e => setSuspendFrom(e.target.value)}
+                  className="w-full px-3 py-2 text-[12.5px] border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                <p className="text-[10.5px] text-gray-500 mt-1">Tháng chứa ngày này vẫn nhập được P&amp;L Dự án và số lao động; từ tháng sau mới khoá.</p>
+              </div>
+              <div>
                 <label className="block text-[11px] font-semibold text-gray-700 mb-1">Lý do ngưng <span className="text-red-500">*</span></label>
                 <textarea rows={3} value={suspendReason} onChange={e => setSuspendReason(e.target.value)} autoFocus
                   placeholder="Nhập lý do ngưng hợp tác..."
@@ -1415,7 +1429,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
             </div>
             <div className="px-5 pb-5 flex gap-2">
               <button onClick={() => setSuspendTask(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
-              <button onClick={submitSuspend} disabled={suspendSaving || !suspendReason.trim()}
+              <button onClick={submitSuspend} disabled={suspendSaving || !suspendReason.trim() || !suspendFrom}
                 className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded-lg transition">
                 {suspendSaving ? 'Đang gửi...' : isAdmin ? 'Xác nhận ngưng' : 'Gửi yêu cầu'}
               </button>

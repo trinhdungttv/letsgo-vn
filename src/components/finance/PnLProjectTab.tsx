@@ -4,6 +4,7 @@ import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, Pnl
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import type { ClientBranchHistory, BranchTypeHistory } from '../../lib/types';
+import { isActiveInMonth, suspensionMonth, suspensionLabel, formatSuspensionDate, shortMonth } from '../../utils/suspension';
 
 interface PnLProjectTabProps {
   clients: Client[];
@@ -66,7 +67,7 @@ export default function PnLProjectTab({
   const [hohLgInput, setHohLgInput] = useState('100');
   const [hohCnInput, setHohCnInput] = useState('0');
 
-  type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
+  type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; suspended_from?: string | null; suspended_at?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
   const [allBranchHistory, setAllBranchHistory] = useState<ClientBranchHistory[]>([]);
   const [branchTypeHistoryMap, setBranchTypeHistoryMap] = useState<Record<string, BranchTypeHistory[]>>({});
@@ -100,7 +101,7 @@ export default function PnLProjectTab({
     return null;
   }, [zoneData]);
   useEffect(() => {
-    supabase.from('clients').select('id, name, region, archived_at, cooperation_status, project_type, default_lg_pct, default_cn_pct')
+    supabase.from('clients').select('id, name, region, archived_at, cooperation_status, suspended_from, suspended_at, project_type, default_lg_pct, default_cn_pct')
       .order('name')
       .then(({ data }) => { if (data) setExtraClients(data as MinClient[]); });
     supabase.from('client_branch_history').select('*').order('effective_from')
@@ -116,7 +117,7 @@ export default function PnLProjectTab({
   const mergedClients = useMemo(() => {
     const ids = new Set(clients.map(c => c.id));
     const extras = extraClients.filter(c => !ids.has(c.id));
-    return [...clients.map(c => ({ id: c.id, name: c.name, region: c.region, archived_at: c.archived_at, cooperation_status: c.cooperation_status })), ...extras];
+    return [...clients.map(c => ({ id: c.id, name: c.name, region: c.region, archived_at: c.archived_at, cooperation_status: c.cooperation_status, suspended_from: c.suspended_from, suspended_at: c.suspended_at })), ...extras];
   }, [clients, extraClients]);
 
   const branchOptions = useMemo(
@@ -169,9 +170,15 @@ export default function PnLProjectTab({
     setPendingSplit(null);
   }, [selId]);
 
+  // Khách đã ngưng chỉ còn thêm được vào THÁNG NGƯNG trở về trước.
+  // Ví dụ ngưng 30/06/2026 → tháng 06/2026 vẫn thêm/nhập P&L bình thường,
+  // từ tháng 07/2026 không còn trong danh sách chọn nữa.
   const availableClients = useMemo(
-    () => mergedClients.filter(c => !monthProjects.some(p => p.client_id === c.id)),
-    [mergedClients, monthProjects]
+    () => mergedClients.filter(c =>
+      !monthProjects.some(p => p.client_id === c.id) &&
+      isActiveInMonth(c, month)
+    ),
+    [mergedClients, monthProjects, month]
   );
   const filteredAddClients = useMemo(
     () => addSearch ? availableClients.filter(c => c.name.toLowerCase().includes(addSearch.toLowerCase())) : availableClients,
@@ -658,8 +665,13 @@ export default function PnLProjectTab({
                     className="w-3.5 h-3.5"
                   />
                   {c.name}
-                  {(c.archived_at || c.cooperation_status === 'suspended') && (
-                    <span className="text-[10px] text-red-400 ml-1">(Da ngung)</span>
+                  {c.cooperation_status === 'suspended' && (
+                    <span className="text-[10px] text-orange-600 ml-1" title={suspensionLabel(c) ?? undefined}>
+                      (Ngưng {formatSuspensionDate(c)} — tháng cuối)
+                    </span>
+                  )}
+                  {c.archived_at && c.cooperation_status !== 'suspended' && (
+                    <span className="text-[10px] text-red-400 ml-1">(Đã lưu trữ)</span>
                   )}
                 </label>
               ))}
@@ -691,14 +703,24 @@ export default function PnLProjectTab({
             const rr = calcPnl(p, c, taxOptsFor(p.client_id));
             const gtldRevenue = (revLines[p.id] || []).filter(l => l.service_type === 'recruitment').reduce((s, l) => s + (l.amount || 0), 0);
             const hohLineRevenue = (revLines[p.id] || []).filter(l => l.service_type === 'hoh').reduce((s, l) => s + (l.amount || 0), 0);
+            // Bản ghi P&L của khách đã ngưng: nhắc rõ tháng cuối / hoặc dữ liệu thừa sau ngày ngưng.
+            const pClient = mergedClients.find(x => x.id === p.client_id);
+            const pSuspMonth = suspensionMonth(pClient);
+            const pSuspNote = pSuspMonth == null ? null
+              : month === pSuspMonth ? { cls: 'bg-orange-50 text-orange-700 border-orange-200', text: `Tháng cuối · ngưng ${formatSuspensionDate(pClient)}` }
+              : month > pSuspMonth ? { cls: 'bg-red-50 text-red-600 border-red-200', text: `Đã ngưng từ ${shortMonth(pSuspMonth)} — nên xoá dòng này` }
+              : null;
             return (
               <div
                 key={p.id}
                 onClick={() => setSelId(p.id)}
                 className={`px-3 py-2.5 border-b border-[#E8E7E2] border-l-2 cursor-pointer transition hover:bg-white ${p.id === selId ? 'bg-white border-l-[#0F6E56]' : 'border-l-transparent'}`}
               >
-                <div className="text-[12px] font-medium text-[#111] truncate">{p.clients?.name || mergedClients.find(x => x.id === p.client_id)?.name || '—'}</div>
+                <div className="text-[12px] font-medium text-[#111] truncate">{p.clients?.name || pClient?.name || '—'}</div>
                 <div className="text-[10px] text-[#999] mb-1">{p.branch_manager || '—'}</div>
+                {pSuspNote && (
+                  <div className={`text-[9.5px] px-1.5 py-0.5 mb-1 rounded border w-fit ${pSuspNote.cls}`}>{pSuspNote.text}</div>
+                )}
                 <div className="flex items-start justify-between">
                   <div className="flex flex-col gap-0.5">
                     <span className={`w-fit text-[10px] px-1.5 py-0.5 rounded font-medium ${p.project_type === 'managed' ? 'bg-[#E6F1FB] text-[#0C447C]' : p.project_type === 'per_manday' ? 'bg-[#FFF3E0] text-[#9A4E00]' : 'bg-[#EAF3DE] text-[#27500A]'}`}>

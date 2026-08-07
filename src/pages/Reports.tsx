@@ -10,6 +10,7 @@ import type { Client, LaborHistoryEntry, ProjectPnl, ProjectPnlCost, Branch, Bra
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib/types';
 import { getMonthLast, formatCurrency, monthLabel, shiftMonth, daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
+import { isActiveInMonth } from '../utils/suspension';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Filler);
 
@@ -182,7 +183,14 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
     return () => { cancelled = true; };
   }, [pnls]);
 
+  // Hiện trạng: dùng cho các chỉ số neo theo hôm nay (LĐ hiện tại, HĐ sắp hết hạn).
   const activeClients = useMemo(() => clients.filter(c => c.cooperation_status !== 'suspended' && !c.archived_at), [clients]);
+  // Theo tháng: khách đã ngưng vẫn phải được tính cho các tháng TRƯỚC và ĐÚNG
+  // tháng ngưng — nếu loại hẳn thì biểu đồ lịch sử bị tụt giả tạo.
+  const clientsInMonth = useCallback(
+    (month: string) => clients.filter(c => !c.archived_at && isActiveInMonth(c, month)),
+    [clients]
+  );
   const clientById = useMemo(() => Object.fromEntries(clients.map(c => [c.id, c])), [clients]);
 
   const curMonths = useMemo(() => periodMonths(mode, selMonth), [mode, selMonth]);
@@ -226,15 +234,16 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   }, [activeClients, laborHistory, nowMonthNum, prevNowNum]);
 
   // Số LĐ tại kỳ P&L đang chọn — dùng cho chỉ số doanh thu/LĐ (cùng kỳ với doanh thu).
-  const periodMonthNum = Number(curMonths[curMonths.length - 1].split('-')[1]);
+  const periodMonth = curMonths[curMonths.length - 1];
+  const periodMonthNum = Number(periodMonth.split('-')[1]);
   const workersAtPeriod = useMemo(() => {
     let sum = 0;
-    for (const c of activeClients) {
+    for (const c of clientsInMonth(periodMonth)) {
       const v = getMonthLast(laborHistory[c.id] || [], periodMonthNum);
       if (v !== null) sum += v;
     }
     return sum;
-  }, [activeClients, laborHistory, periodMonthNum]);
+  }, [clientsInMonth, laborHistory, periodMonth, periodMonthNum]);
 
   const totalWorkers = laborByClient.reduce((s, r) => s + (r.cur || 0), 0);
   const laborGains = laborByClient.reduce((s, r) => s + (r.delta && r.delta > 0 ? r.delta : 0), 0);
@@ -344,22 +353,24 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   // ==== Xu hướng lao động 6 tháng gần nhất tính từ hôm nay
   // (week_label không có năm — giữ trong phạm vi 6 tháng để tránh trùng nhãn) ====
   const laborTrend = useMemo(() => {
-    const months: { num: number; label: string }[] = [];
+    const months: { mo: string; num: number; label: string }[] = [];
     for (let i = 5; i >= 0; i--) {
       const mo = shiftMonth(currentMonthStr(), -i);
       const [y, m] = mo.split('-').map(Number);
-      months.push({ num: m, label: `T${m}/${String(y).slice(2)}` });
+      months.push({ mo, num: m, label: `T${m}/${String(y).slice(2)}` });
     }
-    const totals = months.map(({ num }) => {
+    const totals = months.map(({ mo, num }) => {
       let sum = 0, found = false;
-      for (const c of activeClients) {
+      // Từng tháng lấy đúng tập khách còn hợp tác trong tháng đó — khách ngưng
+      // giữa kỳ vẫn được tính cho các tháng trước và tháng ngưng.
+      for (const c of clientsInMonth(mo)) {
         const v = getMonthLast(laborHistory[c.id] || [], num);
         if (v !== null) { sum += v; found = true; }
       }
       return found ? sum : null;
     });
     return { labels: months.map(m => m.label), totals };
-  }, [activeClients, laborHistory]);
+  }, [clientsInMonth, laborHistory]);
 
   // ==== Bảng xếp hạng chi nhánh ====
   const matchBranch = useCallback((key: string): Branch | undefined =>

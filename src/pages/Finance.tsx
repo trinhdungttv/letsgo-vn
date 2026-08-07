@@ -11,6 +11,7 @@ import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
 import { resolveDay, normalizeDayRange } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
+import { isActiveInMonth, suspensionMonth, formatSuspensionDate } from '../utils/suspension';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -118,12 +119,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
 
+  // Timeline/Trạng thái TT xem theo tháng: khách đã ngưng vẫn hiện ở các tháng
+  // tính đến hết tháng ngưng (tháng đó vẫn còn chốt công, xuất HĐ, thu tiền).
   const filteredClients = useMemo(() => clients.filter(c => {
-    if (c.cooperation_status === 'suspended') return false;
+    if (!isActiveInMonth(c, month)) return false;
     const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
     const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     return okR && okM;
-  }), [clients, filterRegion, filterManager]);
+  }), [clients, filterRegion, filterManager, month]);
 
   // ── Calendar dimensions (used by Gantt timeline) ──────────────────
   const [calYear, calMonthNum] = month.split('-').map(Number);
@@ -481,6 +484,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
                           {c.name}{c.status === 'danger' || c.status === 'warn' ? ' 🚩' : ''}
                         </button>
+                        {suspensionMonth(c) === month && (
+                          <div className="text-[9.5px] text-orange-600 font-medium">Tháng cuối · ngưng {formatSuspensionDate(c)}</div>
+                        )}
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LD</div>
                       </div>
                       <div className="flex-1 relative">

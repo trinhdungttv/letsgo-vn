@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { AlertCircle, RefreshCw, ClipboardList, Trash2, X, Eye, Check, ExternalLink } from 'lucide-react';
 import type { Client, CooperationSuspensionRequest, WorkTask, WorkTaskComment } from '../lib/types';
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib/types';
-import { daysUntil } from '../lib/format';
+import { daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { queueGoogleSync } from '../lib/googleSync';
@@ -140,9 +140,16 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
     const newStatus = approve ? 'approved' : 'rejected';
     await supabase.from('cooperation_suspension_requests').update({ status: newStatus, reviewed_at: now }).eq('id', req.id);
     if (approve) {
-      await supabase.from('clients').update({ cooperation_status: 'suspended', suspension_reason: req.reason, suspended_at: now, updated_at: now }).eq('id', req.client_id);
+      // Áp đúng ngày ngưng người gửi chọn — không lấy ngày bấm duyệt.
+      const patch = {
+        cooperation_status: 'suspended' as const,
+        suspension_reason: req.reason,
+        suspended_from: req.suspended_from || now.slice(0, 10),
+        suspended_at: now,
+      };
+      await supabase.from('clients').update({ ...patch, updated_at: now }).eq('id', req.client_id);
       const client = clients.find(c => c.id === req.client_id);
-      if (client && onClientUpdate) onClientUpdate({ ...client, cooperation_status: 'suspended', suspension_reason: req.reason, suspended_at: now });
+      if (client && onClientUpdate) onClientUpdate({ ...client, ...patch });
     }
     setSuspendRequests(prev => prev.filter(r => r.id !== req.id));
     setReviewingId(null);
@@ -444,6 +451,9 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                     <div className="text-[12px] font-semibold text-[#111]">{client?.name ?? req.client_id}</div>
                     <div className="text-[11px] text-[#888] mt-0.5">Người yêu cầu: <span className="text-[#555] font-medium">{req.requester_name}</span></div>
                     <div className="text-[11px] text-[#555] mt-0.5 italic">"{req.reason}"</div>
+                    {req.suspended_from && (
+                      <div className="text-[11px] text-orange-700 mt-0.5">Ngưng từ <strong>{formatDate(req.suspended_from)}</strong> — tháng này vẫn nhập P&amp;L / số LĐ được</div>
+                    )}
                     <div className="text-[10.5px] text-[#bbb] mt-0.5">{new Date(req.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                   </div>
                   <div className="flex gap-1.5 shrink-0 mt-0.5">

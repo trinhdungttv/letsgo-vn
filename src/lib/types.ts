@@ -82,7 +82,8 @@ export interface Client {
   khoan_tiers?: { min_workers: number; lg_pct: number; cn_pct: number }[];
   cooperation_status?: 'active' | 'suspended';
   suspension_reason?: string | null;
-  suspended_at?: string | null;
+  suspended_at?: string | null;   // thời điểm bấm nút ngưng (dấu vết thao tác)
+  suspended_from?: string | null; // ngày ngưng hợp tác thật, 'YYYY-MM-DD' (migration 134)
   payment_group?: number;
   payment_days?: number;
   payment_wday?: boolean;
@@ -1111,6 +1112,7 @@ export interface CooperationSuspensionRequest {
   requester_id: string
   requester_name: string
   reason: string
+  suspended_from?: string | null // ngày ngưng người gửi chọn, 'YYYY-MM-DD' (migration 134)
   status: 'pending' | 'approved' | 'rejected'
   reviewed_by: string | null
   reviewed_at: string | null
