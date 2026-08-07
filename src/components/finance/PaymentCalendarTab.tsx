@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { calcExpectedDue, getDueStatusConfig, formatDateVN } from '../../lib/paymentDate';
 import type { Client } from '../../lib/types';
+import { isSuspended, formatSuspensionDate, suspensionMonth } from '../../utils/suspension';
 
 interface Props {
   clients: Client[];
@@ -34,8 +35,15 @@ export default function PaymentCalendarTab({ clients }: Props) {
   const [filter, setFilter] = useState<FilterMode>('all');
 
   const enriched = useMemo(() => {
+    const curMonth = new Date().toISOString().slice(0, 7);
     return clients
       .filter(c => !c.archived_at)
+      // Khách đã ngưng: giữ tới hết tháng ngưng (còn kỳ thu tiền cuối), sau đó
+      // chỉ giữ nếu vẫn CHƯA thu được tiền — tránh để nợ cũ rơi khỏi tầm mắt.
+      .filter(c => {
+        const sm = suspensionMonth(c);
+        return sm == null || curMonth <= sm || !c.paid_this_month;
+      })
       .map(c => {
         const paid = c.paid_this_month || false;
         const invDate = c.invoice_date ? new Date(c.invoice_date) : null;
@@ -133,7 +141,14 @@ export default function PaymentCalendarTab({ clients }: Props) {
                 <div key={c.id} className={`px-4 py-3 grid grid-cols-12 items-center gap-2 hover:bg-[#FAFAF8] transition border-l-2 ${paid ? 'border-l-blue-400 opacity-60' : result?.status==='overdue' ? 'border-l-red-400' : result?.status==='urgent' ? 'border-l-amber-400' : 'border-l-transparent'}`}>
                   <div className="col-span-4 min-w-0">
                     <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
-                    <div className="text-[11px] text-[#888]">{c.region}</div>
+                    <div className="text-[11px] text-[#888]">
+                      {c.region}
+                      {isSuspended(c) && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
+                          Ngưng {formatSuspensionDate(c)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="col-span-2">
                     <GroupBadge group={c.payment_group ?? 1} />

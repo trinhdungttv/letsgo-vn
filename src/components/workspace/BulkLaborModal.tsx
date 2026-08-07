@@ -6,6 +6,7 @@ import FilterDropdown, { ALL_OPTION } from '../FilterDropdown'
 import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, prevWeekLabel } from '../../lib/format'
 import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
+import { isActiveInMonth, suspensionLabel, formatSuspensionDate } from '../../utils/suspension'
 
 interface Props {
   clients: Client[]
@@ -24,12 +25,35 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
   const [bulkSaving, setBulkSaving] = useState(false)
   const [, setWeekDataLoaded] = useState(false)
 
-  const activeClients = useMemo(
-    () => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'),
-    [clients]
-  )
-
   const { branches } = useBranchData()
+
+  const bulkWeekGroups = useMemo(() => {
+    return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)]
+  }, [bulkExtraWeeks])
+
+  // Nhãn tuần (TmWw) không mang năm — lấy tháng/năm từ chính nhóm chứa nó.
+  const monthOfWeek = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const g of bulkWeekGroups) {
+      const m = g.month.match(/Tháng\s+(\d+)\/(\d+)/)
+      if (!m) continue
+      const key = `${m[2]}-${String(Number(m[1])).padStart(2, '0')}`
+      for (const l of g.labels) map[l] = key
+    }
+    return map
+  }, [bulkWeekGroups])
+
+  const bulkMonth = monthOfWeek[bulkWeek] ?? null
+
+  // Khách đã ngưng vẫn phải nhập được số LĐ của THÁNG NGƯNG (tháng cuối cùng).
+  // Ví dụ ngưng 30/06 → các tuần thuộc tháng 06 vẫn hiện; từ tháng 07 mới ẩn.
+  const activeClients = useMemo(
+    () => clients.filter(c =>
+      c.client_type === 'active' &&
+      (c.cooperation_status !== 'suspended' || (bulkMonth != null && isActiveInMonth(c, bulkMonth)))
+    ),
+    [clients, bulkMonth]
+  )
 
   // Hiển thị tên chi nhánh chuẩn (branches.name); client.region vẫn lưu key cũ
   // (branches.region) nên khi lọc phải chấp nhận cả 2 giá trị.
@@ -45,10 +69,6 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
     }
     return set
   }, [branches, bulkRegions])
-
-  const bulkWeekGroups = useMemo(() => {
-    return [...nextWeekLabels(bulkExtraWeeks), ...recentWeekLabels(6)]
-  }, [bulkExtraWeeks])
 
   const filteredClients = useMemo(() =>
     activeClients
@@ -185,7 +205,15 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
             const showPrevHint = prevVal !== undefined && !hasData
             return (
               <div key={c.id} className="flex items-center justify-between py-1.5 gap-2">
-                <span className="text-[12.5px] text-gray-800 truncate flex-1">{c.name}</span>
+                <span className="text-[12.5px] text-gray-800 truncate flex-1">
+                  {c.name}
+                  {c.cooperation_status === 'suspended' && (
+                    <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap"
+                      title={`${suspensionLabel(c)} — đây là tháng cuối cùng còn nhập số lao động`}>
+                      Ngưng {formatSuspensionDate(c)} · tháng cuối
+                    </span>
+                  )}
+                </span>
                 {showPrevHint && (
                   <button
                     type="button"

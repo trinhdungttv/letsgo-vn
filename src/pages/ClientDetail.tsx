@@ -25,6 +25,7 @@ import SocialLinksRow from '../components/SocialLinksRow';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 import DayCell from '../components/DayCell';
 import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
+import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -83,6 +84,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Sửa nhanh mốc ngưng hợp tác (cho khách đã ngưng từ trước, chưa có/sai ngày).
+  const [suspEdit, setSuspEdit] = useState<string | null>(null);
+  const [suspSaving, setSuspSaving] = useState(false);
   const [editingProjectType, setEditingProjectType] = useState(false);
   const [tempProjectType, setTempProjectType] = useState<string>('contracted');
   const [tempLgPct, setTempLgPct] = useState(60);
@@ -629,6 +633,30 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     }
   };
 
+  const saveSuspensionDate = async () => {
+    if (!suspEdit) { toast('Vui lòng chọn ngày ngưng hợp tác'); return; }
+    setSuspSaving(true);
+    const now = new Date().toISOString();
+    const oldDate = suspensionDate(client);
+    try {
+      const { error } = await supabase.from('clients')
+        .update({ suspended_from: suspEdit, updated_at: now }).eq('id', client.id);
+      if (error) throw error;
+      onClientUpdate({ ...client, suspended_from: suspEdit });
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: client.id,
+        description: `Sửa mốc ngưng hợp tác "${client.name}": ${oldDate ? formatDate(oldDate) : '(chưa có)'} → ${formatDate(suspEdit)}`,
+        oldData: client, newData: { ...client, suspended_from: suspEdit },
+      });
+      toast(`Đã cập nhật ngày ngưng thành ${formatDate(suspEdit)}`);
+      setSuspEdit(null);
+    } catch (e: unknown) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setSuspSaving(false);
+    }
+  };
+
   const handleLaborUpdate = async () => {
     const val = parseInt(laborInput);
     if (isNaN(val) || val < 0) { toast('Số lao động không hợp lệ'); return; }
@@ -672,8 +700,48 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             <ArrowLeft size={13} /> Quay lại
           </button>
           <div>
-            <div className="text-[14px] font-semibold text-[#111]">{client.name}</div>
+            <div className="text-[14px] font-semibold text-[#111] flex items-center gap-2">
+              {client.name}
+              {isSuspended(client) && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">
+                  {suspensionLabel(client)}
+                </span>
+              )}
+            </div>
             <div className="text-[11.5px] text-[#888]">{client.region || ''} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
+            {isSuspended(client) && (
+              suspEdit !== null ? (
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="text-[11px] text-[#666]">Ngày ngưng:</span>
+                  <input
+                    type="date" value={suspEdit} autoFocus disabled={suspSaving}
+                    onChange={e => setSuspEdit(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveSuspensionDate(); if (e.key === 'Escape') setSuspEdit(null); }}
+                    className="text-[11.5px] px-2 py-1 border border-orange-400 rounded-lg outline-none"
+                  />
+                  <button onClick={saveSuspensionDate} disabled={suspSaving || !suspEdit}
+                    className="text-[11px] px-2 py-1 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 disabled:opacity-50 transition">
+                    {suspSaving ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button onClick={() => setSuspEdit(null)} className="text-[11px] px-2 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Hủy</button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-orange-700 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                  {suspensionMonth(client) ? (
+                    <span>Tháng cuối còn nhập P&amp;L / số lao động: <strong>{shortMonth(suspensionMonth(client)!)}</strong></span>
+                  ) : (
+                    <span className="text-red-600 font-medium">⚠ Chưa có ngày ngưng — mọi tháng đều đang bị khoá nhập liệu</span>
+                  )}
+                  {user?.role === 'admin' && (
+                    <button
+                      onClick={() => setSuspEdit(suspensionDate(client) || todayISO())}
+                      className="text-[11px] text-blue-600 hover:underline"
+                    >✎ Sửa ngày ngưng</button>
+                  )}
+                  {client.suspension_reason && <span className="text-[#888]">· Lý do: {client.suspension_reason}</span>}
+                </div>
+              )
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
