@@ -20,7 +20,7 @@ import { ChurnBadge } from '../components/clients/ChurnBadge';
 import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
-import { EOM, anchorDay } from '../utils/timelineDays';
+import { anchorDay, dayLabel, isDynamicDay } from '../utils/timelineDays';
 import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, todayISO, isActiveInMonth, suspensionDate } from '../utils/suspension';
 
 interface ClientsProps {
@@ -1403,7 +1403,7 @@ export default function Clients({
                             />
                           ) : (() => {
                             const d = anchorDay(c.cutoff_day, c.cutoff_day_end);
-                            return d == null ? '—' : d === EOM ? 'Cuối tháng' : `Ngày ${d}`;
+                            return d == null ? '—' : isDynamicDay(d) ? dayLabel(d) : `Ngày ${d}`;
                           })()}
                         </td>
                       )}

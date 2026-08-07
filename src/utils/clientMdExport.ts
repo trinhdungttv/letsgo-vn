@@ -10,7 +10,7 @@
 //    Report ở đầu file để AI biết chỗ nào tin được, chỗ nào phải bỏ qua.
 
 import { supabase } from '../lib/supabase';
-import { formatDayRange } from './timelineDays';
+import { formatDayRange, resolveDay } from './timelineDays';
 import { isSuspended, suspensionMonth, formatSuspensionDate, suspendedDuration } from './suspension';
 import { calcPnl, monthLabel, getManagerForMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
@@ -442,7 +442,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
         continue;
       }
       const [y, mo] = m.split('-').map(Number);
-      const invDay = client.invoice_day ? (client.invoice_day === -1 ? new Date(y, mo, 0).getDate() : client.invoice_day) : null;
+      const invDay = resolveDay(client.invoice_day, new Date(y, mo, 0).getDate());
       const invDate = invDay ? new Date(y, mo - 1, invDay) : null;
       const due = invDate ? calcExpectedDue(client, invDate)?.date ?? null : null;
       let diff: number | null = null;

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { calcExpectedDue, formatDateVN } from '../../lib/paymentDate';
 import type { Client } from '../../lib/types';
+import { resolveDay } from '../../utils/timelineDays';
 
 interface FinRow {
   id: string;
@@ -38,7 +39,7 @@ export default function PaymentHistory({ client, embedded }: Props) {
   const analyzed = useMemo(() => {
     return rows.map(r => {
       const [y, m] = r.month.split('-').map(Number);
-      const invDay = client.invoice_day ? (client.invoice_day === -1 ? new Date(y, m, 0).getDate() : client.invoice_day) : null;
+      const invDay = resolveDay(client.invoice_day, new Date(y, m, 0).getDate());
       const invDate = invDay ? new Date(y, m - 1, invDay) : null;
       const due = invDate ? calcExpectedDue(client, invDate) : null;
       const dueDate = due?.date ?? null;

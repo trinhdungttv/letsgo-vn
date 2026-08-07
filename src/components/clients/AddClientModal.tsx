@@ -6,6 +6,7 @@ import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { normalizeDayRange } from '../../utils/timelineDays';
+import DayCell from '../DayCell';
 
 interface AddClientModalProps {
   open: boolean;
@@ -24,8 +25,7 @@ type DayRow = { start: number | null; end: number | null };
 function DayRangeField({
   label, dot, value, onChange,
 }: { label: string; dot: string; value: DayRow; onChange: (v: DayRow) => void }) {
-  const isStartEOM = value.start === -1;
-  const isEndEOM = value.end === -1;
+  // Dùng chung ô nhập với Tài chính: ô trái có nút CT-1, ô phải có nút CT.
   return (
     <div className="flex items-center gap-3">
       <div className="w-[100px] shrink-0 flex items-center gap-1.5 text-[12px] font-medium text-[#444]">
@@ -34,43 +34,11 @@ function DayRangeField({
       </div>
       <div className="flex-1">
         <label className="text-[10px] text-[#999] block mb-0.5">Ngày bắt đầu</label>
-        {isStartEOM ? (
-          <div className="flex items-center gap-1">
-            <span className="text-[12px] text-blue-600 font-medium">Cuối tháng</span>
-            <button type="button" onClick={() => onChange({ ...value, start: null })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            <input
-              type="number" min={1} max={31} placeholder="—"
-              value={value.start ?? ''}
-              onChange={e => { const v = e.target.value; onChange({ ...value, start: v === '' ? null : Math.max(1, Math.min(31, +v)) }); }}
-              className="w-full text-[13px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-center"
-            />
-            <button type="button" onClick={() => onChange({ ...value, start: -1 })}
-              title="Cuối tháng" className="text-[9px] px-1 py-1.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 shrink-0">CT</button>
-          </div>
-        )}
+        <DayCell quick="eom1" value={value.start} onChange={v => onChange({ ...value, start: v })} />
       </div>
       <div className="flex-1">
         <label className="text-[10px] text-[#999] block mb-0.5">Ngày kết thúc</label>
-        {isEndEOM ? (
-          <div className="flex items-center gap-1">
-            <span className="text-[12px] text-blue-600 font-medium">Cuối tháng</span>
-            <button type="button" onClick={() => onChange({ ...value, end: null })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            <input
-              type="number" min={1} max={31} placeholder="—"
-              value={value.end ?? ''}
-              onChange={e => { const v = e.target.value; onChange({ ...value, end: v === '' ? null : Math.max(1, Math.min(31, +v)) }); }}
-              className="w-full text-[13px] px-2 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-center"
-            />
-            <button type="button" onClick={() => onChange({ ...value, end: -1 })}
-              title="Cuối tháng" className="text-[9px] px-1 py-1.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 shrink-0">CT</button>
-          </div>
-        )}
+        <DayCell quick="eom" value={value.end} onChange={v => onChange({ ...value, end: v })} />
       </div>
     </div>
   );
