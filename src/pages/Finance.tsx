@@ -252,17 +252,21 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const handleSaveEdit = async () => {
     if (!editClient) return;
     const c = editClient;
-    // Chi nhap 1 o => moc 1 ngay: don ve "ngay bat dau", bo "ngay ket thuc"
-    const cutoff = normalizeDayRange(editForm.cutoff_day, editForm.cutoff_day_end);
-    const calc = normalizeDayRange(editForm.calc_day, editForm.calc_day_end);
-    const salary = normalizeDayRange(editForm.salary_day, editForm.salary_day_end);
+    // Luu DUNG o nguoi dung da nhap: xoa o "bat dau" roi chi dat o "ket thuc" thi
+    // gia tri phai nam o "ket thuc" sau khi luu (truoc day bi don ve "bat dau" nen
+    // mo lai thay nhu chua luu). Cho hien thi timeline van coi 1 o = moc 1 ngay.
+    const keep = (s: number | null, e: number | null) =>
+      s == null && e == null ? { start: null, end: null } : { start: s, end: e };
+    const cutoff = keep(editForm.cutoff_day, editForm.cutoff_day_end);
+    const calc = keep(editForm.calc_day, editForm.calc_day_end);
+    const salary = keep(editForm.salary_day, editForm.salary_day_end);
     const normForm = {
       ...editForm,
       cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
       calc_day: calc.start, calc_day_end: calc.end,
       salary_day: salary.start, salary_day_end: salary.end,
-      extra_calc_days: editForm.extra_calc_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
-      extra_salary_days: editForm.extra_salary_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
+      extra_calc_days: editForm.extra_calc_days.filter(ex => ex.start != null || ex.end != null) as { start: number; end: number | null }[],
+      extra_salary_days: editForm.extra_salary_days.filter(ex => ex.start != null || ex.end != null) as { start: number; end: number | null }[],
     };
     // invoice_date là NGÀY CỤ THỂ (Lịch Thu Tiền & Điều khoản thanh toán đang đọc).
     // Đổi "ngày xuất HĐ" ở đây thì kéo invoice_date theo cho khỏi lệch: giữ nguyên
@@ -957,7 +961,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               ] as { label: string; start: 'cutoff_day' | 'calc_day' | 'salary_day'; end: 'cutoff_day_end' | 'calc_day_end' | 'salary_day_end'; dot: string }[]).map(row => {
                 const startVal = editForm[row.start];
                 const endVal = editForm[row.end];
-                const isOneDay = startVal != null && endVal == null;
+                // Chi nhap 1 trong 2 o (bat dau HOAC ket thuc) => moc dien ra trong 1 ngay
+                const isOneDay = (startVal == null) !== (endVal == null);
                 return (
                   <div key={row.start} className="flex items-center gap-3">
                     <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">

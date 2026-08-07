@@ -3,7 +3,7 @@ import type { Client } from '../lib/types';
 import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import FilterDropdown, { ALL_OPTION } from './FilterDropdown';
-import { EOM } from '../utils/timelineDays';
+import { EOM, anchorDay } from '../utils/timelineDays';
 
 interface Props {
   clients: Client[];
@@ -89,10 +89,13 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
             ) : filtered.map((c, idx) => {
               // Recruitment không có ngày chu kỳ cố định — hiển thị placeholder.
               const isRecruitment = c.service_type === 'recruitment';
-              const cutoffHighlight: 'done' | 'active' | 'pending' = c.cutoff_day != null && todayNum >= c.cutoff_day ? 'done' : c.cutoff_day != null && todayNum === c.cutoff_day - 1 ? 'active' : 'pending';
+              // Moc 1 ngay co the nam o cot "bat dau" hoac "ket thuc" — lay ngay thuc te.
+              const cutoffD = anchorDay(c.cutoff_day, c.cutoff_day_end);
+              const salaryD = anchorDay(c.salary_day, c.salary_day_end);
+              const cutoffHighlight: 'done' | 'active' | 'pending' = cutoffD != null && todayNum >= cutoffD ? 'done' : cutoffD != null && todayNum === cutoffD - 1 ? 'active' : 'pending';
               const payStartHighlight: 'done' | 'active' | 'pending' = c.payment_start != null && todayNum >= c.payment_start ? 'done' : c.payment_start != null && todayNum === c.payment_start - 1 ? 'active' : 'pending';
               const payEndHighlight: 'done' | 'active' | 'pending' = c.payment_end != null && todayNum >= c.payment_end ? 'done' : c.payment_start != null && todayNum >= c.payment_start ? 'active' : 'pending';
-              const salaryHighlight: 'done' | 'active' | 'pending' = c.salary_day != null && todayNum >= c.salary_day ? 'done' : c.salary_day != null && todayNum === c.salary_day - 1 ? 'active' : 'pending';
+              const salaryHighlight: 'done' | 'active' | 'pending' = salaryD != null && todayNum >= salaryD ? 'done' : salaryD != null && todayNum === salaryD - 1 ? 'active' : 'pending';
 
               return (
                 <tr key={c.id} className="hover:bg-[#FAFAF8] transition">
@@ -118,7 +121,7 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
                       </div>
                     ) : (
                       <div className="flex items-center justify-center gap-0">
-                        <TimelinePill day={c.cutoff_day} label="Chot cong" highlight={cutoffHighlight} />
+                        <TimelinePill day={cutoffD} label="Chot cong" highlight={cutoffHighlight} />
                         <Connector active={cutoffHighlight === 'done'} />
                         <TimelinePill day={c.payment_start} label="Bat dau TT" highlight={payStartHighlight} />
                         <Connector active={payEndHighlight !== 'pending'} />
@@ -131,7 +134,7 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
                       {isRecruitment ? (
                         <span className="text-[11px] text-[#aaa]">—</span>
                       ) : (
-                        <TimelinePill day={c.salary_day} label="Phat luong" highlight={salaryHighlight} />
+                        <TimelinePill day={salaryD} label="Phat luong" highlight={salaryHighlight} />
                       )}
                     </div>
                   </td>
