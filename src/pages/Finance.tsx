@@ -9,6 +9,8 @@ import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
+import { resolveDay, normalizeDayRange } from '../utils/timelineDays';
+import DayCell from '../components/DayCell';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -134,21 +136,20 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() + 1 === calMonthNum;
     const ref = isCurrentMonth ? todayD : 1;
     const getRange = (c: Client): [number | null, number | null] => {
-      const rd2 = (v: number | null | undefined): number | null => {
-        if (v == null) return null;
-        if (v === -1) return daysInMonth;
-        return Math.min(v, daysInMonth);
+      const rd2 = (v: number | null | undefined): number | null => resolveDay(v, daysInMonth);
+      const pair = (s: number | null | undefined, e: number | null | undefined): [number | null, number | null] => {
+        const n = normalizeDayRange(s, e);
+        return [rd2(n.start), rd2(n.end)];
       };
       switch (timelinePhase) {
-        case 'cutoff': return [rd2(c.cutoff_day), rd2(c.cutoff_day_end)];
-        case 'calc': return [rd2(c.calc_day), rd2(c.calc_day_end)];
-        case 'salary': return [rd2(c.salary_day), rd2(c.salary_day_end)];
+        case 'cutoff': return pair(c.cutoff_day, c.cutoff_day_end);
+        case 'calc': return pair(c.calc_day, c.calc_day_end);
+        case 'salary': return pair(c.salary_day, c.salary_day_end);
         case 'invoice': {
-          const d = c.invoice_day ? (c.invoice_day === -1 ? daysInMonth : Math.min(c.invoice_day, daysInMonth)) : null;
-          return [d, null];
+          return [rd2(c.invoice_day), null];
         }
         case 'paydue': {
-          const autoInv = c.invoice_day ? (c.invoice_day === -1 ? daysInMonth : Math.min(c.invoice_day, daysInMonth)) : null;
+          const autoInv = rd2(c.invoice_day);
           const invDate = autoInv ? new Date(calYear, calMonthNum - 1, autoInv) : null;
           const due = invDate ? calcExpectedDue(c, invDate) : null;
           const dueDay = due?.date?.getMonth() === calMonthNum - 1 ? due.date.getDate() : null;
@@ -185,10 +186,22 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const handleSaveEdit = async () => {
     if (!editClient) return;
     const c = editClient;
-    const updates = { ...editForm, updated_at: new Date().toISOString() };
+    // Chi nhap 1 o => moc 1 ngay: don ve "ngay bat dau", bo "ngay ket thuc"
+    const cutoff = normalizeDayRange(editForm.cutoff_day, editForm.cutoff_day_end);
+    const calc = normalizeDayRange(editForm.calc_day, editForm.calc_day_end);
+    const salary = normalizeDayRange(editForm.salary_day, editForm.salary_day_end);
+    const normForm = {
+      ...editForm,
+      cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
+      calc_day: calc.start, calc_day_end: calc.end,
+      salary_day: salary.start, salary_day_end: salary.end,
+      extra_calc_days: editForm.extra_calc_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
+      extra_salary_days: editForm.extra_salary_days.map(ex => normalizeDayRange(ex.start, ex.end)).filter(r => r.start != null) as { start: number; end: number | null }[],
+    };
+    const updates = { ...normForm, updated_at: new Date().toISOString() };
     const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
     if (error) { toast('Lỗi: ' + error.message); return; }
-    onClientUpdate({ ...c, ...editForm });
+    onClientUpdate({ ...c, ...normForm });
     setEditClient(null);
     toast('Đã cập nhật timeline!');
     await logActivity({
@@ -421,27 +434,27 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   </div>
                 ) : sortedTimelineClients.map(c => {
                   const isRecruitment = c.service_type === 'recruitment';
-                  // -1 = cuoi thang: tu chuyen thanh ngay cuoi cua thang dang xem
-                  const rd = (v: number | null | undefined, isStart = false): number | null => {
-                    if (v == null) return null;
-                    if (v === -1) return isStart ? daysInMonth - 1 : daysInMonth;
-                    return Math.min(v, daysInMonth);
-                  };
+                  // -1 (EOM) = cuoi thang: tu nhay theo so ngay thuc te cua thang dang xem
+                  const rd = (v: number | null | undefined): number | null => resolveDay(v, daysInMonth);
+                  // Chi nhap "ngay ket thuc" => coi nhu moc 1 ngay
+                  const nr = (s: number | null | undefined, e: number | null | undefined) => normalizeDayRange(s, e);
 
-                  const cutoffDay = rd(c.cutoff_day, true);
-                  const cutoffEnd = rd(c.cutoff_day_end);
+                  const cutoffRange = nr(c.cutoff_day, c.cutoff_day_end);
+                  const cutoffDay = rd(cutoffRange.start);
+                  const cutoffEnd = rd(cutoffRange.end);
                   const cutoffEndOk = cutoffEnd != null && cutoffDay != null && cutoffEnd > cutoffDay ? cutoffEnd : null;
-                  const cutoffX = cutoffDay != null ? ((cutoffDay - 1) / daysInMonth) * 100 : null;
+                  const cutoffX = cutoffDay != null ? ((Math.min(cutoffDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const cutoffEndX = cutoffEndOk != null ? (cutoffEndOk / daysInMonth) * 100 : null;
 
-                  const calcDay = rd(c.calc_day, true);
-                  const calcEnd = rd(c.calc_day_end);
+                  const calcRange = nr(c.calc_day, c.calc_day_end);
+                  const calcDay = rd(calcRange.start);
+                  const calcEnd = rd(calcRange.end);
                   const calcEndOk = calcEnd != null && calcDay != null && calcEnd > calcDay ? calcEnd : null;
                   const calcX = calcDay != null ? ((Math.min(calcDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const calcEndX = calcEndOk != null ? (calcEndOk / daysInMonth) * 100 : null;
 
                   // Xuat HD: tu dong lay tu invoice_day (setup trong Dieu khoan thanh toan)
-                  const autoInvoiceDay = c.invoice_day ? Math.min(c.invoice_day === -1 ? daysInMonth : c.invoice_day, daysInMonth) : null;
+                  const autoInvoiceDay = resolveDay(c.invoice_day, daysInMonth);
                   const invoiceDay = autoInvoiceDay;
                   const invoiceEndOk: number | null = null;
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
@@ -455,8 +468,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const payDueDay = dueDayInMonth;
                   const payDueX = payDueDay != null ? ((payDueDay - 1) / daysInMonth) * 100 : null;
 
-                  const salaryDay = rd(c.salary_day, true);
-                  const salaryEnd = rd(c.salary_day_end);
+                  const salaryRange = nr(c.salary_day, c.salary_day_end);
+                  const salaryDay = rd(salaryRange.start);
+                  const salaryEnd = rd(salaryRange.end);
                   const salaryEndOk = salaryEnd != null && salaryDay != null && salaryEnd > salaryDay ? salaryEnd : null;
                   const salaryX = salaryDay != null ? ((Math.min(salaryDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const salaryEndX = salaryEndOk != null ? (salaryEndOk / daysInMonth) * 100 : null;
@@ -483,8 +497,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           if (!isRecruitment) {
                             const extraCalcs: { start: number; end: number | null }[] = Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [];
                             for (const ex of extraCalcs) {
-                              const exDay = rd(ex.start, true);
-                              const exEnd = rd(ex.end);
+                              const exR = nr(ex.start, ex.end);
+                              const exDay = rd(exR.start);
+                              const exEnd = rd(exR.end);
                               const exEndOk = exEnd != null && exDay != null && exEnd > exDay ? exEnd : null;
                               const exX = exDay != null ? ((Math.min(exDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                               const exEndX = exEndOk != null ? (exEndOk / daysInMonth) * 100 : null;
@@ -501,8 +516,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           if (!isRecruitment) {
                             const extras: { start: number; end: number | null }[] = Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [];
                             for (const ex of extras) {
-                              const exDay = rd(ex.start, true);
-                              const exEnd = rd(ex.end);
+                              const exR = nr(ex.start, ex.end);
+                              const exDay = rd(exR.start);
+                              const exEnd = rd(exR.end);
                               const exEndOk = exEnd != null && exDay != null && exEnd > exDay ? exEnd : null;
                               const exX = exDay != null ? ((Math.min(exDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                               const exEndX = exEndOk != null ? (exEndOk / daysInMonth) * 100 : null;
@@ -620,10 +636,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const cost = (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0);
                   const profit = (r.revenue || 0) - cost;
 
-                  const rdStep = (v: number | null | undefined, fallback: number, isStart = false): number => {
-                    if (v == null) return fallback;
-                    return v === -1 ? (isStart ? daysInMonth - 1 : daysInMonth) : Math.min(v, daysInMonth);
-                  };
+                  const rdStep = (v: number | null | undefined, fallback: number): number =>
+                    resolveDay(v, daysInMonth) ?? fallback;
                   const cutoffDay = rdStep(clientData?.cutoff_day, 20);
                   const calcDay = rdStep(clientData?.calc_day, cutoffDay + 2);
                   const payStartDay = rdStep(clientData?.payment_start, 26);
@@ -836,8 +850,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               ] as { label: string; start: 'cutoff_day' | 'calc_day' | 'salary_day'; end: 'cutoff_day_end' | 'calc_day_end' | 'salary_day_end'; dot: string }[]).map(row => {
                 const startVal = editForm[row.start];
                 const endVal = editForm[row.end];
-                const isStartEOM = startVal === -1;
-                const isEndEOM = endVal === -1;
+                const isOneDay = startVal != null && endVal == null;
                 return (
                   <div key={row.start} className="flex items-center gap-3">
                     <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
@@ -845,38 +858,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       {row.label}
                     </div>
                     <div className="flex-1">
-                      <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay bat dau</label>
-                      {isStartEOM ? (
-                        <div className="flex items-center gap-1">
-                          <span className="text-[12px] text-blue-600 font-medium">Ap cuoi thang</span>
-                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.start]: 28 })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <input type="number" min={1} max={31} value={startVal ?? 1}
-                            onChange={e => setEditForm({ ...editForm, [row.start]: Math.max(1, Math.min(31, +e.target.value)) })}
-                            className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.start]: -1 })}
-                            title="Cuoi thang" className="text-[9px] px-1 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 whitespace-nowrap">CT</button>
-                        </div>
-                      )}
+                      <label className="text-[10.5px] text-[#999] block mb-0.5">{isOneDay ? 'Ngay (1 ngay)' : 'Ngay bat dau'}</label>
+                      <DayCell value={startVal} onChange={v => setEditForm({ ...editForm, [row.start]: v })} />
                     </div>
                     <div className="flex-1">
                       <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay ket thuc</label>
-                      {isEndEOM ? (
-                        <div className="flex items-center gap-1">
-                          <span className="text-[12px] text-blue-600 font-medium">Cuoi thang</span>
-                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.end]: null })} className="text-[10px] text-gray-400 hover:text-red-500">&times;</button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <input type="number" min={1} max={31} placeholder="—" value={endVal ?? ''}
-                            onChange={e => { const v = e.target.value; setEditForm({ ...editForm, [row.end]: v === '' ? null : Math.max(1, Math.min(31, +v)) }); }}
-                            className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-                          <button type="button" onClick={() => setEditForm({ ...editForm, [row.end]: -1 })}
-                            title="Cuoi thang" className="text-[9px] px-1 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 whitespace-nowrap">CT</button>
-                        </div>
-                      )}
+                      <DayCell value={endVal} onChange={v => setEditForm({ ...editForm, [row.end]: v })} />
                     </div>
                   </div>
                 );
@@ -894,23 +881,18 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
                 </div>
                 <div className="flex-1">
-                  <input type="number" min={1} max={31} value={ex.start}
-                    onChange={e => {
-                      const arr = [...editForm.extra_calc_days];
-                      arr[idx] = { ...arr[idx], start: Math.max(1, Math.min(31, +e.target.value)) };
-                      setEditForm({ ...editForm, extra_calc_days: arr });
-                    }}
-                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                  <DayCell value={ex.start} onChange={v => {
+                    const arr = [...editForm.extra_calc_days];
+                    arr[idx] = { ...arr[idx], start: v ?? 1 };
+                    setEditForm({ ...editForm, extra_calc_days: arr });
+                  }} />
                 </div>
                 <div className="flex-1">
-                  <input type="number" min={1} max={31} placeholder="—" value={ex.end ?? ''}
-                    onChange={e => {
-                      const arr = [...editForm.extra_calc_days];
-                      const v = e.target.value;
-                      arr[idx] = { ...arr[idx], end: v === '' ? null : Math.max(1, Math.min(31, +v)) };
-                      setEditForm({ ...editForm, extra_calc_days: arr });
-                    }}
-                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                  <DayCell value={ex.end} onChange={v => {
+                    const arr = [...editForm.extra_calc_days];
+                    arr[idx] = { ...arr[idx], end: v };
+                    setEditForm({ ...editForm, extra_calc_days: arr });
+                  }} />
                 </div>
               </div>
             ))}
@@ -928,30 +910,25 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
                 </div>
                 <div className="flex-1">
-                  <input type="number" min={1} max={31} value={ex.start}
-                    onChange={e => {
-                      const arr = [...editForm.extra_salary_days];
-                      arr[idx] = { ...arr[idx], start: Math.max(1, Math.min(31, +e.target.value)) };
-                      setEditForm({ ...editForm, extra_salary_days: arr });
-                    }}
-                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                  <DayCell value={ex.start} onChange={v => {
+                    const arr = [...editForm.extra_salary_days];
+                    arr[idx] = { ...arr[idx], start: v ?? 1 };
+                    setEditForm({ ...editForm, extra_salary_days: arr });
+                  }} />
                 </div>
                 <div className="flex-1">
-                  <input type="number" min={1} max={31} placeholder="—" value={ex.end ?? ''}
-                    onChange={e => {
-                      const arr = [...editForm.extra_salary_days];
-                      const v = e.target.value;
-                      arr[idx] = { ...arr[idx], end: v === '' ? null : Math.max(1, Math.min(31, +v)) };
-                      setEditForm({ ...editForm, extra_salary_days: arr });
-                    }}
-                    className="w-full text-[13px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                  <DayCell value={ex.end} onChange={v => {
+                    const arr = [...editForm.extra_salary_days];
+                    arr[idx] = { ...arr[idx], end: v };
+                    setEditForm({ ...editForm, extra_salary_days: arr });
+                  }} />
                 </div>
               </div>
             ))}
             <button type="button" onClick={() => setEditForm({ ...editForm, extra_salary_days: [...editForm.extra_salary_days, { start: 15, end: null }] })}
               className="text-[10.5px] text-purple-500 hover:text-purple-700 mt-1.5 hover:underline">+ Them dot phat luong</button>
 
-            <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay.</div>
+            <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay. Nut <strong>CT</strong> = cuoi thang, tu nhay theo so ngay thuc te (28/29/30/31).</div>
             <div className="text-[11px] text-blue-500 mt-1">Xuat HD va Ky TT tu dong lay tu "Dieu khoan thanh toan" trong ho so khach hang.</div>
 
             <div className="flex gap-2 mt-4">

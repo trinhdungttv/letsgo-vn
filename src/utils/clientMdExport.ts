@@ -10,6 +10,7 @@
 //    Report ở đầu file để AI biết chỗ nào tin được, chỗ nào phải bỏ qua.
 
 import { supabase } from '../lib/supabase';
+import { formatDayRange } from './timelineDays';
 import { calcPnl, monthLabel, getManagerForMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
 import type {
@@ -308,7 +309,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
     L.push(`| Số LĐ tối thiểu cam kết | ${client.min_workers || MISSING} |`);
     if (client.service_type !== 'recruitment') {
       const dayRange = (start: number | null, end: number | null) =>
-        start == null ? MISSING : `ngày ${start}${end != null ? `–${end}` : ''}`;
+        start == null ? MISSING : `ngày ${formatDayRange(start, end)}`;
       L.push(`| Chu kỳ chốt công | ${dayRange(client.cutoff_day, client.cutoff_day_end)} |`);
       L.push(`| Chu kỳ đối chiếu | ${dayRange(client.calc_day, client.calc_day_end)} |`);
       L.push(`| Chu kỳ thanh toán | ${dayRange(client.payment_start, client.payment_end)}${client.next_month_pay ? ' (tháng sau)' : ''} |`);

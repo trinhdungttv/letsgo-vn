@@ -20,6 +20,7 @@ import { ChurnBadge } from '../components/clients/ChurnBadge';
 import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
+import { EOM } from '../utils/timelineDays';
 
 interface ClientsProps {
   clients: Client[];
@@ -1317,7 +1318,7 @@ export default function Clients({
                               onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
                               className="text-[12px] w-14 px-1.5 py-1 rounded border border-blue-400 outline-none"
                             />
-                          ) : c.cutoff_day != null ? `Ngày ${c.cutoff_day}` : '—'}
+                          ) : c.cutoff_day == null ? '—' : c.cutoff_day === EOM ? 'Cuối tháng' : `Ngày ${c.cutoff_day}`}
                         </td>
                       )}
                       {col('payment') && (
