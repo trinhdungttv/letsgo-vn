@@ -20,8 +20,12 @@ import { useManagers } from '../hooks/useManagers';
 import { useCostCategories } from '../hooks/useCostCategories';
 import { useFinanceData } from '../hooks/useFinanceData';
 import { useBranchData } from '../hooks/useBranchData';
+import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { usePersistedState } from '../hooks/usePersistedState';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
+
+// Nhãn cho khách chưa gán nhân sự tính lương (chỉ dùng ở bộ lọc, không lưu DB).
+const UNASSIGNED_OPTION = 'Chưa gán';
 
 type WorkspaceTab = 'clients' | 'pnl' | 'overhead' | 'performance' | 'payment';
 
@@ -130,6 +134,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   // ── Shared filters ────────────────────────────────────────────────
   const [filterRegion, setFilterRegion] = usePersistedState<string[]>('lgvn_finance_filterRegion', [ALL_OPTION]);
   const [filterManager, setFilterManager] = usePersistedState<string[]>('lgvn_finance_filterManager', [ALL_OPTION]);
+  const [filterPayrollStaff, setFilterPayrollStaff] = usePersistedState<string[]>('lgvn_finance_filterPayrollStaff', [ALL_OPTION]);
 
   type TimelinePhase = TimelinePhaseKey;
   const [timelinePhase, setTimelinePhase] = useState<TimelinePhase | null>(null);
@@ -169,6 +174,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
   const { branches: branchList } = useBranchData();
+  const { payrollStaffs } = usePayrollStaffs();
   const { categories: costCategories, add: addCostCat, rename: renameCostCat, remove: removeCostCat, toggleDefault: toggleCostCatDefault, setGroupType: setCostCatGroup, setDefaultPayer: setCostCatPayer } = useCostCategories();
 
   useEffect(() => {
@@ -177,6 +183,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
   const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
+  // Kèm cả "Chưa gán" để soi ra khách chưa có ai phụ trách tính lương.
+  const payrollStaffOptions = useMemo(() => {
+    const names = payrollStaffs.map(s2 => s2.name);
+    const hasUnassigned = clients.some(c => !c.payroll_staff);
+    return [ALL_OPTION, ...names, ...(hasUnassigned ? [UNASSIGNED_OPTION] : [])];
+  }, [payrollStaffs, clients]);
 
   // Timeline/Trạng thái TT xem theo tháng: khách đã ngưng vẫn hiện ở các tháng
   // tính đến hết tháng ngưng (tháng đó vẫn còn chốt công, xuất HĐ, thu tiền).
@@ -184,8 +196,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     if (!isActiveInMonth(c, month)) return false;
     const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
     const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
-    return okR && okM;
-  }), [clients, filterRegion, filterManager, month]);
+    const okP = filterPayrollStaff.includes(ALL_OPTION)
+      || filterPayrollStaff.includes(c.payroll_staff || UNASSIGNED_OPTION);
+    return okR && okM && okP;
+  }), [clients, filterRegion, filterManager, filterPayrollStaff, month]);
 
   // ── Calendar dimensions (used by Gantt timeline) ──────────────────
   const [calYear, calMonthNum] = month.split('-').map(Number);
@@ -302,7 +316,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   const totalCost = pnlTotalCost || finCost;
   const totalProfit = totalRev - totalCost;
   const paidCount = sortedFinance.filter(r => r.paid_status).length;
-  const monthTitle = month === '2026-06' ? 'Tháng 6/2026' : 'Tháng 5/2026';
+  // Tiêu đề bám theo tháng đang chọn ở dropdown (trước đây bị gán cứng T5/T6).
+  const monthTitle = monthLabel(month);
 
   // Mark as paid — open date picker
   const openPayModal = (recId: string) => {
@@ -456,9 +471,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             <div className="flex items-center gap-2.5 flex-wrap">
               <FilterDropdown label="Chi nhánh" options={regions} selected={filterRegion} onChange={setFilterRegion} allLabel="Tất cả chi nhánh" />
               <FilterDropdown label="Quản lý" options={managers} selected={filterManager} onChange={setFilterManager} allLabel="Tất cả quản lý" />
-              {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION)) && (
+              <FilterDropdown label="NS tính lương" options={payrollStaffOptions} selected={filterPayrollStaff} onChange={setFilterPayrollStaff} allLabel="Tất cả NS tính lương" />
+              {(!filterRegion.includes(ALL_OPTION) || !filterManager.includes(ALL_OPTION) || !filterPayrollStaff.includes(ALL_OPTION)) && (
                 <button
-                  onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); }}
+                  onClick={() => { setFilterRegion([ALL_OPTION]); setFilterManager([ALL_OPTION]); setFilterPayrollStaff([ALL_OPTION]); }}
                   className="text-[11.5px] text-blue-600 hover:underline"
                 >
                   Xóa lọc
