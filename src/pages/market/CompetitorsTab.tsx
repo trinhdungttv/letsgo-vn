@@ -11,6 +11,8 @@ import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
 import { shortId, expandId } from '../../hooks/useHashSubRoute';
+import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
+import SearchBox from '../../components/SearchBox';
 import { type CompetitorLinkType, fetchLinkTypes, addLinkType, deleteLinkType, reorderLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
@@ -97,6 +99,9 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   };
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => (localStorage.getItem('market_competitors_view_mode') as 'list' | 'card') || 'list');
   useEffect(() => { localStorage.setItem('market_competitors_view_mode', viewMode); }, [viewMode]);
+  // Tìm nhanh bằng phím "/" — không lưu qua F5 vì đây là thao tác tra cứu tức thời.
+  const [search, setSearch] = useState('');
+  const searchRef = useSlashSearch(() => setSearch(''));
   const [compCharts, setCompCharts] = useState<CompChartItem[]>(loadCompCharts);
   const [showChartSettings, setShowChartSettings] = useState(false);
   useEffect(() => { localStorage.setItem(COMP_DASH_KEY, JSON.stringify(compCharts)); }, [compCharts]);
@@ -143,6 +148,13 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   };
 
   const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
+
+  // Ô tìm kiếm (phím tắt "/") chỉ lọc DANH SÁCH bên dưới — các biểu đồ tổng quan
+  // vẫn giữ nguyên toàn cảnh theo khu vực, không nhảy loạn khi đang gõ.
+  const visibleList = useMemo(
+    () => list.filter(c => matchesSearch(search, c.company_name, c.zone_name, c.supplying_for?.join(' '))),
+    [list, search],
+  );
 
   const overallAvg = (() => {
     const vals = marketSurveys.filter(s => s.wage_unskilled_min != null && s.wage_unskilled_max != null)
@@ -415,8 +427,12 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
           cắt mất bởi overflow-hidden của thẻ cha (giống lỗi từng gặp ở tab Lương TT). */}
       <div className="bg-white border border-[#E8E7E2] rounded-[10px]">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] rounded-t-[10px] flex-wrap gap-2">
-          <div className="text-[12.5px] font-semibold text-[#111]">Nhà cung ứng đối thủ</div>
+          <div className="text-[12.5px] font-semibold text-[#111]">
+            Nhà cung ứng đối thủ
+            {search && <span className="ml-1.5 text-[11px] font-normal text-[#888]">— {visibleList.length}/{list.length} kết quả</span>}
+          </div>
           <div className="flex items-center gap-2">
+            <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên đối thủ..." />
             <div className="flex border border-gray-300 rounded-lg overflow-hidden">
               <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
               <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
@@ -470,7 +486,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
               ))}
             </tr></thead>
             <tbody>
-              {list.map(c => {
+              {visibleList.map(c => {
                 const avg = avgForZone(c.zone_name || '');
                 const diff = avg && c.wage_paid ? Math.round(((c.wage_paid - avg) / avg) * 100) : null;
                 const wn = diff == null ? null : diff < -3 ? { cls: 'bg-red-50 text-red-700', txt: `▼ Thấp hơn TT ${Math.abs(diff)}%` }
@@ -501,8 +517,8 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                   </tr>
                 );
               })}
-              {list.length === 0 && (
-                <tr><td colSpan={10} className="text-center py-6 text-[#aaa]">Chưa có dữ liệu đối thủ</td></tr>
+              {visibleList.length === 0 && (
+                <tr><td colSpan={10} className="text-center py-6 text-[#aaa]">{search ? `Không tìm thấy đối thủ nào khớp "${search}"` : 'Chưa có dữ liệu đối thủ'}</td></tr>
               )}
             </tbody>
           </table>
@@ -511,7 +527,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
 
         {viewMode === 'card' && (
         <div className="p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 rounded-b-[10px]">
-          {list.map(c => {
+          {visibleList.map(c => {
             const avg = avgForZone(c.zone_name || '');
             const diff = avg && c.wage_paid ? Math.round(((c.wage_paid - avg) / avg) * 100) : null;
             const wn = diff == null ? null : diff < -3 ? { cls: 'bg-red-50 text-red-700', txt: `▼ Thấp hơn TT ${Math.abs(diff)}%` }
