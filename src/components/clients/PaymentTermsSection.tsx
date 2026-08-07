@@ -3,6 +3,8 @@ import { FileText, Save, Info, ChevronDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { calcExpectedDue, getDueStatusConfig } from '../../lib/paymentDate';
 import type { Client } from '../../lib/types';
+import DayCell from '../DayCell';
+import { resolveDay, anchorDay } from '../../utils/timelineDays';
 
 interface Props {
   client: Client;
@@ -26,14 +28,20 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
   const curYear = now.getFullYear();
   const curMonth = now.getMonth();
 
-  const savedDay = client.invoice_date
-    ? new Date(client.invoice_date).getDate()
-    : (client.invoice_day ?? null);
+  // Moc xuat HD co the duoc nhap o o "bat dau" hoac o "ket thuc" ben Tai chinh.
+  const invoiceSlot: 'invoice_day' | 'invoice_day_end' =
+    client.invoice_day == null && client.invoice_day_end != null ? 'invoice_day_end' : 'invoice_day';
+  const savedDay = anchorDay(client.invoice_day, client.invoice_day_end)
+    ?? (client.invoice_date ? new Date(client.invoice_date).getDate() : null);
 
   const [invoiceDay, setInvoiceDay] = useState<number | null>(savedDay);
 
-  const autoInvoiceDate = invoiceDay
-    ? `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(Math.min(invoiceDay, new Date(curYear, curMonth + 1, 0).getDate())).padStart(2, '0')}`
+  // invoice_day co the la moc dong (-1 cuoi thang, -2 cuoi thang -1) => quy ra
+  // ngay that cua thang hien tai truoc khi dung.
+  const daysInCurMonth = new Date(curYear, curMonth + 1, 0).getDate();
+  const curInvoiceDay = resolveDay(invoiceDay, daysInCurMonth);
+  const autoInvoiceDate = curInvoiceDay
+    ? `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(curInvoiceDay).padStart(2, '0')}`
     : '';
 
   const [form, setForm] = useState({
@@ -58,11 +66,9 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
 
   const handleInvoiceDayChange = (day: number | null) => {
     setInvoiceDay(day);
-    if (day && day >= 1 && day <= 31) {
-      const maxDay = new Date(curYear, curMonth + 1, 0).getDate();
-      const d = Math.min(day, maxDay);
-      const dateStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      set('invoice_date', dateStr);
+    const d = resolveDay(day, new Date(curYear, curMonth + 1, 0).getDate());
+    if (d) {
+      set('invoice_date', `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
     } else {
       set('invoice_date', '');
     }
@@ -70,7 +76,8 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
 
   const handleSave = async () => {
     setSaving(true);
-    const updates = { ...form, invoice_day: invoiceDay, updated_at: new Date().toISOString() };
+    // Ghi lai dung o dang giu gia tri de khong lam lech voi timeline Tai chinh.
+    const updates = { ...form, [invoiceSlot]: invoiceDay, updated_at: new Date().toISOString() };
     const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
     setSaving(false);
     if (error) { toast('Loi: ' + error.message); return; }
@@ -215,17 +222,11 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
         <div>
           <label className="text-[11px] text-[#888] font-medium block mb-1.5">NGAY XUAT HOA DON HANG THANG</label>
           <div className="flex items-center gap-3">
-            <div className="relative w-[100px]">
-              <input
-                type="number" min={1} max={31}
-                value={invoiceDay ?? ''}
-                onChange={e => handleInvoiceDayChange(e.target.value ? +e.target.value : null)}
-                placeholder="Ngay"
-                className="w-full text-[13px] font-semibold text-center px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]"
-              />
+            <div className="relative w-[150px]">
+              <DayCell quick="both" value={invoiceDay} onChange={handleInvoiceDayChange} />
             </div>
             <div className="text-[12px] text-[#555]">
-              {invoiceDay ? (
+              {curInvoiceDay ? (
                 <>hang thang · Thang nay: <span className="font-semibold text-[#111]">{form.invoice_date ? new Date(form.invoice_date + 'T00:00').toLocaleDateString('vi-VN') : '—'}</span></>
               ) : (
                 <span className="text-[#aaa]">Nhap ngay co dinh xuat HD (VD: 5, 20, 25...)</span>

@@ -9,7 +9,7 @@ import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
-import { EOM, resolveDay, normalizeDayRange } from '../utils/timelineDays';
+import { resolveDay, normalizeDayRange, anchorDay } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
 import { isActiveInMonth, suspensionMonth, formatSuspensionDate } from '../utils/suspension';
 import { supabase } from '../lib/supabase';
@@ -54,7 +54,7 @@ function syncInvoiceDate(current: string | null | undefined, invoiceDay: number 
   if (invoiceDay == null) return null;
   const [y, m] = current.slice(0, 10).split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
-  const day = invoiceDay === EOM ? daysInMonth : Math.min(Math.max(invoiceDay, 1), daysInMonth);
+  const day = resolveDay(invoiceDay, daysInMonth) ?? daysInMonth;
   return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
@@ -207,11 +207,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         case 'cutoff': return pair(c.cutoff_day, c.cutoff_day_end);
         case 'calc': return pair(c.calc_day, c.calc_day_end);
         case 'salary': return pair(c.salary_day, c.salary_day_end);
-        case 'invoice': {
-          return [rd2(c.invoice_day), null];
-        }
+        case 'invoice': return pair(c.invoice_day, c.invoice_day_end);
         case 'paydue': {
-          const autoInv = rd2(c.invoice_day);
+          const autoInv = rd2(anchorDay(c.invoice_day, c.invoice_day_end));
           const invDate = autoInv ? new Date(calYear, calMonthNum - 1, autoInv) : null;
           const due = invDate ? calcExpectedDue(c, invDate) : null;
           const dueDay = due?.date?.getMonth() === calMonthNum - 1 ? due.date.getDate() : null;
@@ -271,7 +269,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     // invoice_date là NGÀY CỤ THỂ (Lịch Thu Tiền & Điều khoản thanh toán đang đọc).
     // Đổi "ngày xuất HĐ" ở đây thì kéo invoice_date theo cho khỏi lệch: giữ nguyên
     // tháng cũ, chỉ thay ngày, quy đúng theo số ngày thực tế của tháng đó.
-    const invoiceDate = syncInvoiceDate(c.invoice_date, normForm.invoice_day);
+    const invoiceDate = syncInvoiceDate(c.invoice_date, anchorDay(normForm.invoice_day, normForm.invoice_day_end));
     const updates = { ...normForm, invoice_date: invoiceDate, updated_at: new Date().toISOString() };
     const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
     if (error) { toast('Lỗi: ' + error.message); return; }
@@ -561,12 +559,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const calcX = calcDay != null ? ((Math.min(calcDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const calcEndX = calcEndOk != null ? (calcEndOk / daysInMonth) * 100 : null;
 
-                  // Xuat HD: tu dong lay tu invoice_day (setup trong Dieu khoan thanh toan)
-                  const autoInvoiceDay = resolveDay(c.invoice_day, daysInMonth);
+                  // Xuat HD: lay tu invoice_day / invoice_day_end (dung chung voi Dieu khoan thanh toan)
+                  const invoiceRange = nr(c.invoice_day, c.invoice_day_end);
+                  const autoInvoiceDay = rd(invoiceRange.start);
                   const invoiceDay = autoInvoiceDay;
-                  const invoiceEndOk: number | null = null;
+                  const invoiceEnd = rd(invoiceRange.end);
+                  const invoiceEndOk = invoiceEnd != null && invoiceDay != null && invoiceEnd > invoiceDay ? invoiceEnd : null;
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
-                  const invoiceEndX: number | null = null;
+                  const invoiceEndX = invoiceEndOk != null ? (invoiceEndOk / daysInMonth) * 100 : null;
 
                   // Ky TT: tu dong tinh tu calcExpectedDue (Dieu khoan thanh toan)
                   const autoInvDate = autoInvoiceDay ? new Date(calYear, calMonthNum - 1, autoInvoiceDay) : null;
@@ -971,11 +971,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                     </div>
                     <div className="flex-1">
                       <label className="text-[10.5px] text-[#999] block mb-0.5">{isOneDay ? 'Ngay (1 ngay)' : 'Ngay bat dau'}</label>
-                      <DayCell value={startVal} onChange={v => setEditForm({ ...editForm, [row.start]: v })} />
+                      <DayCell quick="eom1" value={startVal} onChange={v => setEditForm({ ...editForm, [row.start]: v })} />
                     </div>
                     <div className="flex-1">
                       <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay ket thuc</label>
-                      <DayCell value={endVal} onChange={v => setEditForm({ ...editForm, [row.end]: v })} />
+                      <DayCell quick="eom" value={endVal} onChange={v => setEditForm({ ...editForm, [row.end]: v })} />
                     </div>
                   </div>
                 );
@@ -993,14 +993,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
                 </div>
                 <div className="flex-1">
-                  <DayCell value={ex.start} onChange={v => {
+                  <DayCell quick="eom1" value={ex.start} onChange={v => {
                     const arr = [...editForm.extra_calc_days];
                     arr[idx] = { ...arr[idx], start: v ?? 1 };
                     setEditForm({ ...editForm, extra_calc_days: arr });
                   }} />
                 </div>
                 <div className="flex-1">
-                  <DayCell value={ex.end} onChange={v => {
+                  <DayCell quick="eom" value={ex.end} onChange={v => {
                     const arr = [...editForm.extra_calc_days];
                     arr[idx] = { ...arr[idx], end: v };
                     setEditForm({ ...editForm, extra_calc_days: arr });
@@ -1022,14 +1022,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
                 </div>
                 <div className="flex-1">
-                  <DayCell value={ex.start} onChange={v => {
+                  <DayCell quick="eom1" value={ex.start} onChange={v => {
                     const arr = [...editForm.extra_salary_days];
                     arr[idx] = { ...arr[idx], start: v ?? 1 };
                     setEditForm({ ...editForm, extra_salary_days: arr });
                   }} />
                 </div>
                 <div className="flex-1">
-                  <DayCell value={ex.end} onChange={v => {
+                  <DayCell quick="eom" value={ex.end} onChange={v => {
                     const arr = [...editForm.extra_salary_days];
                     arr[idx] = { ...arr[idx], end: v };
                     setEditForm({ ...editForm, extra_salary_days: arr });
@@ -1040,28 +1040,36 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             <button type="button" onClick={() => setEditForm({ ...editForm, extra_salary_days: [...editForm.extra_salary_days, { start: 15, end: null }] })}
               className="text-[10.5px] text-purple-500 hover:text-purple-700 mt-1.5 hover:underline">+ Them dot phat luong</button>
 
-            <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay. Nut <strong>CT</strong> = cuoi thang, tu nhay theo so ngay thuc te (28/29/30/31).</div>
+            <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay. Nut <strong>CT-1</strong> (o trai) = ngay ke truoc ngay cuoi thang, <strong>CT</strong> (o phai) = ngay cuoi thang — ca hai tu nhay theo so ngay thuc te cua thang (28/29/30/31).</div>
 
             {/* ── Xuất HĐ + Kỳ TT: cùng cột DB với "Điều khoản thanh toán" trong
                    hồ sơ khách hàng — sửa bên nào cũng vào một chỗ ── */}
             <div className="mt-3 pt-3 border-t border-[#F0EEE9] space-y-3">
               <div className="flex items-center gap-3">
-                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
-                  <span className="inline-block w-2 h-2 rounded-sm bg-cyan-500" />
-                  Xuat HD
+                <div className="w-[110px] shrink-0 text-[12.5px] font-medium text-[#444]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-sm bg-cyan-500" />
+                    Xuat HD
+                  </div>
+                  <div className="text-[10px] text-[#aaa] pl-3.5">hang thang</div>
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay xuat hoa don</label>
-                  <DayCell value={editForm.invoice_day} onChange={v => setEditForm({ ...editForm, invoice_day: v })} />
+                  <label className="text-[10.5px] text-[#999] block mb-0.5">
+                    {(editForm.invoice_day == null) !== (editForm.invoice_day_end == null) ? 'Ngay (1 ngay)' : 'Ngay bat dau'}
+                  </label>
+                  <DayCell quick="eom1" value={editForm.invoice_day} onChange={v => setEditForm({ ...editForm, invoice_day: v })} />
                 </div>
-                <div className="flex-1 text-[10.5px] text-[#999] self-end pb-1.5">hang thang</div>
+                <div className="flex-1">
+                  <label className="text-[10.5px] text-[#999] block mb-0.5">Ngay ket thuc</label>
+                  <DayCell quick="eom" value={editForm.invoice_day_end} onChange={v => setEditForm({ ...editForm, invoice_day_end: v })} />
+                </div>
               </div>
 
               {(() => {
                 const g = editForm.payment_group;
                 // Xem trước Kỳ TT ngay trong tháng đang mở, dùng đúng hàm tính của
                 // Lịch Thu Tiền nên số hiện ở đây khớp với timeline sau khi lưu.
-                const invDay = resolveDay(editForm.invoice_day, daysInMonth);
+                const invDay = resolveDay(anchorDay(editForm.invoice_day, editForm.invoice_day_end), daysInMonth);
                 const preview = invDay != null
                   ? calcExpectedDue(
                       { ...editClient, payment_group: g, payment_days: editForm.payment_days, payment_fixed_day: editForm.payment_fixed_day, payment_cutoff: editForm.payment_cutoff },
@@ -1088,7 +1096,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       ) : g === 2 && !editClient.payment_weekday ? (
                         <div className="flex items-center gap-1.5">
                           <div className="w-[110px]">
-                            <DayCell value={editForm.payment_fixed_day} onChange={v => setEditForm({ ...editForm, payment_fixed_day: v ?? 10 })} />
+                            <DayCell quick="eom" value={editForm.payment_fixed_day} onChange={v => setEditForm({ ...editForm, payment_fixed_day: v ?? 10 })} />
                           </div>
                           <span className="text-[11px] text-[#888] whitespace-nowrap">chot truoc ngay</span>
                           <input type="number" min={1} max={31} value={editForm.payment_cutoff}

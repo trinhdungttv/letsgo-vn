@@ -3,8 +3,27 @@
 //   null = chưa đặt
 //   1..31 = ngày cố định trong tháng
 //   EOM (-1) = "cuối tháng" — luôn nhảy theo số ngày thực tế của tháng đang xem (28/29/30/31)
+//   EOM_1 (-2) = "cuối tháng -1" — ngày kề trước ngày cuối tháng (27/28/29/30)
 
 export const EOM = -1;
+export const EOM_1 = -2;
+
+/** Nhãn ngắn cho 2 mốc động, dùng chung cho nút bấm và chỗ hiển thị. */
+export const EOM_LABEL = 'Cuối tháng';
+export const EOM_1_LABEL = 'Cuối tháng -1';
+
+/** Giá trị động (cuối tháng / cuối tháng -1) hay ngày cố định 1–31? */
+export function isDynamicDay(v: number | null | undefined): boolean {
+  return v === EOM || v === EOM_1;
+}
+
+/** Nhãn hiển thị cho 1 giá trị ngày đã lưu. */
+export function dayLabel(v: number | null | undefined): string {
+  if (v == null) return '—';
+  if (v === EOM) return EOM_LABEL;
+  if (v === EOM_1) return EOM_1_LABEL;
+  return String(v);
+}
 
 /** Số ngày thực tế của tháng (year, month 1-12). */
 export function daysOfMonth(year: number, month1to12: number): number {
@@ -18,18 +37,21 @@ export function daysOfMonth(year: number, month1to12: number): number {
 export function resolveDay(v: number | null | undefined, daysInMonth: number): number | null {
   if (v == null) return null;
   if (v === EOM) return daysInMonth;
+  if (v === EOM_1) return Math.max(daysInMonth - 1, 1);
   return Math.min(Math.max(v, 1), daysInMonth);
 }
 
 /** Thứ tự so sánh: EOM luôn đứng sau mọi ngày cố định. */
 export function dayOrder(v: number | null | undefined): number {
   if (v == null) return -Infinity;
-  return v === EOM ? 32 : v;
+  if (v === EOM) return 32;
+  if (v === EOM_1) return 31.5;
+  return v;
 }
 
 /** Nhãn hiển thị cho 1 mốc: "cuối tháng", "5", "5–cuối tháng"… */
 export function formatDayRange(start: number | null | undefined, end: number | null | undefined): string {
-  const one = (v: number) => (v === EOM ? 'cuối tháng' : String(v));
+  const one = (v: number) => (v === EOM ? 'cuối tháng' : v === EOM_1 ? 'cuối tháng -1' : String(v));
   const { start: s, end: e } = normalizeDayRange(start, end);
   if (s == null) return '—';
   return e == null ? one(s) : `${one(s)}–${one(e)}`;
