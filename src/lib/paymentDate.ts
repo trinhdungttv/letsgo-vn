@@ -85,10 +85,18 @@ export function calcExpectedDue(client: {
     const fixedDay = client.payment_fixed_day ?? 10;
     const cutoff = client.payment_cutoff ?? fixedDay;
     const invDay = invDate.getDate();
-    let due = invDay >= cutoff ? new Date(invDate.getFullYear(), invDate.getMonth()+1, fixedDay) : new Date(invDate.getFullYear(), invDate.getMonth(), fixedDay);
+    // Tháng đích rồi mới quy ra ngày thật: -1 = cuối tháng, và ngày 31 ở tháng
+    // chỉ có 28/29/30 phải lùi về ngày cuối — nếu để new Date(y, m, 31) thì JS
+    // tự nhảy sang tháng sau, ra sai kỳ thu tiền.
+    const dueYear = invDate.getFullYear();
+    const dueMonthIdx = invDay >= cutoff ? invDate.getMonth() + 1 : invDate.getMonth();
+    const daysInDueMonth = new Date(dueYear, dueMonthIdx + 1, 0).getDate();
+    const realDay = fixedDay === -1 ? daysInDueMonth : Math.min(Math.max(fixedDay, 1), daysInDueMonth);
+    let due = new Date(dueYear, dueMonthIdx, realDay);
     const adj = adjustHoliday(due, holiday);
     if (adj.adjusted && holiday !== 'manual') due = adj.date;
-    const note = invDay >= cutoff ? `HĐ ngày ${invDay} ≥ cutoff ${cutoff} → thu ngày ${fixedDay} tháng sau` : `HĐ ngày ${invDay} < cutoff ${cutoff} → thu ngày ${fixedDay} tháng này`;
+    const dayLabel = fixedDay === -1 ? `cuối tháng (${realDay})` : realDay !== fixedDay ? `${realDay} (rút từ ${fixedDay} cho khớp số ngày của tháng)` : String(realDay);
+    const note = invDay >= cutoff ? `HĐ ngày ${invDay} ≥ cutoff ${cutoff} → thu ngày ${dayLabel} tháng sau` : `HĐ ngày ${invDay} < cutoff ${cutoff} → thu ngày ${dayLabel} tháng này`;
     return { type: 'exact', date: due, label: formatDateVN(due), note, daysRemaining: calcDaysRemaining(due), status: calcStatus(due) };
   }
 

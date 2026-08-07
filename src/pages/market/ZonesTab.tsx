@@ -48,7 +48,7 @@ import SearchSelect from './SearchSelect';
 import RichTextEditor from './RichTextEditor';
 import { REGION_ZONES, regionZoneLabel, regionZoneColorCls } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
-import { shortId, expandId } from '../../hooks/useHashSubRoute';
+import { tinyId, expandTinyId } from '../../hooks/useHashSubRoute';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import SearchBox from '../../components/SearchBox';
 
@@ -111,12 +111,13 @@ function MultiPicker({ tags, options, onAdd, onRemove, onAddOption, color, place
   );
 }
 
-// Đọc KCN đang mở từ URL: #/market/zones/{shortId}
-// parts[0]='market', parts[1]='zones' (useHashTab quản lý), parts[2]=id rút gọn.
+// Đọc KCN đang mở từ URL: #/market/zones/{tinyId} — mã siêu ngắn (3-4 ký tự),
+// tự động dài thêm nếu trùng với KCN khác trong danh sách hiện tại.
+// parts[0]='market', parts[1]='zones' (useHashTab quản lý), parts[2]=mã rút gọn.
 function zoneIdFromHash(zones: MarketZone[]): string | null {
   const parts = window.location.hash.replace('#/', '').split('/');
   if (parts[0] !== 'market' || parts[1] !== 'zones' || !parts[2]) return null;
-  return expandId(parts[2], zones) || zones.find(z => z.id === parts[2])?.id || null;
+  return expandTinyId(parts[2], zones) || zones.find(z => z.id === parts[2])?.id || null;
 }
 
 // Bộ lọc của tab KCN — nhớ qua F5 để không phải chọn lại (URL vẫn giữ ngắn gọn).
@@ -159,7 +160,7 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
   const setSelectedId = (id: string | null) => {
     setSelectedIdRaw(id);
-    const hash = id ? `#/market/zones/${shortId(id)}` : '#/market/zones';
+    const hash = id ? `#/market/zones/${tinyId(id, marketZones)}` : '#/market/zones';
     if (window.location.hash !== hash) window.history.pushState(null, '', hash);
   };
   const [showAdd, setShowAdd] = useState(false);
