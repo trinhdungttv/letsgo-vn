@@ -20,7 +20,7 @@ import { ChurnBadge } from '../components/clients/ChurnBadge';
 import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
-import { EOM } from '../utils/timelineDays';
+import { EOM, anchorDay } from '../utils/timelineDays';
 import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, todayISO, isActiveInMonth, suspensionDate } from '../utils/suspension';
 
 interface ClientsProps {
@@ -307,7 +307,8 @@ export default function Clients({
   }, [clients, bulkSearch, bulkRegions, acceptedRegions, bulkMonth]);
 
   const activeClients = clients.filter(c => !c.archived_at && c.cooperation_status !== 'suspended');
-  const incompleteClients = activeClients.filter(c => !c.region || !c.manager || (c.service_type !== 'recruitment' && !c.cutoff_day));
+  // Moc chot cong co the duoc nhap o o "ket thuc" (mot ngay) — van tinh la da nhap.
+  const incompleteClients = activeClients.filter(c => !c.region || !c.manager || (c.service_type !== 'recruitment' && anchorDay(c.cutoff_day, c.cutoff_day_end) == null));
   const suspendedClients = clients.filter(c => !c.archived_at && c.cooperation_status === 'suspended');
   const missingSuspendDate = suspendedClients.filter(c => !suspensionDate(c));
   const totalWorkers = activeClients.reduce((s, c) => s + (c.current_workers || 0), 0);
@@ -1400,7 +1401,10 @@ export default function Clients({
                               onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
                               className="text-[12px] w-14 px-1.5 py-1 rounded border border-blue-400 outline-none"
                             />
-                          ) : c.cutoff_day == null ? '—' : c.cutoff_day === EOM ? 'Cuối tháng' : `Ngày ${c.cutoff_day}`}
+                          ) : (() => {
+                            const d = anchorDay(c.cutoff_day, c.cutoff_day_end);
+                            return d == null ? '—' : d === EOM ? 'Cuối tháng' : `Ngày ${d}`;
+                          })()}
                         </td>
                       )}
                       {col('payment') && (

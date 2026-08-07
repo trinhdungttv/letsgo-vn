@@ -36,6 +36,18 @@ export function formatDayRange(start: number | null | undefined, end: number | n
 }
 
 /**
+ * Mốc 1 ngày có thể được nhập ở ô "bắt đầu" HOẶC ô "kết thúc" — người dùng chọn ô
+ * nào thì lưu đúng ô đó (xem handleSaveEdit trong Finance). Hàm này lấy ra ngày
+ * thật sự của mốc cho những chỗ chỉ hiển thị 1 con số.
+ */
+export function anchorDay(
+  start: number | null | undefined,
+  end: number | null | undefined,
+): number | null {
+  return start ?? end ?? null;
+}
+
+/**
  * Chuẩn hoá 1 cặp (bắt đầu, kết thúc) trước khi lưu:
  *  - chỉ nhập ngày kết thúc  → coi như mốc 1 ngày (dồn về ngày bắt đầu)
  *  - kết thúc <= bắt đầu     → mốc 1 ngày (bỏ ngày kết thúc)
