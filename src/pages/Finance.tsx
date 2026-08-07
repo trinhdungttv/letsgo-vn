@@ -11,7 +11,8 @@ import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
 import { resolveDay, normalizeDayRange, anchorDay } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
-import { isActiveInMonth, suspensionMonth, formatSuspensionDate } from '../utils/suspension';
+import ServiceTypeBadge from '../components/ServiceTypeBadge';
+import { isActiveInMonth, isSuspended } from '../utils/suspension';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -193,6 +194,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   // Timeline/Trạng thái TT xem theo tháng: khách đã ngưng vẫn hiện ở các tháng
   // tính đến hết tháng ngưng (tháng đó vẫn còn chốt công, xuất HĐ, thu tiền).
   const filteredClients = useMemo(() => clients.filter(c => {
+    // Da ngung hop tac (hoac da luu tru) thi an han khoi timeline, ke ca thang cuoi.
+    if (isSuspended(c) || c.archived_at) return false;
     if (!isActiveInMonth(c, month)) return false;
     const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
     const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
@@ -602,12 +605,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   return (
                     <div key={c.id} className="flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
                       <div className="w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2]">
-                        <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
-                          {c.name}{c.status === 'danger' || c.status === 'warn' ? ' 🚩' : ''}
-                        </button>
-                        {suspensionMonth(c) === month && (
-                          <div className="text-[9.5px] text-orange-600 font-medium">Tháng cuối · ngưng {formatSuspensionDate(c)}</div>
-                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
+                            {c.name}{c.status === 'danger' || c.status === 'warn' ? ' 🚩' : ''}
+                          </button>
+                          <ServiceTypeBadge type={c.service_type} className="shrink-0" />
+                        </div>
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LD</div>
                       </div>
                       <div className="flex-1 relative">

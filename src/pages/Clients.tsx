@@ -22,6 +22,7 @@ import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
 import { anchorDay, dayLabel, isDynamicDay } from '../utils/timelineDays';
 import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, todayISO, isActiveInMonth, suspensionDate } from '../utils/suspension';
+import ServiceTypeBadge from '../components/ServiceTypeBadge';
 
 interface ClientsProps {
   clients: Client[];
@@ -1228,23 +1229,9 @@ export default function Clients({
                                   <option value="recruitment">Gioi thieu lao dong</option>
                                   <option value="hoh">HOH</option>
                                 </select>
-                              ) : c.service_type === 'recruitment' ? (
-                                <span
-                                  onDoubleClick={e => startEdit(e, c, 'service_type')}
-                                  title="Gioi thieu lao dong — nhan doi de doi loai hinh"
-                                  className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium cursor-pointer select-none bg-purple-50 text-purple-600 border-purple-200"
-                                >
-                                  GT
-                                </span>
-                              ) : c.service_type === 'hoh' ? (
-                                <span
-                                  onDoubleClick={e => startEdit(e, c, 'service_type')}
-                                  title="HOH — nhan doi de doi loai hinh"
-                                  className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium cursor-pointer select-none bg-orange-50 text-orange-600 border-orange-200"
-                                >
-                                  HOH
-                                </span>
-                              ) : null}
+                              ) : (
+                                <ServiceTypeBadge type={c.service_type} editable onDoubleClick={e => startEdit(e, c, 'service_type')} />
+                              )}
                               <ChurnBadge level={churnLevel} />
                               <button
                                 onClick={e => {
