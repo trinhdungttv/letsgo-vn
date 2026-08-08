@@ -8,7 +8,7 @@ import PerformanceTab from '../components/finance/PerformanceTab';
 import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
-import { calcExpectedDue } from '../lib/paymentDate';
+import { calcExpectedDue, formatDateVN } from '../lib/paymentDate';
 import { resolveDay, normalizeDayRange, anchorDay } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
 import ServiceTypeBadge from '../components/ServiceTypeBadge';
@@ -61,6 +61,43 @@ function syncInvoiceDate(current: string | null | undefined, invoiceDay: number 
   const daysInMonth = new Date(y, m, 0).getDate();
   const day = resolveDay(invoiceDay, daysInMonth) ?? daysInMonth;
   return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Các mốc "Kỳ TT" rơi vào tháng đang xem.
+ *
+ * Hạn thu tiền thường rớt sang tháng sau (vd xuất HĐ ngày 25 + 15 ngày → ngày 09
+ * tháng kế), nên phải soi ngược hoá đơn của 3 tháng gần nhất chứ không chỉ tháng
+ * đang mở — trước đây chỉ tính hoá đơn cùng tháng nên những khách kiểu này không
+ * bao giờ có chấm xanh. Trả kèm tháng hoá đơn để hiện tooltip "kỳ TT của tháng nào".
+ */
+function payDuesInMonth(c: Client, year: number, month1to12: number) {
+  const invoiceRule = normalizeDayRange(c.invoice_day, c.invoice_day_end).start;
+  if (invoiceRule == null) return [];
+  const out: { day: number; invMonth: string; invDateLabel: string; dueLabel: string }[] = [];
+  const seen = new Set<number>();
+  for (const offset of [-2, -1, 0]) {
+    const invMonthStart = new Date(year, month1to12 - 1 + offset, 1);
+    const invYear = invMonthStart.getFullYear();
+    const invMonthIdx = invMonthStart.getMonth();
+    const invDay = resolveDay(invoiceRule, new Date(invYear, invMonthIdx + 1, 0).getDate());
+    if (invDay == null) continue;
+    const invDate = new Date(invYear, invMonthIdx, invDay);
+    const due = calcExpectedDue(c, invDate);
+    const dueDate = due?.date ?? due?.dateFrom ?? null;
+    if (!dueDate) continue;
+    if (dueDate.getFullYear() !== year || dueDate.getMonth() !== month1to12 - 1) continue;
+    const day = dueDate.getDate();
+    if (seen.has(day)) continue;
+    seen.add(day);
+    out.push({
+      day,
+      invMonth: `${invMonthIdx + 1}/${invYear}`,
+      invDateLabel: formatDateVN(invDate),
+      dueLabel: due?.label ?? formatDateVN(dueDate),
+    });
+  }
+  return out.sort((a, b) => a.day - b.day);
 }
 
 const TIMELINE_VISIBLE_KEY = 'lgvn_finance_timeline_visible_phases';
@@ -225,13 +262,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         case 'calc': return pair(c.calc_day, c.calc_day_end);
         case 'salary': return pair(c.salary_day, c.salary_day_end);
         case 'invoice': return pair(c.invoice_day, c.invoice_day_end);
-        case 'paydue': {
-          const autoInv = rd2(anchorDay(c.invoice_day, c.invoice_day_end));
-          const invDate = autoInv ? new Date(calYear, calMonthNum - 1, autoInv) : null;
-          const due = invDate ? calcExpectedDue(c, invDate) : null;
-          const dueDay = due?.date?.getMonth() === calMonthNum - 1 ? due.date.getDate() : null;
-          return [dueDay, null];
-        }
+        case 'paydue': return [payDuesInMonth(c, calYear, calMonthNum)[0]?.day ?? null, null];
         default: return [null, null];
       }
     };
@@ -587,13 +618,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const invoiceX = invoiceDay != null ? ((Math.min(invoiceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const invoiceEndX = invoiceEndOk != null ? (invoiceEndOk / daysInMonth) * 100 : null;
 
-                  // Ky TT: tu dong tinh tu calcExpectedDue (Dieu khoan thanh toan)
-                  const autoInvDate = autoInvoiceDay ? new Date(calYear, calMonthNum - 1, autoInvoiceDay) : null;
-                  const dueResult = autoInvDate ? calcExpectedDue(c, autoInvDate) : null;
-                  const dueDay = dueResult?.date ? dueResult.date.getDate() : null;
-                  const dueDayInMonth = dueDay != null && dueResult?.date?.getMonth() === calMonthNum - 1 ? dueDay : null;
-                  const payDueDay = dueDayInMonth;
-                  const payDueX = payDueDay != null ? ((payDueDay - 1) / daysInMonth) * 100 : null;
+                  // Ky TT: gom ca han thu tien cua hoa don thang truoc roi vao thang nay
+                  const payDues = payDuesInMonth(c, calYear, calMonthNum);
 
                   const salaryRange = nr(c.salary_day, c.salary_day_end);
                   const salaryDay = rd(salaryRange.start);
@@ -618,7 +644,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
                         {(() => {
-                          type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean };
+                          type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean; title?: string };
                           const markers: Mk[] = [];
                           if (isPhaseOn('cutoff') && !isRecruitment && cutoffX != null && cutoffDay != null)
                             markers.push({ x: cutoffX, day: cutoffDay, label: 'Chot cong', color: 'bg-orange-400', textCls: 'text-orange-600', shape: 'circle', endX: cutoffEndX ?? undefined, endDay: cutoffEndOk ?? undefined, dashCls: 'border-orange-300' });
@@ -639,8 +665,17 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           }
                           if (isPhaseOn('invoice') && invoiceX != null && invoiceDay != null)
                             markers.push({ x: invoiceX, day: invoiceDay, label: 'Xuat HD', color: 'bg-cyan-500', textCls: 'text-cyan-600', shape: 'square', endX: invoiceEndX ?? undefined, endDay: invoiceEndOk ?? undefined, dashCls: 'border-cyan-300', external: true });
-                          if (isPhaseOn('paydue') && payDueX != null && payDueDay != null)
-                            markers.push({ x: payDueX, day: payDueDay, label: c.paid_this_month ? 'Da TT' : 'Ky TT', color: 'bg-emerald-500', textCls: c.paid_this_month ? 'text-emerald-700' : 'text-emerald-600', shape: 'square', external: true });
+                          if (isPhaseOn('paydue')) {
+                            for (const pd of payDues) {
+                              markers.push({
+                                x: ((pd.day - 1) / daysInMonth) * 100, day: pd.day,
+                                label: c.paid_this_month ? 'Da TT' : 'Ky TT',
+                                color: 'bg-emerald-500', textCls: c.paid_this_month ? 'text-emerald-700' : 'text-emerald-600',
+                                shape: 'square', external: true,
+                                title: `Ky TT hoa don thang ${pd.invMonth} (xuat ${pd.invDateLabel}) — han thu ${pd.dueLabel}`,
+                              });
+                            }
+                          }
                           if (isPhaseOn('salary') && !isRecruitment && salaryX != null && salaryDay != null)
                             markers.push({ x: salaryX, day: salaryDay, label: 'Phat luong', color: 'bg-purple-500', textCls: 'text-purple-600', shape: 'circle', endX: salaryEndX ?? undefined, endDay: salaryEndOk ?? undefined, dashCls: 'border-purple-300' });
                           if (isPhaseOn('salary') && !isRecruitment) {
@@ -686,7 +721,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             const cs: React.CSSProperties = m.shape === 'diamond' ? { clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' } : {};
                             const r = (m.external && isClash(m.day)) ? row2 : row1;
                             if (r === row2) anyRow2 = true;
-                            dotItems.push({ x: m.x, day: m.day, color: m.color, sc, cs, title: `${m.label}: ngay ${m.day}${m.endDay ? `–${m.endDay}` : ''}`, inlineColor: m.inlineColor, row: r });
+                            dotItems.push({ x: m.x, day: m.day, color: m.color, sc, cs, title: m.title ?? `${m.label}: ngay ${m.day}${m.endDay ? `–${m.endDay}` : ''}`, inlineColor: m.inlineColor, row: r });
                             labelItems.push({ x: m.x, day: m.day, textCls: m.textCls, row: r });
                             if (m.endX != null) {
                               lineItems.push({ x: m.x, endX: m.endX, color: m.color, inlineColor: m.inlineColor, row: r });
@@ -736,7 +771,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             </div>
                           );
                         })()}
-                        {!payDueDay && !isRecruitment && c.next_month_pay && (
+                        {payDues.length === 0 && !isRecruitment && c.next_month_pay && (
                           <div className="absolute text-[9px] text-emerald-600 font-medium" style={{ right: 4, top: 6 }}>TT thang sau</div>
                         )}
                       </div>
