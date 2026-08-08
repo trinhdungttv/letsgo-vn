@@ -11,7 +11,7 @@ import {
   ChevronDown, X, Phone, Mail, SlidersHorizontal,
 } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry } from '../lib/types';
-import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast } from '../lib/format';
+import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -208,8 +208,45 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
   const financePaid = useMemo(() => filteredClients.filter(c => financeByClient[c.id]?.paid_status).length, [filteredClients, financeByClient]);
   const displayRevenue = financeRevenue > 0 ? financeRevenue : totalRevenue;
   const paid = financePaid > 0 ? financePaid : filteredClients.filter(c => c.paid_this_month).length;
-  const danger = filteredClients.filter(c => c.status === 'danger').length;
-  const warn = filteredClients.filter(c => c.status === 'warn').length;
+  // HĐ cần xử lý — đếm theo NGÀY HẾT HẠN THẬT (clients.contract_end), cùng nguồn với
+  // bảng "Tái ký hợp đồng" ngay bên cạnh và rail "HĐ cần xử lý" ở Workspace.
+  // Trước đây thẻ này đếm clients.status === 'danger'/'warn': trường đó không có chỗ
+  // nào ghi giá trị (toàn bộ KH đều là 'ok') nên thẻ luôn hiện 0 dù HĐ đã hết hạn.
+  const contractAlerts = useMemo(() => {
+    let expired = 0, soon = 0;
+    for (const c of filteredClients) {
+      const d = daysUntil(c.contract_end);
+      if (d === null) continue;          // chưa nhập ngày hết hạn → không kết luận
+      if (d <= 0) expired++;
+      else if (d <= 30) soon++;
+    }
+    return { expired, soon, total: expired + soon };
+  }, [filteredClients]);
+
+  // Số KH còn hạn hợp đồng (KH chưa nhập ngày hết hạn vẫn tính là đang HĐ).
+  const activeContracts = filteredClients.length - contractAlerts.expired;
+
+  // Tăng/giảm lao động so với tháng trước — số thật từ lịch sử lao động,
+  // thay cho dòng "+2.8%" vốn được ghi cứng trong mã nguồn.
+  const monthWorkers = useMemo(() => {
+    const sumOf = (monthNum: number) => {
+      if (monthNum < 1) return null;
+      let sum = 0, found = false;
+      for (const c of filteredClients) {
+        const v = getMonthLast(laborHistory[c.id] || [], monthNum);
+        if (v !== null) { sum += v; found = true; }
+      }
+      return found ? sum : null;
+    };
+    return { cur: sumOf(curMonthNum), prev: sumOf(curMonthNum - 1) };
+  }, [filteredClients, laborHistory, curMonthNum]);
+
+  // Chỉ so sánh khi tháng này ĐÃ có người nhập số. Chưa nhập thì `totalWorkers`
+  // vẫn đang là số chốt của tháng trước (current_workers = bản ghi mới nhất),
+  // đem so sẽ ra "0%" — nghe như lao động đứng yên, trong khi thực tế là chưa có số.
+  const workerDeltaPct = monthWorkers.cur !== null && monthWorkers.prev !== null && monthWorkers.prev > 0
+    ? ((totalWorkers - monthWorkers.prev) / monthWorkers.prev) * 100
+    : null;
 
   // Map client region → branch name
   const clientToBranch = useMemo(() => {
@@ -244,7 +281,40 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     return Object.values(map).sort((a, b) => b.workers - a.workers);
   }, [filteredClients, clientToBranch, pnlByClient]);
 
-  const trendData = [2420, 2510, 2590, 2670, 2790, totalWorkers || 2847];
+  // ---- Xu hướng lao động: luôn chạy tới THÁNG HIỆN TẠI, tự nới ra khi sang tháng mới ----
+  // Số LĐ mỗi tháng dùng đúng quy tắc sẵn có của trang (xem workersOf bên dưới):
+  //   • tháng hiện tại  → số live (current_workers) ⇒ khớp thẻ "Tổng lao động"
+  //   • tháng đã qua    → số của tuần cuối cùng tháng đó trong lịch sử lao động
+  // Cửa sổ hiển thị luôn dừng ở T1 của năm nay: week_label ("TmWw") KHÔNG mang năm,
+  // lùi qua năm trước sẽ lấy nhầm số của cùng tháng năm nay.
+  const [trendRange, setTrendRange] = usePersistedState<'ytd' | '3' | '6' | '12'>('lgvn_dash_trendRange', 'ytd');
+
+  const laborTrend = useMemo(() => {
+    const span = trendRange === 'ytd' ? curMonthNum : Math.min(Number(trendRange), curMonthNum);
+    const months = Array.from({ length: span }, (_, i) => curMonthNum - span + 1 + i);
+    const points = months.map(num => {
+      if (num === curMonthNum) return totalWorkers || null;
+      let sum = 0, found = false;
+      for (const c of filteredClients) {
+        const v = getMonthLast(laborHistory[c.id] || [], num);
+        if (v !== null) { sum += v; found = true; }
+      }
+      // Tháng chưa nhập liệu → null (đứt nét) thay vì 0, tránh đường tụt giả tạo.
+      return found ? sum : null;
+    });
+    return { months, labels: months.map(n => `T${n}`), points };
+  }, [trendRange, curMonthNum, filteredClients, laborHistory, totalWorkers]);
+
+  const trendRangeLabel = laborTrend.months.length > 1
+    ? `T${laborTrend.months[0]}–T${laborTrend.months[laborTrend.months.length - 1]}`
+    : `T${curMonthNum}`;
+
+  // ---- Kiểu hiển thị & khung trục đứng của biểu đồ xu hướng (tuỳ chọn, có lưu) ----
+  const [trendChart, setTrendChart] = usePersistedState<'line' | 'bar'>('lgvn_dash_trendChart', 'line');
+  const [trendAxis, setTrendAxis] = usePersistedState<'auto' | 'data' | 'zero' | 'custom'>('lgvn_dash_trendAxis', 'auto');
+  const [trendMin, setTrendMin] = usePersistedState<string>('lgvn_dash_trendMin', '');
+  const [trendMax, setTrendMax] = usePersistedState<string>('lgvn_dash_trendMax', '');
+  const [trendTicks, setTrendTicks] = usePersistedState<number>('lgvn_dash_trendTicks', 8);
 
   // Labor targets per scope ('total' or a region/branch name)
   const [targets, setTargets] = useState<Record<string, number>>({});
@@ -263,6 +333,50 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
   const targetScopeKey = scopeMode === 'region' && selectedScope ? selectedScope : 'total';
   const targetScopeLabel = targetScopeKey === 'total' ? 'Tổng' : targetScopeKey;
   const targetValue = targets[targetScopeKey];
+
+  // Khung trục đứng của biểu đồ xu hướng. Bước chia luôn là số tròn và số vạch
+  // do người dùng chọn (mặc định 8) — không để Chart.js tự nhảy bước, vì khi dải
+  // số rộng nó chọn bước 500 làm biểu đồ trống trơn.
+  const trendYScale = useMemo(() => {
+    const NICE = [1, 2, 5, 10, 20, 25, 50, 100, 150, 200, 250, 500, 750, 1000, 1500, 2000, 2500, 5000];
+    const ticks = Math.max(3, Math.min(12, trendTicks));
+    const snap = (lo: number, hi: number, exact = false) => {
+      if (exact) {
+        // Mức tự nhập giữ nguyên — chọn bước chia CHIA HẾT khoảng đó để vạch cuối
+        // rơi đúng vào mức trên, và số vạch gần với lựa chọn nhất.
+        const ideal = (hi - lo) / ticks;
+        const pool = NICE.filter(s => Number.isInteger((hi - lo) / s));
+        const list = pool.length ? pool : NICE;
+        const step = list.reduce((best, s) => Math.abs(s - ideal) < Math.abs(best - ideal) ? s : best, list[0]);
+        return { min: lo, max: hi, step };
+      }
+      const step = NICE.find(s => s >= (hi - lo) / ticks) ?? 10000;
+      return { min: Math.max(0, Math.floor(lo / step) * step), max: Math.ceil(hi / step) * step, step };
+    };
+
+    if (trendAxis === 'custom') {
+      const lo = Number(trendMin), hi = Number(trendMax);
+      // Nhập đủ & hợp lệ thì dùng đúng con số đã nhập, không bo tròn.
+      if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo && trendMin !== '' && trendMax !== '') {
+        return snap(lo, hi, true);
+      }
+    }
+
+    const vals = laborTrend.points.filter((v): v is number => v != null);
+    if (!vals.length) return null;
+    const dataLo = Math.min(...vals), dataHi = Math.max(...vals);
+
+    // "Bám dữ liệu": bỏ qua mốc mục tiêu để đường lao động trải kín khung.
+    if (trendAxis === 'data') return snap(dataLo * 0.95, dataHi * 1.05);
+
+    const withTarget = targetValue != null ? [...vals, targetValue] : vals;
+    const hi = Math.max(...withTarget);
+    if (trendAxis === 'zero') return snap(0, hi * 1.05);
+    // "Tự động": trần dừng ĐÚNG ở mốc mục tiêu (không đệm thêm 5% phía trên nữa),
+    // để mốc mục tiêu nằm trên vạch trên cùng và đường lao động được đẩy lên cao hơn.
+    const cap = targetValue != null && targetValue >= dataHi ? targetValue : hi * 1.05;
+    return snap(Math.min(...withTarget) * 0.95, cap);
+  }, [laborTrend, trendAxis, trendMin, trendMax, trendTicks, targetValue]);
 
   const startEditTarget = () => {
     setTargetInput(targetValue != null ? String(targetValue) : '');
@@ -504,7 +618,10 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
               <Users size={14} className="text-[#ccc]" />
             </div>
             <div className="text-[22px] font-bold text-[#111]">{filteredClients.length}</div>
-            <div className="text-[11px] text-[#aaa] mt-0.5">Đang HĐ: {filteredClients.filter(c => c.status !== 'danger').length}</div>
+            <div className="text-[11px] text-[#aaa] mt-0.5">
+              Đang HĐ: {activeContracts}
+              {contractAlerts.expired > 0 && <span className="text-red-500"> · {contractAlerts.expired} hết hạn</span>}
+            </div>
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">
@@ -512,7 +629,20 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
               <TrendingUp size={14} className="text-blue-400" />
             </div>
             <div className="text-[22px] font-bold text-[#1D4ED8]">{totalWorkers.toLocaleString()}</div>
-            <div className="text-[11px] text-emerald-600 mt-0.5">+2.8% so tháng trước</div>
+            {workerDeltaPct === null ? (
+              <div className="text-[11px] text-[#aaa] mt-0.5">
+                {curMonthNum <= 1
+                  ? 'Chưa có mốc so sánh (đầu năm)'
+                  : monthWorkers.cur === null && monthWorkers.prev !== null
+                    ? `Chưa nhập số T${curMonthNum} — đang lấy số chốt T${curMonthNum - 1}`
+                    : `Chưa có số liệu T${curMonthNum - 1} để so sánh`}
+              </div>
+            ) : (
+              <div className={`text-[11px] mt-0.5 ${workerDeltaPct > 0 ? 'text-emerald-600' : workerDeltaPct < 0 ? 'text-red-500' : 'text-[#aaa]'}`}>
+                {workerDeltaPct > 0 ? '+' : ''}{workerDeltaPct.toFixed(1)}% so tháng trước
+                <span className="text-[#aaa]"> ({monthWorkers.prev!.toLocaleString()})</span>
+              </div>
+            )}
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">
@@ -521,25 +651,30 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
             </div>
             <div className="text-[22px] font-bold text-[#111]">{formatCurrency(displayRevenue)}</div>
             <div className="text-[11px] mt-0.5">
-              <span className={paid > 0 ? 'text-emerald-600' : 'text-[#aaa]'}>Đã TT: {paid}/{filteredClients.length} KH</span>
+              {displayRevenue > 0 ? (
+                <span className={paid > 0 ? 'text-emerald-600' : 'text-[#aaa]'}>Đã TT: {paid}/{filteredClients.length} KH</span>
+              ) : (
+                // Phân biệt "chưa nhập số" với "đã nhập nhưng bằng 0" — tránh hiểu nhầm là không ai thanh toán.
+                <span className="text-[#aaa]">Chưa nhập P&L tháng {curMonthNum}</span>
+              )}
             </div>
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-lg p-3.5">
             <div className="flex items-center justify-between mb-1">
               <div className="text-[11.5px] text-[#888]">HĐ cần xử lý</div>
-              <AlertCircle size={14} className={danger + warn > 0 ? 'text-red-400' : 'text-[#ccc]'} />
+              <AlertCircle size={14} className={contractAlerts.total > 0 ? 'text-red-400' : 'text-[#ccc]'} />
             </div>
-            <div className="text-[22px] font-bold" style={{ color: danger + warn > 0 ? '#DC2626' : '#059669' }}>{danger + warn}</div>
-            <div className="text-[11px] text-[#aaa] mt-0.5">{danger} khẩn cấp · {warn} sắp hết</div>
+            <div className="text-[22px] font-bold" style={{ color: contractAlerts.expired > 0 ? '#DC2626' : contractAlerts.total > 0 ? '#D97706' : '#059669' }}>{contractAlerts.total}</div>
+            <div className="text-[11px] text-[#aaa] mt-0.5">{contractAlerts.expired} đã hết hạn · {contractAlerts.soon} sắp hết (≤30 ngày)</div>
           </div>
         </div>
 
         {/* Trend + Alerts */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-2.5">
-          <div className="lg:col-span-2 bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
+          <div className="lg:col-span-2 bg-white border border-[#E8E7E2] rounded-lg overflow-visible">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center gap-1.5 flex-wrap">
               <TrendingUp size={13} className="text-blue-500" />
-              <span className="text-[12.5px] font-semibold text-[#111]">Xu hướng lao động T1–T6</span>
+              <span className="text-[12.5px] font-semibold text-[#111]">Xu hướng lao động {trendRangeLabel}</span>
               <div className="ml-auto flex items-center gap-1.5">
                 {editingTarget ? (
                   <>
@@ -564,28 +699,92 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
                     <Target size={14} />
                   </button>
                 )}
+                <ChartFilterButton>
+                  <FilterRow label="Khoảng tháng">
+                    <select value={trendRange} onChange={e => setTrendRange(e.target.value as 'ytd' | '3' | '6' | '12')}
+                      className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                      <option value="ytd">Từ đầu năm</option>
+                      <option value="12">12 tháng gần nhất</option>
+                      <option value="6">6 tháng gần nhất</option>
+                      <option value="3">3 tháng gần nhất</option>
+                    </select>
+                  </FilterRow>
+                  <div className="text-[10px] text-gray-400 leading-snug">
+                    Luôn kết thúc ở tháng hiện tại (T{curMonthNum}) và không lùi quá T1 năm nay.
+                  </div>
+                  <FilterRow label="Kiểu biểu đồ">
+                    <select value={trendChart} onChange={e => setTrendChart(e.target.value as 'line' | 'bar')}
+                      className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                      <option value="line">Đường</option>
+                      <option value="bar">Cột</option>
+                    </select>
+                  </FilterRow>
+                  <FilterRow label="Trục đứng">
+                    <select value={trendAxis} onChange={e => setTrendAxis(e.target.value as 'auto' | 'data' | 'zero' | 'custom')}
+                      className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                      <option value="auto">Tự động (kèm mục tiêu)</option>
+                      <option value="data">Bám sát dữ liệu</option>
+                      <option value="zero">Bắt đầu từ 0</option>
+                      <option value="custom">Tự nhập mức</option>
+                    </select>
+                  </FilterRow>
+                  {trendAxis === 'custom' && (
+                    <FilterRow label="Từ → đến">
+                      <div className="flex items-center gap-1 w-[130px]">
+                        <input type="number" value={trendMin} onChange={e => setTrendMin(e.target.value)} placeholder="2000"
+                          className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none w-full focus:border-blue-400" />
+                        <span className="text-[11px] text-gray-400">→</span>
+                        <input type="number" value={trendMax} onChange={e => setTrendMax(e.target.value)} placeholder="3000"
+                          className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none w-full focus:border-blue-400" />
+                      </div>
+                    </FilterRow>
+                  )}
+                  <FilterRow label="Số vạch chia">
+                    <select value={trendTicks} onChange={e => setTrendTicks(Number(e.target.value))}
+                      className="text-[11px] px-1.5 py-1 border border-gray-200 rounded-md outline-none bg-white text-[#555] focus:border-blue-400 w-[130px]">
+                      {[4, 6, 8, 10, 12].map(n => <option key={n} value={n}>{n} vạch</option>)}
+                    </select>
+                  </FilterRow>
+                  {trendAxis === 'data' && targetValue != null && (
+                    <div className="text-[10px] text-amber-600 leading-snug">
+                      Chế độ này bỏ mốc mục tiêu {targetValue.toLocaleString('vi-VN')} ra khỏi khung nên
+                      đường kẻ mục tiêu có thể không hiện.
+                    </div>
+                  )}
+                </ChartFilterButton>
               </div>
             </div>
             <div className="p-3" style={{ height: 168 }}>
-              <Line
-                data={{ labels: ['T1','T2','T3','T4','T5','T6'], datasets: [{ data: trendData, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.45, cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: 3 }] }}
-                options={{
+              {(() => {
+                const trendOpts = {
                   responsive: true, maintainAspectRatio: false,
+                  // Chừa chỗ cho nhãn mục tiêu khi mốc mục tiêu nằm đúng vạch trên cùng.
+                  layout: { padding: { top: 10 } },
                   plugins: {
                     legend: { display: false },
+                    tooltip: { callbacks: { label: (c: any) => `${Number(c.parsed.y).toLocaleString('vi-VN')} người` } },
                     ...({ targetLine: { value: targetValue } } as any),
                   },
                   scales: {
                     x: { grid: { display: false } },
-                    y: (() => {
-                      const vals = targetValue != null ? [...trendData, targetValue] : trendData;
-                      const min = Math.floor(Math.min(...vals) * 0.95 / 10) * 10;
-                      const max = Math.ceil(Math.max(...vals) * 1.05 / 10) * 10;
-                      return { min, max, ticks: { callback: (v: any) => Number(v).toLocaleString() } };
-                    })(),
+                    y: {
+                      ...(trendYScale ? { min: trendYScale.min, max: trendYScale.max } : {}),
+                      ticks: { stepSize: trendYScale?.step, callback: (v: any) => Number(v).toLocaleString() },
+                    },
                   },
-                }}
-              />
+                } as any;
+                return trendChart === 'bar' ? (
+                  <Bar
+                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, backgroundColor: 'rgba(59,130,246,0.75)', borderRadius: 4, maxBarThickness: 34 }] }}
+                    options={trendOpts}
+                  />
+                ) : (
+                  <Line
+                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.45, cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: 3, spanGaps: true }] }}
+                    options={trendOpts}
+                  />
+                );
+              })()}
             </div>
           </div>
 
