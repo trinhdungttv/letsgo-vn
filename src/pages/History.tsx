@@ -9,6 +9,7 @@ import DataHistoryTab from '../components/history/DataHistoryTab';
 import TimeMachineTab from '../components/history/TimeMachineTab';
 import BackupTab from '../components/history/BackupTab';
 import type { AuditLogEntry, AuditAction, Client } from '../lib/types';
+import { useBranchLookup } from '../hooks/useBranchLookup';
 
 interface Props {
   toast: (msg: string) => void;
@@ -26,6 +27,7 @@ const PAGE_SIZE = 50;
 type Tab = 'activity' | 'db' | 'timemachine' | 'backup' | 'archive';
 
 export default function History({ toast, onReload }: Props) {
+  const { labelOf } = useBranchLookup();
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('activity');
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -145,7 +147,7 @@ export default function History({ toast, onReload }: Props) {
                 ) : archivedClients.map(c => (
                   <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
                     <td className="px-3 py-2 font-semibold">{c.name}</td>
-                    <td className="px-3 py-2 text-[#555]">{c.region || '—'}</td>
+                    <td className="px-3 py-2 text-[#555]">{labelOf(c)}</td>
                     <td className="px-3 py-2 text-[#555]">{c.manager || '—'}</td>
                     <td className="px-3 py-2 text-[#888] whitespace-nowrap">{c.archived_at ? new Date(c.archived_at).toLocaleString('vi-VN') : '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">

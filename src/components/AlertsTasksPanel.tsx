@@ -245,7 +245,7 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
             task_type: 'Tái ký HĐ',
             due_date: today,
             priority: d !== null && d <= 0 ? 'high' : 'medium',
-            kcn: c.industrial_zones?.[0] || null,
+            branch_id: c.branch_id ?? null,
             status: 'pending',
             doc_status: 'chua_soan',
           };

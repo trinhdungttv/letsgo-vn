@@ -54,7 +54,7 @@ export default function OverheadTab({
 
   const addRow = async () => {
     try {
-      await onAdd({ branch_manager: branchManager, month, label: 'Chi phí mới', value: 0, cost_type: 'Cố định', sort_order: rows.length });
+      await onAdd({ branch_id: null, branch_manager: branchManager, month, label: 'Chi phí mới', value: 0, cost_type: 'Cố định', sort_order: rows.length });
     } catch (e) { toast('Lỗi: ' + (e instanceof Error ? e.message : String(e))); }
   };
 

@@ -10,6 +10,7 @@ import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
 import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth, prevWeekLabel } from '../lib/format';
+import { branchOf, branchOptions, resolveBranchByLegacyText } from '../lib/branchRef';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -84,7 +85,7 @@ export default function Clients({
   const [suspendReason, setSuspendReason] = useState('');
   const [suspendFrom, setSuspendFrom] = useState('');
   const [isSuspending, setIsSuspending] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ id: string; field: 'region' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' | 'service_type' } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: 'branch_id' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' | 'service_type' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
@@ -187,26 +188,23 @@ export default function Clients({
 
   const { branches, deleteBranch } = useBranchData();
 
-  // Filter chi nhánh hiển thị theo tên chuẩn (branches.name), nhưng client.region
-  // vẫn lưu key cũ (branches.region) — mở rộng lựa chọn ra cả 2 giá trị để khớp.
-  const acceptedRegions = useCallback((selected: string[]) => {
-    const set = new Set(selected);
-    for (const b of branches) {
-      if (selected.includes(b.name) || (b.region && selected.includes(b.region))) {
-        set.add(b.name);
-        if (b.region) set.add(b.region);
-      }
-    }
-    return set;
-  }, [branches]);
-
-  const activeRegionSet = useMemo(() => acceptedRegions(activeRegion), [acceptedRegions, activeRegion]);
+  // Bộ lọc chi nhánh so theo TÊN CHUẨN (branches.name). Khách nào chưa gán chi nhánh
+  // thì mang nhãn riêng để lọc ra xem và gán tay.
+  const CHUA_GAN = 'Chưa gán chi nhánh';
+  const branchNameOfClient = useCallback(
+    (c: Client) => branchOf(c, branches)?.name ?? CHUA_GAN,
+    [branches]
+  );
+  const matchesBranchFilter = useCallback((c: Client, selected: string[]) => {
+    if (selected.includes(ALL_OPTION)) return true;
+    return selected.includes(branchNameOfClient(c));
+  }, [branchNameOfClient]);
 
   const filtered = clients.filter(c => {
     if (c.archived_at) return false;
     if (quickFilter === 'suspended') return c.cooperation_status === 'suspended';
     if (c.cooperation_status === 'suspended') return false;
-    const matchRegion = activeRegion.includes(ALL_OPTION) || activeRegionSet.has(c.region || '');
+    const matchRegion = matchesBranchFilter(c, activeRegion);
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
@@ -229,7 +227,7 @@ export default function Clients({
   const exportToCSV = useCallback(() => {
     const headers = ['Tên công ty','Chi nhánh','Quản lý','KCN','LĐ hiện tại','LĐ tối thiểu','Trạng thái','Hết HĐ'];
     const rows = filtered.map(c => [
-      c.name, c.region || '', c.manager || '',
+      c.name, branchNameOfClient(c), c.manager || '',
       (c.industrial_zones || []).join(', '),
       c.current_workers || 0, c.min_workers || 0,
       c.status || '', c.contract_end || '',
@@ -242,7 +240,7 @@ export default function Clients({
     a.click(); URL.revokeObjectURL(url);
     setShowExport(false);
     toast('Đã xuất file CSV ✓');
-  }, [filtered, toast]);
+  }, [filtered, toast, branchNameOfClient]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -273,7 +271,8 @@ export default function Clients({
   const { staffs: allBranchStaffs } = useAllBranchStaffs();
   const { payrollStaffs } = usePayrollStaffs();
 
-  const regionNames = [ALL_OPTION, ...branches.map(b => b.name)];
+  // Thêm mục "Chưa gán chi nhánh" để lọc ra đúng những KH cần gán tay.
+  const regionNames = [ALL_OPTION, ...branchOptions(branches).map(o => o.label), CHUA_GAN];
   const managerNames = [ALL_OPTION, ...managers.map(m => m.name)];
   const zoneNames = [ALL_OPTION, ...marketZones.map(z => z.name)];
 
@@ -297,19 +296,17 @@ export default function Clients({
 
   // Khách đã ngưng vẫn nhập được số LĐ tới hết THÁNG NGƯNG (ví dụ ngưng 30/06 →
   // các tuần của tháng 06 vẫn hiện); từ tháng sau mới biến mất khỏi danh sách.
-  const bulkClients = useMemo(() => {
-    const regionSet = acceptedRegions(bulkRegions);
-    return clients
-      .filter(c => !c.archived_at)
-      .filter(c => c.cooperation_status !== 'suspended' || (bulkMonth != null && isActiveInMonth(c, bulkMonth)))
-      .filter(c => bulkRegions.includes(ALL_OPTION) || regionSet.has(c.region || ''))
-      .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase()))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [clients, bulkSearch, bulkRegions, acceptedRegions, bulkMonth]);
+  const bulkClients = useMemo(() => clients
+    .filter(c => !c.archived_at)
+    .filter(c => c.cooperation_status !== 'suspended' || (bulkMonth != null && isActiveInMonth(c, bulkMonth)))
+    .filter(c => matchesBranchFilter(c, bulkRegions))
+    .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+  [clients, bulkSearch, bulkRegions, matchesBranchFilter, bulkMonth]);
 
   const activeClients = clients.filter(c => !c.archived_at && c.cooperation_status !== 'suspended');
   // Moc chot cong co the duoc nhap o o "ket thuc" (mot ngay) — van tinh la da nhap.
-  const incompleteClients = activeClients.filter(c => !c.region || !c.manager || (c.service_type !== 'recruitment' && anchorDay(c.cutoff_day, c.cutoff_day_end) == null));
+  const incompleteClients = activeClients.filter(c => !branchOf(c, branches) || !c.manager || (c.service_type !== 'recruitment' && anchorDay(c.cutoff_day, c.cutoff_day_end) == null));
   const suspendedClients = clients.filter(c => !c.archived_at && c.cooperation_status === 'suspended');
   const missingSuspendDate = suspendedClients.filter(c => !suspensionDate(c));
   const totalWorkers = activeClients.reduce((s, c) => s + (c.current_workers || 0), 0);
@@ -692,8 +689,14 @@ export default function Clients({
   }
 
   const QUICK_EDIT_LABELS: Record<string, string> = {
-    region: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái', payroll_staff: 'NS Tính lương', service_type: 'Loai hinh dich vu',
+    branch_id: 'Chi nhánh', manager: 'Quản lý', contract_start: 'Ngày bắt đầu HĐ', contract_end: 'Ngày hết hạn HĐ', cutoff_day: 'Ngày chốt công', status: 'Trạng thái', payroll_staff: 'NS Tính lương', service_type: 'Loai hinh dich vu',
   };
+
+  // Giá trị đem ghi nhật ký: branch_id là UUID nên đổi sang tên chi nhánh.
+  const forLog = (field: string, v: unknown) =>
+    field === 'branch_id'
+      ? (branches.find(b => b.id === v)?.name ?? '—')
+      : (v ?? '—');
 
   const startEdit = (e: React.MouseEvent, c: Client, field: NonNullable<typeof editingCell>['field']) => {
     e.stopPropagation();
@@ -753,7 +756,7 @@ export default function Clients({
     const oldVal = field === 'cutoff_day' ? c.cutoff_day : (c as any)[field];
     let newVal: any = editValue;
     if (field === 'cutoff_day') newVal = Math.max(1, Math.min(31, parseInt(editValue) || 1));
-    if ((field === 'region' || field === 'manager' || field === 'contract_start' || field === 'contract_end') && !editValue) newVal = null;
+    if ((field === 'branch_id' || field === 'manager' || field === 'contract_start' || field === 'contract_end') && !editValue) newVal = null;
     if (String(oldVal ?? '') === String(newVal ?? '')) { cancelEdit(); return; }
     setSavingCell(true);
     try {
@@ -774,7 +777,8 @@ export default function Clients({
       onClientUpdate({ ...c, ...updates });
       await logActivity({
         user, action: 'update', table: 'clients', recordId: c.id,
-        description: `Cập nhật ${QUICK_EDIT_LABELS[field]} của "${c.name}": ${oldVal ?? '—'} → ${newVal ?? '—'}`,
+        // branch_id lưu UUID — nhật ký phải in ra tên chi nhánh thì mới đọc được.
+        description: `Cập nhật ${QUICK_EDIT_LABELS[field]} của "${c.name}": ${forLog(field, oldVal)} → ${forLog(field, newVal)}`,
         oldData: c, newData: { ...c, ...updates },
       });
       toast('Đã cập nhật');
@@ -1250,8 +1254,8 @@ export default function Clients({
                         </div>
                       </td>
                       {col('region') && (
-                        <td className="px-3 py-2 text-[12px] text-[#555]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'region')}>
-                          {editingCell?.id === c.id && editingCell.field === 'region' ? (
+                        <td className="px-3 py-2 text-[12px] text-[#555]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'branch_id')}>
+                          {editingCell?.id === c.id && editingCell.field === 'branch_id' ? (
                             <select
                               autoFocus value={editValue} disabled={savingCell}
                               onClick={e => e.stopPropagation()}
@@ -1261,9 +1265,11 @@ export default function Clients({
                               className="text-[12px] px-1.5 py-1 rounded border border-blue-400 outline-none bg-white"
                             >
                               <option value="">—</option>
-                              {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                              {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                             </select>
-                          ) : (branches.find(b => b.region === c.region)?.name || c.region || '—')}
+                          ) : branchOf(c, branches)
+                            ? branchNameOfClient(c)
+                            : <span className="text-amber-600 font-medium" title={`Chưa gán chi nhánh${c.region ? ` — dữ liệu cũ ghi "${c.region}"` : ''}. Nhấp đúp để chọn.`}>⚠ Chưa gán</span>}
                         </td>
                       )}
                       {col('manager') && (
@@ -1275,7 +1281,7 @@ export default function Clients({
                               onChange={e => {
                                 if (e.target.value === '__new__') {
                                   cancelEdit();
-                                  setNewManagerForm({ name: '', phone: '', email: '', region: c.region || '' });
+                                  setNewManagerForm({ name: '', phone: '', email: '', region: branchOf(c, branches)?.name ?? '' });
                                   setAddManagerFor(c);
                                   return;
                                 }
@@ -1287,11 +1293,11 @@ export default function Clients({
                             >
                               <option value="">—</option>
                               {(() => {
-                                const branch = branches.find(b => b.region === c.region);
+                                const branch = branchOf(c, branches);
                                 const bStaffs = branch ? allBranchStaffs.filter(s => s.branch_id === branch.id) : [];
                                 return bStaffs.length > 0 ? (
                                   <>
-                                    <optgroup label={`Nhan su ${branch?.short_name || branch?.name || c.region}`}>
+                                    <optgroup label={`Nhan su ${branch?.short_name || branch?.name || '—'}`}>
                                       {bStaffs.map(s => <option key={s.id} value={s.name}>{s.name}{s.role ? ` (${s.role})` : ''}</option>)}
                                     </optgroup>
                                     <optgroup label="Tat ca quan ly">
@@ -1313,7 +1319,7 @@ export default function Clients({
                             >
                               <div style={{
                                 width: 22, height: 22, borderRadius: '50%',
-                                background: getBranchColor(c.region || null),
+                                background: getBranchColor(branchOf(c, branches)?.name ?? null),
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 color: '#fff', fontSize: 9, fontWeight: 700, flexShrink: 0,
                               }}>
@@ -1858,7 +1864,7 @@ export default function Clients({
                     <select value={editingManager.region || ''} onChange={e => setEditingManager({ ...editingManager, region: e.target.value })}
                       className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
                       <option value="">—</option>
-                      {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                      {branchOptions(branches).map(o => <option key={o.id} value={o.label}>{o.label}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1867,7 +1873,7 @@ export default function Clients({
                   {[
                     ['Số điện thoại', selectedManager.phone],
                     ['Email', selectedManager.email],
-                    ['Chi nhánh', branches.find(b => b.region === selectedManager.region)?.name || selectedManager.region],
+                    ['Chi nhánh', resolveBranchByLegacyText(selectedManager.region, branches)?.name || selectedManager.region],
                   ].map(([label, val]) => (
                     <div key={label}>
                       <label className="text-[12px] text-[#666] font-medium">{label}</label>
@@ -1889,7 +1895,7 @@ export default function Clients({
                       <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-[12.5px] font-medium text-[#111] truncate">{c.name}</div>
-                          <div className="text-[11px] text-[#888]">{c.region || '—'}</div>
+                          <div className="text-[11px] text-[#888]">{branchNameOfClient(c)}</div>
                         </div>
                         <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${p.cls}`}>{p.label}</span>
                       </div>
@@ -1946,7 +1952,7 @@ export default function Clients({
                 <select value={newManagerForm.region} onChange={e => setNewManagerForm(f => ({ ...f, region: e.target.value }))}
                   className="w-full text-[13px] px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-400 bg-white">
                   <option value="">—</option>
-                  {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                  {branchOptions(branches).map(o => <option key={o.id} value={o.label}>{o.label}</option>)}
                 </select>
               </div>
             </div>

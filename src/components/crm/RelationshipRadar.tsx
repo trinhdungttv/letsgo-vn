@@ -7,6 +7,7 @@ import { CONTACT_TYPES } from '../../lib/constants';
 import { getOrCreatePipelineEntryForClient } from '../../lib/pipelineHelpers';
 import { CompanyProfileModal } from './CompanyProfileModal';
 import type { Client, CSKHLog, CRMPipelineEntry, CRMProduct, Contact } from '../../lib/types';
+import { useBranchLookup } from '../../hooks/useBranchLookup';
 
 type Tier = 'a' | 'b';
 type Status = 'red' | 'yellow' | 'green';
@@ -88,6 +89,7 @@ interface Props {
 }
 
 export function RelationshipRadar({ clients, contacts, products, toast }: Props) {
+  const { labelOf } = useBranchLookup();
   const { user } = useAuth();
   const [logs, setLogs] = useState<CSKHLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -308,7 +310,7 @@ export function RelationshipRadar({ clients, contacts, products, toast }: Props)
                     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${STATUS_CHIP[st]}`}>{it.days >= 999 ? 'Chưa từng' : `${it.days}d`}</span>
                   </div>
                   <div className="text-[9.5px] text-[#999] truncate">
-                    {it.lastLabel} · {it.client.region || '—'} · {it.client.crm_owner || it.client.manager || '—'}
+                    {it.lastLabel} · {labelOf(it.client)} · {it.client.crm_owner || it.client.manager || '—'}
                   </div>
                   <div className="h-1 rounded bg-[#eee] overflow-hidden">
                     <div className={`h-full rounded ${STATUS_FILL[st]}`} style={{ width: `${pct}%` }} />
@@ -321,7 +323,7 @@ export function RelationshipRadar({ clients, contacts, products, toast }: Props)
                     ) : (
                       <span className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#ddd]"><Phone size={10} /></span>
                     )}
-                    <span className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888]" title={it.client.region || ''}>
+                    <span className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888]" title={labelOf(it.client)}>
                       <MapPin size={10} />
                     </span>
                     <button

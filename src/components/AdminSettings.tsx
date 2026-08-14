@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Plus, Pencil, Trash2, Check, AlertTriangle } from 'lucide-react';
 import type { Region, Manager, Client, Branch, PayrollStaff } from '../lib/types';
+import { branchOptions, branchOf, resolveBranchByLegacyText } from '../lib/branchRef';
 import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -110,8 +111,10 @@ export default function AdminSettings({
     setDeletePassword('');
   };
 
-  const affectedClients = deletingRegion ? clients.filter(c => c.region === deletingRegion.name) : [];
-  const linkedBranch = deletingRegion ? branches.find(b => b.region === deletingRegion.name) : undefined;
+  // 'regions' là bảng tên chi nhánh CŨ, đang thoái trào. Đối chiếu qua resolver để
+  // vẫn bắt đúng khách hàng/chi nhánh liên quan dù tên cũ hay mới.
+  const linkedBranch = deletingRegion ? resolveBranchByLegacyText(deletingRegion.name, branches) ?? undefined : undefined;
+  const affectedClients = linkedBranch ? clients.filter(c => branchOf(c, branches)?.id === linkedBranch.id) : [];
 
   const confirmDeleteRegion = async () => {
     if (!deletingRegion) return;
@@ -218,7 +221,7 @@ export default function AdminSettings({
                   <select value={newMgr.region || ''} onChange={e => setNewMgr(f => ({ ...f, region: e.target.value }))}
                     className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">— Chọn chi nhánh —</option>
-                    {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                    {branchOptions(branches).map(o => <option key={o.id} value={o.label}>{o.label}</option>)}
                   </select>
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setShowAddMgr(false)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>
@@ -244,7 +247,7 @@ export default function AdminSettings({
                         <select value={editingMgr.region || ''} onChange={e => setEditingMgr({ ...editingMgr, region: e.target.value })}
                           className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400">
                           <option value="">— Chọn chi nhánh —</option>
-                          {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
+                          {branchOptions(branches).map(o => <option key={o.id} value={o.label}>{o.label}</option>)}
                         </select>
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => setEditingMgr(null)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">Hủy</button>

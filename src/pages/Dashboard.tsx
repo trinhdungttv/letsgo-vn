@@ -11,6 +11,7 @@ import {
   ChevronDown, X, Phone, Mail, SlidersHorizontal,
 } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry } from '../lib/types';
+import { branchOf } from '../lib/branchRef';
 import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -151,7 +152,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     return map;
   }, [marketZones]);
 
-  const branchNames = useMemo(() => branches.map(b => ({ label: b.name, region: b.region })), [branches]);
+  const branchNames = useMemo(() => branches.map(b => ({ label: b.name, region: b.name })), [branches]);
   const managers = useMemo(() => allManagers.map(m => m.name).sort(), [allManagers]);
 
   // Filtered clients based on global scope (exclude suspended)
@@ -166,8 +167,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     if (scopeMode === 'branch') {
       const br = branches.find(b => b.name === selectedScope);
       if (!br) return base;
-      const matchValues = new Set([br.name, br.region, br.short_name].filter(Boolean));
-      return base.filter(c => c.region && matchValues.has(c.region));
+      return base.filter(c => branchOf(c, branches)?.id === br.id);
     }
     return base.filter(c => c.manager === selectedScope);
   }, [clients, scopeMode, selectedScope, zonesByProvince, branches]);
@@ -248,12 +248,11 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     ? ((totalWorkers - monthWorkers.prev) / monthWorkers.prev) * 100
     : null;
 
-  // Map client region → branch name
+  // Khách hàng → tên chi nhánh chuẩn
   const clientToBranch = useMemo(() => {
     const map: Record<string, string> = {};
     for (const c of clients) {
-      if (!c.region) continue;
-      const br = branches.find(b => [b.name, b.region, b.short_name].filter(Boolean).includes(c.region!));
+      const br = branchOf(c, branches);
       if (br) map[c.id] = br.name;
     }
     return map;

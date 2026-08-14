@@ -5,7 +5,8 @@ import { formatCurrency } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import { useRegions } from '../hooks/useRegions';
+import { useBranchData } from '../hooks/useBranchData';
+import { branchOptions } from '../lib/branchRef';
 import { useManagers } from '../hooks/useManagers';
 import type { Client, CRMProduct, CRMDeal, Contact } from '../lib/types';
 
@@ -75,14 +76,14 @@ interface AddDealForm {
 
 interface ActivateForm {
   companyName: string;
-  region: string;
+  branchId: string;
   manager: string;
 }
 
 export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, onSelectDeal, onDealActivate, toast }: CRMBoardProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { regions } = useRegions();
+  const { branches } = useBranchData();
   const { managers } = useManagers();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -91,7 +92,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activatingDeal, setActivatingDeal] = useState<CRMDeal | null>(null);
-  const [activateForm, setActivateForm] = useState<ActivateForm>({ companyName: '', region: '', manager: '' });
+  const [activateForm, setActivateForm] = useState<ActivateForm>({ companyName: '', branchId: '', manager: '' });
   const [isActivating, setIsActivating] = useState(false);
 
   const [settings, setSettings] = useState<PipelineSettings>(loadSettings);
@@ -157,7 +158,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
     setActivatingDeal(deal);
     setActivateForm({
       companyName: deal.title,
-      region: '',
+      branchId: '',
       manager: deal.owner || '',
     });
   };
@@ -171,7 +172,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
     try {
       const { data, error } = await supabase.from('clients').insert({
         name: activateForm.companyName.trim(),
-        region: activateForm.region.trim() || null,
+        branch_id: activateForm.branchId || null,
         manager: activateForm.manager.trim() || null,
         client_type: 'active',
         status: 'ok',
@@ -454,14 +455,14 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Khu vực</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Chi nhánh</label>
                 <select
-                  value={activateForm.region}
-                  onChange={e => setActivateForm(f => ({ ...f, region: e.target.value }))}
+                  value={activateForm.branchId}
+                  onChange={e => setActivateForm(f => ({ ...f, branchId: e.target.value }))}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value="">Chọn khu vực...</option>
-                  {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                  <option value="">Chọn chi nhánh...</option>
+                  {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
               </div>
               <div>

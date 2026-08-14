@@ -8,7 +8,8 @@ import type { CRMPipelineEntry, CRMDeal, CRMProduct, Contact } from '../lib/type
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import { useRegions } from '../hooks/useRegions';
+import { useBranchData } from '../hooks/useBranchData';
+import { branchOptions, branchOf } from '../lib/branchRef';
 import { CompanyProfileModal, STAGES, RATING_CONFIG } from '../components/crm/CompanyProfileModal';
 
 interface CRMPipelineProps {
@@ -42,7 +43,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
-  const [modalForm, setModalForm] = useState({ name: '', region: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
+  const [modalForm, setModalForm] = useState({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -52,21 +53,8 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const [dealForm, setDealForm] = useState<AddDealForm>({ title: '', contactId: '', productId: '', value: 0, stage: 'new', owner: '', expectedClose: '' });
   const [isSubmittingDeal, setIsSubmittingDeal] = useState(false);
 
-  const { regions, add: addRegion } = useRegions();
-  const [showAddRegion, setShowAddRegion] = useState(false);
-  const [newRegionName, setNewRegionName] = useState('');
+  const { branches } = useBranchData();
 
-  const handleAddRegion = async () => {
-    const name = newRegionName.trim();
-    if (!name) return;
-    try {
-      await addRegion(name);
-      setModalForm(f => ({ ...f, region: name }));
-      setNewRegionName('');
-      setShowAddRegion(false);
-      toast('Đã thêm khu vực mới');
-    } catch (e: any) { toast('Lỗi: ' + e.message); }
-  };
 
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
 
@@ -116,7 +104,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
     try {
       const { data, error } = await supabase.from('crm_pipeline').insert({
-        company_name: modalForm.name, region: modalForm.region || null,
+        company_name: modalForm.name, branch_id: modalForm.branchId || null,
         worker_estimate: parseInt(modalForm.estimate) || null,
         stage: 'tiem-nang', rating: modalForm.rating,
         contact_id: modalForm.contactId || null,
@@ -127,14 +115,14 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
       if (error) throw error;
       // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
       await supabase.from('market_leads').insert({
-        company_name: modalForm.name, region: modalForm.region || null,
+        company_name: modalForm.name, region: branches.find(b => b.id === modalForm.branchId)?.name ?? null,
         workers_needed: parseInt(modalForm.estimate) || 0,
         source: 'CRM Pipeline', status: 'Chưa LH',
         suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }],
         crm_id: data.id,
       });
       await onRefresh();
-      setModalForm({ name: '', region: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
+      setModalForm({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
       setShowModal(false);
       toast('Đã thêm vào pipeline!');
       await logActivity({
@@ -249,7 +237,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                           <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${rc.dot}`} title={rc.label} />
                         </div>
                         <div className="text-[11px] text-[#888] truncate">
-                          {entry.region || ''}
+                          {branchOf(entry, branches)?.name ?? entry.region ?? ''}
                           {entry.worker_estimate ? ` · ~${entry.worker_estimate} LĐ` : ''}
                         </div>
                       </div>
@@ -273,7 +261,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                 {sec.items.slice(0, 3).map(e => (
                   <button key={e.id} onClick={() => setProfileEntry(e)}
                     className="w-full text-left text-[12px] text-[#555] hover:text-[#111] transition truncate py-0.5">
-                    {e.company_name}{e.region ? ` · ${e.region}` : ''}
+                    {e.company_name}{(() => { const n = branchOf(e, branches)?.name ?? e.region; return n ? ` · ${n}` : ''; })()}
                   </button>
                 ))}
                 {sec.items.length > 3 && <div className="text-[11px] text-[#bbb]">+{sec.items.length - 3} khác</div>}
@@ -295,34 +283,12 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                   className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[12px] text-[#666] font-medium">Khu vực/KCN</label>
-                <div className="flex items-center gap-1.5">
-                  <select value={modalForm.region} onChange={e => setModalForm(f => ({ ...f, region: e.target.value }))}
-                    className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                    <option value="">Chọn khu vực</option>
-                    {!regions.some(r => r.name === modalForm.region) && modalForm.region && (
-                      <option value={modalForm.region}>{modalForm.region}</option>
-                    )}
-                    {regions.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-                  </select>
-                  <button type="button" onClick={() => setShowAddRegion(s => !s)}
-                    title="Thêm khu vực mới"
-                    className="shrink-0 px-2.5 py-1.5 border border-gray-300 rounded-lg text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition">
-                    <Plus size={14} />
-                  </button>
-                </div>
-                {showAddRegion && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <input value={newRegionName} onChange={e => setNewRegionName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddRegion())}
-                      placeholder="Tên khu vực/KCN mới"
-                      className="flex-1 text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" autoFocus />
-                    <button type="button" onClick={handleAddRegion}
-                      className="shrink-0 px-3 py-1.5 bg-[#1D4ED8] text-white rounded-lg text-[12px] font-medium hover:bg-[#1E40AF] transition">
-                      Thêm
-                    </button>
-                  </div>
-                )}
+                <label className="text-[12px] text-[#666] font-medium">Chi nhánh</label>
+                <select value={modalForm.branchId} onChange={e => setModalForm(f => ({ ...f, branchId: e.target.value }))}
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  <option value="">Chọn chi nhánh</option>
+                  {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">

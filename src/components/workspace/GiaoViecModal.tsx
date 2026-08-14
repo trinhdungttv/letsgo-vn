@@ -3,16 +3,18 @@ import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { queueGoogleSync } from '../../lib/googleSync'
-import type { Client, WorkTask, TaskPriority } from '../../lib/types'
+import type { Client, Branch, WorkTask, TaskPriority } from '../../lib/types'
+import { branchOf } from '../../lib/branchRef'
 
 interface Props {
   clients: Client[]
+  branches: Branch[]
   toast: (msg: string) => void
   onClose: () => void
   onCreated?: (task: WorkTask) => void
 }
 
-export function GiaoViecModal({ clients, toast, onClose, onCreated }: Props) {
+export function GiaoViecModal({ clients, branches, toast, onClose, onCreated }: Props) {
   const { user, token } = useAuth()
   const [title, setTitle] = useState('')
   const [clientId, setClientId] = useState('')
@@ -38,7 +40,8 @@ export function GiaoViecModal({ clients, toast, onClose, onCreated }: Props) {
       priority,
       notes: notes.trim() || null,
       status: 'pending',
-      kcn: clientId ? (activeClients.find(c => c.id === clientId)?.industrial_zones?.[0] || null) : null,
+      // Chi nhánh suy từ khách hàng — cùng quy tắc với form "Việc của tôi".
+      branch_id: branchOf(clientId ? activeClients.find(x => x.id === clientId) : null, branches)?.id ?? null,
     }
     const { data, error } = await supabase.from('work_tasks').insert(payload).select().single()
     setSaving(false)

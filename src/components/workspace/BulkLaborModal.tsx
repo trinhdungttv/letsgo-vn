@@ -7,6 +7,7 @@ import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, p
 import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
 import { isActiveInMonth, suspensionLabel, formatSuspensionDate } from '../../utils/suspension'
+import { branchOf } from '../../lib/branchRef'
 
 interface Props {
   clients: Client[]
@@ -59,22 +60,17 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
   // (branches.region) nên khi lọc phải chấp nhận cả 2 giá trị.
   const regionNames = useMemo(() => [ALL_OPTION, ...branches.map(b => b.name)], [branches])
 
-  const bulkRegionSet = useMemo(() => {
-    const set = new Set(bulkRegions)
-    for (const b of branches) {
-      if (bulkRegions.includes(b.name) || (b.region && bulkRegions.includes(b.region))) {
-        set.add(b.name)
-        if (b.region) set.add(b.region)
-      }
-    }
-    return set
+  // Lọc theo TÊN CHUẨN của chi nhánh (branches.name).
+  const matchesBranchFilter = useMemo(() => {
+    const sel = new Set(bulkRegions)
+    return (c: Client) => sel.has(ALL_OPTION) || sel.has(branchOf(c, branches)?.name ?? '')
   }, [branches, bulkRegions])
 
   const filteredClients = useMemo(() =>
     activeClients
-      .filter(c => bulkRegions.includes(ALL_OPTION) || bulkRegionSet.has(c.region || ''))
+      .filter(matchesBranchFilter)
       .filter(c => !bulkSearch || c.name.toLowerCase().includes(bulkSearch.toLowerCase())),
-    [activeClients, bulkRegions, bulkRegionSet, bulkSearch]
+    [activeClients, matchesBranchFilter, bulkSearch]
   )
 
   async function loadWeekData(week: string) {

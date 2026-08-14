@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
-  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, RefreshCw, History, Pencil, X,
+  Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, History, Pencil, X,
   Filter, Check, Settings2,
 } from 'lucide-react';
 import { useBranchData } from '../hooks/useBranchData';
 import { useBranchStaffs } from '../hooks/useBranchStaffs';
 import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
 import { useManagers } from '../hooks/useManagers';
-import { useRegions } from '../hooks/useRegions';
 import { useOverheadCategories } from '../hooks/useOverheadCategories';
 import { useHashSubRoute } from '../hooks/useHashSubRoute';
 import BranchZones from '../components/branches/BranchZones';
@@ -18,6 +17,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import type { Client, Branch, BranchStatus, BranchTypeHistory, ProjectPnl, ProjectPnlCost, BranchOverhead, ClientManagerHistory, LaborHistoryEntry } from '../lib/types';
+import { branchOf, resolveBranchByLegacyText } from '../lib/branchRef';
 import { fmtTrieu, daysUntil, monthLabel, shiftMonth, getBranchTypeForMonth, calcPnl } from '../lib/format';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 
@@ -73,22 +73,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     toggleDefault: toggleOverheadCatDefault, updateCostType: updateOverheadCatCostType,
     updateIcon: updateOverheadCatIcon, reorder: reorderOverheadCats,
   } = useOverheadCategories();
-  const { regions, add: addRegion, remove: removeRegion } = useRegions();
   const { provinces: PROVINCES, addProvince } = useProvinces();
-  const regionNames = regions.map(r => r.name).filter(n => n !== 'Tất cả');
   const managerNames = managers.map(m => m.name);
-
-  // Ensure a "Khu vực phụ trách" name exists in the regions table (creates it if new),
-  // so it immediately shows up as a "Chi nhánh" filter option on the Clients page too.
-  const ensureRegion = async (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed || regionNames.includes(trimmed)) return;
-    try {
-      await addRegion(trimmed);
-    } catch (e) {
-      toast('Lỗi tạo khu vực: ' + errMsg(e));
-    }
-  };
 
   // Resolve a manager by name, creating a new manager record if it doesn't exist yet
   // so new people can be assigned without going through a separate "Manager" admin page.
@@ -192,8 +178,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       }
       setAllStaffSalary(salaryMap);
 
-      const tieredBranchRegions = branches.filter(b => b.khoan_type === 'tiered').map(b => b.region).filter(Boolean) as string[];
-      const tieredClientIds = tieredBranchRegions.length ? clients.filter(c => c.region && tieredBranchRegions.includes(c.region)).map(c => c.id) : [];
+      const tieredBranchIds = new Set(branches.filter(b => b.khoan_type === 'tiered').map(b => b.id));
+      const tieredClientIds = tieredBranchIds.size
+        ? clients.filter(c => { const br = branchOf(c, branches); return br && tieredBranchIds.has(br.id); }).map(c => c.id)
+        : [];
       if (tieredClientIds.length) {
         const curMonthNum = parseInt(month.split('-')[1], 10);
         const prefix = `T${curMonthNum}W`;
@@ -267,7 +255,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   // Open a specific branch when navigated here from another page (e.g. Dashboard region table)
   useEffect(() => {
     if (!focusRegion || !branches.length) return;
-    const match = branches.find(b => b.region === focusRegion);
+    const match = resolveBranchByLegacyText(focusRegion, branches);
     if (match) setSelectedId(match.id);
     onFocusConsumed?.();
   }, [focusRegion, branches, onFocusConsumed]);
@@ -342,11 +330,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const saveProfile = async () => {
     if (!selected) return;
-    const region = (form.region ?? '').trim();
-    if (region && branches.some(b => b.id !== selected.id && b.region === region)) {
-      toast(`"${region}" đã được liên kết với chi nhánh khác — vui lòng đặt tên khu vực phụ trách khác`);
-      return;
-    }
     try {
       const mgr = await resolveManager(form.manager_name ?? '');
       // Dán link Google Maps → tự sinh toạ độ; xoá link (khi trước đó có) → xoá toạ độ đi kèm
@@ -357,7 +340,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         short_name: form.short_name ?? null,
         manager_id: mgr.id,
         manager_name: mgr.name,
-        region: form.region ?? null,
         location: form.location ?? null,
         map_link: form.map_link ?? null,
         ...(isValidVnLatLng(mapPos)
@@ -373,9 +355,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         difficulties: form.difficulties ?? null,
         opportunities: form.opportunities ?? null,
       });
-      if (form.region) await ensureRegion(form.region);
-      if (user && form.region) {
-        await recordBranchUpdateSession(user.id, form.region, {
+      // Phiên cập nhật ghi theo TÊN CHUẨN của chi nhánh (trước đây ghi theo tên cũ).
+      const sessionName = form.name || selected.name;
+      if (user && sessionName) {
+        await recordBranchUpdateSession(user.id, sessionName, {
           status_note: form.status_note ?? null,
           difficulties: form.difficulties ?? null,
           opportunities: form.opportunities ?? null,
@@ -394,85 +377,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     [branches]
   );
 
-  const missingRegions = useMemo(
-    () => regionNames.filter(name => !branches.some(b => b.region === name)),
-    [regionNames, branches]
-  );
-
-  const syncFromRegions = async (names: string[], silent: boolean) => {
-    try {
-      for (const name of names) {
-        const parts = name.split(' - ');
-        const shortName = parts.length > 1 ? parts[0].trim() : name.slice(0, 2).toUpperCase();
-        const mgrName = parts.length > 1 ? parts[1].trim() : null;
-        const mgr = mgrName ? managers.find(m => m.name === mgrName) : undefined;
-        await addBranch({
-          name,
-          short_name: shortName,
-          manager_id: mgr?.id || null,
-          manager_name: mgr?.name || mgrName,
-          manager_avatar_url: null,
-          region: name,
-          location: null,
-          map_link: null,
-          address: null,
-          phone: null,
-          email: null,
-          established_date: null,
-          status: 'active',
-          branch_type: 'contracted',
-          notes: null,
-          status_note: null,
-          difficulties: null,
-          opportunities: null,
-        });
-      }
-      if (!silent) toast(`Đã thêm ${names.length} chi nhánh từ Khu vực`);
-    } catch (e) {
-      toast('Lỗi: ' + errMsg(e));
-    }
-  };
-
-  const handleSyncFromRegions = () => {
-    if (!missingRegions.length) { toast('Tất cả khu vực đã có chi nhánh tương ứng'); return; }
-    syncFromRegions(missingRegions, false);
-  };
-
-  // Auto-create a branch whenever a new "Chi nhánh" region is added on the Clients page,
-  // so the two lists never drift apart without requiring a manual sync click.
-  const autoSyncedRef = useRef(false);
-  useEffect(() => {
-    if (autoSyncedRef.current) return;
-    if (!regionNames.length || !branches.length) return;
-    if (!missingRegions.length) return;
-    autoSyncedRef.current = true;
-    syncFromRegions(missingRegions, true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingRegions, regionNames, branches]);
-
-  // Đồng bộ region cũ trên clients → region mới theo tên chi nhánh
-  const [syncingRegions, setSyncingRegions] = useState(false);
-  const handleSyncClientRegions = async () => {
-    if (!branches.length || !clients.length) return;
-    setSyncingRegions(true);
-    let updated = 0;
-    for (const c of clients) {
-      if (!c.region) continue;
-      // Tìm branch match theo region cũ (name / region / short_name)
-      const br = branches.find(b => [b.name, b.region, b.short_name].filter(Boolean).includes(c.region!));
-      if (!br || !br.region) continue;
-      if (c.region === br.region) continue; // đã đúng rồi
-      await supabase.from('clients').update({ region: br.region }).eq('id', c.id);
-      updated++;
-    }
-    // Cũng xoá dashboard_tasks cũ vì client_region đã lỗi thời
-    if (updated > 0) {
-      await supabase.from('dashboard_tasks').delete().neq('id', '');
-    }
-    setSyncingRegions(false);
-    toast(updated > 0 ? `Đã cập nhật ${updated} khách hàng` : 'Tất cả region đã đúng');
-    if (updated > 0) window.location.reload();
-  };
+  // ĐÃ GỠ: syncFromRegions / handleSyncClientRegions.
+  // Hai hàm này là nguồn sống của tên chi nhánh cũ — một hàm tự tạo chi nhánh từ
+  // bảng `regions` (danh sách tên cũ) và gán branches.region = tên cũ; hàm kia ghi
+  // ngược tên cũ vào clients.region rồi xoá sạch dashboard_tasks. Từ migration 138
+  // khách hàng nối với chi nhánh bằng branch_id nên cả hai đều thừa và có hại.
 
   const handleDeleteBranch = (b: Branch) => {
     setDeleteTarget(b);
@@ -499,20 +408,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         description: `Xóa chi nhánh "${deleteTarget.name}"`,
         oldData: deleteTarget,
       });
-      // Also remove the linked "Khu vực phụ trách" region entry, otherwise the
-      // auto-sync effect will detect it as a missing region and re-create the branch.
-      if (deleteTarget.region) {
-        const linkedRegion = regions.find(r => r.name === deleteTarget.region);
-        if (linkedRegion) {
-          await removeRegion(linkedRegion.id);
-          await logActivity({
-            user, action: 'delete', table: 'regions', recordId: linkedRegion.id,
-            description: `Xóa khu vực phụ trách "${linkedRegion.name}" (theo chi nhánh "${deleteTarget.name}")`,
-            oldData: linkedRegion,
-          });
-        }
-      }
-      toast('Đã xoá chi nhánh');
       setDeleteTarget(null);
       setDeletePassword('');
     } catch (e) {
@@ -530,11 +425,22 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
     return map;
   }, [laborByClient]);
 
+  // projects_pnl và branch_overhead vẫn còn cột text cũ (branch_manager). Ưu tiên
+  // branch_id; chỉ dò theo text khi gặp dòng chưa kịp backfill.
+  const pnlBranchId = useCallback(
+    (p: ProjectPnl) => p.branch_id ?? resolveBranchByLegacyText(p.branch_manager, branches)?.id ?? null,
+    [branches]
+  );
+  const ohBranchId = useCallback(
+    (o: BranchOverhead) => o.branch_id ?? resolveBranchByLegacyText(o.branch_manager, branches)?.id ?? null,
+    [branches]
+  );
+
   const branchPeakWorkers = useMemo(() => {
     const map: Record<string, number> = {};
     for (const b of branches) {
-      if (b.khoan_type !== 'tiered' || !b.region) continue;
-      const branchClientIds = clients.filter(c => c.region === b.region).map(c => c.id);
+      if (b.khoan_type !== 'tiered') continue;
+      const branchClientIds = clients.filter(c => branchOf(c, branches)?.id === b.id).map(c => c.id);
       const weekTotals: Record<string, number> = {};
       for (const cid of branchClientIds) {
         for (const e of (laborByClient[cid] || [])) {
@@ -558,17 +464,16 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       alerts: string[];
     }> = {};
     for (const b of branches) {
-      const matchValues = new Set([b.name, b.region, b.short_name].filter(Boolean));
-      const branchClients = clients.filter(c => c.region && matchValues.has(c.region));
+      const branchClients = clients.filter(c => branchOf(c, branches)?.id === b.id);
       const workers = branchClients.filter(c => c.cooperation_status !== 'suspended').reduce((s, c) => s + (c.current_workers || 0), 0);
-      const projects = projectsPnl.filter(p => p.month === month && matchValues.has(p.branch_manager || ''));
+      const projects = projectsPnl.filter(p => p.month === month && pnlBranchId(p) === b.id);
       const revenue = projects.reduce((s, p) => s + (p.revenue || 0), 0);
       const lnCn = projects.reduce((s, p) => {
         const costs = pnlCostsMap[p.id] || [];
         const r = calcPnl(p, costs);
         return s + r.cnP;
       }, 0);
-      const overheadTotal = overhead.filter(o => o.month === month && matchValues.has(o.branch_manager)).reduce((s, o) => s + (o.value || 0), 0);
+      const overheadTotal = overhead.filter(o => o.month === month && ohBranchId(o) === b.id).reduce((s, o) => s + (o.value || 0), 0);
       const staffSalary = allStaffSalary[b.id] || 0;
       const lnRong = lnCn - overheadTotal - staffSalary;
       const alerts: string[] = [];
@@ -585,14 +490,13 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const prevBranchLnRong = useMemo(() => {
     const map: Record<string, number> = {};
     for (const b of branches) {
-      const matchValues = new Set([b.name, b.region, b.short_name].filter(Boolean));
-      const projects = prevProjectsPnl.filter(p => matchValues.has(p.branch_manager || ''));
+      const projects = prevProjectsPnl.filter(p => pnlBranchId(p) === b.id);
       const lnCn = projects.reduce((s, p) => {
         const costs = pnlCostsMap[p.id] || [];
         const r = calcPnl(p, costs);
         return s + r.cnP;
       }, 0);
-      const oh = prevOverhead.filter(o => matchValues.has(o.branch_manager)).reduce((s, o) => s + (o.value || 0), 0);
+      const oh = prevOverhead.filter(o => ohBranchId(o) === b.id).reduce((s, o) => s + (o.value || 0), 0);
       const staffSalary = allStaffSalary[b.id] || 0;
       map[b.id] = lnCn - oh - staffSalary;
     }
@@ -653,9 +557,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
     return (
       <div className="space-y-3">
-        <datalist id="region-options">
-          {regionNames.map(r => <option key={r} value={r} />)}
-        </datalist>
         <datalist id="location-options">
           {locationNames.map(l => <option key={l} value={l} />)}
         </datalist>
@@ -838,9 +739,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       </InlineField>
                       <InlineField label="Trưởng VP - CN">
                         <input value={form.manager_name || ''} onChange={e => setF({ manager_name: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" list="manager-options" placeholder="Chọn tên" />
-                      </InlineField>
-                      <InlineField label="Khu vực (liên kết KH)">
-                        <input value={form.region || ''} onChange={e => setF({ region: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" list="region-options" />
                       </InlineField>
                     </div>
                     {/* Row 2: Status + address */}
@@ -1946,9 +1844,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   // ════════════════════════════════════════════════════════════════
   return (
     <div className="space-y-3">
-      <datalist id="region-options">
-        {regionNames.map(r => <option key={r} value={r} />)}
-      </datalist>
       <datalist id="location-options">
         {locationNames.map(l => <option key={l} value={l} />)}
       </datalist>
@@ -1979,20 +1874,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               </button>
             ))}
           </div>
-          {missingRegions.length > 0 && (
-            <button onClick={handleSyncFromRegions} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition">
-              <RefreshCw size={12} /> Đồng bộ ({missingRegions.length})
-            </button>
-          )}
-          <button
-            onClick={handleSyncClientRegions}
-            disabled={syncingRegions}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 transition"
-            title="Cập nhật region cũ trên KH theo tên chi nhánh hiện tại"
-          >
-            <RefreshCw size={12} className={syncingRegions ? 'animate-spin' : ''} />
-            {syncingRegions ? 'Đang xử lý...' : 'Sync region KH'}
-          </button>
           <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
             <Plus size={12} /> Thêm CN
           </button>
@@ -2007,7 +1888,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         provinces={PROVINCES}
         addBranch={addBranch}
         addManager={addManager}
-        ensureRegion={ensureRegion}
         addProvince={addProvince}
         toast={toast}
         onCreated={created => setSelectedId(created.id)}
@@ -2209,7 +2089,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
                 <th className="text-left font-medium px-3.5 py-2">Chi nhánh</th>
                 <th className="text-left font-medium px-3 py-2">Địa danh</th>
-                <th className="text-left font-medium px-3 py-2">Khu vực</th>
                 <th className="text-left font-medium px-3 py-2">Quản lý</th>
                 <th className="text-right font-medium px-3 py-2">KH</th>
                 <th className="text-right font-medium px-3 py-2">Lao động</th>
@@ -2229,7 +2108,6 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                         </a>
                       ) : (b.location || '—')}
                     </td>
-                    <td className="px-3 py-2 text-[#666]">{b.region || '—'}</td>
                     <td className="px-3 py-2 text-[#666]">
                       <div className="flex items-center gap-1.5">
                         {renderAvatar(b, 18)}

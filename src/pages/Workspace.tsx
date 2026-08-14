@@ -25,6 +25,7 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import type { Client, FinanceRecord, CRMPipelineEntry, CRMProduct, Page, KCNSummary, Branch } from '../lib/types';
 import { ROLE_LABELS, CRM_STAGES } from '../lib/constants';
 import { formatDate, daysUntil } from '../lib/format';
+import { branchOf, resolveBranchByLegacyText } from '../lib/branchRef';
 
 interface WorkspaceProps {
   clients: Client[];
@@ -87,6 +88,9 @@ function RailCard({ title, icon, count, action, children }: {
 export default function Workspace({ clients, pipeline, products, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user, token } = useAuth();
   const { branches, updateBranch } = useBranchData();
+
+  // Việc tạo tự động (tái ký HĐ) gắn luôn chi nhánh để khỏi phải vào sửa tay từng việc.
+  const branchIdOfClient = (c: Client) => branchOf(c, branches)?.id ?? null;
 
   const [layout, setLayout] = usePersistedState<WorkspaceLayout>('lgvn_workspace_layout_v2', DEFAULT_LAYOUT);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -154,7 +158,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       task_type: 'Tái ký HĐ',
       due_date: todayStr(),
       priority: daysLeft !== null && daysLeft <= 0 ? 'high' : 'medium',
-      kcn: client.industrial_zones?.[0] || null,
+      branch_id: branchIdOfClient(client),
       status: 'in_progress',
       doc_status: 'dang_soan',
     });
@@ -182,7 +186,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
         task_type: 'Tái ký HĐ',
         due_date: today,
         priority: s.daysLeft <= 0 ? 'high' : 'medium',
-        kcn: s.client.industrial_zones?.[0] || null,
+        branch_id: branchIdOfClient(s.client),
         status: 'in_progress',
         doc_status: 'dang_soan',
       }));
@@ -205,11 +209,16 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [panelRecordDate, setPanelRecordDate] = useState(todayStr());
   const [panelSaving, setPanelSaving] = useState(false);
 
-  // Lịch sử phiên được lưu với target_name = `Chi nhánh ${region}`; fallback sang name khi chưa có region
-  const branchKey = (b: Branch) => b.region || b.name;
+  // morning_priorities.target_name = `Chi nhánh ${tên}`. Các phiên GHI TRƯỚC ĐÂY dùng
+  // tên chi nhánh cũ (branches.region), phiên mới dùng tên chuẩn (branches.name). Ta ĐỌC
+  // cả hai key rồi lấy mốc mới nhất — lịch sử cũ vẫn tính, và không phải viết lại bảng
+  // nhật ký. Chỉ lúc GHI mới dùng tên chuẩn, nên key cũ tự tắt dần.
+  const branchKey = (b: Branch) => b.name;
+  const branchKeysLegacy = (b: Branch) =>
+    [b.name, b.region].filter(Boolean).map(n => `Chi nhánh ${n}`) as string[];
 
   useEffect(() => {
-    const names = branches.map(b => `Chi nhánh ${branchKey(b)}`);
+    const names = branches.flatMap(branchKeysLegacy);
     if (!names.length) return;
     supabase.from('morning_priorities').select('target_name, priority_date').in('target_name', names)
       .order('priority_date', { ascending: false })
@@ -226,7 +235,12 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   }, [branches]);
 
   const visitSuggests = useMemo(() => branches.map(b => {
-    const last = branchActivity[`Chi nhánh ${branchKey(b)}`];
+    // Mốc ghé gần nhất = mới nhất giữa key tên chuẩn và key tên cũ.
+    const last = branchKeysLegacy(b)
+      .map(k => branchActivity[k])
+      .filter(Boolean)
+      .sort()
+      .pop();
     const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null;
     return { branch: b, daysSince };
   }).sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999)),
@@ -322,11 +336,13 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       .sort((a, b) => a.daysLeft - b.daysLeft),
   [clients]);
 
-  const branchExpiring = useMemo(() =>
-    branchRegion
-      ? expiringList30.filter(x => x.client.region === branchRegion)
-      : [],
-  [expiringList30, branchRegion]);
+  // branchRegion lấy từ managers.region (text — có thể là tên cũ hoặc tên chuẩn).
+  // Quy về chi nhánh rồi mới lọc khách hàng theo branch_id.
+  const branchExpiring = useMemo(() => {
+    const br = resolveBranchByLegacyText(branchRegion, branches);
+    if (!br) return [];
+    return expiringList30.filter(x => branchOf(x.client, branches)?.id === br.id);
+  }, [expiringList30, branchRegion, branches]);
 
   const adjustFont = (delta: number) =>
     setLayout(prev => ({ ...prev, fontScale: Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round((prev.fontScale + delta) * 100) / 100)) }));
@@ -526,6 +542,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
               clients={clients}
               pipelineEntries={pipeline}
               products={products}
+              branches={branches}
               onClientUpdate={onClientUpdate}
               toast={toast}
               onStatsChange={handleStats}
@@ -737,6 +754,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       {showGiaoViec && (
         <GiaoViecModal
           clients={clients}
+          branches={branches}
           toast={toast}
           onClose={() => setShowGiaoViec(false)}
           onCreated={() => setRefreshToken(t => t + 1)}
