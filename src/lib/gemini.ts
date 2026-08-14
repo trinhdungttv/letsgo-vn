@@ -56,7 +56,6 @@ export function buildWorkspaceContext(clients: Client[], finance: FinanceRecord[
       const fin = monthFinance.find(f => f.client_id === c.id);
       return [
         `- ${c.name}`,
-        `khu vực: ${c.region || '—'}`,
         `quản lý: ${c.manager || '—'}`,
         `trạng thái: ${c.status}`,
         `lao động hiện tại: ${c.current_workers ?? 0}`,

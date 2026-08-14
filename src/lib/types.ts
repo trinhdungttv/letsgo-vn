@@ -31,6 +31,10 @@ export type ServiceType = 'leasing' | 'recruitment' | 'hoh';
 export interface Client {
   id: string;
   name: string;
+  /** Chi nhánh phụ trách — nguồn dữ liệu duy nhất. Dùng branchOfClient() trong lib/branchRef. */
+  branch_id: string | null;
+  /** LỖI THỜI — tên chi nhánh cũ dạng text. Chỉ còn để đối chiếu dữ liệu chưa backfill.
+   *  Không đọc trường này để hiển thị: tên chuẩn nằm ở branches.name. */
   region: string | null;
   manager: string | null;
   industrial_zones: string[];
@@ -96,6 +100,12 @@ export interface Client {
   payment_cb_from?: number;
   payment_cb_to?: number;
   invoice_date?: string;
+  // Kỳ TT Thực Tế — ngày thanh toán thực tế áp dụng, có thể khác Kỳ TT Trên HĐ ở trên.
+  // NULL = chưa cấu hình riêng, dùng lại Kỳ TT Trên HĐ (payment_group/payment_days/...).
+  payment_actual_mode?: 'days' | 'fixed' | null;
+  payment_actual_days?: number | null;
+  payment_actual_fixed_day?: number | null;
+  payment_actual_cutoff?: number | null;
   payroll_staff?: string | null;
   // Toạ độ bản đồ (migration 094)
   map_link?: string | null;
@@ -240,6 +250,9 @@ export interface CRMPipelineEntry {
   id: string;
   client_id?: string | null;
   company_name: string;
+  /** Chi nhánh phụ trách — nguồn dữ liệu duy nhất. */
+  branch_id: string | null;
+  /** LỖI THỜI — tên chi nhánh cũ dạng text, giữ để đối chiếu. */
   region: string | null;
   worker_estimate: number | null;
   workers_seasonal: number | null;
@@ -797,6 +810,9 @@ export interface ProjectPnl {
   id: string;
   client_id: string;
   month: string;
+  /** Chi nhánh — nguồn dữ liệu duy nhất. */
+  branch_id: string | null;
+  /** LỖI THỜI — tên chi nhánh dạng text, giữ để đối chiếu. */
   branch_manager: string | null;
   project_type: ProjectPnlType;
   lg_pct: number;
@@ -855,6 +871,9 @@ export interface ProjectPnlCost {
 
 export interface BranchOverhead {
   id: string;
+  /** Chi nhánh — nguồn dữ liệu duy nhất. */
+  branch_id: string | null;
+  /** LỖI THỜI — tên chi nhánh dạng text, giữ để đối chiếu. */
   branch_manager: string;
   month: string;
   label: string;
@@ -1095,7 +1114,10 @@ export interface WorkTask {
   task_type: string | null
   due_date: string
   priority: TaskPriority
+  // kcn: cột cũ, chỉ còn để đọc dữ liệu việc đã tạo trước migration 137.
+  // Việc tạo mới dùng branch_id (Chi Nhánh) thay cho ô "KCN / Địa điểm".
   kcn: string | null
+  branch_id: string | null
   notes: string | null
   status: TaskStatus
   completed_at: string | null
@@ -1126,6 +1148,26 @@ export interface WorkTaskComment {
   user_name: string
   content: string
   created_at: string
+}
+
+// Bình luận cho workspace_tasks (Task nội bộ chung) — mirror WorkTaskComment.
+export interface WorkspaceTaskComment {
+  id: string
+  task_id: string
+  user_id: string | null
+  user_name: string
+  content: string
+  created_at: string
+}
+
+// Trạng thái riêng cho "Task nội bộ (chung)" (workspace_tasks.type === 'task').
+// "Hồ sơ · HĐ (chung)" (type === 'doc') vẫn dùng bộ trạng thái kiểu hồ sơ cũ (WS_STATUS).
+export type WsTaskStatus = 'todo' | 'in_progress' | 'done'
+export const WS_TASK_STATUS_LABELS: Record<WsTaskStatus, string> = { todo: 'Cần làm', in_progress: 'Đang làm', done: 'Đã xong' }
+export const WS_TASK_STATUS_COLORS: Record<WsTaskStatus, string> = {
+  todo:        'bg-slate-100 text-slate-600 border-slate-300',
+  in_progress: 'bg-blue-50 text-blue-700 border-blue-300',
+  done:        'bg-green-50 text-green-700 border-green-300',
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = { high: 'Cao', medium: 'TB', low: 'Thấp' }

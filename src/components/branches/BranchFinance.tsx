@@ -98,10 +98,15 @@ export default function BranchFinance({
   const catMgrRef = useRef<HTMLDivElement>(null);
 
   const loadOverhead = useCallback(async () => {
-    const ohMatchValues = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
-    const { data } = await supabase.from('branch_overhead').select('*').in('branch_manager', ohMatchValues).order('sort_order');
+    // branch_id là khoá chính thức; vẫn vét thêm các dòng cũ còn khoá bằng text
+    // (tên chuẩn / tên cũ / tên rút gọn) để không sót chi phí nào.
+    const legacyKeys = [branch.name, branch.region, branch.short_name].filter(Boolean) as string[];
+    const { data } = await supabase.from('branch_overhead')
+      .select('*')
+      .or(`branch_id.eq.${branch.id},branch_manager.in.(${legacyKeys.map(k => `"${k}"`).join(',')})`)
+      .order('sort_order');
     setOverhead((data ?? []) as OverheadRow[]);
-  }, [branch.name, branch.region, branch.short_name]);
+  }, [branch.id, branch.name, branch.region, branch.short_name]);
 
   useEffect(() => { loadOverhead(); }, [loadOverhead]);
 
@@ -115,10 +120,14 @@ export default function BranchFinance({
     return () => document.removeEventListener('mousedown', handler);
   }, [catMgrOpen]);
 
-  const branchProjects = useMemo(() => {
-    const matchValues = new Set([branch.name, branch.region, branch.short_name].filter(Boolean));
-    return projectsPnl.filter(p => matchValues.has(p.branch_manager || ''));
-  }, [projectsPnl, branch.name, branch.region, branch.short_name]);
+  const matchesBranch = useCallback((p: { branch_id?: string | null; branch_manager: string | null }) => {
+    if (p.branch_id) return p.branch_id === branch.id;
+    const k = (p.branch_manager ?? '').trim().toLowerCase();
+    return [branch.name, branch.region, branch.short_name]
+      .filter(Boolean).some(v => (v as string).trim().toLowerCase() === k);
+  }, [branch.id, branch.name, branch.region, branch.short_name]);
+
+  const branchProjects = useMemo(() => projectsPnl.filter(matchesBranch), [projectsPnl, matchesBranch]);
 
   const monthOverhead = useMemo(() =>
     overhead.filter(o => o.month === month).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
@@ -164,7 +173,8 @@ export default function BranchFinance({
     if (monthOverhead.some(o => o.label === cat.label)) { toast('Đã có mục này'); return; }
     const { data, error } = await supabase.from('branch_overhead')
       .insert({
-        branch_manager: branch.region || branch.name,
+        branch_id: branch.id,
+        branch_manager: branch.name,
         month, label: cat.label, value: 0,
         cost_type: cat.cost_type === 'operational' ? 'Vận hành' : 'Cố định',
         sort_order: monthOverhead.length,
@@ -176,7 +186,7 @@ export default function BranchFinance({
 
   const addCustomRow = async () => {
     const { data, error } = await supabase.from('branch_overhead')
-      .insert({ branch_manager: branch.region || branch.name, month, label: 'Chi phí mới', value: 0, cost_type: 'Cố định', sort_order: monthOverhead.length })
+      .insert({ branch_id: branch.id, branch_manager: branch.name, month, label: 'Chi phí mới', value: 0, cost_type: 'Cố định', sort_order: monthOverhead.length })
       .select().single();
     if (error) { toast('Lỗi: ' + error.message); return; }
     setOverhead(prev => [...prev, data as OverheadRow]);
@@ -223,7 +233,7 @@ export default function BranchFinance({
     for (const r of prevRows) {
       if (monthOverhead.some(o => o.label === r.label)) continue;
       const { data } = await supabase.from('branch_overhead')
-        .insert({ branch_manager: branch.region || branch.name, month, label: r.label, value: r.value, cost_type: r.cost_type, sort_order: r.sort_order ?? 0 })
+        .insert({ branch_id: branch.id, branch_manager: branch.name, month, label: r.label, value: r.value, cost_type: r.cost_type, sort_order: r.sort_order ?? 0 })
         .select().single();
       if (data) setOverhead(prev2 => [...prev2, data as OverheadRow]);
     }
@@ -239,7 +249,8 @@ export default function BranchFinance({
       for (const cat of defaults) {
         const { data } = await supabase.from('branch_overhead')
           .insert({
-            branch_manager: branch.region || branch.name,
+            branch_id: branch.id,
+            branch_manager: branch.name,
             month, label: cat.label, value: 0,
             cost_type: cat.cost_type === 'operational' ? 'Vận hành' : 'Cố định',
             sort_order: cat.sort_order,
@@ -307,9 +318,8 @@ export default function BranchFinance({
   }, [curMonth]);
 
   const chartData = useMemo(() => {
-    const matchValues = new Set([branch.name, branch.region, branch.short_name].filter(Boolean));
     return chartMonths.map(m => {
-      const mp = projectsPnl.filter(p => p.month === m && matchValues.has(p.branch_manager || ''));
+      const mp = projectsPnl.filter(p => p.month === m && matchesBranch(p));
       const rev = mp.reduce((s, p) => s + p.revenue, 0);
       const cost = mp.reduce((s, p) => {
         const cs = pnlCostsMap[p.id] || [];
@@ -323,7 +333,7 @@ export default function BranchFinance({
       const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0) + staffSalaryTotal;
       return { month: m, rev, cost, lnCn, oh, lnRong: lnCn - oh };
     });
-  }, [chartMonths, projectsPnl, pnlCostsMap, overhead, staffSalaryTotal, branch.name, branch.region, branch.short_name]);
+  }, [chartMonths, projectsPnl, pnlCostsMap, overhead, staffSalaryTotal, matchesBranch]);
 
   const handleAddCategory = async () => {
     const label = newCatLabel.trim();

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { Client } from '../lib/types';
-import { useRegions } from '../hooks/useRegions';
+import { useBranchLookup } from '../hooks/useBranchLookup';
+import { branchOptions } from '../lib/branchRef';
 import { useManagers } from '../hooks/useManagers';
 import FilterDropdown, { ALL_OPTION } from './FilterDropdown';
 import { anchorDay, dayLabel, isDynamicDay } from '../utils/timelineDays';
@@ -35,17 +36,17 @@ function Connector({ active }: { active: boolean }) {
 export default function FinanceTimeline({ clients, onClientClick }: Props) {
   const todayNum = new Date().getDate();
 
-  const { regions: regionList } = useRegions();
+  const { branches, labelOf } = useBranchLookup();
   const { managers: managerList } = useManagers();
 
-  const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
+  const regions = useMemo(() => [ALL_OPTION, ...branchOptions(branches).map(o => o.label)], [branches]);
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
 
   const [filterRegion, setFilterRegion] = useState<string[]>([ALL_OPTION]);
   const [filterManager, setFilterManager] = useState<string[]>([ALL_OPTION]);
 
   const filtered = useMemo(() => clients.filter(c => {
-    const byRegion = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
+    const byRegion = filterRegion.includes(ALL_OPTION) || filterRegion.includes(labelOf(c));
     const byManager = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     return byRegion && byManager;
   }), [clients, filterRegion, filterManager]);
@@ -109,7 +110,7 @@ export default function FinanceTimeline({ clients, onClientClick }: Props) {
                       <div className="font-semibold text-[#111]">{c.name}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-[#555]">{c.region || '—'}</td>
+                  <td className="px-4 py-3 text-[#555]">{labelOf(c)}</td>
                   <td className="px-4 py-3 text-[#555]">{c.manager || '—'}</td>
                   <td className="px-4 py-3">
                     {/* Recruitment không có chu kỳ cố định — hiển thị nhãn thay thế */}

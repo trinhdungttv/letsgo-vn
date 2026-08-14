@@ -11,13 +11,15 @@ import {
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logActivity } from '../../lib/audit'
-import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact } from '../../lib/types'
-import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, type DocStatus, type TaskPriority } from '../../lib/types'
+import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact, Branch, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
+import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
 import { queueGoogleSync, syncGoogleNow, pulledChanges } from '../../lib/googleSync'
 import { GoogleSyncCard } from './GoogleSyncCard'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
 import { todayISO } from '../../utils/suspension'
+import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
+import { branchOf, branchLabel, branchOptions } from '../../lib/branchRef'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -28,6 +30,8 @@ export interface WorkspaceTask {
   assignee: string | null
   deadline: string | null
   created_at: string
+  /** Chi nhánh liên kết — chỉ áp dụng cho type==='task' (Task nội bộ chung) */
+  branch_id: string | null
 }
 
 const WS_STATUS: Record<string, { label: string; cls: string }> = {
@@ -127,6 +131,8 @@ interface Props {
   /** Dữ liệu CRM Pipeline — dùng để mở hồ sơ công ty (CompanyProfileModal) ngay tại Workspace. */
   pipelineEntries: CRMPipelineEntry[]
   products: CRMProduct[]
+  /** Danh sách Chi nhánh — dùng để chọn Chi nhánh liên kết cho Task nội bộ (chung). */
+  branches: Branch[]
   onClientUpdate: (client: Client) => void
   toast: (msg: string) => void
   onStatsChange?: (stats: FeedStats) => void
@@ -138,7 +144,7 @@ interface Props {
   hideHistory?: boolean
 }
 
-export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
+export function MyWorkFeed({ clients, pipelineEntries, products, branches, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
   const { user, token } = useAuth()
   const isAdmin = user?.role === 'admin'
 
@@ -180,6 +186,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([])
   const [donePipeline, setDonePipeline] = useState<CRMPipelineTask[]>([])
   const [comments, setComments] = useState<Record<string, WorkTaskComment[]>>({})
+  // Bình luận của Task nội bộ (chung) — cùng bảng workspace_task_comments đọc/ghi ở cả
+  // đây lẫn khối "Việc nội bộ liên kết" trên trang Chi nhánh (BranchHistoryFields).
+  const [wsComments, setWsComments] = useState<Record<string, WorkspaceTaskComment[]>>({})
   const [loading, setLoading] = useState(true)
 
   // ---- Hồ sơ công ty (CompanyProfileModal) — mở ngay từ 1 việc "Khách mới", logic giống CRM Pipeline BD ----
@@ -265,6 +274,14 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
         const map: Record<string, WorkTaskComment[]> = {}
         for (const c of cData as WorkTaskComment[]) (map[c.task_id] ||= []).push(c)
         setComments(map)
+      }
+      const wsIds = ((ws.data as WorkspaceTask[]) || []).map(t => t.id)
+      if (wsIds.length) {
+        const wsCData = await fetchWorkspaceTaskComments(wsIds)
+        if (cancelled) return
+        const wsMap: Record<string, WorkspaceTaskComment[]> = {}
+        for (const c of wsCData) (wsMap[c.task_id] ||= []).push(c)
+        setWsComments(wsMap)
       }
     })()
     return () => { cancelled = true }
@@ -360,7 +377,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     const eow = endOfWeekStr()
     const items = allItems.filter(it => {
       if (filter !== 'Tất cả' && it.category !== filter) return false
-      if (q && !(it.title.toLowerCase().includes(q) || (it.work?.kcn ?? '').toLowerCase().includes(q))) return false
+      if (q) {
+        // Tìm được cả theo Chi nhánh của việc, và theo KCN cũ của việc tạo trước migration 137.
+        const b = it.work?.branch_id ? branches.find(x => x.id === it.work!.branch_id) : null
+        const hay = `${it.title} ${b?.name ?? ''} ${it.work?.kcn ?? ''}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
       if (dayFilter === 'overdue') { if (!it.due || it.due >= today) return false }
       else if (dayFilter) { if (it.due !== dayFilter) return false }
       return true
@@ -379,7 +401,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     const byDue = (a: FeedItem, b: FeedItem) => (a.due ?? '9999').localeCompare(b.due ?? '9999')
     for (const k of Object.keys(g) as GroupKey[]) g[k].sort(byDue)
     return g
-  }, [allItems, filter, search, dayFilter, focusMode])
+  }, [allItems, filter, search, dayFilter, focusMode, branches])
 
   const totalVisible = groups.overdue.length + groups.today.length + groups.week.length + groups.later.length
 
@@ -430,7 +452,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     if (qKind === 'work') {
       const { data, error } = await supabase.from('work_tasks').insert({
         user_id: user.id, client_id: null, title: qTitle.trim(), task_type: 'Văn phòng',
-        due_date: qDue || todayStr(), priority: 'medium', kcn: null, notes: null, status: 'pending',
+        due_date: qDue || todayStr(), priority: 'medium', branch_id: null, notes: null, status: 'pending',
       }).select().single()
       if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]); pingGoogle() }
     } else if (qKind === 'pipeline') {
@@ -454,7 +476,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     } else {
       const { data, error } = await supabase.from('workspace_tasks').insert({
         title: qTitle.trim(), type: qKind === 'ws_doc' ? 'doc' : 'task',
-        status: 'not_started', assignee: qAssignee.trim() || null, deadline: qDue || null,
+        status: qKind === 'ws_doc' ? 'not_started' : 'todo', assignee: qAssignee.trim() || null, deadline: qDue || null,
       }).select().single()
       if (!error && data) setWsTasks(prev => [data as WorkspaceTask, ...prev])
     }
@@ -470,21 +492,23 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   const [fType, setFType] = useState(TASK_TYPE_OPTIONS[0])
   const [fDue, setFDue] = useState(todayStr())
   const [fPriority, setFPriority] = useState<TaskPriority>('medium')
-  const [fKcn, setFKcn] = useState('')
+  const [fBranchId, setFBranchId] = useState('')
   const [fNotes, setFNotes] = useState('')
   const [fSaving, setFSaving] = useState(false)
 
   const activeClients = useMemo(() => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'), [clients])
 
+  const branchOfClient = (c: Client | null | undefined) => branchOf(c, branches)
+
   function selectFormClient(id: string) {
     setFClientId(id)
-    const c = clients.find(cl => cl.id === id)
-    if (c?.industrial_zones?.[0]) setFKcn(c.industrial_zones[0])
+    const b = branchOfClient(clients.find(cl => cl.id === id))
+    if (b) setFBranchId(b.id)
   }
 
   function resetFullForm() {
     setFClientId(''); setFDesc(''); setFType(TASK_TYPE_OPTIONS[0])
-    setFDue(todayStr()); setFPriority('medium'); setFKcn(''); setFNotes('')
+    setFDue(todayStr()); setFPriority('medium'); setFBranchId(''); setFNotes('')
   }
 
   async function saveFullTask() {
@@ -500,7 +524,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
       task_type: fType,
       due_date: fDue,
       priority: fPriority,
-      kcn: fKcn || null,
+      branch_id: fBranchId || null,
       notes: fNotes.trim() || null,
       status: 'pending',
     }).select().single()
@@ -733,6 +757,18 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     await supabase.from('workspace_tasks').delete().eq('id', id)
   }
 
+  // ---- Task nội bộ (chung): đổi trạng thái Cần làm/Đang làm/Đã xong + chọn Chi nhánh liên kết ----
+  async function changeWsTaskStatus(t: WorkspaceTask, status: WsTaskStatus) {
+    if (status === 'done') { markWsDone(t); return }
+    setWsTasks(prev => prev.map(x => x.id === t.id ? { ...x, status } : x))
+    await supabase.from('workspace_tasks').update({ status }).eq('id', t.id)
+  }
+
+  async function changeWsBranch(t: WorkspaceTask, branchId: string | null) {
+    setWsTasks(prev => prev.map(x => x.id === t.id ? { ...x, branch_id: branchId } : x))
+    await supabase.from('workspace_tasks').update({ branch_id: branchId }).eq('id', t.id)
+  }
+
   // ---- Bình luận (chỉ work tasks) ----
   const [commentInput, setCommentInput] = useState<Record<string, string>>({})
   const [sendingComment, setSendingComment] = useState<string | null>(null)
@@ -766,6 +802,38 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
     await supabase.from('work_task_comments').delete().eq('id', commentId)
   }
 
+  // ---- Bình luận Task nội bộ (chung) — cùng bảng workspace_task_comments với khối
+  // "Việc nội bộ liên kết" ở trang Chi nhánh (BranchHistoryFields), qua lib/workspaceTaskComments ----
+  const [wsCommentInput, setWsCommentInput] = useState<Record<string, string>>({})
+  const [sendingWsComment, setSendingWsComment] = useState<string | null>(null)
+  const [editingWsCommentId, setEditingWsCommentId] = useState<string | null>(null)
+  const [editingWsCommentText, setEditingWsCommentText] = useState('')
+
+  async function sendWsComment(taskId: string) {
+    const content = (wsCommentInput[taskId] ?? '').trim()
+    if (!content || !user) return
+    setSendingWsComment(taskId)
+    const data = await addWorkspaceTaskComment(taskId, user.id, user.full_name || user.username || 'Người dùng', content)
+    if (data) {
+      setWsComments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), data] }))
+      setWsCommentInput(prev => ({ ...prev, [taskId]: '' }))
+    }
+    setSendingWsComment(null)
+  }
+
+  async function saveWsCommentEdit(commentId: string, taskId: string) {
+    const content = editingWsCommentText.trim()
+    if (!content) return
+    setWsComments(prev => ({ ...prev, [taskId]: (prev[taskId] ?? []).map(c => c.id === commentId ? { ...c, content } : c) }))
+    setEditingWsCommentId(null)
+    await updateWorkspaceTaskComment(commentId, content)
+  }
+
+  async function deleteWsComment(commentId: string, taskId: string) {
+    setWsComments(prev => ({ ...prev, [taskId]: (prev[taskId] ?? []).filter(c => c.id !== commentId) }))
+    await deleteWorkspaceTaskComment(commentId)
+  }
+
   // ---- Mở rộng dòng ----
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
@@ -774,24 +842,30 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   const [histSearch, setHistSearch] = useState('')
   const [histCat, setHistCat] = useState('all')
 
-  interface DoneItem { id: string; key: string; title: string; category: string; doneAt: string | null; notes: string | null; assignee: string | null; kcn: string | null }
+  // `place` = Chi nhánh của việc; việc tạo trước migration 137 chưa gắn chi nhánh thì
+  // rơi về KCN cũ đã nhập, để lịch sử của các việc đó không bị trống chỗ này.
+  interface DoneItem { id: string; key: string; title: string; category: string; doneAt: string | null; notes: string | null; assignee: string | null; place: string | null }
   const doneHistory = useMemo((): DoneItem[] => [
-    ...doneWork.map(t => ({
-      id: t.id, key: `w_${t.id}`, title: t.title,
-      category: workCategory(t.task_type),
-      doneAt: t.completed_at ?? null, notes: t.notes ?? null, assignee: null, kcn: t.kcn ?? null,
-    })),
+    ...doneWork.map(t => {
+      const b = t.branch_id ? branches.find(x => x.id === t.branch_id) : null
+      return {
+        id: t.id, key: `w_${t.id}`, title: t.title,
+        category: workCategory(t.task_type),
+        doneAt: t.completed_at ?? null, notes: t.notes ?? null, assignee: null,
+        place: b ? branchLabel(b) : t.kcn ?? null,
+      }
+    }),
     ...doneWs.map(t => ({
       id: t.id, key: `s_${t.id}`, title: t.title,
       category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ',
-      doneAt: t.created_at ?? null, notes: null, assignee: t.assignee ?? null, kcn: null,
+      doneAt: t.created_at ?? null, notes: null, assignee: t.assignee ?? null, place: null,
     })),
     ...donePipeline.map(t => ({
       id: t.id, key: `pl_${t.id}`, title: `${t.company_name} — ${t.title}`,
       category: 'Khách mới',
-      doneAt: t.updated_at ?? null, notes: t.result_note ?? null, assignee: null, kcn: null,
+      doneAt: t.updated_at ?? null, notes: t.result_note ?? null, assignee: null, place: null,
     })),
-  ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs, donePipeline])
+  ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs, donePipeline, branches])
 
   const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
   const filteredHistory = doneHistory.filter(t =>
@@ -803,8 +877,16 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
   function renderRow(it: FeedItem, group: GroupKey) {
     const expanded = expandedKey === it.key
     const isOverdue = group === 'overdue'
-    const cmts = it.source === 'work' ? (comments[it.id] ?? []) : []
-    const wsSt = it.ws ? (WS_STATUS[it.ws.status] || WS_STATUS.not_started) : null
+    const cmts = it.source === 'work' ? (comments[it.id] ?? []) : it.source === 'ws' ? (wsComments[it.id] ?? []) : []
+    // "Task nội bộ (chung)" (type='task') dùng bộ trạng thái riêng Cần làm/Đang làm/Đã xong;
+    // "Hồ sơ · HĐ (chung)" (type='doc') giữ nguyên bộ trạng thái kiểu hồ sơ cũ.
+    const wsSt = it.ws
+      ? (it.ws.type === 'task'
+          ? { label: WS_TASK_STATUS_LABELS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_LABELS.todo, cls: WS_TASK_STATUS_COLORS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo }
+          : (WS_STATUS[it.ws.status] || WS_STATUS.not_started))
+      : null
+    const wsBranch = it.ws?.branch_id ? branches.find(b => b.id === it.ws!.branch_id) : null
+    const workBranch = it.work?.branch_id ? branches.find(b => b.id === it.work!.branch_id) : null
     const isEditingWs = it.source === 'ws' && editWsId === it.id
     const wi = it.work ? waitInfo(it.work) : null
     const phone = it.work ? phoneOf(it.work.client_id) : null
@@ -856,8 +938,13 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                   Nhắc lại →
                 </button>
               )}
-              {it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>}
+              {/* Chi nhánh của việc; việc tạo trước migration 137 chưa có branch_id thì
+                  vẫn hiện KCN cũ đã nhập, không để trống chỗ này. */}
+              {workBranch
+                ? <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(workBranch)}</span>
+                : it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>}
               {wsSt && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${wsSt.cls}`}>{wsSt.label}</span>}
+              {wsBranch && <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(wsBranch)}</span>}
               {it.ws?.assignee && <span className="text-[10.5px] text-[#888]">{it.ws.assignee}</span>}
               {it.work && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${TASK_PRIORITY_COLORS[it.work.priority]}`}>{TASK_PRIORITY_LABELS[it.work.priority]}</span>}
               {cmts.length > 0 && <span className="text-[10.5px] text-[#999] flex items-center gap-0.5"><MessageSquare size={10} />{cmts.length}</span>}
@@ -976,7 +1063,31 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
             {/* --- Việc chung: sửa inline / xoá --- */}
             {it.ws && !isEditingWs && (
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10.5px] text-[#999]">{it.ws.type === 'doc' ? 'Hồ sơ · HĐ' : 'Task nội bộ'}{it.ws.deadline ? ` · hạn ${formatDate(it.ws.deadline)}` : ''}</span>
+                {it.ws.type === 'task' ? (
+                  <>
+                    <select
+                      value={it.ws.status in WS_TASK_STATUS_LABELS ? it.ws.status : 'todo'}
+                      onChange={e => changeWsTaskStatus(it.ws!, e.target.value as WsTaskStatus)}
+                      className={`text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium ${WS_TASK_STATUS_COLORS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
+                    >
+                      {(['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => (
+                        <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={it.ws.branch_id ?? ''}
+                      onChange={e => changeWsBranch(it.ws!, e.target.value || null)}
+                      title="Chi nhánh liên kết"
+                      className="text-[10.5px] border border-[#E8E7E2] rounded-md px-2 py-1 focus:outline-none font-medium bg-white text-[#666]"
+                    >
+                      <option value="">— Không liên kết Chi nhánh —</option>
+                      {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </>
+                ) : (
+                  <span className="text-[10.5px] text-[#999]">Hồ sơ · HĐ</span>
+                )}
+                {it.ws.deadline && <span className="text-[10.5px] text-[#999]">Hạn: {formatDate(it.ws.deadline)}</span>}
                 <div className="ml-auto flex items-center gap-1">
                   <button
                     onClick={() => { setEditWsId(it.id); setEditWs({ title: it.ws!.title, status: it.ws!.status, deadline: it.ws!.deadline ?? '', assignee: it.ws!.assignee ?? '' }) }}
@@ -999,12 +1110,61 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                 />
                 <div className="flex gap-2 flex-wrap">
                   <select value={editWs.status} onChange={e => setEditWs(p => ({ ...p, status: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none">
-                    {Object.entries(WS_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    {it.ws.type === 'task'
+                      ? (['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>)
+                      : Object.entries(WS_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select>
                   <input type="date" value={editWs.deadline} onChange={e => setEditWs(p => ({ ...p, deadline: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none" />
                   <input placeholder="Người phụ trách" value={editWs.assignee} onChange={e => setEditWs(p => ({ ...p, assignee: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none flex-1 min-w-[90px]" />
                   <button onClick={() => setEditWsId(null)} className="text-[11px] px-2.5 py-1 border border-[#E8E7E2] rounded-md text-[#666]">Huỷ</button>
                   <button onClick={() => saveWsEdit(it.id)} className="text-[11px] px-2.5 py-1 bg-blue-600 text-white rounded-md">Lưu</button>
+                </div>
+              </div>
+            )}
+
+            {/* --- Bình luận Task nội bộ (chung) --- */}
+            {it.ws && it.ws.type === 'task' && (
+              <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+                {cmts.length > 0 && (
+                  <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                    {(cmts as WorkspaceTaskComment[]).map(cm => (
+                      <div key={cm.id} className="px-2.5 py-1.5 group">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
+                          <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingWsCommentId(cm.id); setEditingWsCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
+                            <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteWsComment(cm.id, it.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
+                          </div>
+                        </div>
+                        {editingWsCommentId === cm.id ? (
+                          <div className="flex gap-1 mt-1">
+                            <input autoFocus value={editingWsCommentText} onChange={e => setEditingWsCommentText(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveWsCommentEdit(cm.id, it.id); if (e.key === 'Escape') setEditingWsCommentId(null) }}
+                              className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
+                            <button onClick={() => saveWsCommentEdit(cm.id, it.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
+                            <button onClick={() => setEditingWsCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
+                          </div>
+                        ) : (
+                          <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                  <input
+                    type="text" value={wsCommentInput[it.id] ?? ''}
+                    onChange={e => setWsCommentInput(prev => ({ ...prev, [it.id]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendWsComment(it.id) } }}
+                    placeholder="Bình luận tiến độ..."
+                    className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-[#fafafa] placeholder:text-[#ccc]"
+                  />
+                  <button
+                    onClick={() => sendWsComment(it.id)}
+                    disabled={sendingWsComment === it.id || !(wsCommentInput[it.id] ?? '').trim()}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                  >Gửi</button>
                 </div>
               </div>
             )}
@@ -1115,7 +1275,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm nhanh theo tên khách, KCN..."
+              placeholder="Tìm nhanh theo tên khách, Chi nhánh..."
               className="flex-1 text-[12px] focus:outline-none placeholder:text-[#ccc] bg-transparent min-w-0"
             />
             {search && <button onClick={() => setSearch('')} className="text-[#bbb] hover:text-[#666]"><X size={12} /></button>}
@@ -1178,7 +1338,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                 </div>
               </div>
               <button onClick={() => { setQuickOpen(false); setFullForm(true); setFDesc(qTitle) }} className="self-start text-[11px] text-blue-600 hover:underline">
-                Mở form đầy đủ (khách hàng, loại việc, ưu tiên, KCN...) →
+                Mở form đầy đủ (khách hàng, loại việc, ưu tiên, Chi nhánh...) →
               </button>
             </div>
           ) : (
@@ -1231,9 +1391,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                   </div>
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">KCN / Địa điểm</label>
-                  <input placeholder="VSIP I, VP..." value={fKcn} onChange={e => setFKcn(e.target.value)}
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400" />
+                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Chi Nhánh</label>
+                  <select value={fBranchId} onChange={e => setFBranchId(e.target.value)}
+                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400">
+                    <option value="">— Không chọn —</option>
+                    {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
                 </div>
               </div>
               <div>
@@ -1326,7 +1489,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, onClientUpdate,
                     </div>
                     <div className="text-[10.5px] text-[#888] mt-0.5">
                       ✓ {t.doneAt ? formatDate(t.doneAt.split('T')[0]) : ''}
-                      {t.kcn ? ` · ${t.kcn}` : ''}{t.assignee ? ` · ${t.assignee}` : ''}
+                      {t.place ? ` · ${t.place}` : ''}{t.assignee ? ` · ${t.assignee}` : ''}
                     </div>
                     {t.notes && (
                       <div className="mt-1 flex items-start gap-1.5 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">

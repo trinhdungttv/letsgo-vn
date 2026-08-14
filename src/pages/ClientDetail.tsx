@@ -11,7 +11,6 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
-import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
 import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
@@ -26,6 +25,7 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 import DayCell from '../components/DayCell';
 import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
+import { branchOptions, branchLabelOf } from '../lib/branchRef';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -77,7 +77,6 @@ interface ClientDetailProps {
 
 export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
-  void useRegions;
   const { managers } = useManagers();
   const CD_TAB_KEYS = ['overview', 'profile', 'crm'] as const;
   const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile' | 'crm'>('client-detail', CD_TAB_KEYS, 'overview', 2);
@@ -138,14 +137,14 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [askingDocId, setAskingDocId] = useState<string | null>(null);
   const [docAnswers, setDocAnswers] = useState<Record<string, string>>({});
   const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
-  const [branchTransferForm, setBranchTransferForm] = useState<{ branch_name: string; effective_from: string; notes: string } | null>(null);
+  const [branchTransferForm, setBranchTransferForm] = useState<{ branch_id: string; effective_from: string; notes: string } | null>(null);
   const [branchHistory, setBranchHistory] = useState<ClientBranchHistory[]>([]);
   const { branches } = useBranchData();
   const [newZoneOpen, setNewZoneOpen] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
   const [form, setForm] = useState({
     name: client.name || '',
-    region: client.region || '',
+    branch_id: client.branch_id || '',
     manager: client.manager || '',
     industrial_zones: client.industrial_zones || [],
     contract_start: client.contract_start || '',
@@ -573,12 +572,16 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   };
 
   const handleBranchTransfer = async () => {
-    if (!branchTransferForm?.branch_name) { toast('Vui long chon chi nhanh moi'); return; }
+    if (!branchTransferForm?.branch_id) { toast('Vui long chon chi nhanh moi'); return; }
+    const newBranch = branches.find(b => b.id === branchTransferForm.branch_id);
+    if (!newBranch) { toast('Khong tim thay chi nhanh'); return; }
     try {
       const { data, error } = await supabase.from('client_branch_history')
         .insert({
           client_id: client.id,
-          branch_name: branchTransferForm.branch_name,
+          branch_id: newBranch.id,
+          // Ghi kèm tên tại thời điểm chuyển — nhật ký giữ nguyên chữ dù sau này chi nhánh đổi tên.
+          branch_name: newBranch.name,
           effective_from: branchTransferForm.effective_from,
           notes: branchTransferForm.notes || null,
           created_by: user?.full_name || null,
@@ -586,13 +589,13 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         .select().single();
       if (error) throw error;
       setBranchHistory(prev => [...prev, data as ClientBranchHistory].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
-      const updates = { region: branchTransferForm.branch_name, updated_at: new Date().toISOString() };
+      const updates = { branch_id: newBranch.id, updated_at: new Date().toISOString() };
       const { error: e2 } = await supabase.from('clients').update(updates).eq('id', client.id);
       if (e2) throw e2;
       onClientUpdate({ ...client, ...updates });
       await logActivity({
         user, action: 'insert', table: 'client_branch_history', recordId: data.id,
-        description: `Chuyen chi nhanh "${client.name}" sang "${branchTransferForm.branch_name}" tu ${monthLabel(branchTransferForm.effective_from)}`,
+        description: `Chuyen chi nhanh "${client.name}" sang "${newBranch.name}" tu ${monthLabel(branchTransferForm.effective_from)}`,
         newData: data,
       });
       setBranchTransferForm(null);
@@ -708,7 +711,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 </span>
               )}
             </div>
-            <div className="text-[11.5px] text-[#888]">{client.region || ''} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
+            <div className="text-[11.5px] text-[#888]">{branchLabelOf(client, branches)} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
             {isSuspended(client) && (
               suspEdit !== null ? (
                 <div className="flex items-center gap-1.5 mt-1">
@@ -1343,10 +1346,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>
-                      <select value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                      <select value={form.branch_id} onChange={e => setForm({ ...form, branch_id: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
                         <option value="">-- Chon chi nhanh --</option>
-                        {branches.map(b => <option key={b.id} value={b.region || b.name}>{b.name}</option>)}
-                        {form.region && !branches.some(b => (b.region || b.name) === form.region) && <option value={form.region}>{form.region}</option>}
+                        {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -1473,9 +1475,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                   <div className="col-span-2">
                     <label className="text-[12px] text-[#666] font-medium">Chi Nhanh</label>
                     <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
-                      <span className="text-[13px] text-[#111] font-medium">{client.region || '—'}</span>
+                      <span className="text-[13px] text-[#111] font-medium">{branchLabelOf(client, branches)}</span>
                       <button
-                        onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_name: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
+                        onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_id: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
                       >
                         <ArrowRightLeft size={11} /> Chuyen chi nhanh
@@ -1485,9 +1487,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       <div className="mt-2 p-3 rounded-lg border border-teal-200 bg-teal-50 flex flex-col gap-2">
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] text-[#666] font-medium">Chi nhanh moi</label>
-                          <select value={branchTransferForm.branch_name} onChange={e => setBranchTransferForm({ ...branchTransferForm, branch_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500 bg-white">
+                          <select value={branchTransferForm.branch_id} onChange={e => setBranchTransferForm({ ...branchTransferForm, branch_id: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500 bg-white">
                             <option value="">-- Chon chi nhanh --</option>
-                            {branches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                            {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                           </select>
                         </div>
                         <div className="flex flex-col gap-1">

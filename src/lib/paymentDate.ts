@@ -115,6 +115,46 @@ export function calcExpectedDue(client: {
   return null;
 }
 
+/**
+ * Kỳ TT Thực Tế — chỉ 2 cách (thu hẹp so với 3 nhóm của Kỳ TT Trên HĐ):
+ *   'days'  = số ngày kể từ ngày xuất HĐ (tái dùng nhánh group=1 của calcExpectedDue)
+ *   'fixed' = ngày cố định trong tháng, có mốc chốt (tái dùng nhánh group=2 không theo thứ)
+ * Trả về null khi payment_actual_mode chưa được cấu hình (client.payment_actual_mode == null) —
+ * gọi getPaymentDue() để tự fallback về Kỳ TT Trên HĐ trong trường hợp đó.
+ */
+export function calcExpectedDueActual(client: {
+  payment_actual_mode?: string | null; payment_actual_days?: number | null;
+  payment_actual_fixed_day?: number | null; payment_actual_cutoff?: number | null;
+  invoice_date?: string | null;
+}, invoiceDate?: Date): PaymentResult | null {
+  if (!client.payment_actual_mode) return null;
+  return calcExpectedDue({
+    payment_group: client.payment_actual_mode === 'fixed' ? 2 : 1,
+    payment_days: client.payment_actual_days ?? 15,
+    payment_fixed_day: client.payment_actual_fixed_day ?? 10,
+    payment_cutoff: client.payment_actual_cutoff ?? 5,
+    invoice_date: client.invoice_date,
+  }, invoiceDate);
+}
+
+/** true khi kết quả trả về là Kỳ TT Thực Tế đã tự cấu hình riêng (không phải fallback từ HĐ). */
+export function hasActualOverride(client: { payment_actual_mode?: string | null }): boolean {
+  return !!client.payment_actual_mode;
+}
+
+/**
+ * Điểm vào chung cho cả 2 nơi hiển thị (Timeline + Lịch Thu Tiền): 'contract' luôn dùng
+ * Kỳ TT Trên HĐ; 'actual' dùng Kỳ TT Thực Tế nếu đã cấu hình, chưa cấu hình thì tự fallback
+ * về Kỳ TT Trên HĐ (không để trống — khách chưa tuỳ chỉnh vẫn thấy số hợp lý).
+ */
+export function getPaymentDue(client: Parameters<typeof calcExpectedDue>[0] & Parameters<typeof calcExpectedDueActual>[0], invoiceDate: Date | undefined, mode: 'contract' | 'actual'): PaymentResult | null {
+  if (mode === 'actual') {
+    const actual = calcExpectedDueActual(client, invoiceDate);
+    if (actual) return actual;
+  }
+  return calcExpectedDue(client, invoiceDate);
+}
+
 export function getDueStatusConfig(status: PaymentResult['status'], daysRemaining?: number) {
   switch (status) {
     case 'overdue': return { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', label: `Quá hạn ${Math.abs(daysRemaining??0)} ngày`, dot: 'bg-red-500' };

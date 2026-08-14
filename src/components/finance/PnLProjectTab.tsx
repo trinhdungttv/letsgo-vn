@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine, PnlInvoiceSettings, ServiceType } from '../../lib/types';
+import { branchOf } from '../../lib/branchRef';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import type { ClientBranchHistory, BranchTypeHistory } from '../../lib/types';
@@ -101,7 +102,7 @@ export default function PnLProjectTab({
     return null;
   }, [zoneData]);
   useEffect(() => {
-    supabase.from('clients').select('id, name, region, archived_at, cooperation_status, suspended_from, suspended_at, project_type, default_lg_pct, default_cn_pct')
+    supabase.from('clients').select('id, name, branch_id, region, archived_at, cooperation_status, suspended_from, suspended_at, project_type, default_lg_pct, default_cn_pct')
       .order('name')
       .then(({ data }) => { if (data) setExtraClients(data as MinClient[]); });
     supabase.from('client_branch_history').select('*').order('effective_from')
@@ -117,7 +118,7 @@ export default function PnLProjectTab({
   const mergedClients = useMemo(() => {
     const ids = new Set(clients.map(c => c.id));
     const extras = extraClients.filter(c => !ids.has(c.id));
-    return [...clients.map(c => ({ id: c.id, name: c.name, region: c.region, archived_at: c.archived_at, cooperation_status: c.cooperation_status, suspended_from: c.suspended_from, suspended_at: c.suspended_at })), ...extras];
+    return [...clients.map(c => ({ id: c.id, name: c.name, branch_id: c.branch_id, region: c.region, archived_at: c.archived_at, cooperation_status: c.cooperation_status, suspended_from: c.suspended_from, suspended_at: c.suspended_at })), ...extras];
   }, [clients, extraClients]);
 
   const branchOptions = useMemo(
@@ -335,8 +336,7 @@ export default function PnLProjectTab({
         const ec = extraClients.find(c => c.id === clientId);
         let clientProjectType: ProjectPnlType = ec?.project_type === 'managed' ? 'managed' : 'shared';
 
-        const clientRegion = ec?.region || client?.region;
-        const matchedBranch = clientRegion ? branches.find(b => b.region === clientRegion) : null;
+        const matchedBranch = branchOf(ec ?? client ?? null, branches);
         const branchKhoan = matchedBranch ? getBranchTypeForMonth(branchTypeHistoryMap[matchedBranch.id] || [], month) : null;
 
         if (branchKhoan?.type === 'company') {
@@ -368,7 +368,9 @@ export default function PnLProjectTab({
         const created = await onAddProject({
           client_id: clientId,
           month,
-          branch_manager: prevEntry?.branch_manager || getBranchForMonth(allBranchHistory.filter(h => h.client_id === clientId), month) || client?.region || null,
+          // branch_id là khoá thật; branch_manager giữ lại tên để đối chiếu dữ liệu cũ.
+          branch_id: matchedBranch?.id ?? null,
+          branch_manager: prevEntry?.branch_manager || getBranchForMonth(allBranchHistory.filter(h => h.client_id === clientId), month) || matchedBranch?.name || null,
           project_type: clientProjectType,
           lg_pct: lgPct,
           cn_pct: cnPct,

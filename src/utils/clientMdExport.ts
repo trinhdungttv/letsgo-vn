@@ -188,6 +188,12 @@ async function fetchRawData(client: Client, fromMonth: string, toMonth: string):
 
 export async function buildClientMdExport(client: Client, opts: ExportOptions): Promise<ExportResult> {
   const raw = await fetchRawData(client, opts.fromMonth, opts.toMonth);
+  // Tên chi nhánh lấy từ bảng branches theo branch_id — không đọc client.region (tên cũ).
+  const branchName = await (async () => {
+    if (!client.branch_id) return null;
+    const { data } = await supabase.from('branches').select('name').eq('id', client.branch_id).maybeSingle();
+    return (data as { name: string } | null)?.name ?? null;
+  })();
   const months = monthRange(opts.fromMonth, opts.toMonth);
   const laborMap = laborByMonth(raw.labor);
   const pnlByMonth = new Map(raw.pnls.map(p => [p.month, p]));
@@ -243,7 +249,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
   if (opts.sections.profile) {
     const fields: [string, boolean][] = [
       ['Quản lý phụ trách', !!client.manager],
-      ['Chi nhánh/Khu vực', !!client.region],
+      ['Chi nhánh', !!branchName],
       ['Ngày bắt đầu hợp đồng', !!client.contract_start],
       ['Ngày kết thúc hợp đồng', !!client.contract_end],
       ['Người liên hệ', raw.contacts.length > 0],
@@ -309,7 +315,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
     L.push('');
     L.push('| Trường | Giá trị |');
     L.push('|---|---|');
-    L.push(`| Chi nhánh / Khu vực | ${client.region || MISSING} |`);
+    L.push(`| Chi nhánh | ${branchName || MISSING} |`);
     L.push(`| Quản lý phụ trách hiện tại | ${client.manager || MISSING} |`);
     L.push(`| Khu công nghiệp | ${client.industrial_zones?.length ? client.industrial_zones.join(', ') : MISSING} |`);
     L.push(`| Hợp đồng | ${client.contract_start || MISSING} → ${client.contract_end || MISSING} |`);

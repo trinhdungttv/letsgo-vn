@@ -5,6 +5,7 @@ import { calcExpectedDue, getDueStatusConfig } from '../../lib/paymentDate';
 import type { Client } from '../../lib/types';
 import DayCell from '../DayCell';
 import { resolveDay, anchorDay } from '../../utils/timelineDays';
+import PaymentActualTermFields from './PaymentActualTermFields';
 
 interface Props {
   client: Client;
@@ -57,6 +58,10 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
     payment_cb_from:   client.payment_cb_from   ?? 10,
     payment_cb_to:     client.payment_cb_to     ?? 15,
     invoice_date:      autoInvoiceDate,
+    payment_actual_mode:      client.payment_actual_mode      ?? null,
+    payment_actual_days:      client.payment_actual_days      ?? 15,
+    payment_actual_fixed_day: client.payment_actual_fixed_day ?? 10,
+    payment_actual_cutoff:    client.payment_actual_cutoff    ?? 5,
   });
 
   const invDate = form.invoice_date ? new Date(form.invoice_date) : null;
@@ -234,6 +239,15 @@ export default function PaymentTermsSection({ client, onUpdate, toast, embedded 
             </div>
           </div>
           <div className="text-[10.5px] text-[#aaa] mt-1">He thong tu tinh ngay xuat HD cho thang hien tai. Sang thang moi se tu cap nhat.</div>
+        </div>
+
+        <div>
+          <div className="text-[11px] text-[#888] font-medium mb-2">KỲ TT THỰC TẾ (nếu khác Kỳ TT Trên HĐ ở trên)</div>
+          <PaymentActualTermFields
+            value={form}
+            onChange={patch => setForm(f => ({ ...f, ...patch } as typeof f))}
+            invoiceDate={invDate}
+          />
         </div>
 
         {dueResult && statusConfig ? (

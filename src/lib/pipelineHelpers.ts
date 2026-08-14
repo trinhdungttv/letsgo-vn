@@ -18,7 +18,7 @@ export async function getOrCreatePipelineEntryForClient(client: Client): Promise
     .insert({
       client_id: client.id,
       company_name: client.name,
-      region: client.region || null,
+      branch_id: client.branch_id ?? null,
       stage: 'hop-tac',
       rating: 'normal',
     })

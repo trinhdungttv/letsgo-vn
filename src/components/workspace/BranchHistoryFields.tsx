@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, Pencil, Trash2, Check, X, Plus, Send } from 'lucide-react'
+import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, Pencil, Trash2, Check, X, Plus, Send, Link2, Unlink } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import type { Branch, MorningPriority } from '../../lib/types'
-import { GOAL_TYPE_LABELS } from '../../lib/types'
+import type { Branch, MorningPriority, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
+import { GOAL_TYPE_LABELS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS } from '../../lib/types'
 import { formatDate } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
+import type { WorkspaceTask } from './MyWorkFeed'
+import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
 
 interface Props {
   branch: Branch
@@ -111,8 +113,84 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const [saving, setSaving] = useState(false)
   const { user } = useAuth()
 
-  // Lịch sử phiên keyed theo region; chi nhánh mới chưa sync region thì dùng name
-  const regionKey = branch.region || branch.name
+  // ---- Việc nội bộ liên kết — Task nội bộ (chung) gắn với chi nhánh này (workspace_tasks.branch_id).
+  // Cùng đọc/ghi thẳng workspace_tasks + workspace_task_comments với Workspace > MyWorkFeed —
+  // không nhân bản dữ liệu, sửa ở đây hay ở Workspace đều là cùng 1 bảng.
+  const [linkedTasks, setLinkedTasks] = useState<WorkspaceTask[]>([])
+  const [linkedComments, setLinkedComments] = useState<Record<string, WorkspaceTaskComment[]>>({})
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [linkedCommentInput, setLinkedCommentInput] = useState<Record<string, string>>({})
+  const [sendingLinkedComment, setSendingLinkedComment] = useState<string | null>(null)
+  const [editingLinkedCommentId, setEditingLinkedCommentId] = useState<string | null>(null)
+  const [editingLinkedCommentText, setEditingLinkedCommentText] = useState('')
+
+  useEffect(() => {
+    if (!branch.id) { setLinkedTasks([]); return }
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase
+        .from('workspace_tasks')
+        .select('*')
+        .eq('branch_id', branch.id)
+        .eq('type', 'task')
+        .order('deadline', { ascending: true })
+      if (cancelled) return
+      const tasks = (data || []) as WorkspaceTask[]
+      setLinkedTasks(tasks)
+      const ids = tasks.map(t => t.id)
+      if (ids.length) {
+        const cData = await fetchWorkspaceTaskComments(ids)
+        if (cancelled) return
+        const map: Record<string, WorkspaceTaskComment[]> = {}
+        for (const c of cData) (map[c.task_id] ||= []).push(c)
+        setLinkedComments(map)
+      } else {
+        setLinkedComments({})
+      }
+    })()
+    return () => { cancelled = true }
+  }, [branch.id, refreshKey])
+
+  async function changeLinkedTaskStatus(t: WorkspaceTask, status: WsTaskStatus) {
+    setLinkedTasks(prev => prev.map(x => x.id === t.id ? { ...x, status } : x))
+    await supabase.from('workspace_tasks').update({ status }).eq('id', t.id)
+  }
+
+  async function unlinkTask(t: WorkspaceTask) {
+    if (!confirm(`Bỏ liên kết "${t.title}" khỏi chi nhánh này?`)) return
+    setLinkedTasks(prev => prev.filter(x => x.id !== t.id))
+    await supabase.from('workspace_tasks').update({ branch_id: null }).eq('id', t.id)
+  }
+
+  async function sendLinkedComment(taskId: string) {
+    const content = (linkedCommentInput[taskId] ?? '').trim()
+    if (!content || !user) return
+    setSendingLinkedComment(taskId)
+    const data = await addWorkspaceTaskComment(taskId, user.id, user.full_name || user.username || 'Người dùng', content)
+    if (data) {
+      setLinkedComments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), data] }))
+      setLinkedCommentInput(prev => ({ ...prev, [taskId]: '' }))
+    }
+    setSendingLinkedComment(null)
+  }
+
+  async function saveLinkedCommentEdit(commentId: string, taskId: string) {
+    const content = editingLinkedCommentText.trim()
+    if (!content) return
+    setLinkedComments(prev => ({ ...prev, [taskId]: (prev[taskId] ?? []).map(c => c.id === commentId ? { ...c, content } : c) }))
+    setEditingLinkedCommentId(null)
+    await updateWorkspaceTaskComment(commentId, content)
+  }
+
+  async function deleteLinkedComment(commentId: string, taskId: string) {
+    setLinkedComments(prev => ({ ...prev, [taskId]: (prev[taskId] ?? []).filter(c => c.id !== commentId) }))
+    await deleteWorkspaceTaskComment(commentId)
+  }
+
+  // Phiên cập nhật khoá theo TÊN CHUẨN của chi nhánh. Các phiên ghi trước đây dùng
+  // tên cũ (branch.region) nên vẫn đọc kèm khoá đó, chỉ ghi mới bằng tên chuẩn.
+  const regionKey = branch.name
+  const legacyKeys = [branch.name, branch.region].filter(Boolean) as string[]
 
   // Auto-save draft to localStorage
   const draftKey = regionKey ? `lgvn_branch_draft_${regionKey}` : null
@@ -162,7 +240,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
       const { data } = await supabase
         .from('morning_priorities')
         .select('*')
-        .eq('target_name', `Chi nhánh ${regionKey}`)
+        .in('target_name', legacyKeys.map(k => `Chi nhánh ${k}`))
         .order('priority_date', { ascending: false })
         .limit(30)
       if (data) setHistory(data as MorningPriority[])
@@ -181,11 +259,12 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
     supabase
       .from('morning_priorities')
       .select('*')
-      .eq('target_name', `Chi nhánh ${regionKey}`)
+      .in('target_name', legacyKeys.map(k => `Chi nhánh ${k}`))
       .order('priority_date', { ascending: false })
       .limit(30)
       .then(({ data }) => setHistory((data || []) as MorningPriority[]))
-  }, [regionKey, refreshKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regionKey, branch.region, refreshKey])
 
   const monthGrid = useMemo(buildMonthGrid, [])
   const sessionDates = useMemo(() => new Set(history.map(h => h.priority_date)), [history])
@@ -349,6 +428,95 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
 
   return (
     <div className="flex flex-col gap-3">
+      {/* 0. Việc nội bộ liên kết — Task nội bộ (chung) gắn với chi nhánh này. Khối riêng, tách
+          bạch khỏi nhật ký Tình trạng/Khó khăn/Cơ hội tự do bên dưới. Chỉ hiện khi có liên kết. */}
+      {linkedTasks.length > 0 && (
+        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+          <div className="flex items-center gap-1.5 px-2.5 py-2 bg-[#fafafa] border-b border-[#E8E7E2]">
+            <Link2 size={12} className="text-[#7C3AED]" />
+            <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Việc nội bộ liên kết</span>
+            <span className="text-[9px] text-[#bbb] ml-auto">{linkedTasks.length} việc</span>
+          </div>
+          <div className="flex flex-col divide-y divide-[#F0EFEB]">
+            {linkedTasks.map(t => {
+              const isExpanded = expandedTaskId === t.id
+              const cmts = linkedComments[t.id] ?? []
+              return (
+                <div key={t.id} className="px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}
+                      className="text-[11.5px] font-semibold text-[#111] text-left hover:underline flex-1 min-w-[120px]"
+                    >
+                      {t.title}
+                    </button>
+                    <select
+                      value={t.status in WS_TASK_STATUS_LABELS ? t.status : 'todo'}
+                      onChange={e => changeLinkedTaskStatus(t, e.target.value as WsTaskStatus)}
+                      className={`text-[10px] border rounded-md px-1.5 py-0.5 focus:outline-none font-medium ${WS_TASK_STATUS_COLORS[(t.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
+                    >
+                      {(['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => (
+                        <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                    {t.deadline && <span className="text-[10px] text-[#999] whitespace-nowrap">Hạn: {formatDate(t.deadline)}</span>}
+                    {cmts.length > 0 && <span className="text-[10px] text-[#999]">{cmts.length} bình luận</span>}
+                    <button onClick={() => unlinkTask(t)} title="Bỏ liên kết khỏi chi nhánh" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition">
+                      <Unlink size={11} />
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-2 border border-[#E8E7E2] rounded-lg bg-[#fafafa] overflow-hidden">
+                      {cmts.length > 0 && (
+                        <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                          {cmts.map(cm => (
+                            <div key={cm.id} className="px-2.5 py-1.5 group bg-white">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
+                                <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => { setEditingLinkedCommentId(cm.id); setEditingLinkedCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
+                                  <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteLinkedComment(cm.id, t.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
+                                </div>
+                              </div>
+                              {editingLinkedCommentId === cm.id ? (
+                                <div className="flex gap-1 mt-1">
+                                  <input autoFocus value={editingLinkedCommentText} onChange={e => setEditingLinkedCommentText(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveLinkedCommentEdit(cm.id, t.id); if (e.key === 'Escape') setEditingLinkedCommentId(null) }}
+                                    className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
+                                  <button onClick={() => saveLinkedCommentEdit(cm.id, t.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
+                                  <button onClick={() => setEditingLinkedCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
+                                </div>
+                              ) : (
+                                <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                        <input
+                          type="text" value={linkedCommentInput[t.id] ?? ''}
+                          onChange={e => setLinkedCommentInput(prev => ({ ...prev, [t.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendLinkedComment(t.id) } }}
+                          placeholder="Bình luận tiến độ..."
+                          className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white placeholder:text-[#ccc]"
+                        />
+                        <button
+                          onClick={() => sendLinkedComment(t.id)}
+                          disabled={sendingLinkedComment === t.id || !(linkedCommentInput[t.id] ?? '').trim()}
+                          className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                        >Gửi</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 1. Mini calendar (top) */}
       <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
           <div className="flex items-center justify-between mb-2">

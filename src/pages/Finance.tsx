@@ -7,16 +7,17 @@ import PnLProjectTab from '../components/finance/PnLProjectTab';
 import PerformanceTab from '../components/finance/PerformanceTab';
 import PaymentCalendarTab from '../components/finance/PaymentCalendarTab';
 import type { FinanceRecord, Client } from '../lib/types';
+import { branchOf, branchOptions } from '../lib/branchRef';
 import { formatCurrency, monthLabel, shiftMonth } from '../lib/format';
-import { calcExpectedDue, formatDateVN } from '../lib/paymentDate';
+import { calcExpectedDue, formatDateVN, getPaymentDue } from '../lib/paymentDate';
 import { resolveDay, normalizeDayRange, anchorDay } from '../utils/timelineDays';
 import DayCell from '../components/DayCell';
 import ServiceTypeBadge from '../components/ServiceTypeBadge';
+import PaymentActualTermFields from '../components/clients/PaymentActualTermFields';
 import { isActiveInMonth, isSuspended } from '../utils/suspension';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
-import { useRegions } from '../hooks/useRegions';
 import { useManagers } from '../hooks/useManagers';
 import { useCostCategories } from '../hooks/useCostCategories';
 import { useFinanceData } from '../hooks/useFinanceData';
@@ -45,9 +46,14 @@ const TIMELINE_PHASES: { key: TimelinePhaseKey; label: string; dot: React.ReactN
   { key: 'cutoff', label: 'Chốt công', dot: <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> },
   { key: 'calc', label: 'Tính lương', dot: <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> },
   { key: 'invoice', label: 'Xuất HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> },
-  { key: 'paydue', label: 'Kỳ TT', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
+  { key: 'paydue', label: 'Kỳ TT Trên HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
   { key: 'salary', label: 'Phát lương', dot: <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> },
 ];
+// Nhãn mốc "Kỳ TT" đổi theo lựa chọn Trên HĐ / Thực Tế đang xem trên Timeline & Lịch Thu Tiền.
+function phaseLabel(p: { key: TimelinePhaseKey; label: string }, paymentView: 'contract' | 'actual'): string {
+  if (p.key !== 'paydue') return p.label;
+  return paymentView === 'actual' ? 'Kỳ TT Thực Tế' : 'Kỳ TT Trên HĐ';
+}
 /**
  * Giữ invoice_date (ngày cụ thể) khớp với invoice_day (quy tắc lặp hàng tháng).
  * Giữ nguyên THÁNG của invoice_date cũ, chỉ đổi ngày; -1 = ngày cuối tháng đó,
@@ -71,7 +77,7 @@ function syncInvoiceDate(current: string | null | undefined, invoiceDay: number 
  * đang mở — trước đây chỉ tính hoá đơn cùng tháng nên những khách kiểu này không
  * bao giờ có chấm xanh. Trả kèm tháng hoá đơn để hiện tooltip "kỳ TT của tháng nào".
  */
-function payDuesInMonth(c: Client, year: number, month1to12: number) {
+function payDuesInMonth(c: Client, year: number, month1to12: number, mode: 'contract' | 'actual' = 'contract') {
   const invoiceRule = normalizeDayRange(c.invoice_day, c.invoice_day_end).start;
   if (invoiceRule == null) return [];
   const out: { day: number; invMonth: string; invDateLabel: string; dueLabel: string }[] = [];
@@ -83,7 +89,7 @@ function payDuesInMonth(c: Client, year: number, month1to12: number) {
     const invDay = resolveDay(invoiceRule, new Date(invYear, invMonthIdx + 1, 0).getDate());
     if (invDay == null) continue;
     const invDate = new Date(invYear, invMonthIdx, invDay);
-    const due = calcExpectedDue(c, invDate);
+    const due = getPaymentDue(c, invDate, mode);
     const dueDate = due?.date ?? due?.dateFrom ?? null;
     if (!dueDate) continue;
     if (dueDate.getFullYear() !== year || dueDate.getMonth() !== month1to12 - 1) continue;
@@ -182,6 +188,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
   );
   const [showPhaseSettings, setShowPhaseSettings] = useState(false);
   const isPhaseOn = (k: TimelinePhaseKey) => visiblePhases[k] !== false;
+  // Xem Kỳ TT theo Trên HĐ hay Thực Tế — dùng chung cho cả Timeline (Gantt) và Lịch Thu Tiền,
+  // 1 lựa chọn duy nhất áp dụng cả 2 nơi để không lệch số giữa 2 tab.
+  const [paymentView, setPaymentView] = usePersistedState<'contract' | 'actual'>('lgvn_finance_payment_view', 'contract');
   const togglePhase = (k: TimelinePhaseKey) => {
     setVisiblePhases({ ...visiblePhases, [k]: !isPhaseOn(k) });
     // Đang lọc theo mốc vừa tắt thì bỏ luôn bộ lọc, tránh sắp xếp theo thứ không còn hiện.
@@ -204,12 +213,16 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     payment_days: 15 as number,
     payment_fixed_day: 10 as number,
     payment_cutoff: 5 as number,
+    // Kỳ TT Thực Tế — cùng cột DB với "Điều khoản thanh toán" trong hồ sơ khách hàng.
+    payment_actual_mode: null as 'days' | 'fixed' | null,
+    payment_actual_days: 15 as number,
+    payment_actual_fixed_day: 10 as number,
+    payment_actual_cutoff: 5 as number,
   });
 
   // ── Date picker modal state ───────────────────────────────────────
   const [payModal, setPayModal] = useState<{ recId: string; date: string } | null>(null);
 
-  const { regions: regionList } = useRegions();
   const { managers: managerList } = useManagers();
   const { branches: branchList } = useBranchData();
   const { payrollStaffs } = usePayrollStaffs();
@@ -219,7 +232,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     if (!overheadBranch && managerList.length) setOverheadBranch(managerList[0].name);
   }, [managerList, overheadBranch]);
 
-  const regions = useMemo(() => [ALL_OPTION, ...regionList.map(r => r.name)], [regionList]);
+  const regions = useMemo(() => [ALL_OPTION, ...branchOptions(branchList).map(o => o.label)], [branchList]);
   const managers = useMemo(() => [ALL_OPTION, ...managerList.map(m => m.name)], [managerList]);
   // Kèm cả "Chưa gán" để soi ra khách chưa có ai phụ trách tính lương.
   const payrollStaffOptions = useMemo(() => {
@@ -234,7 +247,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     // Da ngung hop tac (hoac da luu tru) thi an han khoi timeline, ke ca thang cuoi.
     if (isSuspended(c) || c.archived_at) return false;
     if (!isActiveInMonth(c, month)) return false;
-    const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(c.region || '');
+    const okR = filterRegion.includes(ALL_OPTION) || filterRegion.includes(branchOf(c, branchList)?.name ?? '');
     const okM = filterManager.includes(ALL_OPTION) || filterManager.includes(c.manager || '');
     const okP = filterPayrollStaff.includes(ALL_OPTION)
       || filterPayrollStaff.includes(c.payroll_staff || UNASSIGNED_OPTION);
@@ -262,7 +275,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         case 'calc': return pair(c.calc_day, c.calc_day_end);
         case 'salary': return pair(c.salary_day, c.salary_day_end);
         case 'invoice': return pair(c.invoice_day, c.invoice_day_end);
-        case 'paydue': return [payDuesInMonth(c, calYear, calMonthNum)[0]?.day ?? null, null];
+        case 'paydue': return [payDuesInMonth(c, calYear, calMonthNum, paymentView)[0]?.day ?? null, null];
         default: return [null, null];
       }
     };
@@ -276,7 +289,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     });
     scored.sort((a, b) => a.score - b.score);
     return scored.map(s => s.c);
-  }, [filteredClients, timelinePhase, calYear, calMonthNum, daysInMonth]);
+  }, [filteredClients, timelinePhase, calYear, calMonthNum, daysInMonth, paymentView]);
 
   const startEdit = (c: Client) => {
     setEditClient(c);
@@ -292,6 +305,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       payment_days: c.payment_days ?? 15,
       payment_fixed_day: c.payment_fixed_day ?? 10,
       payment_cutoff: c.payment_cutoff ?? 5,
+      payment_actual_mode: c.payment_actual_mode ?? null,
+      payment_actual_days: c.payment_actual_days ?? 15,
+      payment_actual_fixed_day: c.payment_actual_fixed_day ?? 10,
+      payment_actual_cutoff: c.payment_actual_cutoff ?? 5,
     });
   };
 
@@ -524,11 +541,22 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 <div className="flex items-center gap-1 text-[11px]">
                   {TIMELINE_PHASES.filter(p => isPhaseOn(p.key)).map(item => (
                     <button key={item.key} onClick={() => setTimelinePhase(timelinePhase === item.key ? null : item.key)}
-                      title={`Bấm để sắp xếp khách hàng theo mốc "${item.label}"`}
+                      title={`Bấm để sắp xếp khách hàng theo mốc "${phaseLabel(item, paymentView)}"`}
                       className={`flex items-center gap-1.5 px-2 py-1 rounded-full transition ${timelinePhase === item.key ? 'bg-gray-200 text-[#111] font-semibold' : 'text-[#888] hover:bg-gray-100'}`}>
-                      {item.dot} {item.label}
+                      {item.dot} {phaseLabel(item, paymentView)}
                     </button>
                   ))}
+                  {/* Trên HĐ / Thực Tế — áp dụng cho cả Timeline lẫn Lịch Thu Tiền */}
+                  <div className="flex items-center bg-gray-100 rounded-full p-0.5 ml-1">
+                    <button onClick={() => setPaymentView('contract')}
+                      className={`px-2 py-1 rounded-full text-[11px] font-medium transition ${paymentView === 'contract' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
+                      Trên HĐ
+                    </button>
+                    <button onClick={() => setPaymentView('actual')}
+                      className={`px-2 py-1 rounded-full text-[11px] font-medium transition ${paymentView === 'actual' ? 'bg-white shadow-sm text-[#7C3AED]' : 'text-[#999] hover:text-[#555]'}`}>
+                      Thực Tế
+                    </button>
+                  </div>
                   {/* Bánh răng: chọn mốc nào hiện / mốc nào ẩn trên timeline */}
                   <div className="relative">
                     <button
@@ -552,7 +580,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                                 className="w-3.5 h-3.5 accent-blue-600"
                               />
                               {p.dot}
-                              <span className="text-[12px] text-[#444]">{p.label}</span>
+                              <span className="text-[12px] text-[#444]">{phaseLabel(p, paymentView)}</span>
                             </label>
                           ))}
                           <button
@@ -619,7 +647,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const invoiceEndX = invoiceEndOk != null ? (invoiceEndOk / daysInMonth) * 100 : null;
 
                   // Ky TT: gom ca han thu tien cua hoa don thang truoc roi vao thang nay
-                  const payDues = payDuesInMonth(c, calYear, calMonthNum);
+                  const payDues = payDuesInMonth(c, calYear, calMonthNum, paymentView);
 
                   const salaryRange = nr(c.salary_day, c.salary_day_end);
                   const salaryDay = rd(salaryRange.start);
@@ -672,7 +700,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                                 label: c.paid_this_month ? 'Da TT' : 'Ky TT',
                                 color: 'bg-emerald-500', textCls: c.paid_this_month ? 'text-emerald-700' : 'text-emerald-600',
                                 shape: 'square', external: true,
-                                title: `Ky TT hoa don thang ${pd.invMonth} (xuat ${pd.invDateLabel}) — han thu ${pd.dueLabel}`,
+                                title: `${paymentView === 'actual' ? 'Kỳ TT Thực Tế' : 'Kỳ TT Trên HĐ'} — hoa don thang ${pd.invMonth} (xuat ${pd.invDateLabel}) — han thu ${pd.dueLabel}`,
                               });
                             }
                           }
@@ -928,6 +956,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             clients={clients}
             onUpdateClient={onClientUpdate}
             toast={toast}
+            mode={paymentView}
+            onModeChange={setPaymentView}
           />
         )}
       </div>
@@ -1134,7 +1164,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   <div className="flex items-start gap-3">
                     <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444] pt-4">
                       <span className="inline-block w-2 h-2 rounded-sm bg-emerald-500" />
-                      Ky TT
+                      Kỳ TT Trên HĐ
                     </div>
                     <div className="flex-1 min-w-0">
                       <label className="text-[10.5px] text-[#999] block mb-0.5">
@@ -1172,9 +1202,30 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   </div>
                 );
               })()}
+
+              <div className="flex items-start gap-3 pt-1">
+                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444] pt-1">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-[#7C3AED]" />
+                  Kỳ TT Thực Tế
+                </div>
+                <div className="flex-1 min-w-0">
+                  {(() => {
+                    const invDay = resolveDay(anchorDay(editForm.invoice_day, editForm.invoice_day_end), daysInMonth);
+                    const invoiceDateForActual = invDay != null ? new Date(calYear, calMonthNum - 1, invDay) : null;
+                    return (
+                      <PaymentActualTermFields
+                        value={editForm}
+                        onChange={patch => setEditForm(f => ({ ...f, ...patch } as typeof f))}
+                        invoiceDate={invoiceDateForActual}
+                        compact
+                      />
+                    );
+                  })()}
+                </div>
+              </div>
             </div>
 
-            <div className="text-[11px] text-blue-500 mt-2">Xuat HD va Ky TT dung chung du lieu voi "Dieu khoan thanh toan" trong ho so khach hang — sua o day hay o do deu nhu nhau.</div>
+            <div className="text-[11px] text-blue-500 mt-2">Xuat HD, Ky TT Tren HD va Ky TT Thuc Te dung chung du lieu voi "Dieu khoan thanh toan" trong ho so khach hang — sua o day hay o do deu nhu nhau.</div>
 
             <div className="flex gap-2 mt-4">
               <button onClick={handleSaveEdit} className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg text-[13px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">

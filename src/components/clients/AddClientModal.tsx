@@ -7,6 +7,7 @@ import { logActivity } from '../../lib/audit';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { normalizeDayRange } from '../../utils/timelineDays';
 import DayCell from '../DayCell';
+import { branchOptions, resolveBranchByLegacyText } from '../../lib/branchRef';
 
 interface AddClientModalProps {
   open: boolean;
@@ -51,7 +52,7 @@ export default function AddClientModal({
   const [name, setName] = useState('');
   const [nameError, setNameError] = useState('');
   const [zoneName, setZoneName] = useState('');
-  const [region, setRegion] = useState('');
+  const [branchId, setBranchId] = useState('');
   const [manager, setManager] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -71,17 +72,17 @@ export default function AddClientModal({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; missing: string[]; name: string } | null>(null);
 
-  const regionOptions = useMemo(() => [...new Set(branches.map(b => b.region || b.name))].sort(), [branches]);
-  const branchForRegion = branches.find(b => (b.region || b.name) === region) || null;
-  const branchStaffsForRegion = branchForRegion ? allBranchStaffs.filter(s => s.branch_id === branchForRegion.id) : [];
-  const managerOptions = branchStaffsForRegion.length > 0
-    ? branchStaffsForRegion.map(s => s.name)
-    : managers.filter(m => !region || m.region === region).map(m => m.name);
+  const branchList = useMemo(() => branchOptions(branches), [branches]);
+  const selectedBranch = branches.find(b => b.id === branchId) || null;
+  const branchStaffsForBranch = selectedBranch ? allBranchStaffs.filter(s => s.branch_id === selectedBranch.id) : [];
+  const managerOptions = branchStaffsForBranch.length > 0
+    ? branchStaffsForBranch.map(s => s.name)
+    : managers.filter(m => !selectedBranch || resolveBranchByLegacyText(m.region, branches)?.id === selectedBranch.id).map(m => m.name);
 
   if (!open) return null;
 
   const reset = () => {
-    setName(''); setNameError(''); setZoneName(''); setRegion(''); setManager('');
+    setName(''); setNameError(''); setZoneName(''); setBranchId(''); setManager('');
     setPhone(''); setEmail(''); setNotes(''); setMapLink(''); setServiceType('leasing'); setPaymentTermDays(30);
     setCutoff({ start: 25, end: null }); setCalc({ start: 27, end: null }); setSalary({ start: 5, end: null });
     setProjectType('contracted'); setLgPct(40); setCnPct(60); setResult(null);
@@ -93,8 +94,9 @@ export default function AddClientModal({
     setZoneName(z);
     const zone = marketZones.find(mz => mz.name === z);
     if (!zone || !zone.location) return;
-    const match = branches.find(b => (b.location || '').toLowerCase().includes(zone.location!.toLowerCase()) || (b.region || b.name).toLowerCase().includes(zone.location!.toLowerCase()));
-    if (match) setRegion(match.region || match.name);
+    const loc = zone.location!.toLowerCase();
+    const match = branches.find(b => (b.location || '').toLowerCase().includes(loc) || b.name.toLowerCase().includes(loc));
+    if (match) setBranchId(match.id);
   };
 
   const onLgChange = (v: string) => { const n = Math.min(100, Math.max(0, +v || 0)); setLgPct(n); setCnPct(Math.round((100 - n) * 10) / 10); };
@@ -122,7 +124,7 @@ export default function AddClientModal({
 
       const payload = {
         name: trimmed,
-        region: region || null,
+        branch_id: branchId || null,
         manager: manager || null,
         industrial_zones: zoneName ? [zoneName] : [],
         status: 'ok',
@@ -151,12 +153,12 @@ export default function AddClientModal({
       onCreated(created);
       await logActivity({
         user, action: 'insert', table: 'clients', recordId: created.id,
-        description: `Thêm khách hàng mới "${trimmed}"${region ? ` (${region})` : ''} - ${serviceType === 'recruitment' ? 'Giới thiệu lao động' : serviceType === 'hoh' ? 'HOH' : 'Cho thuê lao động'}`,
+        description: `Thêm khách hàng mới "${trimmed}"${selectedBranch ? ` (${selectedBranch.name})` : ''} - ${serviceType === 'recruitment' ? 'Giới thiệu lao động' : serviceType === 'hoh' ? 'HOH' : 'Cho thuê lao động'}`,
         newData: created,
       });
 
       const missing: string[] = [];
-      if (!region) missing.push('chi nhánh');
+      if (!branchId) missing.push('chi nhánh');
       if (!manager) missing.push('người quản lý');
       if (serviceType !== 'recruitment' && !cutoff.start) missing.push('lịch chốt công');
       setResult({ ok: missing.length === 0, missing, name: trimmed });
@@ -236,9 +238,9 @@ export default function AddClientModal({
               </div>
               <div>
                 <label className="text-[11px] text-[#777] block mb-1">Chi nhánh phụ trách</label>
-                <select value={region} onChange={e => { setRegion(e.target.value); setManager(''); }} className="w-full text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none bg-white">
+                <select value={branchId} onChange={e => { setBranchId(e.target.value); setManager(''); }} className="w-full text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none bg-white">
                   <option value="">— Chọn chi nhánh —</option>
-                  {regionOptions.map(r => <option key={r} value={r}>{branches.find(b => (b.region || b.name) === r)?.name || r}</option>)}
+                  {branchList.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
               </div>
             </div>

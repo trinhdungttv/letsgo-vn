@@ -1,24 +1,33 @@
 import { useMemo, useState } from 'react';
-import { calcExpectedDue, getDueStatusConfig, formatDateVN } from '../../lib/paymentDate';
+import { getDueStatusConfig, formatDateVN, getPaymentDue, hasActualOverride } from '../../lib/paymentDate';
 import type { Client } from '../../lib/types';
+import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { isSuspended, formatSuspensionDate, suspensionMonth } from '../../utils/suspension';
 
 interface Props {
   clients: Client[];
   onUpdateClient: (c: Client) => void;
   toast: (msg: string) => void;
+  /** Xem theo Kỳ TT Trên HĐ hay Thực Tế — dùng chung state với Timeline (Tài chính > Timeline KH). */
+  mode: 'contract' | 'actual';
+  onModeChange: (m: 'contract' | 'actual') => void;
 }
 
 type FilterMode = 'all' | 'overdue' | 'soon' | 'ok' | 'no_invoice' | 'paid';
 
-function GroupBadge({ group }: { group: number }) {
-  const labels: Record<number, { text: string; cls: string }> = {
-    1: { text: 'Sau N ngày', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-    2: { text: 'Ngày cố định', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
-    3: { text: 'Chu kỳ', cls: 'bg-orange-50 text-orange-700 border-orange-200' },
-  };
+function GroupBadge({ group, actual }: { group: number; actual?: boolean }) {
+  const labels: Record<number, { text: string; cls: string }> = actual
+    ? {
+        1: { text: 'Thực tế: Sau N ngày', cls: 'bg-[#F5F3FF] text-[#7C3AED] border-[#DDD6FE]' },
+        2: { text: 'Thực tế: Ngày cố định', cls: 'bg-[#F5F3FF] text-[#7C3AED] border-[#DDD6FE]' },
+      }
+    : {
+        1: { text: 'Sau N ngày', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+        2: { text: 'Ngày cố định', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+        3: { text: 'Chu kỳ', cls: 'bg-orange-50 text-orange-700 border-orange-200' },
+      };
   const cfg = labels[group] ?? labels[1];
-  return <span className={`text-[10.5px] px-1.5 py-0.5 rounded border font-medium ${cfg.cls}`}>{cfg.text}</span>;
+  return <span className={`text-[10.5px] px-1.5 py-0.5 rounded border font-medium whitespace-nowrap ${cfg.cls}`}>{cfg.text}</span>;
 }
 
 function KpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
@@ -31,7 +40,8 @@ function KpiCard({ label, value, sub, color }: { label: string; value: string | 
   );
 }
 
-export default function PaymentCalendarTab({ clients }: Props) {
+export default function PaymentCalendarTab({ clients, mode, onModeChange }: Props) {
+  const { labelOf } = useBranchLookup();
   const [filter, setFilter] = useState<FilterMode>('all');
 
   const enriched = useMemo(() => {
@@ -47,7 +57,7 @@ export default function PaymentCalendarTab({ clients }: Props) {
       .map(c => {
         const paid = c.paid_this_month || false;
         const invDate = c.invoice_date ? new Date(c.invoice_date) : null;
-        const rawResult = invDate ? calcExpectedDue(c, invDate) : null;
+        const rawResult = invDate ? getPaymentDue(c, invDate, mode) : null;
         const result = paid && rawResult
           ? { ...rawResult, status: 'paid' as const, label: rawResult.label }
           : rawResult;
@@ -65,7 +75,7 @@ export default function PaymentCalendarTab({ clients }: Props) {
         if (!db) return -1;
         return da.getTime() - db.getTime();
       });
-  }, [clients]);
+  }, [clients, mode]);
 
   const kpi = useMemo(() => {
     let overdue = 0, urgent = 0, soon = 0, ok = 0, noInvoice = 0, paid = 0;
@@ -117,6 +127,17 @@ export default function PaymentCalendarTab({ clients }: Props) {
           </button>
         ))}
         <span className="ml-auto text-[11.5px] text-[#aaa]">{filtered.length} khách hàng</span>
+        {/* Trên HĐ / Thực Tế — dùng chung state với Timeline (Tài chính > Timeline KH) */}
+        <div className="flex items-center bg-gray-100 rounded-full p-0.5">
+          <button onClick={() => onModeChange('contract')}
+            className={`px-2.5 py-1 rounded-full text-[11.5px] font-medium transition ${mode === 'contract' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}>
+            Kỳ TT Trên HĐ
+          </button>
+          <button onClick={() => onModeChange('actual')}
+            className={`px-2.5 py-1 rounded-full text-[11.5px] font-medium transition ${mode === 'actual' ? 'bg-white shadow-sm text-[#7C3AED]' : 'text-[#999] hover:text-[#555]'}`}>
+            Kỳ TT Thực Tế
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -128,7 +149,7 @@ export default function PaymentCalendarTab({ clients }: Props) {
               <div className="col-span-4">Khách hàng</div>
               <div className="col-span-2">Điều khoản</div>
               <div className="col-span-2">Xuất HĐ</div>
-              <div className="col-span-2">Dự kiến thu</div>
+              <div className="col-span-2">{mode === 'actual' ? 'Dự kiến thu (Thực Tế)' : 'Dự kiến thu'}</div>
               <div className="col-span-2 text-right">Trạng thái</div>
             </div>
           </div>
@@ -142,7 +163,7 @@ export default function PaymentCalendarTab({ clients }: Props) {
                   <div className="col-span-4 min-w-0">
                     <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
                     <div className="text-[11px] text-[#888]">
-                      {c.region}
+                      {labelOf(c)}
                       {isSuspended(c) && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
                           Ngưng {formatSuspensionDate(c)}
@@ -150,8 +171,15 @@ export default function PaymentCalendarTab({ clients }: Props) {
                       )}
                     </div>
                   </div>
-                  <div className="col-span-2">
-                    <GroupBadge group={c.payment_group ?? 1} />
+                  <div className="col-span-2 flex flex-col items-start gap-0.5">
+                    {mode === 'actual' && hasActualOverride(c) ? (
+                      <GroupBadge group={c.payment_actual_mode === 'fixed' ? 2 : 1} actual />
+                    ) : (
+                      <>
+                        <GroupBadge group={c.payment_group ?? 1} />
+                        {mode === 'actual' && <span className="text-[9.5px] text-[#aaa]">(chưa tuỳ chỉnh, theo HĐ)</span>}
+                      </>
+                    )}
                   </div>
                   <div className="col-span-2 text-[12px] text-[#555]">
                     {c.invoice_date ? formatDateVN(new Date(c.invoice_date)) : <span className="text-[#ccc]">—</span>}

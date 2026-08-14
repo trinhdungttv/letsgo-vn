@@ -113,7 +113,7 @@ export function buildIndustryBriefMd({ industry, terms, positions, metrics, valu
   h('6. Khách hàng & dự án trong ngành');
   if (indClients.length) {
     L.push('**Đang hợp tác:**');
-    for (const c of indClients) L.push(`- ${c.name}${c.region ? ` · ${c.region}` : ''}${c.current_workers ? ` · ${c.current_workers} LĐ` : ''}`);
+    for (const c of indClients) L.push(`- ${c.name}${c.current_workers ? ` · ${c.current_workers} LĐ` : ''}`);
   } else L.push('Đang hợp tác: ' + MISSING);
   if (indLeads.length) {
     L.push('');
