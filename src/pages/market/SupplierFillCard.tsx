@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, X, Pencil, Trash2, Scale, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MarketLeadSupplier, Competitor } from '../../lib/types';
+import type { MergedSupplier } from './supplierLink';
 import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
 import { wageDetailToStrings, wageDetailToNumbers } from './wageFields';
@@ -128,10 +129,11 @@ export default function SupplierFillCard({
   wageFields, onAddWageField, onDeleteWageField,
 }: {
   workersNeeded: number;
-  suppliers: MarketLeadSupplier[];
+  /** Danh sách đã gộp JSON + competitor_clients (xem supplierLink.mergeSuppliers). */
+  suppliers: MergedSupplier[];
   onAddSupplier: (name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => Promise<void> | void;
-  onEditSupplier?: (index: number, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => Promise<void> | void;
-  onDeleteSupplier?: (index: number) => Promise<void> | void;
+  onEditSupplier?: (row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => Promise<void> | void;
+  onDeleteSupplier?: (row: MergedSupplier) => Promise<void> | void;
   saving?: boolean;
   /** Hồ sơ Đối thủ đã tạo sẵn (menu Đối thủ) — chọn thay vì gõ tay, tự gợi ý mức lương chung của NCC đó. */
   competitors?: Competitor[];
@@ -201,13 +203,20 @@ export default function SupplierFillCard({
 
   const submitEdit = async () => {
     if (editIndex == null || !editForm.name.trim()) return;
-    await onEditSupplier?.(editIndex, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail));
+    const row = suppliers[editIndex];
+    if (!row) return;
+    await onEditSupplier?.(row, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail));
     setEditIndex(null);
   };
 
-  const handleDelete = async (i: number, name: string) => {
-    if (!confirm(`Xoá NCC "${name}" khỏi danh sách?`)) return;
-    await onDeleteSupplier?.(i);
+  // Xoá NCC có dòng bên hồ sơ Đối thủ thì nói rõ là xoá cả hai nơi — người dùng nhập số LĐ
+  // trong hồ sơ KCN dễ tưởng ở đây chỉ gỡ khỏi thẻ công ty.
+  const handleDelete = async (row: MergedSupplier) => {
+    const alsoCompetitor = row.ccIds.length
+      ? `\n\nDòng này đang dùng chung với "KH đang phục vụ" trong hồ sơ đối thủ${row.ccKcn ? ` (KCN ${row.ccKcn})` : ''} — xoá ở đây sẽ mất luôn bên đó.`
+      : '';
+    if (!confirm(`Xoá NCC "${row.name}" khỏi danh sách?${alsoCompetitor}`)) return;
+    await onDeleteSupplier?.(row);
   };
 
   return (
@@ -268,13 +277,20 @@ export default function SupplierFillCard({
               <span className="text-[11px] text-[#aaa] min-w-[28px] text-right">{p}%</span>
               {wage && <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">{wage}</span>}
               {detailCount > 0 && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{detailCount} chi tiết</span>}
+              {/* Số LĐ đến từ hồ sơ Đối thủ/KCN — cho biết sửa ở đây là sửa chung cả 2 nơi. */}
+              {s.ccIds.length > 0 && (
+                <span title={`Số LĐ lấy từ "KH đang phục vụ" trong hồ sơ đối thủ${s.ccKcn ? ` · KCN ${s.ccKcn}` : ''}`}
+                  className="text-[10.5px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 shrink-0 cursor-help">
+                  từ hồ sơ đối thủ{s.ccIds.length > 1 ? ` (${s.ccIds.length} dòng)` : ''}
+                </span>
+              )}
               {(onEditSupplier || onDeleteSupplier) && (
                 <span className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-40 sm:group-hover:opacity-100 transition">
                   {onEditSupplier && (
                     <button onClick={() => startEdit(i, s)} className="text-[#999] hover:text-blue-600" title="Sửa"><Pencil size={11} /></button>
                   )}
                   {onDeleteSupplier && (
-                    <button onClick={() => handleDelete(i, s.name)} className="text-[#999] hover:text-red-600" title="Xoá"><Trash2 size={11} /></button>
+                    <button onClick={() => handleDelete(s)} className="text-[#999] hover:text-red-600" title="Xoá"><Trash2 size={11} /></button>
                   )}
                 </span>
               )}

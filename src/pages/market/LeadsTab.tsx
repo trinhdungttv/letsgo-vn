@@ -17,7 +17,10 @@ import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLab
   fetchMinWageBatches, type MinWageBatch } from './regionWage';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr } from './shared';
-import type { Client } from '../../lib/types';
+import type { Client, CompetitorClient } from '../../lib/types';
+import {
+  type MergedSupplier, mergeSuppliers, fetchSupplyRows, writeSupplyQty, deleteSupplyRows,
+} from './supplierLink';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
@@ -94,6 +97,13 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
   const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
   useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
+
+  // "KH đang phục vụ" của các đối thủ — cùng mô tả việc "NCC nào đang cung ứng cho công ty
+  // nào", nhưng nhập ở hồ sơ Đối thủ / hồ sơ KCN. Gộp vào đây để nhập một nơi là thấy ở mọi
+  // nơi (xem supplierLink.ts).
+  const [supplyRows, setSupplyRows] = useState<CompetitorClient[]>([]);
+  const reloadSupply = () => fetchSupplyRows().then(setSupplyRows).catch(e => toast('Lỗi tải NCC từ hồ sơ đối thủ: ' + e.message));
+  useEffect(() => { reloadSupply(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Lương tối thiểu vùng hiện ở đây (cột lương của từng KCN) nên cũng phải cảnh báo khi lỗi thời.
   const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
   useEffect(() => { fetchMinWageBatches().then(setMinWageBatches); }, []);
@@ -290,6 +300,19 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     await supabase.from('competitors').update({ supplying_for }).eq('id', comp.id);
   };
 
+  // Số LĐ được ghi sang competitor_clients khi tên NCC khớp một hồ sơ Đối thủ, để hồ sơ đối
+  // thủ và hồ sơ KCN thấy ngay. Báo lại khi bỏ qua để người dùng biết vì sao không đồng bộ.
+  const pushSupplyQty = async (
+    row: { competitorId: string | null; ccIds: string[] },
+    companyName: string, kcn: string | null, qty: number,
+  ) => {
+    const { skipped } = await writeSupplyQty(row, companyName, kcn, qty, supplyRows);
+    if (skipped === 'multiple') {
+      toast(`"${companyName}" đang có nhiều dòng trùng trong hồ sơ đối thủ — số LĐ chưa đồng bộ, dọn bớt ở hồ sơ đối thủ trước`);
+    }
+    await reloadSupply();
+  };
+
   const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
@@ -303,16 +326,23 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, lead.company_name);
+      const comp = competitors.find(c => c.company_name === name);
+      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, lead.region, qty);
       await onRefresh();
       toast('Đã thêm NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfLead = async (leadId: string, index: number, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfLead = async (leadId: string, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const newSuppliers = lead.suppliers.map((s, i) => i === index ? { ...s, name, qty, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail } : s);
+      // Dòng chỉ có ở competitor_clients (chưa từng nhập ở thẻ công ty) thì thêm mới vào JSON
+      // để giữ được mức lương riêng tại dự án này; dòng đã có thì sửa tại chỗ.
+      const entry = { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      const newSuppliers = row.jsonIndex == null
+        ? [...lead.suppliers, entry]
+        : lead.suppliers.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
       await logActivity({
@@ -320,24 +350,28 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
+      if (!row.is_us) await pushSupplyQty(row, lead.company_name, lead.region, qty);
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleDeleteSupplierOfLead = async (leadId: string, index: number) => {
+  const handleDeleteSupplierOfLead = async (leadId: string, row: MergedSupplier) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const removed = lead.suppliers[index];
-      const newSuppliers = lead.suppliers.filter((_, i) => i !== index);
-      const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
-      if (error) throw error;
+      const newSuppliers = row.jsonIndex == null ? lead.suppliers : lead.suppliers.filter((_, i) => i !== row.jsonIndex);
+      if (row.jsonIndex != null) {
+        const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
+        if (error) throw error;
+      }
+      await deleteSupplyRows(row.ccIds);
       await logActivity({
         user, action: 'update', table: 'market_leads', recordId: leadId,
-        description: `Xoá NCC "${removed?.name}" khỏi công ty/dự án "${lead.company_name}"`,
+        description: `Xoá NCC "${row.name}" khỏi công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
+      await reloadSupply();
       await onRefresh();
       toast('Đã xoá NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -448,15 +482,20 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, client.name);
+      const comp = competitors.find(c => c.company_name === name);
+      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
       toast('Đã thêm NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfClient = async (client: Client, index: number, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
     try {
       const current = client.market_suppliers ?? [];
-      const newSuppliers = current.map((s, i) => i === index ? { ...s, name, qty, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail } : s);
+      const entry = { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      const newSuppliers = row.jsonIndex == null
+        ? [...current, entry]
+        : current.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
       const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
       if (error) throw error;
       await logActivity({
@@ -464,23 +503,27 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
+      if (!row.is_us) await pushSupplyQty(row, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleDeleteSupplierOfClient = async (client: Client, index: number) => {
+  const handleDeleteSupplierOfClient = async (client: Client, row: MergedSupplier) => {
     try {
       const current = client.market_suppliers ?? [];
-      const removed = current[index];
-      const newSuppliers = current.filter((_, i) => i !== index);
-      const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
-      if (error) throw error;
+      const newSuppliers = row.jsonIndex == null ? current : current.filter((_, i) => i !== row.jsonIndex);
+      if (row.jsonIndex != null) {
+        const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
+        if (error) throw error;
+      }
+      await deleteSupplyRows(row.ccIds);
       await logActivity({
         user, action: 'update', table: 'clients', recordId: client.id,
-        description: `Xoá NCC "${removed?.name}" khỏi khách hàng "${client.name}"`,
+        description: `Xoá NCC "${row.name}" khỏi khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
+      await reloadSupply();
       await onRefresh();
       toast('Đã xoá NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -560,13 +603,13 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={c.market_workers_needed ?? 0}
-                  suppliers={c.market_suppliers ?? []}
+                  suppliers={mergeSuppliers(c.market_suppliers ?? [], supplyRows, c.name, competitors)}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(idx, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfClient(c, idx, name, qty, wageMin, wageMax, wageDetail)}
-                  onDeleteSupplier={idx => handleDeleteSupplierOfClient(c, idx)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail)}
+                  onDeleteSupplier={row => handleDeleteSupplierOfClient(c, row)}
                 />
               </div>
             </div>
@@ -645,13 +688,13 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={l.workers_needed}
-                  suppliers={l.suppliers}
+                  suppliers={mergeSuppliers(l.suppliers, supplyRows, l.company_name, competitors)}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(idx, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfLead(l.id, idx, name, qty, wageMin, wageMax, wageDetail)}
-                  onDeleteSupplier={idx => handleDeleteSupplierOfLead(l.id, idx)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail)}
+                  onDeleteSupplier={row => handleDeleteSupplierOfLead(l.id, row)}
                 />
               </div>
             </div>
