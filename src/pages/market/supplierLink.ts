@@ -48,6 +48,10 @@ export interface MergedSupplier extends MarketLeadSupplier {
 export interface LgvSupply {
   count: number;
   note: string;
+  /** Giá vốn LGVN trả NLĐ — chính là `wage_detail` đã nhập ở form hồ sơ công ty. */
+  wageDetail?: Record<string, number> | null;
+  /** Giá bán công ty trả LGVN — chính là `wage_detail_client` ở form hồ sơ công ty. */
+  wageDetailClient?: Record<string, number> | null;
 }
 
 /**
@@ -81,14 +85,21 @@ export function mergeSuppliers(
   // hồ sơ khách hàng (lịch sử lao động theo tuần), nếu không sẽ có 2 con số cho cùng 1 việc
   // và con số gõ tay ở đây gần như luôn cũ.
   if (lgv) {
+    // 2 bảng chi tiết lương của LGVN đã được nhập ngay trên form hồ sơ công ty ("Chi tiết
+    // lương · LGVN trả NLĐ" và "· Công ty trả LGVN") — lấy sang làm mặc định để bảng giá so
+    // được ngay, nhưng KHÔNG đè lên giá trị đã nhập riêng cho dòng NCC này.
+    const notEmpty = (d?: Record<string, number> | null) => d && Object.keys(d).length > 0;
     const us = merged.find(m => m.is_us);
     if (us) {
       us.qty = lgv.count;
       us.qtyLocked = true;
       us.qtyNote = lgv.note;
+      if (!notEmpty(us.wage_detail) && notEmpty(lgv.wageDetail)) us.wage_detail = lgv.wageDetail;
+      if (!notEmpty(us.wage_detail_client) && notEmpty(lgv.wageDetailClient)) us.wage_detail_client = lgv.wageDetailClient;
     } else {
       merged.unshift({
         name: "Let's Go VN", qty: lgv.count, is_us: true,
+        wage_detail: lgv.wageDetail ?? null, wage_detail_client: lgv.wageDetailClient ?? null,
         jsonIndex: null, ccIds: [], competitorId: null,
         qtyLocked: true, qtyNote: lgv.note, jsonQty: 0,
       });

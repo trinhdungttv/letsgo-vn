@@ -121,6 +121,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       count: client.current_workers ?? latest.count ?? 0,
       note: `Số LĐ mới nhất đã nhập trong hồ sơ khách hàng · tuần ${latest.week_label}`
         + `${latest.updated_by ? ` · ${latest.updated_by}` : ''}`,
+      wageDetail: client.wage_detail,
+      wageDetailClient: client.wage_detail_client,
     };
   };
 
@@ -337,11 +339,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     await reloadSupply();
   };
 
-  const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const newSuppliers = [...lead.suppliers, { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail }];
+      const newSuppliers = [...lead.suppliers, { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient }];
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
       await logActivity({
@@ -357,7 +359,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfLead = async (leadId: string, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfLead = async (leadId: string, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
@@ -365,7 +367,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       // để giữ được mức lương riêng tại dự án này; dòng đã có thì sửa tại chỗ.
       // qty đang khoá (số LĐ lấy tự động) thì giữ nguyên giá trị cũ trong JSON — không ghi đè
       // bằng con số dẫn xuất, để nếu sau này bỏ khoá vẫn còn số đã nhập tay.
-      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient };
       const newSuppliers = row.jsonIndex == null
         ? [...lead.suppliers, entry]
         : lead.suppliers.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -497,9 +499,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     setSaving(false);
   };
 
-  const handleAddSupplierToClient = async (client: Client, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleAddSupplierToClient = async (client: Client, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
-      const newSuppliers = [...(client.market_suppliers ?? []), { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail }];
+      const newSuppliers = [...(client.market_suppliers ?? []), { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient }];
       const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
       if (error) throw error;
       await logActivity({
@@ -515,11 +517,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
       const current = client.market_suppliers ?? [];
       // Xem chú thích ở handleEditSupplierOfLead — qty khoá thì không ghi đè bằng số dẫn xuất.
-      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient };
       const newSuppliers = row.jsonIndex == null
         ? [...current, entry]
         : current.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -634,8 +636,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
-                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail)}
+                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfClient(c, row)}
                 />
               </div>
@@ -719,8 +721,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
-                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail)}
+                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfLead(l.id, row)}
                 />
               </div>

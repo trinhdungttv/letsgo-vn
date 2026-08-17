@@ -7,8 +7,14 @@ import WageDetailTable from './WageDetailTable';
 import { wageDetailToStrings, wageDetailToNumbers } from './wageFields';
 import { fmtVnd } from '../../lib/payroll/format';
 
-interface SupForm { name: string; qty: string; wage_min: string; wage_max: string; wage_detail: Record<string, string> }
-const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', wage_detail: {} };
+interface SupForm {
+  name: string; qty: string; wage_min: string; wage_max: string;
+  /** Giá vốn — NCC trả cho người lao động. */
+  wage_detail: Record<string, string>;
+  /** Giá bán — công ty/nhà máy trả cho NCC. */
+  wage_detail_client: Record<string, string>;
+}
+const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', wage_detail: {}, wage_detail_client: {} };
 
 // Khoảng lương vẫn hiển thị gọn bằng "tr" vì nằm trong 1 hàng chật, nhưng Ô NHẬP thì bằng
 // ĐỒNG (migration 126) để khớp đơn vị với Tính bảng lương — xem wageFields.ts.
@@ -16,24 +22,49 @@ const wageFmt = (min: number | null | undefined, max: number | null | undefined)
   min != null && max != null ? `${(min / 1_000_000).toFixed(1)}–${(max / 1_000_000).toFixed(1)}tr` : null;
 
 const tr = (v: number | null | undefined) => v != null ? fmtVnd(v) : '—';
-const detailTotal = (s: MarketLeadSupplier) => Object.values(s.wage_detail ?? {}).reduce((a, b) => a + (b || 0), 0);
+const sumDetail = (d: Record<string, number> | null | undefined) => Object.values(d ?? {}).reduce((a, b) => a + (b || 0), 0);
+/** Giá vốn — NCC trả NLĐ. */
+const detailTotal = (s: MarketLeadSupplier) => sumDetail(s.wage_detail);
+/** Giá bán — công ty trả NCC. */
+const clientTotal = (s: MarketLeadSupplier) => sumDetail(s.wage_detail_client);
 
-/** Bảng so sánh lương giữa các NCC (kể cả Let's Go VN) tại cùng 1 công ty/dự án — chọn NCC
- * muốn so, LGVN luôn ghim cột đầu để dễ đối chiếu, có dòng "So với LGVN" tính chênh lệch. */
+/**
+ * Bảng giá giữa các bên tại cùng 1 công ty/dự án. Mỗi NCC có 2 phía:
+ *   - GIÁ BÁN  (`wage_detail_client`): công ty/nhà máy trả cho NCC đó
+ *   - GIÁ VỐN  (`wage_detail`)       : NCC đó trả cho người lao động
+ * Chênh lệch 2 phía = phí dịch vụ NCC đang ăn — con số cần để định giá, thay vì
+ * chỉ nhìn khoảng lương áng chừng. LGVN luôn ghim cột đầu để đối chiếu.
+ */
 function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSupplier[]; selected: MarketLeadSupplier[] }) {
   const lgvn = suppliers.find(s => s.is_us);
   const cols = [...selected].sort((a, b) => (b.is_us ? 1 : 0) - (a.is_us ? 1 : 0));
-  const fieldNames = [...new Set(cols.flatMap(s => Object.keys(s.wage_detail ?? {})))];
-  const lgvnTotal = lgvn ? detailTotal(lgvn) : 0;
-
   if (cols.length === 0) return <div className="text-[11px] text-[#aaa] px-1 py-2">Chọn ít nhất 1 NCC để so sánh.</div>;
+
+  const fieldsOf = (pick: (s: MarketLeadSupplier) => Record<string, number> | null | undefined) =>
+    [...new Set(cols.flatMap(s => Object.keys(pick(s) ?? {})))];
+  const sellFields = fieldsOf(s => s.wage_detail_client);
+  const costFields = fieldsOf(s => s.wage_detail);
+  const margin = (s: MarketLeadSupplier) => clientTotal(s) - detailTotal(s);
+  const lgvnMargin = lgvn ? margin(lgvn) : 0;
+
+  const headCell = 'text-left px-2 py-1 text-[#888] font-medium sticky left-0 bg-white';
+  const rowLabel = 'px-2 py-1 text-[#666] sticky left-0 bg-white truncate max-w-[150px]';
+  const sectionRow = (title: string, hint: string) => (
+    <tr className="border-t border-[#E8E7E2] bg-[#F9F9F7]">
+      <td className="px-2 py-1 sticky left-0 bg-[#F9F9F7]">
+        <span className="text-[11px] font-semibold text-[#333]">{title}</span>
+        <span className="text-[10px] text-[#999] ml-1">{hint}</span>
+      </td>
+      <td colSpan={cols.length} className="bg-[#F9F9F7]" />
+    </tr>
+  );
 
   return (
     <div className="overflow-x-auto">
-      <table className="text-[11.5px] border-collapse">
+      <table className="text-[11.5px] border-collapse min-w-full">
         <thead>
           <tr>
-            <th className="text-left px-2 py-1 text-[#888] font-medium sticky left-0 bg-white">Khoản</th>
+            <th className={headCell}>Khoản</th>
             {cols.map((s, i) => (
               <th key={i} className={`text-right px-2 py-1 font-medium whitespace-nowrap ${s.is_us ? 'text-blue-700' : 'text-[#333]'}`}>
                 {s.is_us ? '● ' : ''}{s.name}
@@ -43,25 +74,78 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
         </thead>
         <tbody>
           <tr className="border-t border-[#F0EEE9]">
-            <td className="px-2 py-1 text-[#666] sticky left-0 bg-white">Lương (khoảng)</td>
+            <td className={rowLabel}>Lương (khoảng)</td>
             {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{wageFmt(s.wage_min, s.wage_max) ?? '—'}</td>)}
           </tr>
-          {fieldNames.map(f => (
-            <tr key={f} className="border-t border-[#F0EEE9]">
-              <td className="px-2 py-1 text-[#666] sticky left-0 bg-white truncate max-w-[140px]">{f}</td>
+
+          {sectionRow('GIÁ BÁN', '· công ty trả NCC')}
+          {sellFields.map(f => (
+            <tr key={'sell-' + f} className="border-t border-[#F0EEE9]">
+              <td className={rowLabel}>{f}</td>
+              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{tr(s.wage_detail_client?.[f])}</td>)}
+            </tr>
+          ))}
+          {!sellFields.length && (
+            <tr className="border-t border-[#F0EEE9]"><td className={rowLabel}>—</td>
+              <td colSpan={cols.length} className="px-2 py-1 text-[10.5px] text-[#aaa]">Chưa nhập khoản nào công ty trả cho NCC</td>
+            </tr>
+          )}
+          <tr className="border-t border-[#F0EEE9] font-medium">
+            <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng giá bán</td>
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(clientTotal(s))}đ</td>)}
+          </tr>
+
+          {sectionRow('GIÁ VỐN', '· NCC trả người lao động')}
+          {costFields.map(f => (
+            <tr key={'cost-' + f} className="border-t border-[#F0EEE9]">
+              <td className={rowLabel}>{f}</td>
               {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{tr(s.wage_detail?.[f])}</td>)}
             </tr>
           ))}
-          <tr className="border-t border-[#E8E7E2] font-medium">
-            <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng chi tiết lương</td>
+          {!costFields.length && (
+            <tr className="border-t border-[#F0EEE9]"><td className={rowLabel}>—</td>
+              <td colSpan={cols.length} className="px-2 py-1 text-[10.5px] text-[#aaa]">Chưa nhập khoản nào NCC trả người lao động</td>
+            </tr>
+          )}
+          <tr className="border-t border-[#F0EEE9] font-medium">
+            <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng giá vốn</td>
             {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s))}đ</td>)}
+          </tr>
+
+          {sectionRow('CHÊNH LỆCH', '· phí dịch vụ NCC ăn')}
+          <tr className="border-t border-[#F0EEE9] font-medium">
+            <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Giá bán − giá vốn</td>
+            {cols.map((s, i) => {
+              const m = margin(s);
+              // Chỉ có nghĩa khi đã nhập cả 2 phía — 1 phía trống thì chênh lệch bằng chính
+              // phía kia, dễ bị đọc nhầm là "lãi to".
+              const complete = clientTotal(s) > 0 && detailTotal(s) > 0;
+              return (
+                <td key={i} className={`text-right px-2 py-1 ${complete ? 'text-[#111]' : 'text-[#ccc]'}`}
+                  title={complete ? undefined : 'Cần nhập cả giá bán lẫn giá vốn mới tính được'}>
+                  {complete ? `${tr(m)}đ` : '—'}
+                </td>
+              );
+            })}
+          </tr>
+          <tr className="border-t border-[#F0EEE9]">
+            <td className={rowLabel}>Tỷ lệ trên giá bán</td>
+            {cols.map((s, i) => {
+              const sell = clientTotal(s);
+              const complete = sell > 0 && detailTotal(s) > 0;
+              return <td key={i} className={`text-right px-2 py-1 ${complete ? 'text-[#555]' : 'text-[#ccc]'}`}>
+                {complete ? `${Math.round((margin(s) / sell) * 100)}%` : '—'}
+              </td>;
+            })}
           </tr>
           {lgvn && (
             <tr className="border-t border-[#F0EEE9]">
-              <td className="px-2 py-1 text-[#888] sticky left-0 bg-white">So với LGVN</td>
+              <td className={rowLabel}>Chênh lệch so với LGVN</td>
               {cols.map((s, i) => {
                 if (s.is_us) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
-                const diff = detailTotal(s) - lgvnTotal;
+                const complete = clientTotal(s) > 0 && detailTotal(s) > 0 && clientTotal(lgvn) > 0 && detailTotal(lgvn) > 0;
+                if (!complete) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
+                const diff = margin(s) - lgvnMargin;
                 const cls = diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-[#999]';
                 return <td key={i} className={`text-right px-2 py-1 font-medium ${cls}`}>{diff > 0 ? '+' : ''}{tr(diff)}đ</td>;
               })}
@@ -116,7 +200,18 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         <button onClick={onSubmit} disabled={saving} className="px-2.5 py-1 rounded bg-[#1D4ED8] text-white text-[12px]">Lưu</button>
         <button onClick={onCancel} className="px-2 py-1 rounded border border-gray-300 text-[12px]"><X size={12} /></button>
       </div>
+      {/* 2 phía của cùng 1 NCC — nhập đủ mới so được phí dịch vụ họ ăn, thay vì áng chừng
+          qua khoảng lương. Cùng bộ trường dùng chung nên đối chiếu được từng khoản. */}
       <WageDetailTable
+        label="Chi tiết giá BÁN · công ty trả NCC"
+        fields={wageFields}
+        value={form.wage_detail_client}
+        onChange={v => setForm({ ...form, wage_detail_client: v })}
+        onAddField={onAddWageField}
+        onDeleteField={onDeleteWageField}
+      />
+      <WageDetailTable
+        label="Chi tiết giá VỐN · NCC trả người lao động"
         fields={wageFields}
         value={form.wage_detail}
         onChange={v => setForm({ ...form, wage_detail: v })}
@@ -137,8 +232,8 @@ export default function SupplierFillCard({
   workersNeeded: number;
   /** Danh sách đã gộp JSON + competitor_clients (xem supplierLink.mergeSuppliers). */
   suppliers: MergedSupplier[];
-  onAddSupplier: (name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => Promise<void> | void;
-  onEditSupplier?: (row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => Promise<void> | void;
+  onAddSupplier: (name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => Promise<void> | void;
+  onEditSupplier?: (row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => Promise<void> | void;
   onDeleteSupplier?: (row: MergedSupplier) => Promise<void> | void;
   saving?: boolean;
   /** Hồ sơ Đối thủ đã tạo sẵn (menu Đối thủ) — chọn thay vì gõ tay, tự gợi ý mức lương chung của NCC đó. */
@@ -196,7 +291,7 @@ export default function SupplierFillCard({
 
   const submitAdd = async () => {
     if (!addForm.name.trim()) return;
-    await onAddSupplier(addForm.name.trim(), parseInt(addForm.qty) || 0, toNum(addForm.wage_min), toNum(addForm.wage_max), wageDetailToNumbers(addForm.wage_detail));
+    await onAddSupplier(addForm.name.trim(), parseInt(addForm.qty) || 0, toNum(addForm.wage_min), toNum(addForm.wage_max), wageDetailToNumbers(addForm.wage_detail), wageDetailToNumbers(addForm.wage_detail_client));
     setShowAdd(false);
     setAddForm(emptySupForm);
   };
@@ -209,6 +304,7 @@ export default function SupplierFillCard({
       wage_min: s.wage_min != null ? String(s.wage_min) : '',
       wage_max: s.wage_max != null ? String(s.wage_max) : '',
       wage_detail: wageDetailToStrings(s.wage_detail),
+      wage_detail_client: wageDetailToStrings(s.wage_detail_client),
     });
   };
 
@@ -216,7 +312,7 @@ export default function SupplierFillCard({
     if (editIndex == null || !editForm.name.trim()) return;
     const row = suppliers[editIndex];
     if (!row) return;
-    await onEditSupplier?.(row, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail));
+    await onEditSupplier?.(row, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail), wageDetailToNumbers(editForm.wage_detail_client));
     setEditIndex(null);
   };
 
@@ -284,7 +380,10 @@ export default function SupplierFillCard({
           }
           const p = shareOf(s.qty);
           const wage = wageFmt(s.wage_min, s.wage_max);
-          const detailCount = Object.keys(s.wage_detail ?? {}).length;
+          const costCount = Object.keys(s.wage_detail ?? {}).length;
+          const sellCount = Object.keys(s.wage_detail_client ?? {}).length;
+          const marginVal = clientTotal(s) - detailTotal(s);
+          const hasBothSides = clientTotal(s) > 0 && detailTotal(s) > 0;
           return (
             <div key={i} className="flex items-center gap-2 group">
               <span className={`text-[12px] min-w-[110px] shrink-0 ${s.is_us ? 'text-blue-700 font-medium' : ''}`}>{s.is_us ? '● ' : ''}{s.name}</span>
@@ -295,7 +394,19 @@ export default function SupplierFillCard({
               >{s.qty} LĐ</span>
               <span className="text-[11px] text-[#aaa] min-w-[28px] text-right">{p}%</span>
               {wage && <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">{wage}</span>}
-              {detailCount > 0 && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{detailCount} chi tiết</span>}
+              {/* Đã nhập đủ 2 phía thì hiện thẳng phí dịch vụ — thứ thực sự cần so, thay vì
+                  chỉ đếm số khoản đã nhập. */}
+              {hasBothSides ? (
+                <span title={`Giá bán ${tr(clientTotal(s))}đ − giá vốn ${tr(detailTotal(s))}đ`}
+                  className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0 cursor-help">
+                  chênh {tr(marginVal)}đ
+                </span>
+              ) : (sellCount > 0 || costCount > 0) && (
+                <span title={`Giá bán: ${sellCount} khoản · Giá vốn: ${costCount} khoản — nhập đủ 2 phía mới tính được chênh lệch`}
+                  className="text-[10.5px] px-1.5 py-0.5 rounded bg-[#F5F4EF] text-[#888] border border-[#E8E7E2] shrink-0 cursor-help">
+                  {sellCount + costCount} chi tiết
+                </span>
+              )}
               {(onEditSupplier || onDeleteSupplier) && (
                 <span className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-40 sm:group-hover:opacity-100 transition">
                   {onEditSupplier && (

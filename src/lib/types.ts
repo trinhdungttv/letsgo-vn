@@ -562,7 +562,11 @@ export interface MarketLeadSupplier {
   wage_min?: number | null;
   wage_max?: number | null;
   // Chi tiết lương theo từng trường dùng chung (tên trường từ wage_detail_fields, giá trị VNĐ)
+  // GIÁ VỐN: NCC này trả cho người lao động.
   wage_detail?: Record<string, number> | null;
+  // GIÁ BÁN: công ty/nhà máy trả cho NCC này — cùng bộ trường với wage_detail để so được
+  // từng khoản và tính ra phí dịch vụ NCC đang ăn. Nằm trong cột JSON nên không cần migration.
+  wage_detail_client?: Record<string, number> | null;
 }
 
 export interface MarketLead {
