@@ -399,8 +399,12 @@ export interface CompetitorClient {
   // Phí sale/cộng tác viên trả hàng tháng cho dự án này (migration 103)
   sale_name?: string | null;
   sale_fee?: number | null;
-  // SĐT sale phụ trách (migration 104)
+  // SĐT sale phụ trách (migration 104 — gộp lại trong 139 vì 104 chưa từng chạy)
   sale_phone?: string | null;
+  // Mốc cập nhật (migration 139) — workers_updated_at là mốc RIÊNG của số LĐ, hiện khi
+  // rê chuột vào con số để biết số liệu chốt từ bao giờ.
+  updated_at?: string | null;
+  workers_updated_at?: string | null;
 }
 
 export interface CompetitorLog {

@@ -1,12 +1,17 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Eye, Plus, X, Check, Search, Trash2, Building2, ExternalLink, ChevronDown, ChevronRight, Users, Info } from 'lucide-react';
+import { Eye, Plus, X, Check, Search, Trash2, Building2, ExternalLink, ChevronDown, ChevronRight, Info, Pencil, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Competitor, CompetitorClient, MarketZone, Client, MarketLead } from '../../lib/types';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
+import { formatCurrency } from '../../lib/format';
 import { fmtTr, sameZone, isNationwide } from './shared';
 import { matchesSearch } from '../../hooks/useSlashSearch';
 import SearchSelect from './SearchSelect';
+import {
+  type CompetitorClientInput, insertCompetitorClient, updateCompetitorClient,
+  missingCompetitorClientColumns, workersTooltip, workersDateInput, dateInputToIso,
+} from './competitorClients';
 
 /**
  * "Đối thủ đang hoạt động tại KCN" — bảng nằm trong hồ sơ 1 KCN.
@@ -40,6 +45,20 @@ interface Presence {
 }
 
 const pill = 'px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap';
+const inputCls = 'text-[12px] px-2 py-1 rounded-lg border border-gray-300 outline-none focus:border-blue-500';
+
+const emptyFactoryForm = { client_name: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', workers_date: '' };
+type FactoryForm = typeof emptyFactoryForm;
+
+const formToInput = (f: FactoryForm, kcn: string): CompetitorClientInput => ({
+  client_name: f.client_name.trim(),
+  kcn,
+  worker_count: parseInt(f.worker_count, 10) || 0,
+  sale_name: f.sale_name.trim() || null,
+  sale_phone: f.sale_phone.trim() || null,
+  sale_fee: f.sale_fee ? parseFloat(f.sale_fee) : null,
+  workers_updated_at: dateInputToIso(f.workers_date),
+});
 
 export default function ZoneCompetitors({ zone, competitors, clients, marketLeads, onRefresh, toast, onOpenCompetitor }: Props) {
   const { user } = useAuth();
@@ -53,7 +72,13 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showBroad, setShowBroad] = useState(false);
   const [factoryFor, setFactoryFor] = useState<string | null>(null);
-  const [factoryForm, setFactoryForm] = useState({ client_name: '', worker_count: '' });
+  const [factoryForm, setFactoryForm] = useState(emptyFactoryForm);
+  // Dòng nhà máy đang sửa tại chỗ (id của competitor_clients).
+  const [editingRow, setEditingRow] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState(emptyFactoryForm);
+  const [missingCols, setMissingCols] = useState<string[]>([]);
+
+  useEffect(() => { missingCompetitorClientColumns().then(setMissingCols); }, []);
 
   // Toàn bộ "KH đang phục vụ" của mọi đối thủ — dữ liệu nhỏ (mỗi đối thủ vài chục dòng) nên
   // tải 1 lần rồi lọc trong JS bằng sameZone(), thay vì .eq('kcn', name) sẽ bỏ sót các bản
@@ -215,12 +240,7 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
     const name = factoryForm.client_name.trim();
     if (!name) { toast('Chọn hoặc nhập tên nhà máy'); return; }
     setBusyId(c.id);
-    const { data, error } = await supabase.from('competitor_clients').insert({
-      competitor_id: c.id,
-      client_name: name,
-      kcn: zone.name,
-      worker_count: parseInt(factoryForm.worker_count, 10) || 0,
-    }).select().single();
+    const { data, error } = await insertCompetitorClient(c.id, formToInput(factoryForm, zone.name));
     if (error) { toast('Lỗi: ' + error.message); setBusyId(null); return; }
     await logActivity({
       user, action: 'insert', table: 'competitor_clients', recordId: data.id,
@@ -229,11 +249,40 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
     });
     // Nhà máy đã biết đích danh → đối thủ chắc chắn hoạt động ở đây, ghi nhận luôn cho khỏi sót.
     if (!(c.active_zones ?? []).some(z => sameZone(z, zone.name))) await recordZone([c], true);
-    setFactoryForm({ client_name: '', worker_count: '' });
+    setFactoryForm(emptyFactoryForm);
     setFactoryFor(null);
     await load();
     setBusyId(null);
     toast(`Đã thêm nhà máy "${name}" cho ${c.company_name}`);
+  };
+
+  const startEditFactory = (row: CompetitorClient) => {
+    setFactoryFor(null);
+    setEditingRow(row.id);
+    setEditForm({
+      client_name: row.client_name,
+      worker_count: String(row.worker_count ?? ''),
+      sale_name: row.sale_name ?? '',
+      sale_phone: row.sale_phone ?? '',
+      sale_fee: row.sale_fee != null ? String(row.sale_fee) : '',
+      workers_date: workersDateInput(row),
+    });
+  };
+
+  const handleSaveFactory = async (row: CompetitorClient, c: Competitor) => {
+    if (!editForm.client_name.trim()) { toast('Tên nhà máy không được để trống'); return; }
+    setBusyId(c.id);
+    const { data, error } = await updateCompetitorClient(row, formToInput(editForm, row.kcn ?? zone.name));
+    if (error) { toast('Lỗi: ' + error.message); setBusyId(null); return; }
+    await logActivity({
+      user, action: 'update', table: 'competitor_clients', recordId: row.id,
+      description: `Cập nhật nhà máy "${row.client_name}" của đối thủ "${c.company_name}" tại ${zone.name}`,
+      oldData: row, newData: data,
+    });
+    setEditingRow(null);
+    await load();
+    setBusyId(null);
+    toast('Đã cập nhật');
   };
 
   const handleDeleteFactory = async (row: CompetitorClient, c: Competitor) => {
@@ -276,6 +325,16 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
           <Plus size={12} /> Chọn đối thủ tại đây
         </button>
       </div>
+
+      {missingCols.length > 0 && (
+        <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11.5px] text-amber-800 flex items-start gap-1.5">
+          <AlertTriangle size={12} className="mt-0.5 flex-none" />
+          <span>
+            Database chưa có cột <b>{missingCols.join(', ')}</b> — các ô này sẽ không lưu được.
+            Chạy migration <b>139</b> trong Supabase SQL Editor để dùng đầy đủ.
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-2 p-3 bg-[#FBFBF9] border-b border-[#F0EEE9]">
         <div className="px-3 py-2 bg-white rounded-lg border border-[#F0EEE9]">
@@ -375,25 +434,56 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
                   {isOpen && (
                     <tr className="border-b border-[#F0EEE9] bg-[#FBFBF9]">
                       <td colSpan={8} className="px-4 py-3">
-                        {p.factories.length ? (
-                          <div className="flex flex-wrap gap-1.5 mb-2">
-                            {p.factories.map(f => (
-                              <span key={f.id} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white border border-[#E8E7E2] text-[11.5px]">
-                                <Building2 size={10} className="text-[#aaa]" />
-                                <span className="text-[#222]">{f.client_name}</span>
-                                <span className="text-[#888]"><Users size={9} className="inline" /> {(f.worker_count ?? 0).toLocaleString('vi-VN')}</span>
-                                {f.sale_name && <span className="text-[10px] text-[#aaa]">Sale: {f.sale_name}</span>}
-                                <button onClick={() => handleDeleteFactory(f, p.c)} className="text-[#ccc] hover:text-red-600"><Trash2 size={10} /></button>
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
+                        {p.factories.length > 0 && (
+                          <table className="w-full text-[11.5px] mb-2 bg-white border border-[#E8E7E2] rounded-lg overflow-hidden">
+                            <thead><tr className="border-b border-[#F0EEE9]">
+                              {['Nhà máy', 'Số LĐ', 'Sale phụ trách', 'SĐT sale', 'Phí sale/tháng', ''].map(h => (
+                                <th key={h} className="text-left px-2.5 py-1.5 text-[10.5px] text-[#999] font-medium whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {p.factories.map(f => editingRow === f.id ? (
+                                <tr key={f.id} className="border-b border-[#F0EEE9] last:border-0 bg-blue-50/40">
+                                  <td className="px-2.5 py-1.5"><input value={editForm.client_name} onChange={e => setEditForm(v => ({ ...v, client_name: e.target.value }))} className={`${inputCls} w-44`} /></td>
+                                  <td className="px-2.5 py-1.5">
+                                    <input type="number" min={0} value={editForm.worker_count} onChange={e => setEditForm(v => ({ ...v, worker_count: e.target.value }))} className={`${inputCls} w-20`} />
+                                  </td>
+                                  <td className="px-2.5 py-1.5"><input value={editForm.sale_name} onChange={e => setEditForm(v => ({ ...v, sale_name: e.target.value }))} placeholder="Tên sale" className={`${inputCls} w-32`} /></td>
+                                  <td className="px-2.5 py-1.5"><input value={editForm.sale_phone} onChange={e => setEditForm(v => ({ ...v, sale_phone: e.target.value }))} placeholder="SĐT" className={`${inputCls} w-28`} /></td>
+                                  <td className="px-2.5 py-1.5"><input type="number" min={0} value={editForm.sale_fee} onChange={e => setEditForm(v => ({ ...v, sale_fee: e.target.value }))} placeholder="₫/tháng" className={`${inputCls} w-28`} /></td>
+                                  <td className="px-2.5 py-1.5 whitespace-nowrap">
+                                    <button onClick={() => handleSaveFactory(f, p.c)} disabled={busyId === p.c.id} className="px-2 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60">Lưu</button>
+                                    <button onClick={() => setEditingRow(null)} className="ml-1 px-2 py-1 rounded-lg text-[11px] border border-gray-300 text-[#666]">Huỷ</button>
+                                  </td>
+                                </tr>
+                              ) : (
+                                <tr key={f.id} className="border-b border-[#F0EEE9] last:border-0">
+                                  <td className="px-2.5 py-1.5 text-[#222]"><Building2 size={10} className="inline text-[#bbb] mr-1" />{f.client_name}</td>
+                                  {/* Rê chuột vào con số → biết số liệu này chốt từ bao giờ. */}
+                                  <td className="px-2.5 py-1.5">
+                                    <span title={workersTooltip(f)} className="font-medium text-red-600 border-b border-dotted border-red-300 cursor-help">
+                                      {(f.worker_count ?? 0).toLocaleString('vi-VN')}
+                                    </span>
+                                  </td>
+                                  <td className="px-2.5 py-1.5 text-[#666]">{f.sale_name || '—'}</td>
+                                  <td className="px-2.5 py-1.5 text-[#666]">{f.sale_phone || '—'}</td>
+                                  <td className="px-2.5 py-1.5 text-blue-700">{f.sale_fee ? formatCurrency(f.sale_fee) : '—'}</td>
+                                  <td className="px-2.5 py-1.5 whitespace-nowrap text-right">
+                                    <button onClick={() => startEditFactory(f)} title="Sửa số LĐ / thông tin sale" className="p-1 rounded hover:bg-blue-50 text-[#bbb] hover:text-blue-600"><Pencil size={11} /></button>
+                                    <button onClick={() => handleDeleteFactory(f, p.c)} title="Xoá nhà máy này" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-600"><Trash2 size={11} /></button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {!p.factories.length && (
                           <div className="text-[11.5px] text-[#999] mb-2">
                             Chưa biết đối thủ này đang cung ứng cho nhà máy nào trong KCN. Thêm vào đây để tính được số LĐ họ đang giữ.
                           </div>
                         )}
                         {factoryFor === p.c.id ? (
-                          <div className="flex items-end gap-2 flex-wrap">
+                          <div className="flex items-end gap-2 flex-wrap bg-white border border-[#E8E7E2] rounded-lg p-2.5">
                             <div className="flex flex-col gap-1">
                               <label className="text-[10.5px] text-[#888]">Nhà máy trong KCN</label>
                               <SearchSelect
@@ -403,30 +493,38 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
                                 placeholder="Chọn / gõ tên nhà máy…"
                                 allowAdd
                                 onAdd={v => setFactoryForm(f => ({ ...f, client_name: v }))}
-                                className="w-64"
+                                className="w-56"
                               />
                             </div>
                             <div className="flex flex-col gap-1">
-                              <label className="text-[10.5px] text-[#888]">Số LĐ họ đang cung ứng</label>
-                              <input
-                                type="number" min={0}
-                                value={factoryForm.worker_count}
-                                onChange={e => setFactoryForm(f => ({ ...f, worker_count: e.target.value }))}
-                                className="w-36 text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                              />
+                              <label className="text-[10.5px] text-[#888]">Số LĐ đang cung ứng</label>
+                              <input type="number" min={0} value={factoryForm.worker_count} onChange={e => setFactoryForm(f => ({ ...f, worker_count: e.target.value }))} className={`${inputCls} w-28 py-1.5`} />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[10.5px] text-[#888]">Sale phụ trách</label>
+                              <input value={factoryForm.sale_name} onChange={e => setFactoryForm(f => ({ ...f, sale_name: e.target.value }))} className={`${inputCls} w-36 py-1.5`} />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[10.5px] text-[#888]">SĐT sale</label>
+                              <input value={factoryForm.sale_phone} onChange={e => setFactoryForm(f => ({ ...f, sale_phone: e.target.value }))} className={`${inputCls} w-32 py-1.5`} />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[10.5px] text-[#888]">Phí sale/tháng (₫)</label>
+                              <input type="number" min={0} value={factoryForm.sale_fee} onChange={e => setFactoryForm(f => ({ ...f, sale_fee: e.target.value }))} className={`${inputCls} w-32 py-1.5`} />
                             </div>
                             <button onClick={() => handleAddFactory(p.c)} disabled={busyId === p.c.id} className="px-3 py-1.5 rounded-lg text-[11.5px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60">
                               {busyId === p.c.id ? 'Đang lưu…' : 'Thêm nhà máy'}
                             </button>
-                            <button onClick={() => { setFactoryFor(null); setFactoryForm({ client_name: '', worker_count: '' }); }} className="px-3 py-1.5 rounded-lg text-[11.5px] border border-gray-300 text-[#666]">Huỷ</button>
+                            <button onClick={() => { setFactoryFor(null); setFactoryForm(emptyFactoryForm); }} className="px-3 py-1.5 rounded-lg text-[11.5px] border border-gray-300 text-[#666]">Huỷ</button>
                           </div>
                         ) : (
-                          <button onClick={() => { setFactoryFor(p.c.id); setFactoryForm({ client_name: '', worker_count: '' }); }} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-white">
+                          <button onClick={() => { setEditingRow(null); setFactoryFor(p.c.id); setFactoryForm(emptyFactoryForm); }} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-white">
                             <Plus size={11} /> Thêm nhà máy họ đang phục vụ
                           </button>
                         )}
                         <div className="mt-2 text-[10.5px] text-[#aaa]">
                           Dữ liệu này dùng chung với mục "KH đang phục vụ" trong hồ sơ đối thủ — sửa ở đâu cũng hiện ở cả hai nơi.
+                          Rê chuột vào số LĐ để xem số liệu chốt từ bao giờ.
                         </div>
                       </td>
                     </tr>

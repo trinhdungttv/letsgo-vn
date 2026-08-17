@@ -10,6 +10,10 @@ import SearchSelect from './SearchSelect';
 import { type CompetitorLinkType, fetchLinkTypes, getLinkUrl, iconForLinkKey } from './competitorLinks';
 import { FOCUS_PROVINCES } from './populationData';
 import { type RecruitmentSource, fetchRecruitmentSources, addRecruitmentSource, deleteRecruitmentSource } from './recruitmentSources';
+import {
+  insertCompetitorClient, updateCompetitorClient, missingCompetitorClientColumns,
+  workersTooltip, workersDateInput, dateInputToIso,
+} from './competitorClients';
 
 interface Contact { name: string; phone: string }
 
@@ -209,6 +213,67 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
   const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '' });
   const [kcnFromProfile, setKcnFromProfile] = useState(false);
 
+  // Sửa tại chỗ 1 dòng "KH đang phục vụ" — gồm cả NGÀY chốt số LĐ, để nhập được số liệu
+  // của kỳ trước mà không làm nó trông như vừa khảo sát hôm nay.
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [editClientForm, setEditClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', workers_date: '' });
+  const [savingClient, setSavingClient] = useState(false);
+  const [missingCols, setMissingCols] = useState<string[]>([]);
+  useEffect(() => { missingCompetitorClientColumns().then(setMissingCols); }, []);
+
+  const startEditClient = (c: CompetitorClient) => {
+    setEditingClientId(c.id);
+    setEditClientForm({
+      client_name: c.client_name,
+      kcn: c.kcn ?? '',
+      worker_count: String(c.worker_count ?? ''),
+      sale_name: c.sale_name ?? '',
+      sale_phone: c.sale_phone ?? '',
+      sale_fee: c.sale_fee != null ? String(c.sale_fee) : '',
+      workers_date: workersDateInput(c),
+    });
+  };
+
+  const handleSaveClientRow = async (row: CompetitorClient) => {
+    if (!editClientForm.client_name.trim()) { toast('Tên nhà máy không được để trống'); return; }
+    setSavingClient(true);
+    const { data, error } = await updateCompetitorClient(row, {
+      client_name: editClientForm.client_name.trim(),
+      kcn: editClientForm.kcn.trim() || null,
+      worker_count: parseInt(editClientForm.worker_count, 10) || 0,
+      sale_name: editClientForm.sale_name.trim() || null,
+      sale_phone: editClientForm.sale_phone.trim() || null,
+      sale_fee: editClientForm.sale_fee ? parseFloat(editClientForm.sale_fee) : null,
+      workers_updated_at: dateInputToIso(editClientForm.workers_date),
+    });
+    setSavingClient(false);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    await logActivity({
+      user, action: 'update', table: 'competitor_clients', recordId: row.id,
+      description: `Cập nhật KH đang phục vụ "${row.client_name}" của đối thủ "${competitor.company_name}"`,
+      oldData: row, newData: data,
+    });
+    setEditingClientId(null);
+    await load();
+    toast('Đã cập nhật');
+  };
+
+  const handleDeleteClientRow = async (row: CompetitorClient) => {
+    if (!confirm(
+      `Xoá "${row.client_name}" khỏi danh sách KH đang phục vụ của "${competitor.company_name}"?\n\n`
+      + `Dòng này bị XOÁ VĨNH VIỄN, không thể hoàn tác. Hồ sơ khách hàng/dự án của công ty đó không bị ảnh hưởng.`,
+    )) return;
+    const { error } = await supabase.from('competitor_clients').delete().eq('id', row.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    await logActivity({
+      user, action: 'delete', table: 'competitor_clients', recordId: row.id,
+      description: `Xoá KH đang phục vụ "${row.client_name}" của đối thủ "${competitor.company_name}"`,
+      oldData: row,
+    });
+    await load();
+    toast('Đã xoá');
+  };
+
   // Danh sách gợi ý cho "Tên nhà máy" — gộp Khách hàng đang hợp tác (clients) +
   // Công ty/Dự án đang tìm hiểu (market_leads) bên tab Công ty/Dự án. Chọn tên chưa có
   // trong 2 nguồn này sẽ tạo mới 1 "Công ty/Dự án đang tìm hiểu" để đồng bộ ngược lại đó.
@@ -322,8 +387,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     const name = clientForm.client_name.trim();
     const kcn = clientForm.kcn.trim();
     if (!name) return;
-    const { error } = await supabase.from('competitor_clients').insert({
-      competitor_id: competitor.id,
+    const { error } = await insertCompetitorClient(competitor.id, {
       client_name: name,
       kcn: kcn || null,
       worker_count: clientForm.worker_count ? parseInt(clientForm.worker_count, 10) : 0,
@@ -687,19 +751,47 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
         <div className="space-y-3">
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">KH đang phục vụ</div>
+            {missingCols.length > 0 && (
+              <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800">
+                Database chưa có cột <b>{missingCols.join(', ')}</b> — các ô này sẽ không lưu được. Chạy migration <b>139</b> trong Supabase SQL Editor.
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]">
                 <thead><tr className="border-b border-[#E8E7E2]">
-                  {['Tên nhà máy', 'KCN', 'LĐ', 'Sale phụ trách', 'SĐT sale', 'Phí sale/tháng', 'Quan hệ'].map(h => (
+                  {['Tên nhà máy', 'KCN', 'LĐ', 'Sale phụ trách', 'SĐT sale', 'Phí sale/tháng', 'Quan hệ', ''].map(h => (
                     <th key={h} className="text-left px-3 py-2 text-[11px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
-                  {compClients.map(c => (
+                  {compClients.map(c => editingClientId === c.id ? (
+                    <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0 bg-blue-50/40">
+                      <td className="px-2 py-1.5"><input value={editClientForm.client_name} onChange={e => setEditClientForm(f => ({ ...f, client_name: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5"><input value={editClientForm.kcn} onChange={e => setEditClientForm(f => ({ ...f, kcn: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5">
+                        <input type="number" min={0} value={editClientForm.worker_count} onChange={e => setEditClientForm(f => ({ ...f, worker_count: e.target.value }))} className="w-16 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" />
+                        {/* Ngày chốt số LĐ — sửa được để nhập số liệu của kỳ trước cho đúng mốc. */}
+                        <input type="date" title="Ngày chốt số LĐ này" value={editClientForm.workers_date} onChange={e => setEditClientForm(f => ({ ...f, workers_date: e.target.value }))} className="mt-1 w-[122px] text-[10.5px] px-1.5 py-0.5 rounded border border-gray-300 outline-none focus:border-blue-500 text-[#666]" />
+                      </td>
+                      <td className="px-2 py-1.5"><input value={editClientForm.sale_name} onChange={e => setEditClientForm(f => ({ ...f, sale_name: e.target.value }))} className="w-24 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5"><input value={editClientForm.sale_phone} onChange={e => setEditClientForm(f => ({ ...f, sale_phone: e.target.value }))} className="w-24 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5"><input type="number" min={0} value={editClientForm.sale_fee} onChange={e => setEditClientForm(f => ({ ...f, sale_fee: e.target.value }))} className="w-24 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5 text-[10.5px] text-[#999]">—</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        <button onClick={() => handleSaveClientRow(c)} disabled={savingClient} className="px-2 py-1 rounded text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60">{savingClient ? '…' : 'Lưu'}</button>
+                        <button onClick={() => setEditingClientId(null)} className="ml-1 px-2 py-1 rounded text-[11px] border border-gray-300 text-[#666]">Huỷ</button>
+                      </td>
+                    </tr>
+                  ) : (
                     <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
                       <td className="px-3 py-2 font-medium">{c.client_name}</td>
                       <td className="px-3 py-2 text-[#666]">{c.kcn || '—'}</td>
-                      <td className="px-3 py-2">{(c.worker_count ?? 0).toLocaleString('vi-VN')}</td>
+                      {/* Rê chuột vào con số → biết số liệu này chốt từ bao giờ. */}
+                      <td className="px-3 py-2">
+                        <span title={workersTooltip(c)} className="border-b border-dotted border-gray-400 cursor-help">
+                          {(c.worker_count ?? 0).toLocaleString('vi-VN')}
+                        </span>
+                      </td>
                       <td className="px-3 py-2 text-[#666]">{c.sale_name || '—'}</td>
                       <td className="px-3 py-2 text-[#666]">{c.sale_phone || '—'}</td>
                       <td className="px-3 py-2 text-blue-700 font-medium">{c.sale_fee ? formatCurrency(c.sale_fee) : '—'}</td>
@@ -708,10 +800,14 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                           ? <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 text-[11px] font-medium">⚠ Chung LG</span>
                           : <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-medium">Tiềm năng</span>}
                       </td>
+                      <td className="px-2 py-2 whitespace-nowrap text-right">
+                        <button onClick={() => startEditClient(c)} title="Sửa số LĐ / sale / ngày chốt số liệu" className="p-1 rounded hover:bg-blue-50 text-[#bbb] hover:text-blue-600"><Pencil size={11} /></button>
+                        <button onClick={() => handleDeleteClientRow(c)} title="Xoá dòng này" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-600"><Trash2 size={11} /></button>
+                      </td>
                     </tr>
                   ))}
                   {compClients.length === 0 && (
-                    <tr><td colSpan={7} className="text-center py-5 text-[#aaa]">Chưa có dữ liệu</td></tr>
+                    <tr><td colSpan={8} className="text-center py-5 text-[#aaa]">Chưa có dữ liệu</td></tr>
                   )}
                 </tbody>
               </table>
