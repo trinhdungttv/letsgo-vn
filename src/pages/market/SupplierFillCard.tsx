@@ -171,6 +171,11 @@ export default function SupplierFillCard({
   const total = suppliers.reduce((s, x) => s + x.qty, 0);
   const remaining = Math.max(workersNeeded - total, 0);
   const pct = workersNeeded > 0 ? Math.round((total / workersNeeded) * 100) : 0;
+  // Chưa nhập "Nhu cầu" thì % fill vô nghĩa (mọi thanh đều 0% dù đã biết cả nghìn LĐ) —
+  // đổi mẫu số sang tổng LĐ đã biết để vẫn đọc được NCC nào đang giữ phần lớn nhất.
+  const hasDemand = workersNeeded > 0;
+  const shareBase = hasDemand ? workersNeeded : total;
+  const shareOf = (qty: number) => shareBase > 0 ? Math.round((qty / shareBase) * 100) : 0;
   const competitorNames = [...new Set((competitors ?? []).map(c => c.company_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
 
   // Khi chọn NCC trong form THÊM MỚI, gợi ý sẵn lương chung từ hồ sơ Đối thủ (nếu chưa gõ lương).
@@ -209,13 +214,11 @@ export default function SupplierFillCard({
     setEditIndex(null);
   };
 
-  // Xoá NCC có dòng bên hồ sơ Đối thủ thì nói rõ là xoá cả hai nơi — người dùng nhập số LĐ
-  // trong hồ sơ KCN dễ tưởng ở đây chỉ gỡ khỏi thẻ công ty.
+  // Số LĐ của 1 NCC là MỘT dữ liệu duy nhất, chỉ hiển thị ở nhiều nơi (thẻ công ty, hồ sơ
+  // đối thủ, hồ sơ KCN). Xoá là xoá hẳn, nên nói rõ để không ai tưởng chỉ ẩn ở màn này.
   const handleDelete = async (row: MergedSupplier) => {
-    const alsoCompetitor = row.ccIds.length
-      ? `\n\nDòng này đang dùng chung với "KH đang phục vụ" trong hồ sơ đối thủ${row.ccKcn ? ` (KCN ${row.ccKcn})` : ''} — xoá ở đây sẽ mất luôn bên đó.`
-      : '';
-    if (!confirm(`Xoá NCC "${row.name}" khỏi danh sách?${alsoCompetitor}`)) return;
+    const scope = row.ccIds.length ? '\n\nDữ liệu này dùng chung — xoá ở đây thì hồ sơ đối thủ và hồ sơ KCN cũng mất theo.' : '';
+    if (!confirm(`Xoá NCC "${row.name}" khỏi danh sách?${scope}`)) return;
     await onDeleteSupplier?.(row);
   };
 
@@ -224,10 +227,17 @@ export default function SupplierFillCard({
       <div className="flex gap-2 flex-wrap items-center mb-3">
         <div className="bg-[#F9F9F7] rounded-lg px-3 py-1.5 text-center"><div className="text-[10px] text-[#aaa]">Nhu cầu</div><div className="text-[14px] font-medium">{workersNeeded}</div></div>
         <div className="bg-[#F9F9F7] rounded-lg px-3 py-1.5 text-center"><div className="text-[10px] text-[#aaa]">Đã fill</div><div className="text-[14px] font-medium text-emerald-600">{total}</div></div>
-        <div className={`rounded-lg px-3 py-1.5 text-center ${remaining > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}><div className={`text-[10px] ${remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>Còn thiếu</div><div className={`text-[14px] font-medium ${remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{remaining}</div></div>
+        <div className={`rounded-lg px-3 py-1.5 text-center ${!hasDemand ? 'bg-[#F9F9F7]' : remaining > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}><div className={`text-[10px] ${!hasDemand ? 'text-[#aaa]' : remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>Còn thiếu</div><div className={`text-[14px] font-medium ${!hasDemand ? 'text-[#ccc]' : remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{hasDemand ? remaining : '—'}</div></div>
         <div className="flex-1 min-w-[120px]">
-          <div className="text-[10px] text-[#aaa] mb-1">{pct}% fill</div>
-          <div className="h-1.5 bg-[#F0EEE9] rounded-full overflow-hidden"><div className="h-1.5 bg-emerald-500 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} /></div>
+          <div className="text-[10px] text-[#aaa] mb-1">
+            {hasDemand
+              ? `${pct}% fill`
+              : <>Chưa nhập nhu cầu · % là tỷ trọng trên <b className="font-medium text-[#888]">{total}</b> LĐ đã biết</>}
+          </div>
+          {/* Không có nhu cầu thì không vẽ thanh fill — thanh xanh đầy sẽ bị đọc nhầm là "đã đủ". */}
+          {hasDemand && (
+            <div className="h-1.5 bg-[#F0EEE9] rounded-full overflow-hidden"><div className="h-1.5 bg-emerald-500 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} /></div>
+          )}
         </div>
         {suppliers.length > 1 && (
           <button
@@ -266,7 +276,7 @@ export default function SupplierFillCard({
               </div>
             );
           }
-          const p = workersNeeded > 0 ? Math.round((s.qty / workersNeeded) * 100) : 0;
+          const p = shareOf(s.qty);
           const wage = wageFmt(s.wage_min, s.wage_max);
           const detailCount = Object.keys(s.wage_detail ?? {}).length;
           return (
@@ -277,13 +287,6 @@ export default function SupplierFillCard({
               <span className="text-[11px] text-[#aaa] min-w-[28px] text-right">{p}%</span>
               {wage && <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">{wage}</span>}
               {detailCount > 0 && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{detailCount} chi tiết</span>}
-              {/* Số LĐ đến từ hồ sơ Đối thủ/KCN — cho biết sửa ở đây là sửa chung cả 2 nơi. */}
-              {s.ccIds.length > 0 && (
-                <span title={`Số LĐ lấy từ "KH đang phục vụ" trong hồ sơ đối thủ${s.ccKcn ? ` · KCN ${s.ccKcn}` : ''}`}
-                  className="text-[10.5px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 shrink-0 cursor-help">
-                  từ hồ sơ đối thủ{s.ccIds.length > 1 ? ` (${s.ccIds.length} dòng)` : ''}
-                </span>
-              )}
               {(onEditSupplier || onDeleteSupplier) && (
                 <span className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-40 sm:group-hover:opacity-100 transition">
                   {onEditSupplier && (

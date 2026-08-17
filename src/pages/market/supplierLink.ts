@@ -37,8 +37,6 @@ export interface MergedSupplier extends MarketLeadSupplier {
   ccIds: string[];
   /** Hồ sơ đối thủ tương ứng, nếu tên NCC khớp một hồ sơ đã tạo. */
   competitorId: string | null;
-  /** KCN ghi trên dòng competitor_clients — hiện làm chú thích nguồn. */
-  ccKcn: string | null;
 }
 
 /**
@@ -64,7 +62,7 @@ export function mergeSuppliers(
   }
 
   const merged: MergedSupplier[] = jsonSuppliers.map((s, i) => ({
-    ...s, jsonIndex: i, ccIds: [], competitorId: null, ccKcn: null,
+    ...s, jsonIndex: i, ccIds: [], competitorId: null,
   }));
 
   for (const [competitorId, rows] of byCompetitor) {
@@ -75,12 +73,11 @@ export function mergeSuppliers(
       existing.qty = qty;                       // competitor_clients là nơi nhập chi tiết → ưu tiên
       existing.ccIds = rows.map(r => r.id);
       existing.competitorId = competitorId;
-      existing.ccKcn = rows[0].kcn ?? null;
     } else {
       merged.push({
         name: comp.company_name, qty, is_us: false,
         wage_min: comp.wage_paid ?? null, wage_max: comp.wage_paid ?? null,
-        jsonIndex: null, ccIds: rows.map(r => r.id), competitorId, ccKcn: rows[0].kcn ?? null,
+        jsonIndex: null, ccIds: rows.map(r => r.id), competitorId,
       });
     }
   }
