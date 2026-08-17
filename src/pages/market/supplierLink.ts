@@ -37,6 +37,17 @@ export interface MergedSupplier extends MarketLeadSupplier {
   ccIds: string[];
   /** Hồ sơ đối thủ tương ứng, nếu tên NCC khớp một hồ sơ đã tạo. */
   competitorId: string | null;
+  /** Số LĐ lấy tự động từ nơi khác → không cho gõ tay, kèm chú thích nguồn. */
+  qtyLocked?: boolean;
+  qtyNote?: string;
+  /** Giá trị qty đang nằm trong JSON — giữ lại để lưu khi qty đang bị khoá. */
+  jsonQty?: number;
+}
+
+/** Số LĐ Let's Go VN thật tại công ty này, lấy từ lịch sử lao động theo tuần. */
+export interface LgvSupply {
+  count: number;
+  note: string;
 }
 
 /**
@@ -48,6 +59,7 @@ export function mergeSuppliers(
   ccRows: CompetitorClient[],
   companyName: string,
   competitors: Competitor[],
+  lgv?: LgvSupply | null,
 ): MergedSupplier[] {
   const compById = new Map(competitors.map(c => [c.id, c]));
 
@@ -62,8 +74,26 @@ export function mergeSuppliers(
   }
 
   const merged: MergedSupplier[] = jsonSuppliers.map((s, i) => ({
-    ...s, jsonIndex: i, ccIds: [], competitorId: null,
+    ...s, jsonIndex: i, ccIds: [], competitorId: null, jsonQty: s.qty,
   }));
+
+  // Số LĐ của Let's Go VN không nhập tay ở đây nữa — lấy thẳng con số mới nhất đã nhập trong
+  // hồ sơ khách hàng (lịch sử lao động theo tuần), nếu không sẽ có 2 con số cho cùng 1 việc
+  // và con số gõ tay ở đây gần như luôn cũ.
+  if (lgv) {
+    const us = merged.find(m => m.is_us);
+    if (us) {
+      us.qty = lgv.count;
+      us.qtyLocked = true;
+      us.qtyNote = lgv.note;
+    } else {
+      merged.unshift({
+        name: "Let's Go VN", qty: lgv.count, is_us: true,
+        jsonIndex: null, ccIds: [], competitorId: null,
+        qtyLocked: true, qtyNote: lgv.note, jsonQty: 0,
+      });
+    }
+  }
 
   for (const [competitorId, rows] of byCompetitor) {
     const comp = compById.get(competitorId)!;

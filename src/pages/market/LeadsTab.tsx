@@ -19,7 +19,8 @@ import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr } from './shared';
 import type { Client, CompetitorClient } from '../../lib/types';
 import {
-  type MergedSupplier, mergeSuppliers, fetchSupplyRows, writeSupplyQty, deleteSupplyRows,
+  type MergedSupplier, type LgvSupply, mergeSuppliers, fetchSupplyRows, writeSupplyQty,
+  deleteSupplyRows, sameCompany,
 } from './supplierLink';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
@@ -76,7 +77,7 @@ function WageMarginSummary({ lgvn, company }: { lgvn: Record<string, string>; co
   );
 }
 
-export default function LeadsTab({ marketLeads, clients, competitors, marketZones, zoneFilter, setZoneFilter, onRefresh, toast }: MarketTabProps) {
+export default function LeadsTab({ marketLeads, clients, competitors, marketZones, laborHistory, zoneFilter, setZoneFilter, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [addTab, setAddTab] = useState<'client' | 'lead' | null>(null);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
@@ -104,6 +105,29 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const [supplyRows, setSupplyRows] = useState<CompetitorClient[]>([]);
   const reloadSupply = () => fetchSupplyRows().then(setSupplyRows).catch(e => toast('Lỗi tải NCC từ hồ sơ đối thủ: ' + e.message));
   useEffect(() => { reloadSupply(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Số LĐ Let's Go VN tại 1 khách hàng = con số MỚI NHẤT đã nhập trong hồ sơ khách hàng
+   * (client_labor_history theo tuần, đã tính sẵn thành client.current_workers — dùng đúng
+   * con số mà trang Khách hàng/Dashboard đang hiển thị). Chỉ khoá ô nhập khi thật sự đã có
+   * lịch sử lao động; chưa nhập tuần nào thì để nguyên số gõ tay, tránh ghi đè thành 0.
+   */
+  const lgvSupplyOf = (client: Client | undefined): LgvSupply | null => {
+    if (!client) return null;
+    const hist = laborHistory[client.id] ?? [];
+    if (!hist.length) return null;
+    const latest = hist[hist.length - 1];
+    return {
+      count: client.current_workers ?? latest.count ?? 0,
+      note: `Số LĐ mới nhất đã nhập trong hồ sơ khách hàng · tuần ${latest.week_label}`
+        + `${latest.updated_by ? ` · ${latest.updated_by}` : ''}`,
+    };
+  };
+
+  // Dự án đang tìm hiểu trùng tên với 1 khách hàng đang hợp tác thì cũng lấy số LĐ thật của
+  // khách hàng đó, thay vì để 2 thẻ hiện 2 con số khác nhau cho cùng một nhà máy.
+  const lgvSupplyForLead = (companyName: string): LgvSupply | null =>
+    lgvSupplyOf(clients.find(c => sameCompany(c.name, companyName)));
   // Lương tối thiểu vùng hiện ở đây (cột lương của từng KCN) nên cũng phải cảnh báo khi lỗi thời.
   const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
   useEffect(() => { fetchMinWageBatches().then(setMinWageBatches); }, []);
@@ -339,7 +363,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     try {
       // Dòng chỉ có ở competitor_clients (chưa từng nhập ở thẻ công ty) thì thêm mới vào JSON
       // để giữ được mức lương riêng tại dự án này; dòng đã có thì sửa tại chỗ.
-      const entry = { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      // qty đang khoá (số LĐ lấy tự động) thì giữ nguyên giá trị cũ trong JSON — không ghi đè
+      // bằng con số dẫn xuất, để nếu sau này bỏ khoá vẫn còn số đã nhập tay.
+      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
       const newSuppliers = row.jsonIndex == null
         ? [...lead.suppliers, entry]
         : lead.suppliers.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -492,7 +518,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
     try {
       const current = client.market_suppliers ?? [];
-      const entry = { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
+      // Xem chú thích ở handleEditSupplierOfLead — qty khoá thì không ghi đè bằng số dẫn xuất.
+      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail };
       const newSuppliers = row.jsonIndex == null
         ? [...current, entry]
         : current.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -603,7 +630,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={c.market_workers_needed ?? 0}
-                  suppliers={mergeSuppliers(c.market_suppliers ?? [], supplyRows, c.name, competitors)}
+                  suppliers={mergeSuppliers(c.market_suppliers ?? [], supplyRows, c.name, competitors, lgvSupplyOf(c))}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
@@ -688,7 +715,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={l.workers_needed}
-                  suppliers={mergeSuppliers(l.suppliers, supplyRows, l.company_name, competitors)}
+                  suppliers={mergeSuppliers(l.suppliers, supplyRows, l.company_name, competitors, lgvSupplyForLead(l.company_name))}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}

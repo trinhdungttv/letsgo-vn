@@ -74,7 +74,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
 }
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
-function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, wageFields, onAddWageField, onDeleteWageField }: {
+function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField }: {
   form: SupForm;
   setForm: (f: SupForm) => void;
   competitorNames: string[];
@@ -82,6 +82,8 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
   onCancel: () => void;
   saving?: boolean;
   allowNameEdit?: boolean;
+  /** Có giá trị = số LĐ lấy tự động từ nơi khác, chỉ hiện chứ không cho gõ. */
+  lockedQtyNote?: string;
   wageFields: string[];
   onAddWageField: (name: string) => Promise<void> | void;
   onDeleteWageField: (name: string) => Promise<void> | void;
@@ -104,7 +106,11 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
             Chưa có hồ sơ Đối thủ nào — tạo ở tab "Đối thủ" trước khi thêm NCC.
           </span>
         )}
-        <input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="Số LĐ" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-16" />
+        {lockedQtyNote ? (
+          <span title={lockedQtyNote} className="text-[12px] px-2 py-1 rounded border border-[#E8E7E2] bg-[#F5F4EF] text-[#666] w-16 text-center cursor-help shrink-0">{form.qty}</span>
+        ) : (
+          <input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="Số LĐ" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-16" />
+        )}
         <input type="number" step="100000" value={form.wage_min} onChange={e => setForm({ ...form, wage_min: e.target.value })} placeholder="Lương từ (đ)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-28 text-right" />
         <input type="number" step="100000" value={form.wage_max} onChange={e => setForm({ ...form, wage_max: e.target.value })} placeholder="đến (đ)" className="text-[12px] px-2 py-1 rounded border border-gray-300 outline-none w-28 text-right" />
         <button onClick={onSubmit} disabled={saving} className="px-2.5 py-1 rounded bg-[#1D4ED8] text-white text-[12px]">Lưu</button>
@@ -270,7 +276,7 @@ export default function SupplierFillCard({
                 <SupplierInlineForm
                   form={editForm} setForm={setEditForm} competitorNames={competitorNames}
                   onSubmit={submitEdit} onCancel={() => setEditIndex(null)} saving={saving}
-                  allowNameEdit={!s.is_us}
+                  allowNameEdit={!s.is_us} lockedQtyNote={s.qtyLocked ? s.qtyNote : undefined}
                   wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                 />
               </div>
@@ -283,7 +289,10 @@ export default function SupplierFillCard({
             <div key={i} className="flex items-center gap-2 group">
               <span className={`text-[12px] min-w-[110px] shrink-0 ${s.is_us ? 'text-blue-700 font-medium' : ''}`}>{s.is_us ? '● ' : ''}{s.name}</span>
               <div className="flex-1 h-[11px] bg-[#F0EEE9] rounded overflow-hidden"><div className={`h-[11px] rounded ${s.is_us ? 'bg-blue-600' : 'bg-[#B8D4F0]'}`} style={{ width: `${Math.min(p, 100)}%` }} /></div>
-              <span className={`text-[12px] font-medium min-w-[52px] text-right ${s.is_us ? 'text-blue-700' : ''}`}>{s.qty} LĐ</span>
+              <span
+                title={s.qtyNote}
+                className={`text-[12px] font-medium min-w-[52px] text-right ${s.is_us ? 'text-blue-700' : ''} ${s.qtyLocked ? 'border-b border-dotted border-current/40 cursor-help' : ''}`}
+              >{s.qty} LĐ</span>
               <span className="text-[11px] text-[#aaa] min-w-[28px] text-right">{p}%</span>
               {wage && <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">{wage}</span>}
               {detailCount > 0 && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">{detailCount} chi tiết</span>}
