@@ -158,7 +158,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
 }
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
-function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField }: {
+function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields }: {
   form: SupForm;
   setForm: (f: SupForm) => void;
   competitorNames: string[];
@@ -171,6 +171,8 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
   wageFields: string[];
   onAddWageField: (name: string) => Promise<void> | void;
   onDeleteWageField: (name: string) => Promise<void> | void;
+  onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
+  onReorderWageFields?: (names: string[]) => Promise<void> | void;
 }) {
   return (
     <div className="space-y-2">
@@ -209,6 +211,8 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         onChange={v => setForm({ ...form, wage_detail_client: v })}
         onAddField={onAddWageField}
         onDeleteField={onDeleteWageField}
+        onRenameField={onRenameWageField}
+        onReorderFields={onReorderWageFields}
       />
       <WageDetailTable
         label="Chi tiết giá VỐN · NCC trả người lao động"
@@ -217,6 +221,8 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         onChange={v => setForm({ ...form, wage_detail: v })}
         onAddField={onAddWageField}
         onDeleteField={onDeleteWageField}
+        onRenameField={onRenameWageField}
+        onReorderFields={onReorderWageFields}
       />
     </div>
   );
@@ -227,7 +233,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
  * chung cho Khách hàng đang hợp tác và Công ty/Dự án đang tìm hiểu. */
 export default function SupplierFillCard({
   workersNeeded, suppliers, onAddSupplier, onEditSupplier, onDeleteSupplier, saving, competitors,
-  wageFields, onAddWageField, onDeleteWageField,
+  wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields,
 }: {
   workersNeeded: number;
   /** Danh sách đã gộp JSON + competitor_clients (xem supplierLink.mergeSuppliers). */
@@ -242,6 +248,8 @@ export default function SupplierFillCard({
   wageFields: string[];
   onAddWageField: (name: string) => Promise<void> | void;
   onDeleteWageField: (name: string) => Promise<void> | void;
+  onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
+  onReorderWageFields?: (names: string[]) => Promise<void> | void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<SupForm>(emptySupForm);
@@ -374,6 +382,7 @@ export default function SupplierFillCard({
                   onSubmit={submitEdit} onCancel={() => setEditIndex(null)} saving={saving}
                   allowNameEdit={!s.is_us} lockedQtyNote={s.qtyLocked ? s.qtyNote : undefined}
                   wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
+                  onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
                 />
               </div>
             );
@@ -437,6 +446,7 @@ export default function SupplierFillCard({
             form={addForm} setForm={setAddFormWithSuggest} competitorNames={competitorNames}
             onSubmit={submitAdd} onCancel={() => setShowAdd(false)} saving={saving}
             wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
+                  onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
           />
         </div>
       ) : (

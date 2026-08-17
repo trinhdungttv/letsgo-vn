@@ -12,7 +12,7 @@ import SearchBox from '../../components/SearchBox';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
-import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { fetchWageFields, addWageField, deleteWageField, renameWageField, reorderWageFields, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
 import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls,
   fetchMinWageBatches, type MinWageBatch } from './regionWage';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
@@ -185,6 +185,20 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     const err = await deleteWageField(name);
     if (err) toast('Lỗi xoá trường lương: ' + err);
     setWageFields(prev => prev.filter(f => f !== name));
+  };
+  // Đổi tên kéo theo việc viết lại số liệu đã nhập ở mọi nơi → tải lại từ DB thay vì sửa
+  // state tại chỗ, và refresh dữ liệu công ty/dự án để bảng chi tiết lương hiện tên mới.
+  const handleRenameWageField = async (oldName: string, newName: string) => {
+    const err = await renameWageField(oldName, newName);
+    if (err) { toast('Lỗi đổi tên trường lương: ' + err); return; }
+    setWageFields(await fetchWageFields());
+    await onRefresh();
+    toast(`Đã đổi tên trường lương thành "${newName.trim()}"`);
+  };
+  const handleReorderWageFields = async (names: string[]) => {
+    setWageFields(names); // đổi ngay cho mượt, DB xác nhận sau
+    const err = await reorderWageFields(names);
+    if (err) { toast('Lỗi sắp xếp trường lương: ' + err); setWageFields(await fetchWageFields()); }
   };
 
   // Tỉnh/TP suy ra từ tên KCN (marketZones.location), giống cách làm ở tab Lương TT.
@@ -627,6 +641,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               {editClientId === c.id && (
                 <ClientEditForm client={c} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   onCancel={() => setEditClientId(null)} onSave={patch => handleEditClient(c.id, patch)} />
               )}
               <div className="p-4">
@@ -636,6 +651,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfClient(c, row)}
@@ -712,6 +728,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               {editLeadId === l.id && (
                 <LeadEditForm lead={l} regionOptions={zoneNames} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   onCancel={() => setEditLeadId(null)} onSave={patch => handleEditLead(l.id, patch)} />
               )}
               <div className="p-4">
@@ -721,6 +738,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfLead(l.id, row)}
@@ -770,9 +788,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="100000" value={clientForm.wage_max} onChange={e => setClientForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={clientForm.wage_detail} onChange={v => setClientForm(f => ({ ...f, wage_detail: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
                   <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={clientForm.wage_detail_client} onChange={v => setClientForm(f => ({ ...f, wage_detail_client: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
                   <WageMarginSummary lgvn={clientForm.wage_detail} company={clientForm.wage_detail_client} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
@@ -802,9 +822,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="100000" value={leadForm.wage_max} onChange={e => setLeadForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={leadForm.wage_detail} onChange={v => setLeadForm(f => ({ ...f, wage_detail: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
                   <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={leadForm.wage_detail_client} onChange={v => setLeadForm(f => ({ ...f, wage_detail_client: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
                   <WageMarginSummary lgvn={leadForm.wage_detail} company={leadForm.wage_detail_client} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
@@ -831,7 +853,7 @@ interface EditPatch {
   wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
 }
 
-function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, regionOptions }: {
+function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, regionOptions }: {
   initial: EditPatch;
   industries: string[];
   onAddIndustry: (name: string) => void;
@@ -841,6 +863,8 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   wageFields: string[];
   onAddWageField: (name: string) => void;
   onDeleteWageField: (name: string) => void;
+  onRenameWageField: (oldName: string, newName: string) => void;
+  onReorderWageFields: (names: string[]) => void;
   regionOptions?: string[];
 }) {
   const [patch, setPatch] = useState<EditPatch>(initial);
@@ -867,11 +891,13 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
           label="Chi tiết lương · LGVN trả NLĐ"
           fields={wageFields} value={patch.wage_detail} onChange={v => setPatch(p => ({ ...p, wage_detail: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
+          onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
         />
         <WageDetailTable
           label="Chi tiết lương · Công ty trả LGVN"
           fields={wageFields} value={patch.wage_detail_client} onChange={v => setPatch(p => ({ ...p, wage_detail_client: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
+          onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
         />
         <WageMarginSummary lgvn={patch.wage_detail} company={patch.wage_detail_client} />
       </div>
@@ -896,7 +922,7 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   );
 }
 
-type EditFormExtraProps = { industries: string[]; onAddIndustry: (n: string) => void; onCancel: () => void; onSave: (p: EditPatch) => void; saving: boolean; wageFields: string[]; onAddWageField: (n: string) => void; onDeleteWageField: (n: string) => void };
+type EditFormExtraProps = { industries: string[]; onAddIndustry: (n: string) => void; onCancel: () => void; onSave: (p: EditPatch) => void; saving: boolean; wageFields: string[]; onAddWageField: (n: string) => void; onDeleteWageField: (n: string) => void; onRenameWageField: (o: string, n: string) => void; onReorderWageFields: (names: string[]) => void };
 
 function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraProps) {
   return <EditFormFields initial={{
