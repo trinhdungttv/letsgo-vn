@@ -1,12 +1,22 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, X, Pencil, ArrowUp, ArrowDown, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, X, Pencil, GripVertical, Check } from 'lucide-react';
+import ShiftPicker from './ShiftPicker';
+import type { PayrollInputType } from '../../lib/payroll/coefficients';
+
+/** Hiển thị số có dấu phẩy ngăn cách nghìn khi gõ (5130000 → 5,130,000); giá trị lưu vẫn
+ *  là chuỗi số thuần (không dấu phẩy) để wageDetailToNumbers() parseFloat được bình thường. */
+const formatVnd = (raw: string) => {
+  const digits = raw.replace(/[^\d]/g, '');
+  return digits ? Number(digits).toLocaleString('en-US') : '';
+};
+const stripVnd = (formatted: string) => formatted.replace(/[^\d]/g, '');
 
 /** Bảng chi tiết lương theo từng trường DÙNG CHUNG toàn hệ thống (Lương cơ bản, Phụ cấp…).
  * `fields` là danh sách trường global (bảng wage_detail_fields) — thêm/xoá 1 trường ở đây
  * ảnh hưởng đến MỌI nơi dùng bảng này (Let's Go VN lẫn từng NCC, ở mọi công ty/dự án).
  * `value`/`onChange` chỉ là giá trị RIÊNG của đối tượng đang sửa.
  * ĐƠN VỊ: ĐỒNG (từ migration 126) — khớp với "Tính bảng lương", xem wageFields.ts. */
-export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, onRenameField, onReorderFields, defaultOpen = false, label = 'Chi tiết lương' }: {
+export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, onRenameField, onReorderFields, defaultOpen = false, label = 'Chi tiết lương', fieldTypes }: {
   fields: string[];
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
@@ -19,12 +29,18 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
   defaultOpen?: boolean;
   /** Tiêu đề hiển thị — dùng khi có nhiều bảng chi tiết lương trên cùng 1 form (vd 2 phía LGVN/Công ty). */
   label?: string;
+  /** Loại đơn giá theo luật của từng trường (migration 126) — CHỈ truyền cho bảng phía "trả người
+   *  lao động" (wage_detail), có gán mới hiện được "Tính theo ca làm việc". Không truyền cho phía
+   *  "khách trả" (wage_detail_client) vì đó là giá thương lượng, không suy từ luật được. */
+  fieldTypes?: Record<string, PayrollInputType | null>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [newField, setNewField] = useState('');
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
 
   const startRename = (name: string) => { setRenaming(name); setRenameDraft(name); };
 
@@ -44,13 +60,12 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
     setRenaming(null);
   };
 
-  // Đổi chỗ 2 trường liền kề — dùng nút mũi tên thay vì kéo thả cho khớp với các bảng cấu
-  // hình khác trong app (nút link đối thủ, biểu đồ tổng quan).
-  const move = async (index: number, dir: -1 | 1) => {
-    const j = index + dir;
-    if (j < 0 || j >= fields.length) return;
+  // Kéo-thả tự do bằng chuột: cầm handle ở đầu dòng, thả vào vị trí bất kỳ.
+  const reorderTo = async (from: number, to: number) => {
+    if (from === to) return;
     const next = [...fields];
-    [next[index], next[j]] = [next[j], next[index]];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
     setBusy(true);
     await onReorderFields?.(next);
     setBusy(false);
@@ -89,13 +104,26 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
       {open && (
         <div className="p-2 space-y-1">
           {fields.map((f, i) => (
-            <div key={f} className="flex items-center gap-1.5 group">
+            <div
+              key={f}
+              draggable={!!onReorderFields && renaming !== f}
+              onDragStart={() => setDragIndex(i)}
+              onDragOver={e => { if (dragIndex === null) return; e.preventDefault(); if (overIndex !== i) setOverIndex(i); }}
+              onDragLeave={() => setOverIndex(o => (o === i ? null : o))}
+              onDrop={e => {
+                e.preventDefault();
+                if (dragIndex !== null) reorderTo(dragIndex, i);
+                setDragIndex(null); setOverIndex(null);
+              }}
+              onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
+              className={`flex items-center gap-1.5 group rounded transition-colors ${
+                overIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-blue-50' : ''
+              } ${dragIndex === i ? 'opacity-40' : ''}`}
+            >
               {onReorderFields && (
-                <span className="flex flex-col shrink-0 opacity-40 group-hover:opacity-100 transition">
-                  <button type="button" onClick={() => move(i, -1)} disabled={busy || i === 0} title="Đưa lên trên"
-                    className="text-[#999] hover:text-blue-600 disabled:opacity-25 leading-none"><ArrowUp size={9} /></button>
-                  <button type="button" onClick={() => move(i, 1)} disabled={busy || i === fields.length - 1} title="Đưa xuống dưới"
-                    className="text-[#999] hover:text-blue-600 disabled:opacity-25 leading-none"><ArrowDown size={9} /></button>
+                <span title="Kéo để đổi thứ tự"
+                  className="shrink-0 opacity-40 group-hover:opacity-100 transition text-[#999] hover:text-blue-600 cursor-grab active:cursor-grabbing">
+                  <GripVertical size={12} />
                 </span>
               )}
               {renaming === f ? (
@@ -125,9 +153,9 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
               ))}
               {renaming !== f && (
                 <input
-                  type="number" step="1000"
-                  value={value[f] ?? ''}
-                  onChange={e => setField(f, e.target.value)}
+                  type="text" inputMode="numeric"
+                  value={formatVnd(value[f] ?? '')}
+                  onChange={e => setField(f, stripVnd(e.target.value))}
                   placeholder="đ"
                   title="Nhập bằng ĐỒNG (vd 250000), khớp đơn vị với Tính bảng lương"
                   className="w-28 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none text-right"
@@ -140,6 +168,20 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
             </div>
           ))}
           {fields.length === 0 && <div className="text-[11px] text-[#999] px-0.5 py-1">Chưa có trường lương chi tiết nào</div>}
+          {fieldTypes && (() => {
+            const fieldNameByType = Object.fromEntries(
+              fields.filter(f => fieldTypes[f]).map(f => [fieldTypes[f], f]),
+            ) as Partial<Record<PayrollInputType, string>>;
+            const baseSalaryField = fieldNameByType.base_salary;
+            if (!baseSalaryField) return null;
+            return (
+              <ShiftPicker
+                baseSalary={parseFloat(value[baseSalaryField] || '0') || 0}
+                fieldNameByType={fieldNameByType}
+                onApply={patch => onChange({ ...value, ...patch })}
+              />
+            );
+          })()}
           <div className="flex items-center gap-1.5 pt-1 border-t border-[#F0EEE9] mt-1">
             <input
               value={newField}

@@ -6,6 +6,9 @@ import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
 import { wageDetailToStrings, wageDetailToNumbers } from './wageFields';
 import { fmtVnd } from '../../lib/payroll/format';
+import type { PayrollInputType } from '../../lib/payroll/coefficients';
+import type { WageFieldMapping } from '../../lib/payroll/rateCard';
+import { wageMonthlyTotal } from './shiftCalc';
 
 interface SupForm {
   name: string; qty: string; wage_min: string; wage_max: string;
@@ -22,11 +25,11 @@ const wageFmt = (min: number | null | undefined, max: number | null | undefined)
   min != null && max != null ? `${(min / 1_000_000).toFixed(1)}–${(max / 1_000_000).toFixed(1)}tr` : null;
 
 const tr = (v: number | null | undefined) => v != null ? fmtVnd(v) : '—';
-const sumDetail = (d: Record<string, number> | null | undefined) => Object.values(d ?? {}).reduce((a, b) => a + (b || 0), 0);
+
 /** Giá vốn — NCC trả NLĐ. */
-const detailTotal = (s: MarketLeadSupplier) => sumDetail(s.wage_detail);
+const detailTotal = (s: MarketLeadSupplier, fields: WageFieldMapping[]) => wageMonthlyTotal(s.wage_detail, fields);
 /** Giá bán — công ty trả NCC. */
-const clientTotal = (s: MarketLeadSupplier) => sumDetail(s.wage_detail_client);
+const clientTotal = (s: MarketLeadSupplier, fields: WageFieldMapping[]) => wageMonthlyTotal(s.wage_detail_client, fields);
 
 /**
  * Bảng giá giữa các bên tại cùng 1 công ty/dự án. Mỗi NCC có 2 phía:
@@ -35,7 +38,7 @@ const clientTotal = (s: MarketLeadSupplier) => sumDetail(s.wage_detail_client);
  * Chênh lệch 2 phía = phí dịch vụ NCC đang ăn — con số cần để định giá, thay vì
  * chỉ nhìn khoảng lương áng chừng. LGVN luôn ghim cột đầu để đối chiếu.
  */
-function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSupplier[]; selected: MarketLeadSupplier[] }) {
+function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: MarketLeadSupplier[]; selected: MarketLeadSupplier[]; fieldMappings: WageFieldMapping[] }) {
   const lgvn = suppliers.find(s => s.is_us);
   const cols = [...selected].sort((a, b) => (b.is_us ? 1 : 0) - (a.is_us ? 1 : 0));
   if (cols.length === 0) return <div className="text-[11px] text-[#aaa] px-1 py-2">Chọn ít nhất 1 NCC để so sánh.</div>;
@@ -44,7 +47,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
     [...new Set(cols.flatMap(s => Object.keys(pick(s) ?? {})))];
   const sellFields = fieldsOf(s => s.wage_detail_client);
   const costFields = fieldsOf(s => s.wage_detail);
-  const margin = (s: MarketLeadSupplier) => clientTotal(s) - detailTotal(s);
+  const margin = (s: MarketLeadSupplier) => clientTotal(s, fieldMappings) - detailTotal(s, fieldMappings);
   const lgvnMargin = lgvn ? margin(lgvn) : 0;
 
   const headCell = 'text-left px-2 py-1 text-[#888] font-medium sticky left-0 bg-white';
@@ -92,7 +95,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
           )}
           <tr className="border-t border-[#F0EEE9] font-medium">
             <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng giá bán</td>
-            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(clientTotal(s))}đ</td>)}
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(clientTotal(s, fieldMappings))}đ</td>)}
           </tr>
 
           {sectionRow('GIÁ VỐN', '· NCC trả người lao động')}
@@ -109,7 +112,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
           )}
           <tr className="border-t border-[#F0EEE9] font-medium">
             <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng giá vốn</td>
-            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s))}đ</td>)}
+            {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s, fieldMappings))}đ</td>)}
           </tr>
 
           {sectionRow('CHÊNH LỆCH', '· phí dịch vụ NCC ăn')}
@@ -119,7 +122,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
               const m = margin(s);
               // Chỉ có nghĩa khi đã nhập cả 2 phía — 1 phía trống thì chênh lệch bằng chính
               // phía kia, dễ bị đọc nhầm là "lãi to".
-              const complete = clientTotal(s) > 0 && detailTotal(s) > 0;
+              const complete = clientTotal(s, fieldMappings) > 0 && detailTotal(s, fieldMappings) > 0;
               return (
                 <td key={i} className={`text-right px-2 py-1 ${complete ? 'text-[#111]' : 'text-[#ccc]'}`}
                   title={complete ? undefined : 'Cần nhập cả giá bán lẫn giá vốn mới tính được'}>
@@ -131,8 +134,8 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
           <tr className="border-t border-[#F0EEE9]">
             <td className={rowLabel}>Tỷ lệ trên giá bán</td>
             {cols.map((s, i) => {
-              const sell = clientTotal(s);
-              const complete = sell > 0 && detailTotal(s) > 0;
+              const sell = clientTotal(s, fieldMappings);
+              const complete = sell > 0 && detailTotal(s, fieldMappings) > 0;
               return <td key={i} className={`text-right px-2 py-1 ${complete ? 'text-[#555]' : 'text-[#ccc]'}`}>
                 {complete ? `${Math.round((margin(s) / sell) * 100)}%` : '—'}
               </td>;
@@ -143,7 +146,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
               <td className={rowLabel}>Chênh lệch so với LGVN</td>
               {cols.map((s, i) => {
                 if (s.is_us) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
-                const complete = clientTotal(s) > 0 && detailTotal(s) > 0 && clientTotal(lgvn) > 0 && detailTotal(lgvn) > 0;
+                const complete = clientTotal(s, fieldMappings) > 0 && detailTotal(s, fieldMappings) > 0 && clientTotal(lgvn, fieldMappings) > 0 && detailTotal(lgvn, fieldMappings) > 0;
                 if (!complete) return <td key={i} className="text-right px-2 py-1 text-[#ccc]">—</td>;
                 const diff = margin(s) - lgvnMargin;
                 const cls = diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-[#999]';
@@ -158,7 +161,7 @@ function WageCompareTable({ suppliers, selected }: { suppliers: MarketLeadSuppli
 }
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
-function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields }: {
+function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes }: {
   form: SupForm;
   setForm: (f: SupForm) => void;
   competitorNames: string[];
@@ -173,6 +176,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
   onDeleteWageField: (name: string) => Promise<void> | void;
   onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
   onReorderWageFields?: (names: string[]) => Promise<void> | void;
+  wageFieldTypes: Record<string, PayrollInputType | null>;
 }) {
   return (
     <div className="space-y-2">
@@ -223,6 +227,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         onDeleteField={onDeleteWageField}
         onRenameField={onRenameWageField}
         onReorderFields={onReorderWageFields}
+        fieldTypes={wageFieldTypes}
       />
     </div>
   );
@@ -233,7 +238,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
  * chung cho Khách hàng đang hợp tác và Công ty/Dự án đang tìm hiểu. */
 export default function SupplierFillCard({
   workersNeeded, suppliers, onAddSupplier, onEditSupplier, onDeleteSupplier, saving, competitors,
-  wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields,
+  wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes,
 }: {
   workersNeeded: number;
   /** Danh sách đã gộp JSON + competitor_clients (xem supplierLink.mergeSuppliers). */
@@ -250,7 +255,11 @@ export default function SupplierFillCard({
   onDeleteWageField: (name: string) => Promise<void> | void;
   onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
   onReorderWageFields?: (names: string[]) => Promise<void> | void;
+  /** Loại đơn giá theo luật của từng trường (migration 126) — cần để KHÔNG cộng dồn nhầm các mức
+   *  lương thay-thế-nhau khi tính Tổng giá vốn/giá bán, và để hiện "Tính theo ca làm việc". */
+  wageFieldTypes: Record<string, PayrollInputType | null>;
 }) {
+  const fieldMappings: WageFieldMapping[] = wageFields.map(name => ({ name, payrollInputType: wageFieldTypes[name] ?? null }));
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<SupForm>(emptySupForm);
   const [editIndex, setEditIndex] = useState<number | null>(null);
@@ -369,7 +378,7 @@ export default function SupplierFillCard({
               </label>
             ))}
           </div>
-          <WageCompareTable suppliers={suppliers} selected={compareRows.filter(({ i }) => isPicked(i)).map(({ s }) => s)} />
+          <WageCompareTable suppliers={suppliers} selected={compareRows.filter(({ i }) => isPicked(i)).map(({ s }) => s)} fieldMappings={fieldMappings} />
         </div>
       )}
       <div className="space-y-1.5">
@@ -383,6 +392,7 @@ export default function SupplierFillCard({
                   allowNameEdit={!s.is_us} lockedQtyNote={s.qtyLocked ? s.qtyNote : undefined}
                   wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                   onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
+                  wageFieldTypes={wageFieldTypes}
                 />
               </div>
             );
@@ -391,8 +401,8 @@ export default function SupplierFillCard({
           const wage = wageFmt(s.wage_min, s.wage_max);
           const costCount = Object.keys(s.wage_detail ?? {}).length;
           const sellCount = Object.keys(s.wage_detail_client ?? {}).length;
-          const marginVal = clientTotal(s) - detailTotal(s);
-          const hasBothSides = clientTotal(s) > 0 && detailTotal(s) > 0;
+          const marginVal = clientTotal(s, fieldMappings) - detailTotal(s, fieldMappings);
+          const hasBothSides = clientTotal(s, fieldMappings) > 0 && detailTotal(s, fieldMappings) > 0;
           return (
             <div key={i} className="flex items-center gap-2 group">
               <span className={`text-[12px] min-w-[110px] shrink-0 ${s.is_us ? 'text-blue-700 font-medium' : ''}`}>{s.is_us ? '● ' : ''}{s.name}</span>
@@ -406,7 +416,7 @@ export default function SupplierFillCard({
               {/* Đã nhập đủ 2 phía thì hiện thẳng phí dịch vụ — thứ thực sự cần so, thay vì
                   chỉ đếm số khoản đã nhập. */}
               {hasBothSides ? (
-                <span title={`Giá bán ${tr(clientTotal(s))}đ − giá vốn ${tr(detailTotal(s))}đ`}
+                <span title={`Giá bán ${tr(clientTotal(s, fieldMappings))}đ − giá vốn ${tr(detailTotal(s, fieldMappings))}đ`}
                   className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0 cursor-help">
                   chênh {tr(marginVal)}đ
                 </span>
@@ -447,6 +457,7 @@ export default function SupplierFillCard({
             onSubmit={submitAdd} onCancel={() => setShowAdd(false)} saving={saving}
             wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                   onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
+            wageFieldTypes={wageFieldTypes}
           />
         </div>
       ) : (
