@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin } from 'lucide-react';
+import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin, List, LayoutGrid } from 'lucide-react';
+import { usePersistedState } from '../../hooks/usePersistedState';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -96,6 +97,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     addTab === 'client' ? JSON.stringify(clientForm) !== JSON.stringify(emptyClientSetupForm) : JSON.stringify(leadForm) !== JSON.stringify(emptyLeadForm)
   ));
   const [saving, setSaving] = useState(false);
+  // "Khách hàng đang hợp tác" — dạng List (mặc định, mọi KH luôn mở sẵn chi tiết NCC) hoặc
+  // Card (lưới ảnh cover gọn, bấm 1 thẻ mới mở chi tiết KH đó bên dưới) — đồng bộ ảnh cover với
+  // module Khách hàng vì cùng đọc thẳng bảng clients (migration 141).
+  const [clientViewMode, setClientViewMode] = usePersistedState<'list' | 'card'>('market_tracked_clients_view_mode', 'list');
+  const [focusedClientId, setFocusedClientId] = useState<string | null>(null);
   const [industries, setIndustries] = useState<string[]>([]);
   const [wageFields, setWageFields] = useState<string[]>([]);
   // Loại đơn giá theo luật của từng trường (migration 126) — cần để KHÔNG cộng dồn nhầm các mức
@@ -672,9 +678,37 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       <div ref={splitRef} className={`flex items-start ${dragging ? 'select-none' : ''}`}>
       {/* ── Khách hàng đang hợp tác ── */}
       <div className="space-y-2 min-w-0" style={{ width: `${leftPct}%` }}>
-        <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
+          <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
+            <button onClick={() => setClientViewMode('list')} title="Dạng danh sách (luôn mở sẵn chi tiết)" className={`p-1.5 ${clientViewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={13} /></button>
+            <button onClick={() => setClientViewMode('card')} title="Dạng card (có ảnh cover) — bấm 1 thẻ để mở chi tiết" className={`p-1.5 ${clientViewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={13} /></button>
+          </div>
+        </div>
+        {clientViewMode === 'card' && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-1">
+            {trackedClients.map(c => (
+              <div key={c.id} onClick={() => setFocusedClientId(focusedClientId === c.id ? null : c.id)}
+                className={`bg-white border rounded-[10px] overflow-hidden cursor-pointer transition hover:shadow-md ${focusedClientId === c.id ? 'border-blue-400 ring-1 ring-blue-200' : 'border-[#E8E7E2]'}`}>
+                <div className="aspect-video w-full bg-gray-100 overflow-hidden">
+                  {c.cover_image_url ? (
+                    <img src={c.cover_image_url} alt={c.name}
+                      className={`w-full h-full ${c.cover_image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                      style={{ objectPosition: `${c.cover_image_pos_x ?? 50}% ${c.cover_image_pos_y ?? 50}%` }} />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] text-[#bbb]">Chưa có ảnh cover</div>
+                  )}
+                </div>
+                <div className="px-2.5 py-2">
+                  <div className="text-[12px] font-medium text-[#111] truncate">{c.name}</div>
+                  <div className="text-[10.5px] text-[#888] truncate">{c.industry || '—'}{(c.industrial_zones || [])[0] ? ` · ${(c.industrial_zones || [])[0]}` : ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="space-y-3">
-          {trackedClients.map(c => (
+          {(clientViewMode === 'list' ? trackedClients : trackedClients.filter(c => c.id === focusedClientId)).map(c => (
             <div key={c.id} className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="flex items-start justify-between gap-2 px-4 py-2.5 bg-emerald-50/40 border-b border-[#E8E7E2] flex-wrap">
                 <div className="min-w-0">
@@ -722,6 +756,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
             <div className="text-center py-6 text-[12px] text-[#aaa] bg-white border border-dashed border-[#E8E7E2] rounded-[10px]">
               Chưa có khách hàng nào được thiết lập theo dõi thị trường — bấm "Thêm công ty" → chọn "Khách hàng đang hợp tác"
             </div>
+          )}
+          {clientViewMode === 'card' && trackedClients.length > 0 && !focusedClientId && (
+            <div className="text-center py-4 text-[11.5px] text-[#aaa]">Bấm vào 1 thẻ ở trên để xem chi tiết NCC/lương</div>
           )}
           {untrackedClients.length > 0 && (
             <div className="text-[11px] text-[#999]">

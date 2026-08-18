@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList, List, LayoutGrid } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
@@ -58,6 +58,7 @@ export default function Clients({
   onSelectClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = usePersistedState<'list' | 'card'>('lgvn_clients_view_mode', 'list');
   const [quickFilter, setQuickFilter] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [columns, setColumns] = useState(loadColumnSettings);
@@ -1110,11 +1111,18 @@ export default function Clients({
         )}
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2]">
-            <span className="text-[12.5px] font-semibold text-[#111]">Danh sách ({filtered.length})</span>
-            <input ref={searchInputRef} type="text" placeholder="Tìm kiếm... (/ để focus)" value={search} onChange={e => setSearch(e.target.value)}
-              className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-[220px] outline-none focus:border-blue-500" />
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] gap-2">
+            <span className="text-[12.5px] font-semibold text-[#111] shrink-0">Danh sách ({filtered.length})</span>
+            <div className="flex items-center gap-2">
+              <input ref={searchInputRef} type="text" placeholder="Tìm kiếm... (/ để focus)" value={search} onChange={e => setSearch(e.target.value)}
+                className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-[220px] outline-none focus:border-blue-500" />
+              <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
+                <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
+                <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
+              </div>
+            </div>
           </div>
+          {viewMode === 'list' && (
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead>
@@ -1555,6 +1563,52 @@ export default function Clients({
               </tbody>
             </table>
           </div>
+          )}
+          {viewMode === 'card' && (
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filtered.length === 0 ? (
+                <div className="col-span-full text-center py-8 text-[#aaa]">Không có dữ liệu</div>
+              ) : filtered.map(c => {
+                const wHistory = (laborHistory[c.id] || [])
+                  .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1).slice(-6).map(h => h.count);
+                const hs = c.service_type === 'recruitment'
+                  ? calcHealthScore({ serviceType: 'recruitment', overdueInvoiceCount: 0, unpaidInvoiceCount: 0, contractEnd: c.contract_end || '', lastContactDate: '' })
+                  : calcHealthScore({ serviceType: 'leasing', currentWorkers: c.current_workers || 0, minWorkers: c.min_workers || 0, paidThisMonth: c.paid_this_month || false, progCutoff: c.prog_cutoff || false, contractEnd: c.contract_end || '', lastContactDate: '', workerHistory: wHistory });
+                const minW = c.min_workers || 0;
+                const curW = c.current_workers || 0;
+                const underMin = minW > 0 && curW < minW;
+                const zone = (c.industrial_zones || [])[0];
+                return (
+                  <div key={c.id} onClick={() => onSelectClient(c.id)}
+                    className={`bg-white border rounded-[10px] overflow-hidden cursor-pointer transition hover:shadow-md ${underMin ? 'border-red-200' : 'border-[#E8E7E2]'}`}>
+                    <div className="aspect-video w-full bg-gray-100 overflow-hidden">
+                      {c.cover_image_url ? (
+                        <img src={c.cover_image_url} alt={c.name}
+                          className={`w-full h-full ${c.cover_image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                          style={{ objectPosition: `${c.cover_image_pos_x ?? 50}% ${c.cover_image_pos_y ?? 50}%` }} />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[11px] text-[#bbb]">Chưa có ảnh cover</div>
+                      )}
+                    </div>
+                    <div className="p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
+                          <div className="text-[11px] text-[#888] truncate">{branchNameOfClient(c)}{zone ? ` · ${zone}` : ''}</div>
+                          {c.industry && <div className="text-[10.5px] text-[#aaa] truncate mt-0.5">{c.industry}</div>}
+                        </div>
+                        <HealthScoreRing score={hs.total} size="sm" />
+                      </div>
+                      <div className="flex items-center justify-between mt-2 text-[11.5px]">
+                        <span className={underMin ? 'text-red-600 font-medium' : 'text-[#555]'}>{curW} LĐ{minW > 0 ? ` / tối thiểu ${minW}` : ''}</span>
+                        {c.manager && <span className="text-[#888] truncate max-w-[100px]">{c.manager}</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         </div>
       </div>

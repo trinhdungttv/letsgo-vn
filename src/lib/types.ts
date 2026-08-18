@@ -112,6 +112,11 @@ export interface Client {
   lat?: number | null;
   lng?: number | null;
   geocoded_at?: string | null;
+  // Ảnh cover 16:9 (migration 141) — cùng cơ chế lấp đầy/tự khớp + kéo vị trí với Khu vực/Đối thủ.
+  cover_image_url?: string | null;
+  cover_image_fit?: string | null;
+  cover_image_pos_x?: number | null;
+  cover_image_pos_y?: number | null;
   // Kênh online — Website/Facebook/YouTube/TikTok (migration 119)
   website_url?: string | null;
   facebook_url?: string | null;
