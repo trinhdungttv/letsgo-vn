@@ -710,6 +710,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
                   onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   wageFieldTypes={wageFieldTypes}
+                  companyWageDetailClient={c.wage_detail_client ?? null}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfClient(c, row)}
@@ -799,6 +800,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
                   onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
                   wageFieldTypes={wageFieldTypes}
+                  companyWageDetailClient={l.wage_detail_client ?? null}
                   onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
                   onDeleteSupplier={row => handleDeleteSupplierOfLead(l.id, row)}

@@ -12,12 +12,10 @@ import { wageMonthlyTotal, monthlyForPatternFromWageDetail, allowsExtraOt, SHIFT
 
 interface SupForm {
   name: string; qty: string; wage_min: string; wage_max: string;
-  /** Giá vốn — NCC trả cho người lao động. */
+  /** Giá vốn — NCC trả cho người lao động. Riêng từng NCC, khác nhau theo từng nơi. */
   wage_detail: Record<string, string>;
-  /** Giá bán — công ty/nhà máy trả cho NCC. */
-  wage_detail_client: Record<string, string>;
 }
-const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', wage_detail: {}, wage_detail_client: {} };
+const emptySupForm: SupForm = { name: '', qty: '0', wage_min: '', wage_max: '', wage_detail: {} };
 
 // Khoảng lương vẫn hiển thị gọn bằng "tr" vì nằm trong 1 hàng chật, nhưng Ô NHẬP thì bằng
 // ĐỒNG (migration 126) để khớp đơn vị với Tính bảng lương — xem wageFields.ts.
@@ -208,7 +206,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
 }
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
-function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes, wageUpdatedAt, wageClientUpdatedAt }: {
+function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes, wageUpdatedAt, companyWageDetailClient }: {
   form: SupForm;
   setForm: (f: SupForm) => void;
   competitorNames: string[];
@@ -224,9 +222,11 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
   onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
   onReorderWageFields?: (names: string[]) => Promise<void> | void;
   wageFieldTypes: Record<string, PayrollInputType | null>;
-  /** Mốc lần cuối 2 phía giá THẬT SỰ đổi (migration 140) — chỉ có khi đang sửa NCC đã tồn tại. */
+  /** Mốc lần cuối giá vốn THẬT SỰ đổi (migration 140) — chỉ có khi đang sửa NCC đã tồn tại. */
   wageUpdatedAt?: string | null;
-  wageClientUpdatedAt?: string | null;
+  /** Công ty trả cho MỌI NCC một mức giống nhau (kể cả Let's Go VN) — chỉ đọc ở đây, sửa ở
+   *  "Chi tiết lương · Công ty trả LGVN" phía trên đầu form. */
+  companyWageDetailClient: Record<string, number> | null;
 }) {
   return (
     <div className="space-y-2">
@@ -256,19 +256,27 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         <button onClick={onSubmit} disabled={saving} className="px-2.5 py-1 rounded bg-[#1D4ED8] text-white text-[12px]">Lưu</button>
         <button onClick={onCancel} className="px-2 py-1 rounded border border-gray-300 text-[12px]"><X size={12} /></button>
       </div>
-      {/* 2 phía của cùng 1 NCC — nhập đủ mới so được phí dịch vụ họ ăn, thay vì áng chừng
-          qua khoảng lương. Cùng bộ trường dùng chung nên đối chiếu được từng khoản. */}
-      <WageDetailTable
-        label="Chi tiết giá BÁN · công ty trả NCC"
-        fields={wageFields}
-        value={form.wage_detail_client}
-        onChange={v => setForm({ ...form, wage_detail_client: v })}
-        onAddField={onAddWageField}
-        onDeleteField={onDeleteWageField}
-        onRenameField={onRenameWageField}
-        onReorderFields={onReorderWageFields}
-        updatedAt={wageClientUpdatedAt}
-      />
+      {/* Giá BÁN (công ty trả NCC) là MỘT mức DÙNG CHUNG cho mọi NCC — kể cả Let's Go VN —
+          nên chỉ đọc ở đây, không gõ lại mỗi NCC. Sửa ở "Chi tiết lương · Công ty trả LGVN"
+          phía trên đầu form (áp dụng ngay cho toàn bộ danh sách NCC). */}
+      <div className="border border-[#E8E7E2] rounded-lg overflow-hidden">
+        <div className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11.5px] font-medium text-[#666] bg-[#F9F9F7]">
+          Giá BÁN · công ty trả NCC
+          <span className="ml-auto text-[10px] font-normal text-[#aaa]">dùng chung mọi NCC — sửa ở "Công ty trả LGVN" phía trên</span>
+        </div>
+        <div className="p-2 space-y-0.5">
+          {companyWageDetailClient && Object.keys(companyWageDetailClient).length > 0 ? (
+            Object.entries(companyWageDetailClient).map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between text-[11.5px] text-[#555]">
+                <span className="truncate">{k}</span>
+                <span className="font-medium text-[#333]">{fmtVnd(v)}</span>
+              </div>
+            ))
+          ) : (
+            <div className="text-[11px] text-[#999]">Chưa nhập — vào "Chi tiết lương · Công ty trả LGVN" ở đầu form để nhập 1 lần cho mọi NCC.</div>
+          )}
+        </div>
+      </div>
       <WageDetailTable
         label="Chi tiết giá VỐN · NCC trả người lao động"
         fields={wageFields}
@@ -289,8 +297,9 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
  * lương riêng từng NCC tại dự án này) — bảng chung cho cả Let's Go VN lẫn đối thủ, dùng
  * chung cho Khách hàng đang hợp tác và Công ty/Dự án đang tìm hiểu. */
 export default function SupplierFillCard({
-  workersNeeded, suppliers, onAddSupplier, onEditSupplier, onDeleteSupplier, saving, competitors,
+  workersNeeded, suppliers: rawSuppliers, onAddSupplier, onEditSupplier, onDeleteSupplier, saving, competitors,
   wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes,
+  companyWageDetailClient,
 }: {
   workersNeeded: number;
   /** Danh sách đã gộp JSON + competitor_clients (xem supplierLink.mergeSuppliers). */
@@ -310,8 +319,17 @@ export default function SupplierFillCard({
   /** Loại đơn giá theo luật của từng trường (migration 126) — cần để KHÔNG cộng dồn nhầm các mức
    *  lương thay-thế-nhau khi tính Tổng giá vốn/giá bán, và để hiện "Tính theo ca làm việc". */
   wageFieldTypes: Record<string, PayrollInputType | null>;
+  /** Giá công ty trả NCC (`clients.wage_detail_client` / `market_leads.wage_detail_client`) —
+   *  MỘT mức DÙNG CHUNG cho mọi NCC ở công ty/dự án này, kể cả Let's Go VN, nên không hỏi lại
+   *  riêng từng NCC nữa. Ghi đè lên wage_detail_client đã lưu của từng dòng khi hiển thị/so
+   *  sánh, để luôn khớp giá trị mới nhất chứ không phải bản sao cũ từ lần lưu NCC đó. */
+  companyWageDetailClient: Record<string, number> | null;
 }) {
   const fieldMappings: WageFieldMapping[] = wageFields.map(name => ({ name, payrollInputType: wageFieldTypes[name] ?? null }));
+  // Giá BÁN là 1 mức dùng chung — ghi đè lên wage_detail_client của TỪNG dòng (kể cả LGVN) để
+  // mọi nơi đọc s.wage_detail_client (badge, WageCompareTable, Tổng giá bán…) tự động khớp giá
+  // mới nhất mà không cần sửa lại các chỗ đó.
+  const suppliers = rawSuppliers.map(s => ({ ...s, wage_detail_client: companyWageDetailClient }));
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<SupForm>(emptySupForm);
   const [editIndex, setEditIndex] = useState<number | null>(null);
@@ -360,7 +378,7 @@ export default function SupplierFillCard({
 
   const submitAdd = async () => {
     if (!addForm.name.trim()) return;
-    await onAddSupplier(addForm.name.trim(), parseInt(addForm.qty) || 0, toNum(addForm.wage_min), toNum(addForm.wage_max), wageDetailToNumbers(addForm.wage_detail), wageDetailToNumbers(addForm.wage_detail_client));
+    await onAddSupplier(addForm.name.trim(), parseInt(addForm.qty) || 0, toNum(addForm.wage_min), toNum(addForm.wage_max), wageDetailToNumbers(addForm.wage_detail), companyWageDetailClient ?? {});
     setShowAdd(false);
     setAddForm(emptySupForm);
   };
@@ -373,7 +391,6 @@ export default function SupplierFillCard({
       wage_min: s.wage_min != null ? String(s.wage_min) : '',
       wage_max: s.wage_max != null ? String(s.wage_max) : '',
       wage_detail: wageDetailToStrings(s.wage_detail),
-      wage_detail_client: wageDetailToStrings(s.wage_detail_client),
     });
   };
 
@@ -381,7 +398,7 @@ export default function SupplierFillCard({
     if (editIndex == null || !editForm.name.trim()) return;
     const row = suppliers[editIndex];
     if (!row) return;
-    await onEditSupplier?.(row, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail), wageDetailToNumbers(editForm.wage_detail_client));
+    await onEditSupplier?.(row, editForm.name.trim(), parseInt(editForm.qty) || 0, toNum(editForm.wage_min), toNum(editForm.wage_max), wageDetailToNumbers(editForm.wage_detail), companyWageDetailClient ?? {});
     setEditIndex(null);
   };
 
@@ -445,7 +462,8 @@ export default function SupplierFillCard({
                   wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                   onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
                   wageFieldTypes={wageFieldTypes}
-                  wageUpdatedAt={s.wage_detail_updated_at} wageClientUpdatedAt={s.wage_detail_client_updated_at}
+                  wageUpdatedAt={s.wage_detail_updated_at}
+                  companyWageDetailClient={companyWageDetailClient}
                 />
               </div>
             );
@@ -513,6 +531,7 @@ export default function SupplierFillCard({
             wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                   onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
             wageFieldTypes={wageFieldTypes}
+            companyWageDetailClient={companyWageDetailClient}
           />
         </div>
       ) : (
