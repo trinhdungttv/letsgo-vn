@@ -42,10 +42,50 @@ export const baseTypeOfPattern = (p: ShiftPattern) => BASE_TYPE_OF[p];
  *  này, kẻo tính OT 2 lần. */
 export const allowsExtraOt = (p: ShiftPattern) => p === 'day8' || p === 'night8';
 
-const naturalRate = (type: PayrollInputType, baseSalary: number, workingDays: number) => {
-  const shr = baseSalary / (workingDays * 8);
-  return Math.round(shr * coefficientOf(type, false) * basisHoursOf(type, workingDays));
-};
+const shrOfBaseSalary = (baseSalary: number, workingDays: number) => baseSalary / (workingDays * 8);
+
+const naturalRateFromShr = (type: PayrollInputType, shr: number, workingDays: number) =>
+  Math.round(shr * coefficientOf(type, false) * basisHoursOf(type, workingDays));
+
+const naturalRate = (type: PayrollInputType, baseSalary: number, workingDays: number) =>
+  naturalRateFromShr(type, shrOfBaseSalary(baseSalary, workingDays), workingDays);
+
+/** Suy SHR (đơn giá giờ thường) từ BẤT KỲ mức lương nào đã nhập trong 1 bảng chi tiết lương —
+ *  không cần đúng là "Lương cơ bản", dùng chung logic ưu tiên với wageMonthlyTotal() nên 1 NCC
+ *  chỉ điền "Ca ngày 8h" (chưa điền Lương CB) vẫn suy ra được để so ngang hàng với NCC khác. */
+export function shrFromWageDetail(
+  d: Record<string, number> | null | undefined, fields: WageFieldMapping[], workingDays = STANDARD_WORKING_DAYS,
+): number | null {
+  const picked = pickPayrollInputFromWageDetail(d, fields);
+  if (!picked) return null;
+  const basis = basisHoursOf(picked.type, workingDays);
+  return picked.value / (coefficientOf(picked.type, false) * basis);
+}
+
+/** Thu nhập ước tính CẢ THÁNG nếu đi ĐÚNG 1 ca (+ OT rời nếu có) đủ công chuẩn, suy từ SHR có
+ *  sẵn — dùng để so nhiều NCC/LGVN cùng lúc theo CÙNG 1 kiểu ca giả định, xem ai đang trả cao/
+ *  thấp hơn cho cùng kiểu công việc, thay vì so các mức lương cơ bản không cùng đơn vị/kiểu ca. */
+export function monthlyForPatternFromShr(shr: number, pattern: ShiftPattern, otHours: number, workingDays = STANDARD_WORKING_DAYS): number {
+  const baseType = BASE_TYPE_OF[pattern];
+  const baseRate = naturalRateFromShr(baseType, shr, workingDays);
+  const is12h = pattern === 'day12' || pattern === 'night12';
+  const baseTotalForShift = is12h ? baseRate * 12 : baseRate;
+  let otTotal = 0;
+  if (allowsExtraOt(pattern) && otHours > 0) {
+    const otType: PayrollInputType = pattern === 'night8' ? 'ot_night_weekday' : 'ot_day_weekday';
+    otTotal = naturalRateFromShr(otType, shr, workingDays) * otHours;
+  }
+  return Math.round((baseTotalForShift + otTotal) * workingDays);
+}
+
+/** Kết hợp 2 hàm trên — null nếu bảng chưa nhập mức lương nào suy ra được SHR. */
+export function monthlyForPatternFromWageDetail(
+  d: Record<string, number> | null | undefined, fields: WageFieldMapping[],
+  pattern: ShiftPattern, otHours: number, workingDays = STANDARD_WORKING_DAYS,
+): number | null {
+  const shr = shrFromWageDetail(d, fields, workingDays);
+  return shr == null ? null : monthlyForPatternFromShr(shr, pattern, otHours, workingDays);
+}
 
 export interface ShiftCalcResult {
   /** Giá trị "tự nhiên" cần ghi vào wage_detail cho từng loại đơn giá — đúng đơn vị mà cả hệ

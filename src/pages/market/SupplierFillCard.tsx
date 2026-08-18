@@ -8,7 +8,7 @@ import { wageDetailToStrings, wageDetailToNumbers, wageDetailAgeLabel } from './
 import { fmtVnd } from '../../lib/payroll/format';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
 import type { WageFieldMapping } from '../../lib/payroll/rateCard';
-import { wageMonthlyTotal } from './shiftCalc';
+import { wageMonthlyTotal, monthlyForPatternFromWageDetail, allowsExtraOt, SHIFT_PATTERN_LABELS, type ShiftPattern } from './shiftCalc';
 
 interface SupForm {
   name: string; qty: string; wage_min: string; wage_max: string;
@@ -39,6 +39,11 @@ const clientTotal = (s: MarketLeadSupplier, fields: WageFieldMapping[]) => wageM
  * chỉ nhìn khoảng lương áng chừng. LGVN luôn ghim cột đầu để đối chiếu.
  */
 function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: MarketLeadSupplier[]; selected: MarketLeadSupplier[]; fieldMappings: WageFieldMapping[] }) {
+  // Ước tính thu nhập nếu NLĐ đi ĐÚNG 1 kiểu ca (áp dụng chung cho MỌI NCC/LGVN đang so sánh) —
+  // suy từ mức lương đã nhập của từng bên, không cần đúng tên field "Lương cơ bản" (xem shiftCalc.ts).
+  const [estPattern, setEstPattern] = useState<ShiftPattern | ''>('');
+  const [estOtHours, setEstOtHours] = useState('0');
+
   const lgvn = suppliers.find(s => s.is_us);
   const cols = [...selected].sort((a, b) => (b.is_us ? 1 : 0) - (a.is_us ? 1 : 0));
   if (cols.length === 0) return <div className="text-[11px] text-[#aaa] px-1 py-2">Chọn ít nhất 1 NCC để so sánh.</div>;
@@ -63,6 +68,23 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
   );
 
   return (
+    <div>
+      <div className="px-2.5 py-1.5 bg-amber-50/50 border-b border-[#E8E7E2] flex items-center gap-2 flex-wrap">
+        <span className="text-[10.5px] text-[#888] shrink-0">Ước tính thu nhập nếu đi full 1 kiểu ca (áp dụng mọi NCC ở đây):</span>
+        <select value={estPattern} onChange={e => setEstPattern(e.target.value as ShiftPattern | '')}
+          className="text-[11px] px-1.5 py-1 rounded border border-gray-300 outline-none">
+          <option value="">— không ước tính —</option>
+          {(Object.keys(SHIFT_PATTERN_LABELS) as ShiftPattern[]).map(p => <option key={p} value={p}>{SHIFT_PATTERN_LABELS[p]}</option>)}
+        </select>
+        {estPattern && allowsExtraOt(estPattern) && (
+          <>
+            <span className="text-[10.5px] text-[#888]">+ OT</span>
+            <input type="number" min="0" step="0.5" value={estOtHours} onChange={e => setEstOtHours(e.target.value)}
+              className="w-14 text-[11px] px-1.5 py-1 rounded border border-gray-300 outline-none text-right" />
+            <span className="text-[10.5px] text-[#888]">giờ/ngày</span>
+          </>
+        )}
+      </div>
     <div className="overflow-x-auto">
       <table className="text-[11.5px] border-collapse min-w-full">
         <thead>
@@ -114,6 +136,30 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
             <td className="px-2 py-1 text-[#333] sticky left-0 bg-white">Tổng giá vốn</td>
             {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#111]">{tr(detailTotal(s, fieldMappings))}đ</td>)}
           </tr>
+          {estPattern && (() => {
+            const otHoursNum = parseFloat(estOtHours) || 0;
+            return (
+              <>
+                {sectionRow('ƯỚC TÍNH THU NHẬP', `· nếu đi full ${SHIFT_PATTERN_LABELS[estPattern]}${allowsExtraOt(estPattern) && otHoursNum > 0 ? ` + OT ${otHoursNum}h/ngày` : ''}, đủ 26 công`)}
+                <tr className="border-t border-[#F0EEE9] font-medium bg-amber-50/30">
+                  <td className="px-2 py-1 text-[#333] sticky left-0 bg-amber-50/30">Thu nhập ước tính/tháng</td>
+                  {cols.map((s, i) => {
+                    const est = monthlyForPatternFromWageDetail(s.wage_detail, fieldMappings, estPattern, otHoursNum);
+                    return (
+                      <td key={i} className="text-right px-2 py-1 text-[#111]" title={est == null ? 'Chưa nhập mức lương nào để suy ra' : undefined}>
+                        {est != null ? `${tr(est)}đ` : '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+                <tr>
+                  <td colSpan={cols.length + 1} className="px-2 pb-1.5 text-[10px] text-[#aaa]">
+                    Suy từ mức lương đã nhập của từng bên (ưu tiên Lương cơ bản), giả định đi đủ công — tham khảo, chưa trừ nghỉ phép/lễ/ốm.
+                  </td>
+                </tr>
+              </>
+            );
+          })()}
 
           {sectionRow('CHÊNH LỆCH', '· phí dịch vụ NCC ăn')}
           <tr className="border-t border-[#F0EEE9] font-medium">
@@ -156,6 +202,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
           )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
