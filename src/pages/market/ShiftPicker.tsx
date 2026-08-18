@@ -68,6 +68,15 @@ export default function ShiftPicker({ baseSalary, fieldNameByType, onApply }: {
             Dự kiến ~{fmtVnd(result.previewTotal)} cho {result.previewHours}h công đó
             {(pattern === 'day12' || pattern === 'night12') && ' (đã gồm 4h OT trong hệ số ca 12h)'}.
           </div>
+          <div className="text-[10.5px] text-[#666] bg-white rounded border border-[#E8E7E2] px-1.5 py-1">
+            Nếu đi <b>full ca này cả tháng</b> (26 công, không nghỉ buổi nào): <b>~{fmtVnd(result.monthlyIfFullAttendance)}</b>
+            {(() => {
+              const diff = result.monthlyIfFullAttendance - baseSalary;
+              if (Math.abs(diff) < 1000) return null;
+              return <span className={diff > 0 ? 'text-emerald-700' : 'text-red-600'}> ({diff > 0 ? '+' : ''}{fmtVnd(diff)} so với Lương cơ bản)</span>;
+            })()}
+            <div className="text-[#aaa] mt-0.5">Chỉ để tham khảo — thực tế hiếm ai đi đủ 100% công, chưa trừ nghỉ phép/lễ/ốm.</div>
+          </div>
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={apply} className="px-2 py-1 rounded bg-blue-600 text-white text-[10.5px]">Điền vào bảng</button>
             <button type="button" onClick={() => setOpen(false)} className="px-2 py-1 rounded border border-gray-300 text-[10.5px] text-[#666]">Đóng</button>

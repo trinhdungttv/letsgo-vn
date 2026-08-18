@@ -54,6 +54,11 @@ export interface ShiftCalcResult {
   /** Tổng dự kiến cho ĐÚNG 1 ca cụ thể (gồm OT rời nếu có) — chỉ để người dùng đối chiếu, không lưu. */
   previewTotal: number;
   previewHours: number;
+  /** Nếu NLĐ đi ĐÚNG ca này (+ OT đã chọn) đủ công chuẩn cả tháng, không nghỉ buổi nào —
+   *  previewTotal × số ngày công. Chỉ để đối chiếu với Lương cơ bản (là mức 8h/ngày, KHÔNG
+   *  OT), không phải số sẽ ghi vào đâu — người thật hiếm khi đi đủ 100% công, và nghỉ phép/
+   *  lễ/ốm không tính trong con số này. */
+  monthlyIfFullAttendance: number;
 }
 
 export function computeShift(
@@ -74,9 +79,11 @@ export function computeShift(
     otTotal = otRate * otHours;
   }
 
+  const previewTotal = baseTotalForShift + otTotal;
   return {
     patch,
-    previewTotal: baseTotalForShift + otTotal,
+    previewTotal,
     previewHours: (is12h ? 12 : 8) + (hasOt ? otHours : 0),
+    monthlyIfFullAttendance: Math.round(previewTotal * workingDays),
   };
 }
