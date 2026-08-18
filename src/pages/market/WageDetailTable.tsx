@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, X, Pencil, GripVertical, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, X, Pencil, GripVertical, Check, Clock } from 'lucide-react';
 import ShiftPicker from './ShiftPicker';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
+import { wageDetailAgeLabel } from './wageFields';
 
 /** Hiển thị số có dấu phẩy ngăn cách nghìn khi gõ (5130000 → 5,130,000); giá trị lưu vẫn
  *  là chuỗi số thuần (không dấu phẩy) để wageDetailToNumbers() parseFloat được bình thường. */
@@ -16,7 +17,7 @@ const stripVnd = (formatted: string) => formatted.replace(/[^\d]/g, '');
  * ảnh hưởng đến MỌI nơi dùng bảng này (Let's Go VN lẫn từng NCC, ở mọi công ty/dự án).
  * `value`/`onChange` chỉ là giá trị RIÊNG của đối tượng đang sửa.
  * ĐƠN VỊ: ĐỒNG (từ migration 126) — khớp với "Tính bảng lương", xem wageFields.ts. */
-export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, onRenameField, onReorderFields, defaultOpen = false, label = 'Chi tiết lương', fieldTypes }: {
+export default function WageDetailTable({ fields, value, onChange, onAddField, onDeleteField, onRenameField, onReorderFields, defaultOpen = false, label = 'Chi tiết lương', fieldTypes, updatedAt }: {
   fields: string[];
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
@@ -33,6 +34,9 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
    *  lao động" (wage_detail), có gán mới hiện được "Tính theo ca làm việc". Không truyền cho phía
    *  "khách trả" (wage_detail_client) vì đó là giá thương lượng, không suy từ luật được. */
   fieldTypes?: Record<string, PayrollInputType | null>;
+  /** Mốc lần cuối wage_detail/wage_detail_client THAY ĐỔI thật sự (migration 140) — hiện ngay
+   *  trên tiêu đề để lâu lâu mới vào xem lại vẫn biết ngay số liệu còn mới hay đã cũ. */
+  updatedAt?: string | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [newField, setNewField] = useState('');
@@ -100,6 +104,12 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
         className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11.5px] font-medium text-[#666] bg-[#F9F9F7] hover:bg-[#F3F2EE]">
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         {label}{filled > 0 ? ` (${filled} mục)` : ''}
+        {filled > 0 && (
+          <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-[#aaa] shrink-0">
+            <Clock size={10} />
+            {wageDetailAgeLabel(updatedAt) ?? 'Chưa rõ thời điểm cập nhật'}
+          </span>
+        )}
       </button>
       {open && (
         <div className="p-2 space-y-1">

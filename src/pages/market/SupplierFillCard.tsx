@@ -4,7 +4,7 @@ import type { MarketLeadSupplier, Competitor } from '../../lib/types';
 import type { MergedSupplier } from './supplierLink';
 import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
-import { wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { wageDetailToStrings, wageDetailToNumbers, wageDetailAgeLabel } from './wageFields';
 import { fmtVnd } from '../../lib/payroll/format';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
 import type { WageFieldMapping } from '../../lib/payroll/rateCard';
@@ -161,7 +161,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
 }
 
 /** Form nhập tên/SL/lương NCC (kèm bảng chi tiết lương dùng chung) — dùng chung cho cả thêm mới và sửa. */
-function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes }: {
+function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel, saving, allowNameEdit = true, lockedQtyNote, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, wageFieldTypes, wageUpdatedAt, wageClientUpdatedAt }: {
   form: SupForm;
   setForm: (f: SupForm) => void;
   competitorNames: string[];
@@ -177,6 +177,9 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
   onRenameWageField?: (oldName: string, newName: string) => Promise<void> | void;
   onReorderWageFields?: (names: string[]) => Promise<void> | void;
   wageFieldTypes: Record<string, PayrollInputType | null>;
+  /** Mốc lần cuối 2 phía giá THẬT SỰ đổi (migration 140) — chỉ có khi đang sửa NCC đã tồn tại. */
+  wageUpdatedAt?: string | null;
+  wageClientUpdatedAt?: string | null;
 }) {
   return (
     <div className="space-y-2">
@@ -217,6 +220,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         onDeleteField={onDeleteWageField}
         onRenameField={onRenameWageField}
         onReorderFields={onReorderWageFields}
+        updatedAt={wageClientUpdatedAt}
       />
       <WageDetailTable
         label="Chi tiết giá VỐN · NCC trả người lao động"
@@ -228,6 +232,7 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
         onRenameField={onRenameWageField}
         onReorderFields={onReorderWageFields}
         fieldTypes={wageFieldTypes}
+        updatedAt={wageUpdatedAt}
       />
     </div>
   );
@@ -393,6 +398,7 @@ export default function SupplierFillCard({
                   wageFields={wageFields} onAddWageField={onAddWageField} onDeleteWageField={onDeleteWageField}
                   onRenameWageField={onRenameWageField} onReorderWageFields={onReorderWageFields}
                   wageFieldTypes={wageFieldTypes}
+                  wageUpdatedAt={s.wage_detail_updated_at} wageClientUpdatedAt={s.wage_detail_client_updated_at}
                 />
               </div>
             );
@@ -416,7 +422,9 @@ export default function SupplierFillCard({
               {/* Đã nhập đủ 2 phía thì hiện thẳng phí dịch vụ — thứ thực sự cần so, thay vì
                   chỉ đếm số khoản đã nhập. */}
               {hasBothSides ? (
-                <span title={`Giá bán ${tr(clientTotal(s, fieldMappings))}đ − giá vốn ${tr(detailTotal(s, fieldMappings))}đ`}
+                <span title={`Giá bán ${tr(clientTotal(s, fieldMappings))}đ − giá vốn ${tr(detailTotal(s, fieldMappings))}đ`
+                  + (s.wage_detail_updated_at ? ` · Giá vốn ${wageDetailAgeLabel(s.wage_detail_updated_at)?.toLowerCase()}` : '')
+                  + (s.wage_detail_client_updated_at ? ` · Giá bán ${wageDetailAgeLabel(s.wage_detail_client_updated_at)?.toLowerCase()}` : '')}
                   className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0 cursor-help">
                   chênh {tr(marginVal)}đ
                 </span>

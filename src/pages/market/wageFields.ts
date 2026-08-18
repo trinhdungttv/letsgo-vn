@@ -144,3 +144,24 @@ export const wageDetailToStrings = (d: Record<string, number> | null | undefined
   Object.fromEntries(Object.entries(d ?? {}).map(([k, v]) => [k, String(v)]));
 export const wageDetailToNumbers = (d: Record<string, string>): Record<string, number> =>
   Object.fromEntries(Object.entries(d).filter(([, v]) => v.trim()).map(([k, v]) => [k, parseFloat(v) || 0]));
+
+/** So 2 bảng chi tiết lương có THAY ĐỔI thật không (bỏ qua khoản rỗng/=0) — chỉ bấm mốc
+ *  "cập nhật lúc" lên khi số liệu thật sự đổi, không phải mỗi lần bấm Lưu (migration 140). */
+export function wageDetailChanged(a: Record<string, number> | null | undefined, b: Record<string, number> | null | undefined): boolean {
+  const ae = Object.entries(a ?? {}).filter(([, v]) => v);
+  const be = Object.entries(b ?? {}).filter(([, v]) => v);
+  if (ae.length !== be.length) return true;
+  const bm = new Map(be);
+  return ae.some(([k, v]) => bm.get(k) !== v);
+}
+
+/** "Cập nhật: 18/08/2026 14:30 (hôm nay)" — lâu lâu mới vào xem lại nên cần biết ngay số liệu
+ *  còn mới hay đã cũ. Cùng mẫu với workersTooltip() ở competitorClients.ts. */
+export function wageDetailAgeLabel(stamp: string | null | undefined): string | null {
+  if (!stamp) return null;
+  const d = new Date(stamp);
+  const when = d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  const age = days <= 0 ? 'hôm nay' : days === 1 ? '1 ngày trước' : `${days} ngày trước`;
+  return `Cập nhật: ${when} (${age})`;
+}

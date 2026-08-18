@@ -12,7 +12,7 @@ import SearchBox from '../../components/SearchBox';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
-import { fetchWageFieldRows, addWageField, deleteWageField, renameWageField, reorderWageFields, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { fetchWageFieldRows, addWageField, deleteWageField, renameWageField, reorderWageFields, wageDetailToStrings, wageDetailToNumbers, wageDetailChanged } from './wageFields';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
 import type { WageFieldMapping } from '../../lib/payroll/rateCard';
 import { wageMonthlyTotal } from './shiftCalc';
@@ -326,6 +326,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditLead = async (leadId: string, patch: EditPatch) => {
     setSaving(true);
     try {
+      const old = marketLeads.find(l => l.id === leadId);
+      const newWageDetail = wageDetailToNumbers(patch.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(patch.wage_detail_client);
       const mapPos = parseLatLngFromLink(patch.map_link);
       const { error } = await supabase.from('market_leads').update({
         region: patch.region || null,
@@ -339,8 +342,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         facebook_url: patch.facebook_url.trim() || null,
         youtube_url: patch.youtube_url.trim() || null,
         tiktok_url: patch.tiktok_url.trim() || null,
-        wage_detail: wageDetailToNumbers(patch.wage_detail),
-        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        // Chỉ bấm mốc "cập nhật lúc" lên khi số liệu THẬT SỰ đổi, không phải mỗi lần bấm Lưu.
+        ...(wageDetailChanged(old?.wage_detail, newWageDetail) ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(wageDetailChanged(old?.wage_detail_client, newWageDetailClient) ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', leadId);
       if (error) throw error;
@@ -377,7 +383,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const newSuppliers = [...lead.suppliers, { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient }];
+      const now = new Date().toISOString();
+      const newSuppliers = [...lead.suppliers, {
+        name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: Object.keys(wageDetail).length ? now : null,
+        wage_detail_client_updated_at: Object.keys(wageDetailClient).length ? now : null,
+      }];
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
       await logActivity({
@@ -401,7 +412,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       // để giữ được mức lương riêng tại dự án này; dòng đã có thì sửa tại chỗ.
       // qty đang khoá (số LĐ lấy tự động) thì giữ nguyên giá trị cũ trong JSON — không ghi đè
       // bằng con số dẫn xuất, để nếu sau này bỏ khoá vẫn còn số đã nhập tay.
-      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient };
+      const now = new Date().toISOString();
+      const entry = {
+        name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: wageDetailChanged(row.wage_detail, wageDetail) ? now : (row.wage_detail_updated_at ?? null),
+        wage_detail_client_updated_at: wageDetailChanged(row.wage_detail_client, wageDetailClient) ? now : (row.wage_detail_client_updated_at ?? null),
+      };
       const newSuppliers = row.jsonIndex == null
         ? [...lead.suppliers, entry]
         : lead.suppliers.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -478,6 +494,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     setSaving(true);
     try {
       const mapPos = parseLatLngFromLink(clientForm.map_link);
+      const newWageDetail = wageDetailToNumbers(clientForm.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(clientForm.wage_detail_client);
       const patch = {
         industry: clientForm.industry || null,
         market_workers_needed: parseInt(clientForm.workers_needed) || 0,
@@ -486,8 +504,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_max: toNum(clientForm.wage_max),
         allowance_notes: clientForm.allowance_notes.trim() || null,
         map_link: clientForm.map_link.trim() || null,
-        wage_detail: wageDetailToNumbers(clientForm.wage_detail),
-        wage_detail_client: wageDetailToNumbers(clientForm.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        ...(Object.keys(newWageDetail).length ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(Object.keys(newWageDetailClient).length ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       };
       const { error } = await supabase.from('clients').update(patch).eq('id', clientForm.client_id);
@@ -509,6 +529,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditClient = async (clientId: string, patch: EditPatch) => {
     setSaving(true);
     try {
+      const old = clients.find(c => c.id === clientId);
+      const newWageDetail = wageDetailToNumbers(patch.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(patch.wage_detail_client);
       const mapPos = parseLatLngFromLink(patch.map_link);
       const { error } = await supabase.from('clients').update({
         industry: patch.industry || null,
@@ -521,8 +544,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         facebook_url: patch.facebook_url.trim() || null,
         youtube_url: patch.youtube_url.trim() || null,
         tiktok_url: patch.tiktok_url.trim() || null,
-        wage_detail: wageDetailToNumbers(patch.wage_detail),
-        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        // Chỉ bấm mốc "cập nhật lúc" lên khi số liệu THẬT SỰ đổi, không phải mỗi lần bấm Lưu.
+        ...(wageDetailChanged(old?.wage_detail, newWageDetail) ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(wageDetailChanged(old?.wage_detail_client, newWageDetailClient) ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', clientId);
       if (error) throw error;
@@ -535,7 +561,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 
   const handleAddSupplierToClient = async (client: Client, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
-      const newSuppliers = [...(client.market_suppliers ?? []), { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient }];
+      const now = new Date().toISOString();
+      const newSuppliers = [...(client.market_suppliers ?? []), {
+        name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: Object.keys(wageDetail).length ? now : null,
+        wage_detail_client_updated_at: Object.keys(wageDetailClient).length ? now : null,
+      }];
       const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
       if (error) throw error;
       await logActivity({
@@ -554,8 +585,13 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
       const current = client.market_suppliers ?? [];
+      const now = new Date().toISOString();
       // Xem chú thích ở handleEditSupplierOfLead — qty khoá thì không ghi đè bằng số dẫn xuất.
-      const entry = { name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient };
+      const entry = {
+        name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: wageDetailChanged(row.wage_detail, wageDetail) ? now : (row.wage_detail_updated_at ?? null),
+        wage_detail_client_updated_at: wageDetailChanged(row.wage_detail_client, wageDetailClient) ? now : (row.wage_detail_client_updated_at ?? null),
+      };
       const newSuppliers = row.jsonIndex == null
         ? [...current, entry]
         : current.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
@@ -877,7 +913,7 @@ interface EditPatch {
   wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
 }
 
-function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, regionOptions, wageFieldTypes }: {
+function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, regionOptions, wageFieldTypes, wageUpdatedAt, wageClientUpdatedAt }: {
   initial: EditPatch;
   industries: string[];
   onAddIndustry: (name: string) => void;
@@ -891,6 +927,8 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   onReorderWageFields: (names: string[]) => void;
   regionOptions?: string[];
   wageFieldTypes: Record<string, PayrollInputType | null>;
+  wageUpdatedAt?: string | null;
+  wageClientUpdatedAt?: string | null;
 }) {
   const fieldMappings: WageFieldMapping[] = wageFields.map(name => ({ name, payrollInputType: wageFieldTypes[name] ?? null }));
   const [patch, setPatch] = useState<EditPatch>(initial);
@@ -918,13 +956,14 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
           fields={wageFields} value={patch.wage_detail} onChange={v => setPatch(p => ({ ...p, wage_detail: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
           onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
-          fieldTypes={wageFieldTypes}
+          fieldTypes={wageFieldTypes} updatedAt={wageUpdatedAt}
         />
         <WageDetailTable
           label="Chi tiết lương · Công ty trả LGVN"
           fields={wageFields} value={patch.wage_detail_client} onChange={v => setPatch(p => ({ ...p, wage_detail_client: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
           onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
+          updatedAt={wageClientUpdatedAt}
         />
         <WageMarginSummary lgvn={patch.wage_detail} company={patch.wage_detail_client} fieldMappings={fieldMappings} />
       </div>
@@ -965,7 +1004,7 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
     tiktok_url: client.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(client.wage_detail),
     wage_detail_client: wageDetailToStrings(client.wage_detail_client),
-  }} {...rest} />;
+  }} wageUpdatedAt={client.wage_detail_updated_at} wageClientUpdatedAt={client.wage_detail_client_updated_at} {...rest} />;
 }
 
 function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../lib/types').MarketLead; regionOptions: string[] } & EditFormExtraProps) {
@@ -983,5 +1022,5 @@ function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../li
     tiktok_url: lead.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(lead.wage_detail),
     wage_detail_client: wageDetailToStrings(lead.wage_detail_client),
-  }} {...rest} />;
+  }} wageUpdatedAt={lead.wage_detail_updated_at} wageClientUpdatedAt={lead.wage_detail_client_updated_at} {...rest} />;
 }

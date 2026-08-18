@@ -129,6 +129,10 @@ export interface Client {
   // Chi tiết lương/phí PHÍA CÔNG TY trả cho Let's Go VN, cùng bộ trường với wage_detail để
   // so sánh chênh lệch từng khoản (migration 115)
   wage_detail_client?: Record<string, number> | null;
+  // Mốc tự động ghi lại khi wage_detail/wage_detail_client THAY ĐỔI thật sự (không phải mỗi
+  // lần bấm Lưu) — lâu lâu mới vào xem lại nên cần biết ngay số liệu còn mới hay đã cũ (migration 140).
+  wage_detail_updated_at?: string | null;
+  wage_detail_client_updated_at?: string | null;
 }
 
 // Mục tiêu doanh thu tháng theo chi nhánh — dashboard điều hành (trang Báo cáo).
@@ -567,6 +571,10 @@ export interface MarketLeadSupplier {
   // GIÁ BÁN: công ty/nhà máy trả cho NCC này — cùng bộ trường với wage_detail để so được
   // từng khoản và tính ra phí dịch vụ NCC đang ăn. Nằm trong cột JSON nên không cần migration.
   wage_detail_client?: Record<string, number> | null;
+  // Mốc tự động ghi lại khi wage_detail/wage_detail_client THAY ĐỔI thật sự — nằm ngay trong
+  // phần tử JSON này (mảng suppliers/market_suppliers) nên không cần migration riêng.
+  wage_detail_updated_at?: string | null;
+  wage_detail_client_updated_at?: string | null;
 }
 
 export interface MarketLead {
@@ -599,6 +607,9 @@ export interface MarketLead {
   // Chi tiết lương/phí PHÍA CÔNG TY trả cho Let's Go VN, cùng bộ trường với wage_detail để
   // so sánh chênh lệch từng khoản (migration 115)
   wage_detail_client?: Record<string, number> | null;
+  // Mốc tự động ghi lại khi wage_detail/wage_detail_client THAY ĐỔI thật sự (migration 140).
+  wage_detail_updated_at?: string | null;
+  wage_detail_client_updated_at?: string | null;
   // Liên kết sang crm_pipeline khi đã "Đẩy CRM" (hoặc được tạo sẵn liên kết từ CRM Pipeline/
   // Workspace) — 1-1 tuỳ chọn, cùng mẫu với crm_pipeline.client_id (migration 122).
   crm_id?: string | null;
