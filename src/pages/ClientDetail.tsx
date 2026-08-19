@@ -1,20 +1,18 @@
 import { useState, useMemo, useEffect } from 'react';
-import type { ReactNode } from 'react';
 import { useHashTab } from '../hooks/useHashSubRoute';
-import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, X, RefreshCw, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
-import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, CRMActivity, ClientGift, Contact, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
+import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, ClientGift, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
-import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekLabelFull, sortLaborHistory, statusPill, formatCurrency, monthLabel } from '../lib/format';
+import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekLabelFull, sortLaborHistory, statusPill, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
-import { STAGES, ACTIVE_STAGES, type StageKey } from './CRMDeal';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import PaymentTermsSection from '../components/clients/PaymentTermsSection';
@@ -30,6 +28,7 @@ import { fetchIndustries, addIndustry } from './market/industries';
 import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
+import { KpiTile, SectionCard, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -64,11 +63,7 @@ const DOC_TYPE_LABELS: Record<ClientDocumentType, string> = {
   other: 'Khác',
 };
 
-/* ─────────────────────────────────────────────────────────────
-   Khối UI dùng chung cho tab "Tổng quan"
-   ───────────────────────────────────────────────────────────── */
-
-/** Các khối gập/mở của tab Tổng quan — dùng chung cho thanh điều hướng nhanh. */
+/** Các khối gập/mở của tab "Tổng quan" — dùng chung cho thanh điều hướng nhanh. */
 type SectionKey = 'info' | 'labor' | 'pay' | 'docs' | 'health' | 'hist';
 
 const OVERVIEW_NAV: { key: SectionKey; label: string; icon: string }[] = [
@@ -79,81 +74,6 @@ const OVERVIEW_NAV: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'health', label: 'Sức khoẻ',             icon: '❤️' },
   { key: 'hist',   label: 'Lịch sử',              icon: '🕘' },
 ];
-
-/** Ô chỉ số ở dải tóm tắt đầu trang — bấm vào là nhảy tới khối tương ứng. */
-function KpiTile({ label, value, sub, valueColor, tone = 'muted', right, onClick }: {
-  label: string;
-  value: string;
-  sub?: string;
-  valueColor?: string;
-  tone?: 'good' | 'bad' | 'warn' | 'muted';
-  right?: ReactNode;
-  onClick?: () => void;
-}) {
-  const subColor = tone === 'good' ? '#059669' : tone === 'bad' ? '#DC2626' : tone === 'warn' ? '#D97706' : '#9CA3AF';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-left bg-white border border-[#E8E7E2] rounded-[10px] px-3.5 py-2.5 flex items-center justify-between gap-2 hover:border-[#C9C7BE] hover:shadow-sm transition"
-    >
-      <div className="min-w-0">
-        <div className="text-[10px] uppercase tracking-wide text-[#9CA3AF] font-semibold truncate">{label}</div>
-        <div className="text-[18px] font-bold leading-tight mt-0.5 truncate" style={{ color: valueColor || '#111' }}>{value}</div>
-        {sub && <div className="text-[11px] mt-0.5 truncate" style={{ color: subColor }}>{sub}</div>}
-      </div>
-      {right && <div className="shrink-0">{right}</div>}
-    </button>
-  );
-}
-
-/** Thẻ khối có tiêu đề gập/mở + chỗ gắn nút hành động riêng của khối. */
-function SectionCard({ id, icon, title, badge, open, onToggle, actions, children }: {
-  id: string;
-  icon: string;
-  title: string;
-  badge?: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section id={id} className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden scroll-mt-14">
-      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#E8E7E2]">
-        <button onClick={onToggle} className="flex items-center gap-2 flex-1 min-w-0 text-left group">
-          {open
-            ? <ChevronUp size={13} className="text-[#aaa] shrink-0" />
-            : <ChevronDown size={13} className="text-[#aaa] shrink-0" />}
-          <span className="text-[12.5px] font-semibold text-[#111] group-hover:text-[#1D4ED8] transition truncate">{icon} {title}</span>
-          {badge != null && <span className="text-[11px] text-blue-700 font-medium shrink-0">{badge}</span>}
-        </button>
-        {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
-      </div>
-      {open && <div className="p-4">{children}</div>}
-    </section>
-  );
-}
-
-/** Một dòng nhãn — giá trị trong khối Thông tin. */
-function InfoRow({ label, children, full }: { label: string; children: ReactNode; full?: boolean }) {
-  return (
-    <div className={`flex items-start gap-3 py-1.5 border-b border-dashed border-[#EFEDE8] ${full ? 'xl:col-span-2' : ''}`}>
-      <div className="w-[104px] shrink-0 text-[11.5px] text-[#888] pt-[3px]">{label}</div>
-      <div className="flex-1 min-w-0 text-[12.5px] text-[#111]">{children}</div>
-    </div>
-  );
-}
-
-/** Nút bút chì nhỏ dùng cho các khối sửa nhanh tại chỗ. */
-function PencilButton({ onClick, title }: { onClick: () => void; title?: string }) {
-  return (
-    <button onClick={onClick} title={title}
-      className="p-1 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition shrink-0">
-      <Edit2 size={11} />
-    </button>
-  );
-}
 
 interface ClientDetailProps {
   client: Client;
@@ -173,8 +93,8 @@ interface ClientDetailProps {
 export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
   const { managers } = useManagers();
-  const CD_TAB_KEYS = ['overview', 'profile', 'crm'] as const;
-  const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile' | 'crm'>('client-detail', CD_TAB_KEYS, 'overview', 2);
+  const CD_TAB_KEYS = ['overview', 'profile'] as const;
+  const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile'>('client-detail', CD_TAB_KEYS, 'overview', 2);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -222,27 +142,12 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     selectWeek(labels[labels.length - 1]);
     toast(`Đã thêm Tháng ${m}/${y} vào danh sách tuần`);
   };
-  // Trạng thái gập/mở của từng khối trong tab Tổng quan — nhớ lại theo trình duyệt
-  // để mỗi người giữ được bố cục quen thuộc của mình.
-  const SECTION_LS_KEY = 'client-detail-sections-v1';
-  const DEFAULT_SECTIONS: Record<SectionKey, boolean> = {
-    info: true, labor: true, pay: true, docs: false, health: true, hist: false,
-  };
-  const [sections, setSections] = useState<Record<SectionKey, boolean>>(() => {
-    try {
-      const raw = localStorage.getItem(SECTION_LS_KEY);
-      return raw ? { ...DEFAULT_SECTIONS, ...JSON.parse(raw) } : DEFAULT_SECTIONS;
-    } catch { return DEFAULT_SECTIONS; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(SECTION_LS_KEY, JSON.stringify(sections)); } catch { /* bỏ qua */ }
-  }, [sections]);
-  const toggleSection = (k: SectionKey) => setSections(s => ({ ...s, [k]: !s[k] }));
-  /** Mở khối rồi cuộn tới — dùng cho thanh điều hướng nhanh và các ô chỉ số. */
-  const gotoSection = (k: SectionKey) => {
-    setSections(s => (s[k] ? s : { ...s, [k]: true }));
-    setTimeout(() => document.getElementById(`cd-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-  };
+  // Trạng thái gập/mở của từng khối trong tab Tổng quan (nhớ theo trình duyệt).
+  const { sections, setSections, toggle: toggleSection, goto: gotoSection } = useSectionState<SectionKey>(
+    { info: true, labor: true, pay: true, docs: false, health: true, hist: false },
+    'client-detail-sections-v1',
+    'cd',
+  );
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [uploadDocType, setUploadDocType] = useState<ClientDocumentType>('contract');
@@ -302,26 +207,17 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     });
   }, [activeTab, client, profileEntry, toast]);
 
-  // CRM deal info for this client
+  // Thương vụ CRM của khách hàng này — chỉ còn dùng để hiện người phụ trách
+  // (deal owner) và lối tắt sang CRM Pipeline trong tab Hồ sơ chăm sóc.
   const [deals, setDeals] = useState<CRMDealType[]>([]);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  const [dealActivities, setDealActivities] = useState<CRMActivity[]>([]);
-  const [activeActivityTab, setActiveActivityTab] = useState<'note' | 'call' | 'email' | 'meeting'>('note');
-  const [activityContent, setActivityContent] = useState('');
-  const [savingActivity, setSavingActivity] = useState(false);
-  const [gifts, setGifts] = useState<ClientGift[]>([]);
-  const [cskhContacts, setCskhContacts] = useState<Contact[]>([]);
-  const [showNewRecipient, setShowNewRecipient] = useState(false);
-  const [newRecipientForm, setNewRecipientForm] = useState({ name: '', phone: '', role: '' });
-  const [savingRecipient, setSavingRecipient] = useState(false);
-  const [giftForm, setGiftForm] = useState({ item_name: '', value: '', gift_date: new Date().toISOString().slice(0, 10), notes: '', recipient_contact_id: '' });
-  const [savingGift, setSavingGift] = useState(false);
-  const [editingDealTitle, setEditingDealTitle] = useState(false);
-  const [dealTitleInput, setDealTitleInput] = useState('');
+  // Quà tặng ghi ở bảng cũ client_gifts — hiển thị kèm trong mục Quà tặng của
+  // hồ sơ (mục này ghi mới vào crm_gifts) để không mất dấu dữ liệu đã nhập.
+  const [legacyGifts, setLegacyGifts] = useState<ClientGift[]>([]);
   const [showExportMd, setShowExportMd] = useState(false);
 
   useEffect(() => {
-    if (activeTab !== 'crm') return;
+    if (activeTab !== 'profile') return;
     supabase.from('crm_deals')
       .select('*, crm_products(name)')
       .or(`lead_id.eq.${client.id},client_id.eq.${client.id}`)
@@ -335,21 +231,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       .select('*')
       .eq('client_id', client.id)
       .order('gift_date', { ascending: false })
-      .then(({ data }) => setGifts((data || []) as ClientGift[]));
-    supabase.from('contacts')
-      .select('*, clients(name)')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => setCskhContacts((data || []) as Contact[]));
+      .then(({ data }) => setLegacyGifts((data || []) as ClientGift[]));
   }, [activeTab, client.id]);
-
-  useEffect(() => {
-    if (!selectedDealId) { setDealActivities([]); return; }
-    supabase.from('crm_activities')
-      .select('*')
-      .eq('deal_id', selectedDealId)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => setDealActivities((data || []) as CRMActivity[]));
-  }, [selectedDealId]);
 
   const loadDocuments = () => {
     supabase.from('client_documents')
@@ -422,179 +305,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   };
 
   const selectedDeal = deals.find(d => d.id === selectedDealId) || null;
-
-  const startEditDealTitle = () => {
-    if (!selectedDeal) return;
-    setDealTitleInput(selectedDeal.title);
-    setEditingDealTitle(true);
-  };
-
-  const handleDealTitleUpdate = async () => {
-    if (!selectedDeal) return;
-    const newTitle = dealTitleInput.trim();
-    if (!newTitle || newTitle === selectedDeal.title) { setEditingDealTitle(false); return; }
-    try {
-      const { data, error } = await supabase.from('crm_deals')
-        .update({ title: newTitle }).eq('id', selectedDeal.id)
-        .select('*, crm_products(name)').single();
-      if (error) throw error;
-      setDeals(prev => prev.map(d => d.id === selectedDeal.id ? (data as CRMDealType) : d));
-      setEditingDealTitle(false);
-      toast('Đã đổi tên thương vụ');
-      await logActivity({
-        user, action: 'update', table: 'crm_deals', recordId: selectedDeal.id,
-        description: `Đổi tên thương vụ "${selectedDeal.title}" thành "${newTitle}"`,
-        oldData: selectedDeal, newData: data,
-      });
-    } catch (e: any) {
-      toast('Lỗi: ' + e.message);
-    }
-  };
-
-  const handleStageChange = async (newStage: StageKey) => {
-    if (!selectedDeal) return;
-    try {
-      const { data, error } = await supabase.from('crm_deals')
-        .update({ stage: newStage }).eq('id', selectedDeal.id)
-        .select('*, crm_products(name)').single();
-      if (error) throw error;
-      setDeals(prev => prev.map(d => d.id === selectedDeal.id ? (data as CRMDealType) : d));
-      toast(`Cập nhật thương vụ thành "${STAGES[newStage].label}"`);
-      await logActivity({
-        user, action: 'update', table: 'crm_deals', recordId: selectedDeal.id,
-        description: `Chuyển thương vụ "${selectedDeal.title}" sang giai đoạn "${STAGES[newStage].label}"`,
-        oldData: selectedDeal, newData: data,
-      });
-    } catch (e: any) {
-      toast('Lỗi: ' + e.message);
-    }
-  };
-
-  const getStepState = (step: StageKey, stage: StageKey) => {
-    if (stage === 'won') return 'done';
-    if (stage === 'lost') return 'lost';
-    const currentIndex = ACTIVE_STAGES.indexOf(stage);
-    const stepIndex = ACTIVE_STAGES.indexOf(step);
-    if (stepIndex < currentIndex) return 'done';
-    if (stepIndex === currentIndex) return 'current';
-    return 'pending';
-  };
-
-  const handleActivitySubmit = async () => {
-    if (!selectedDeal) return;
-    if (!activityContent.trim()) { toast('Vui lòng nhập nội dung'); return; }
-    setSavingActivity(true);
-    try {
-      const { data, error } = await supabase.from('crm_activities').insert({
-        deal_id: selectedDeal.id,
-        type: activeActivityTab,
-        content: activityContent.trim(),
-        created_by: user?.full_name || 'System',
-        created_at: new Date().toISOString(),
-      }).select().single();
-      if (error) throw error;
-      setDealActivities(prev => [data as CRMActivity, ...prev]);
-      setActivityContent('');
-      toast('Đã thêm hoạt động');
-      await logActivity({
-        user, action: 'insert', table: 'crm_activities', recordId: data.id,
-        description: `Thêm hoạt động (${activeActivityTab}) cho thương vụ "${selectedDeal.title}"`,
-        newData: data,
-      });
-    } catch (e: any) {
-      toast('Lỗi: ' + e.message);
-    } finally {
-      setSavingActivity(false);
-    }
-  };
-
-  const handleAddGift = async () => {
-    if (!giftForm.item_name.trim()) { toast('Vui lòng nhập tên quà'); return; }
-    setSavingGift(true);
-    try {
-      const recipient = cskhContacts.find(c => c.id === giftForm.recipient_contact_id);
-      const { data, error } = await supabase.from('client_gifts').insert({
-        client_id: client.id,
-        item_name: giftForm.item_name.trim(),
-        value: giftForm.value ? Number(giftForm.value) : null,
-        gift_date: giftForm.gift_date,
-        notes: giftForm.notes.trim() || null,
-        recipient_contact_id: giftForm.recipient_contact_id || null,
-        recipient_name: recipient?.name || null,
-        created_by: user?.full_name || 'System',
-      }).select().single();
-      if (error) throw error;
-      setGifts(prev => [data as ClientGift, ...prev]);
-      setGiftForm({ item_name: '', value: '', gift_date: new Date().toISOString().slice(0, 10), notes: '', recipient_contact_id: '' });
-      toast('Đã thêm quà tặng');
-      await logActivity({
-        user, action: 'insert', table: 'client_gifts', recordId: data.id,
-        description: `Thêm quà tặng "${data.item_name}" cho khách hàng "${client.name}"`,
-        newData: data,
-      });
-    } catch (e: any) {
-      toast('Lỗi: ' + e.message);
-    } finally {
-      setSavingGift(false);
-    }
-  };
-
-  const handleAddRecipient = async () => {
-    if (!newRecipientForm.name.trim()) { toast('Vui lòng nhập họ tên'); return; }
-    setSavingRecipient(true);
-    try {
-      const { data, error } = await supabase.from('contacts').insert({
-        client_id: client.id,
-        name: newRecipientForm.name.trim(),
-        phone: newRecipientForm.phone.trim() || null,
-        role: newRecipientForm.role.trim() || 'Khác',
-        updated_at: new Date().toISOString(),
-      }).select('*, clients(name)').single();
-      if (error) throw error;
-      const contact = data as Contact;
-      setCskhContacts(prev => [contact, ...prev]);
-      setGiftForm(prev => ({ ...prev, recipient_contact_id: contact.id }));
-      setNewRecipientForm({ name: '', phone: '', role: '' });
-      setShowNewRecipient(false);
-      toast('Đã thêm người nhận mới vào CSKH');
-      await logActivity({
-        user, action: 'insert', table: 'contacts', recordId: contact.id,
-        description: `Thêm liên hệ CSKH "${contact.name}" cho khách hàng "${client.name}"`,
-        newData: contact,
-      });
-    } catch (e: any) {
-      toast('Lỗi: ' + e.message);
-    } finally {
-      setSavingRecipient(false);
-    }
-  };
-
-  const timeAgo = (date: string) => {
-    const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
-    if (diff < 60) return 'vừa xong';
-    if (diff < 3600) return `${Math.floor(diff / 60)}p trước`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h trước`;
-    return `${Math.floor(diff / 86400)}d trước`;
-  };
-
-  const activityIcon = (type: string) => {
-    switch (type) {
-      case 'call': return <Phone size={14} className="text-emerald-600" />;
-      case 'email': return <Mail size={14} className="text-blue-600" />;
-      case 'meeting': return <Calendar size={14} className="text-violet-600" />;
-      default: return <MessageCircle size={14} className="text-amber-600" />;
-    }
-  };
-
-  const activityBadge = (type: string) => {
-    const badges: Record<string, { label: string; bg: string; text: string }> = {
-      call: { label: 'Gọi điện', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-      email: { label: 'Email', bg: 'bg-blue-100', text: 'text-blue-700' },
-      note: { label: 'Ghi chú', bg: 'bg-amber-100', text: 'text-amber-700' },
-      meeting: { label: 'Cuộc họp', bg: 'bg-violet-100', text: 'text-violet-700' },
-    };
-    return badges[type] || badges.note;
-  };
 
   const hist = useMemo(() => sortLaborHistory(laborHistory), [laborHistory]);
   const currentWorkers = hist.length ? hist[hist.length - 1].count : 0;
@@ -936,7 +646,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
 
       {/* Tab bar */}
       <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-6">
-        {(['overview', 'profile', 'crm'] as const).map(tab => (
+        {(['overview', 'profile'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -946,7 +656,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 : 'border-transparent text-[#888] hover:text-[#555]'
             }`}
           >
-            {tab === 'overview' ? '📊 Tổng quan' : tab === 'profile' ? '🗂️ Hồ sơ chăm sóc' : '🤝 Chi tiết thương vụ'}
+            {tab === 'overview' ? '📊 Tổng quan' : '🗂️ Hồ sơ chăm sóc'}
           </button>
         ))}
       </div>
@@ -964,6 +674,12 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
               toast={toast}
               isAdmin={user?.role === 'admin'}
               variant="panel"
+              legacyGifts={legacyGifts}
+              dealSummary={selectedDeal ? {
+                title: selectedDeal.title,
+                value: selectedDeal.value || 0,
+                onOpen: onOpenDeal ? () => onOpenDeal(selectedDeal.id) : undefined,
+              } : undefined}
               dealOwner={selectedDeal?.owner}
               onDealOwnerChange={selectedDeal ? async (owner) => {
                 const { error } = await supabase.from('crm_deals').update({ owner, updated_at: new Date().toISOString() }).eq('id', selectedDeal.id);
@@ -973,346 +689,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
               } : undefined}
             />
           )
-        ) : activeTab === 'crm' ? (
-          <div className="space-y-4">
-            {/* Stage progress bar + Won/Lost */}
-            {selectedDeal && (
-              <div className="bg-white rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {ACTIVE_STAGES.map((step, idx) => {
-                      const stage = selectedDeal.stage as StageKey;
-                      const state = getStepState(step, stage);
-                      const stepConfig = STAGES[step];
-                      const isLast = idx === ACTIVE_STAGES.length - 1;
-                      const disabled = stage === 'won' || stage === 'lost';
-                      return (
-                        <div key={step} className="flex items-center gap-2 flex-1">
-                          <button
-                            onClick={() => !disabled && handleStageChange(step)}
-                            disabled={disabled}
-                            className={`flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-all ${
-                              state === 'done' ? 'bg-emerald-100'
-                              : state === 'current' ? `${stepConfig.color} text-white`
-                              : stage === 'lost' ? 'bg-gray-200'
-                              : 'bg-gray-100 border border-gray-300'
-                            } ${!disabled ? 'hover:shadow-md cursor-pointer' : 'cursor-not-allowed'}`}
-                          >
-                            {state === 'done' ? (
-                              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                            ) : (
-                              <span className={`text-xs font-semibold ${state === 'current' ? 'text-white' : stage === 'lost' ? 'text-gray-500' : 'text-gray-700'}`}>{idx + 1}</span>
-                            )}
-                          </button>
-                          <div className={`text-xs font-medium whitespace-nowrap ${
-                            state === 'done' ? 'text-emerald-700'
-                            : state === 'current' ? 'text-gray-900'
-                            : stage === 'lost' ? 'text-gray-400'
-                            : 'text-gray-600'
-                          }`}>{stepConfig.label}</div>
-                          {!isLast && <div className={`flex-1 h-0.5 ${state === 'done' ? 'bg-emerald-300' : 'bg-gray-200'}`} />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {selectedDeal.stage === 'won' ? (
-                    <span className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-emerald-100 text-emerald-700 shrink-0">✓ Đã thắng</span>
-                  ) : selectedDeal.stage === 'lost' ? (
-                    <span className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-red-100 text-red-700 shrink-0">✕ Thua</span>
-                  ) : (
-                    <div className="flex gap-2 shrink-0">
-                      <button onClick={() => handleStageChange('won')} className="px-3 py-1.5 text-[12px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors">Won</button>
-                      <button onClick={() => handleStageChange('lost')} className="px-3 py-1.5 text-[12px] font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors">Lost</button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-          <div className="flex gap-5">
-            {/* Left panel - deal overview + contacts */}
-            <div className="w-[300px] shrink-0 space-y-4">
-              <div className="bg-white rounded-lg border border-gray-200 p-4">
-                <h3 className="text-xs font-semibold uppercase text-gray-600 mb-4">Tổng quan thương vụ</h3>
-                {deals.length === 0 ? (
-                  <p className="text-[12.5px] text-[#aaa]">Chưa có thương vụ CRM cho khách hàng này.</p>
-                ) : (
-                  <>
-                    {deals.length > 1 && (
-                      <select value={selectedDealId || ''} onChange={e => setSelectedDealId(e.target.value)} className="w-full text-[12.5px] px-2.5 py-1.5 mb-3 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                        {deals.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
-                      </select>
-                    )}
-                    {selectedDeal && (
-                      <>
-                        <div className="mb-4">
-                          {editingDealTitle ? (
-                            <input
-                              autoFocus
-                              value={dealTitleInput}
-                              onChange={e => setDealTitleInput(e.target.value)}
-                              onBlur={handleDealTitleUpdate}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') handleDealTitleUpdate();
-                                if (e.key === 'Escape') setEditingDealTitle(false);
-                              }}
-                              className="text-[13px] font-semibold text-[#111] mb-1 w-full px-1.5 py-0.5 border border-blue-500 rounded outline-none"
-                            />
-                          ) : (
-                            <button onClick={startEditDealTitle} className="group flex items-center gap-1.5 mb-1">
-                              <p className="text-[13px] font-semibold text-[#111] text-left">{selectedDeal.title}</p>
-                              <Edit2 size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 transition shrink-0" />
-                            </button>
-                          )}
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-2xl font-bold text-blue-600">{formatCurrency(selectedDeal.value || 0)}</p>
-                            {onOpenDeal && (
-                              <button onClick={() => onOpenDeal(selectedDeal.id)} className="text-[11.5px] text-blue-600 hover:underline shrink-0">Mở trong CRM Pipeline →</button>
-                            )}
-                          </div>
-                        </div>
-                        <div className="mb-5">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-gray-600">Xác suất</span>
-                            <span className="text-xs font-semibold text-gray-900">{STAGES[selectedDeal.stage as StageKey]?.prob ?? 0}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className={`h-2 rounded-full transition-all ${STAGES[selectedDeal.stage as StageKey]?.color || 'bg-gray-400'}`} style={{ width: `${STAGES[selectedDeal.stage as StageKey]?.prob ?? 0}%` }} />
-                          </div>
-                        </div>
-                        <div className="space-y-3 border-t border-gray-200 pt-4">
-                          <div>
-                            <p className="text-xs font-medium text-gray-600 mb-1">Ngày dự kiến đóng</p>
-                            <p className="text-sm font-medium text-gray-900">{formatDate(selectedDeal.expected_closing_date) || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-gray-600 mb-1">Sản phẩm</p>
-                            <p className="text-sm text-gray-900 font-medium">{selectedDeal.crm_products?.name || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-gray-600 mb-1">Giai đoạn</p>
-                            <p className={`text-sm font-medium ${STAGES[selectedDeal.stage as StageKey]?.textCol || 'text-gray-700'}`}>{STAGES[selectedDeal.stage as StageKey]?.label || selectedDeal.stage}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-gray-600 mb-1">Ngày tạo</p>
-                            <p className="text-sm text-gray-900 font-medium">{formatDate(selectedDeal.created_at)}</p>
-                          </div>
-                        </div>
-                        {selectedDeal.notes && (
-                          <div className="mt-4 pt-4 border-t border-gray-200">
-                            <p className="text-xs font-semibold uppercase text-gray-600 mb-2">Ghi chú</p>
-                            <p className="text-xs text-gray-700 leading-relaxed">{selectedDeal.notes}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Right panel - activities */}
-            <div className="flex-1 min-w-0">
-              <div className="bg-white rounded-lg border border-gray-200 p-4 h-full flex flex-col">
-                {!selectedDeal ? (
-                  <div className="flex-1 flex items-center justify-center text-[12.5px] text-[#aaa]">
-                    Không có thương vụ để ghi nhận hoạt động
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex gap-2 mb-4 border-b border-gray-200 pb-3">
-                      {(['note', 'call', 'email', 'meeting'] as const).map(type => (
-                        <button
-                          key={type}
-                          onClick={() => setActiveActivityTab(type)}
-                          className={`text-xs font-medium px-3 py-2 rounded transition-colors ${activeActivityTab === type ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
-                          {type === 'note' && 'Ghi chú'}
-                          {type === 'call' && 'Gọi điện'}
-                          {type === 'email' && 'Email'}
-                          {type === 'meeting' && 'Cuộc họp'}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mb-4 pb-4 border-b border-gray-200">
-                      <textarea
-                        value={activityContent}
-                        onChange={e => setActivityContent(e.target.value)}
-                        placeholder="Nội dung..."
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none h-20 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
-                      />
-                      <p className="text-[11px] text-gray-400 mb-2">Sẽ ghi nhận bởi: <span className="font-medium text-gray-600">{user?.full_name || 'System'}</span></p>
-                      <button
-                        onClick={handleActivitySubmit}
-                        disabled={savingActivity}
-                        className="w-full px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
-                      >
-                        {savingActivity ? 'Đang lưu...' : 'Thêm'}
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto space-y-3">
-                      {dealActivities.length === 0 ? (
-                        <div className="text-center py-8 text-gray-400 text-xs">Không có hoạt động</div>
-                      ) : (
-                        dealActivities.map(a => {
-                          const badge = activityBadge(a.type);
-                          return (
-                            <div key={a.id} className="pb-3 border-b border-gray-100 last:border-b-0">
-                              <div className="flex gap-3">
-                                <div className="flex-shrink-0 mt-0.5">{activityIcon(a.type)}</div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${badge.bg} ${badge.text}`}>{badge.label}</span>
-                                    <span className="text-xs text-gray-500">{a.created_by}</span>
-                                    <span className="text-xs text-gray-400">{timeAgo(a.created_at)}</span>
-                                  </div>
-                                  <p className="text-xs text-gray-700 leading-relaxed break-words">{a.content}</p>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Quà tặng */}
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <h3 className="text-xs font-semibold uppercase text-gray-600 mb-4 flex items-center gap-1.5"><Gift size={14} className="text-pink-500" /> Quà tặng</h3>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-4">
-              <input
-                type="text"
-                value={giftForm.item_name}
-                onChange={e => setGiftForm({ ...giftForm, item_name: e.target.value })}
-                placeholder="Tên quà"
-                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-              />
-              <input
-                type="number"
-                value={giftForm.value}
-                onChange={e => setGiftForm({ ...giftForm, value: e.target.value })}
-                placeholder="Trị giá (VNĐ)"
-                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-              />
-              <input
-                type="date"
-                value={giftForm.gift_date}
-                onChange={e => setGiftForm({ ...giftForm, gift_date: e.target.value })}
-                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-              />
-              <select
-                value={showNewRecipient ? '__new__' : giftForm.recipient_contact_id}
-                onChange={e => {
-                  if (e.target.value === '__new__') { setShowNewRecipient(true); return; }
-                  setShowNewRecipient(false);
-                  setGiftForm({ ...giftForm, recipient_contact_id: e.target.value });
-                }}
-                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-              >
-                <option value="">Người nhận (CSKH)...</option>
-                {cskhContacts.filter(c => c.client_id === client.id).length > 0 && (
-                  <optgroup label="⭐ Người phụ trách công ty này">
-                    {cskhContacts.filter(c => c.client_id === client.id).map(c => (
-                      <option key={c.id} value={c.id}>⭐ {c.name}{c.role ? ` - ${c.role}` : ''}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {cskhContacts.filter(c => c.client_id !== client.id).length > 0 && (
-                  <optgroup label="Khác (CSKH)">
-                    {cskhContacts.filter(c => c.client_id !== client.id).map(c => (
-                      <option key={c.id} value={c.id}>{c.name}{c.role ? ` - ${c.role}` : ''}{c.clients?.name ? ` (${c.clients.name})` : ''}</option>
-                    ))}
-                  </optgroup>
-                )}
-                <option value="__new__">+ Tạo người nhận mới...</option>
-              </select>
-              <input
-                type="text"
-                value={giftForm.notes}
-                onChange={e => setGiftForm({ ...giftForm, notes: e.target.value })}
-                placeholder="Ghi chú"
-                className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-              />
-            </div>
-
-            {showNewRecipient && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <input
-                  type="text"
-                  value={newRecipientForm.name}
-                  onChange={e => setNewRecipientForm({ ...newRecipientForm, name: e.target.value })}
-                  placeholder="Họ tên *"
-                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                />
-                <input
-                  type="text"
-                  value={newRecipientForm.phone}
-                  onChange={e => setNewRecipientForm({ ...newRecipientForm, phone: e.target.value })}
-                  placeholder="SĐT"
-                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                />
-                <input
-                  type="text"
-                  value={newRecipientForm.role}
-                  onChange={e => setNewRecipientForm({ ...newRecipientForm, role: e.target.value })}
-                  placeholder="Chức vụ"
-                  className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleAddRecipient}
-                    disabled={savingRecipient}
-                    className="flex-1 px-3 py-1.5 text-[12.5px] font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
-                  >
-                    {savingRecipient ? 'Đang lưu...' : 'Lưu'}
-                  </button>
-                  <button
-                    onClick={() => { setShowNewRecipient(false); setNewRecipientForm({ name: '', phone: '', role: '' }); }}
-                    className="px-3 py-1.5 text-[12.5px] font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-                  >
-                    Hủy
-                  </button>
-                </div>
-              </div>
-            )}
-            <button
-              onClick={handleAddGift}
-              disabled={savingGift}
-              className="px-3 py-1.5 text-[12.5px] font-medium text-white bg-pink-500 hover:bg-pink-600 disabled:opacity-50 rounded-lg transition-colors mb-4"
-            >
-              {savingGift ? 'Đang lưu...' : '+ Thêm quà tặng'}
-            </button>
-            {gifts.length === 0 ? (
-              <p className="text-[12.5px] text-[#aaa]">Chưa có quà tặng nào được ghi nhận.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-[12.5px]">
-                  <thead><tr className="border-b border-gray-200">
-                    {['Tên quà', 'Trị giá', 'Ngày tặng', 'Người nhận', 'Ghi chú', 'Tạo bởi'].map(h => (
-                      <th key={h} className="text-left px-2 py-1.5 text-[11.5px] text-[#888] font-medium whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {gifts.map(g => (
-                      <tr key={g.id} className="border-b border-gray-100 last:border-0">
-                        <td className="px-2 py-1.5 font-medium">{g.item_name}</td>
-                        <td className="px-2 py-1.5">{g.value != null ? formatCurrency(g.value) : '—'}</td>
-                        <td className="px-2 py-1.5 whitespace-nowrap"><span className="inline-flex items-center gap-1 text-gray-600"><CalendarDays size={12} />{formatDate(g.gift_date)}</span></td>
-                        <td className="px-2 py-1.5">{g.recipient_name || '—'}</td>
-                        <td className="px-2 py-1.5 text-gray-600">{g.notes || '—'}</td>
-                        <td className="px-2 py-1.5 text-gray-400">{g.created_by || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-          </div>
         ) : (
           <div className="max-w-[1500px] mx-auto">
 
@@ -1363,19 +739,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             </div>
 
             {/* ══ Thanh điều hướng nhanh — dính trên đầu khi cuộn ══ */}
-            <div className="sticky top-0 z-20 -mx-5 px-5 py-2 mt-3 bg-[#F5F4EF]/95 backdrop-blur border-b border-[#E8E7E2]">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] uppercase tracking-wide text-[#aaa] font-semibold mr-0.5">Đi tới</span>
-                {OVERVIEW_NAV.map(n => (
-                  <button
-                    key={n.key}
-                    onClick={() => gotoSection(n.key)}
-                    className="px-2.5 py-1 rounded-full text-[11.5px] font-medium border border-[#E2E0D9] bg-white text-[#555] hover:border-[#1D4ED8] hover:text-[#1D4ED8] transition"
-                  >
-                    {n.icon} {n.label}
-                  </button>
-                ))}
-              </div>
+            <div className="mt-3">
+              <QuickNav items={OVERVIEW_NAV} onGo={gotoSection} />
             </div>
 
             {/* ══ Bố cục 2 cột: trái = việc làm hằng ngày, phải = thông tin tham chiếu ══ */}
