@@ -13,6 +13,8 @@ import { useAuth } from '../../lib/auth';
 import { queueGoogleSync } from '../../lib/googleSync';
 import { logActivity } from '../../lib/audit';
 import ContactsTab from '../ContactsTab';
+import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
+import { useBranchData } from '../../hooks/useBranchData';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 
 export const STAGES = [
@@ -130,6 +132,11 @@ export interface CompanyProfileModalProps {
 
 export function CompanyProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary }: CompanyProfileModalProps) {
   const { user, token } = useAuth();
+  // Chi nhánh — nguồn duy nhất để hiển thị/gán, không đọc cột `region` (tên cũ).
+  const { branches } = useBranchData();
+  // Công ty đã là Khách hàng thì chi nhánh thuộc về hồ sơ Khách hàng
+  // (clients.branch_id) — đọc thẳng từ đó để hai nơi không lệch nhau.
+  const [clientBranchId, setClientBranchId] = useState<string | null>(null);
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
@@ -214,6 +221,13 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
         .eq('client_id', entry.client_id)
         .order('due_date', { ascending: false });
       if (!error) setWorkTasks(data as WorkTask[]);
+
+      const { data: cli } = await supabase
+        .from('clients')
+        .select('branch_id')
+        .eq('id', entry.client_id)
+        .maybeSingle();
+      setClientBranchId(cli?.branch_id ?? null);
     }
   }, [entry.id, entry.client_id]);
 
@@ -480,8 +494,11 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
     if (!confirm(`Chuyển "${entry.company_name}" sang Khách hàng đang hợp tác?`)) return;
     setActivating(true);
     try {
+      // Khách hàng mới nhận thẳng branch_id — trước đây chép `entry.region`
+      // (tên chi nhánh cũ) vào `clients.region`, chính là đường khiến tên cũ
+      // quay lại hệ thống sau mỗi lần kích hoạt.
       const { error } = await supabase.from('clients').insert({
-        name: entry.company_name, region: entry.region || null,
+        name: entry.company_name, branch_id: entry.branch_id || null,
         client_type: 'active', pipeline_stage: 'won',
         won_date: new Date().toISOString().slice(0, 10),
         notes: entry.notes || null, status: 'ok',
@@ -670,11 +687,45 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
           value={entry.company_name}
           onSave={v => patchEntry({ company_name: v }, `Đổi tên công ty "${entry.company_name}" thành "${v}"`)}
         />
-        <InlineEdit
-          label="Khu vực / KCN"
-          value={entry.region || ''}
-          onSave={v => patchEntry({ region: v || null }, `Cập nhật khu vực/KCN cho "${entry.company_name}"`)}
-        />
+        {/*
+          Chi nhánh — ghi thẳng vào branch_id (khoá duy nhất), không đụng tới
+          cột `region`. Trước đây ô này là InlineEdit ghi text tự do vào
+          `region` nên tên chi nhánh cũ (VD "MR Hùng Black") rò ra màn hình.
+        */}
+        {entry.client_id ? (
+          <div>
+            <div className="text-[11px] text-[#888] font-medium mb-0.5">Chi nhánh phụ trách</div>
+            <div className="text-[12.5px] font-medium text-[#111]">
+              {branchLabel(branches.find(b => b.id === clientBranchId))}
+            </div>
+            <div className="text-[10.5px] text-[#aaa] mt-0.5">
+              Lấy từ hồ sơ Khách hàng. Đổi tại tab Tổng quan → Chuyển chi nhánh (có ghi lịch sử).
+            </div>
+          </div>
+        ) : (
+        <div>
+          <div className="text-[11px] text-[#888] font-medium mb-0.5">Chi nhánh phụ trách</div>
+          <select
+            value={entry.branch_id || ''}
+            onChange={e => {
+              const id = e.target.value || null;
+              patchEntry(
+                { branch_id: id },
+                `Cập nhật chi nhánh cho "${entry.company_name}" → ${branchLabel(branches.find(b => b.id === id))}`,
+              );
+            }}
+            className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+          >
+            <option value="">— Chưa gán chi nhánh —</option>
+            {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          {!entry.branch_id && entry.region && (
+            <div className="text-[10.5px] text-amber-600 mt-1">
+              Dữ liệu cũ ghi “{entry.region}” — chọn chi nhánh ở trên để chuẩn hoá.
+            </div>
+          )}
+        </div>
+        )}
         <InlineEdit
           label="Tổng Thời Vụ"
           value={String(entry.workers_seasonal ?? 0)}
@@ -1358,10 +1409,10 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
             <h2 className="text-[16px] font-bold text-[#111] leading-tight">{entry.company_name}</h2>
-            {entry.region && (
+            {(clientBranchId || entry.branch_id) && (
               <div className="flex items-center gap-1 mt-1 text-[12px] text-[#888]">
                 <MapPin size={11} />
-                {entry.region}
+                {branchLabelOf({ branch_id: clientBranchId ?? entry.branch_id }, branches)}
               </div>
             )}
           </div>
