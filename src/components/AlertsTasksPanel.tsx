@@ -13,7 +13,6 @@ interface DashboardTask {
   id: string;
   client_id: string | null;
   client_name: string;
-  client_region: string | null;
   description: string;
   status: TaskStatus;
   source_status: string | null;
@@ -37,7 +36,16 @@ const DOC_STATUS_BTN: Record<string, string> = {
 
 interface Props {
   clients: Client[];
-  regionFilter?: string | null;
+  /**
+   * Id các khách hàng đang nằm trong phạm vi đã chọn ở Dashboard (Khu vực /
+   * Chi nhánh / Quản lý), `null` = xem tất cả.
+   *
+   * Trước đây prop này là `regionFilter` — một chuỗi tên tỉnh đem so bằng `===`
+   * với `clients.region` (tên chi nhánh cũ), nên hai vế gần như không bao giờ
+   * khớp: chọn tỉnh thì bảng trống, chọn chi nhánh thì không lọc gì. Nay dùng
+   * chung kết quả lọc của Dashboard nên mọi chế độ phạm vi đều đúng.
+   */
+  scopeClientIds?: Set<string> | null;
   onSelectClient?: (client: Client) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
@@ -47,7 +55,7 @@ interface Props {
   clientToBranch?: Record<string, string>;
 }
 
-export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, isAdmin, onClientUpdate, clientToBranch }: Props) {
+export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClient, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, isAdmin, onClientUpdate, clientToBranch }: Props) {
   const { user, token } = useAuth();
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -84,7 +92,6 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         id: `pt_${t.id}`,
         client_id: null,
         client_name: t.company_name,
-        client_region: null,
         description: t.title + (t.description ? ` — ${t.description}` : ''),
         status: t.status as TaskStatus,
         source_status: null,
@@ -104,7 +111,6 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
             id: `wt_${t.id}`,
             client_id: t.client_id,
             client_name: relatedClient?.name || t.title,
-            client_region: relatedClient?.region || null,
             description: relatedClient ? t.title : (t.task_type || ''),
             status: t.status as TaskStatus,
             source_status: null,
@@ -193,7 +199,6 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
         id: `ct_${c.id}`,
         client_id: c.id,
         client_name: c.name,
-        client_region: c.region,
         description,
         status: (linked?.status as TaskStatus) || 'pending',
         source_status: c.status,
@@ -319,17 +324,22 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
 
   const suspendedClientIds = useMemo(() => new Set(clients.filter(c => c.cooperation_status === 'suspended').map(c => c.id)), [clients]);
 
-  const visibleTasks = useMemo(() => {
-    let list = tasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id));
-    if (regionFilter) list = list.filter(t => t.client_region === regionFilter);
-    return list;
-  }, [tasks, regionFilter, suspendedClientIds]);
+  // Task không gắn khách hàng (việc BD ở pipeline, việc Workspace tự do) không
+  // quy được về chi nhánh nào nên luôn hiện, kể cả khi đang lọc theo phạm vi.
+  const inScope = useCallback(
+    (t: DashboardTask) => !scopeClientIds || !t.client_id || scopeClientIds.has(t.client_id),
+    [scopeClientIds],
+  );
 
-  const visibleContractTasks = useMemo(() => {
-    let list = contractTasks.filter(t => !t.client_id || !suspendedClientIds.has(t.client_id));
-    if (regionFilter) list = list.filter(t => t.client_region === regionFilter);
-    return list;
-  }, [contractTasks, regionFilter, suspendedClientIds]);
+  const visibleTasks = useMemo(
+    () => tasks.filter(t => (!t.client_id || !suspendedClientIds.has(t.client_id)) && inScope(t)),
+    [tasks, inScope, suspendedClientIds],
+  );
+
+  const visibleContractTasks = useMemo(
+    () => contractTasks.filter(t => (!t.client_id || !suspendedClientIds.has(t.client_id)) && inScope(t)),
+    [contractTasks, inScope, suspendedClientIds],
+  );
   const workTasks = useMemo(() => visibleTasks.filter(t => t.source_type !== 'contract'), [visibleTasks]);
 
   const renderDocStatusBadge = (docStatus: string | null | undefined) => {
@@ -387,8 +397,8 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
             </div>
           )}
         </div>
-        {task.client_region && (
-          <span className="text-[10.5px] text-gray-400 shrink-0">{(task.client_id && clientToBranch?.[task.client_id]) || task.client_region}</span>
+        {task.client_id && clientToBranch?.[task.client_id] && (
+          <span className="text-[10.5px] text-gray-400 shrink-0">{clientToBranch[task.client_id]}</span>
         )}
         {/* Status badge (read-only, mirroring Workspace) */}
         <div className="shrink-0">
@@ -530,10 +540,10 @@ export default function AlertsTasksPanel({ clients, regionFilter, onSelectClient
                     : renderTaskStatusBadge(detailTask.status)
                   }
                 </div>
-                {detailTask.client_region && (
+                {detailTask.client_id && clientToBranch?.[detailTask.client_id] && (
                   <div>
-                    <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Khu vực</div>
-                    <span className="text-[12px] text-[#333]">{(detailTask.client_id && clientToBranch?.[detailTask.client_id]) || detailTask.client_region}</span>
+                    <div className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1">Chi nhánh</div>
+                    <span className="text-[12px] text-[#333]">{clientToBranch[detailTask.client_id]}</span>
                   </div>
                 )}
                 {detailTask.due_date && (
