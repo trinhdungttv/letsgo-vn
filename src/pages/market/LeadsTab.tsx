@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin } from 'lucide-react';
+import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin, List, LayoutGrid } from 'lucide-react';
+import { usePersistedState } from '../../hooks/usePersistedState';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -12,12 +13,19 @@ import SearchBox from '../../components/SearchBox';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import WageDetailTable from './WageDetailTable';
 import { fetchIndustries, addIndustry } from './industries';
-import { fetchWageFields, addWageField, deleteWageField, wageDetailToStrings, wageDetailToNumbers } from './wageFields';
+import { fetchWageFieldRows, addWageField, deleteWageField, renameWageField, reorderWageFields, wageDetailToStrings, wageDetailToNumbers, wageDetailChanged } from './wageFields';
+import type { PayrollInputType } from '../../lib/payroll/coefficients';
+import type { WageFieldMapping } from '../../lib/payroll/rateCard';
+import { wageMonthlyTotal } from './shiftCalc';
 import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls,
   fetchMinWageBatches, type MinWageBatch } from './regionWage';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr } from './shared';
-import type { Client } from '../../lib/types';
+import type { Client, CompetitorClient } from '../../lib/types';
+import {
+  type MergedSupplier, type LgvSupply, mergeSuppliers, fetchSupplyRows, writeSupplyQty,
+  deleteSupplyRows, sameCompany,
+} from './supplierLink';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
@@ -34,7 +42,13 @@ const emptyClientSetupForm = {
 
 // Lương 2 phía: wage_detail (LGVN trả NLĐ) vs wage_detail_client (Công ty trả LGVN) — cùng
 // bộ trường nên so được từng khoản. Chỉ tính khi CẢ HAI phía đã có ít nhất 1 số liệu.
-function computeWageMargin(lgvn: Record<string, string>, company: Record<string, string>) {
+//
+// Hàng theo từng trường (diff riêng lẻ) VẪN so được — "Lương cơ bản khách trả" so với "Lương
+// cơ bản LGVN trả" là 2 số cùng loại. Nhưng "Tổng" thì KHÔNG được cộng thẳng Object.values():
+// "Lương cơ bản", "Ca 12h", "OT"… là các cách biểu diễn khác nhau của CÙNG 1 lương cơ bản dưới
+// các kiểu ca khác nhau, không phải khoản cộng dồn (đúng lỗi "Tổng giá vốn" báo sai bên NCC) —
+// dùng wageMonthlyTotal() để quy về đúng 1 mốc lương chính/tháng trước khi so.
+function computeWageMargin(lgvn: Record<string, string>, company: Record<string, string>, fieldMappings: WageFieldMapping[]) {
   const hasLgvn = Object.values(lgvn).some(v => v.trim());
   const hasCompany = Object.values(company).some(v => v.trim());
   if (!hasLgvn || !hasCompany) return null;
@@ -46,13 +60,13 @@ function computeWageMargin(lgvn: Record<string, string>, company: Record<string,
       return { field, lgvn: l, company: c, diff: c - l };
     })
     .filter(r => r.lgvn || r.company);
-  const totalLgvn = rows.reduce((s, r) => s + r.lgvn, 0);
-  const totalCompany = rows.reduce((s, r) => s + r.company, 0);
+  const totalLgvn = wageMonthlyTotal(wageDetailToNumbers(lgvn), fieldMappings);
+  const totalCompany = wageMonthlyTotal(wageDetailToNumbers(company), fieldMappings);
   return { rows, totalLgvn, totalCompany, totalDiff: totalCompany - totalLgvn };
 }
 
-function WageMarginSummary({ lgvn, company }: { lgvn: Record<string, string>; company: Record<string, string> }) {
-  const margin = computeWageMargin(lgvn, company);
+function WageMarginSummary({ lgvn, company, fieldMappings }: { lgvn: Record<string, string>; company: Record<string, string>; fieldMappings: WageFieldMapping[] }) {
+  const margin = computeWageMargin(lgvn, company, fieldMappings);
   if (!margin) return null;
   const diffCls = (d: number) => d > 0 ? 'text-emerald-700' : d < 0 ? 'text-red-600' : 'text-[#999]';
   const fmtDiff = (d: number) => `${d > 0 ? '+' : ''}${d.toFixed(2)}tr`;
@@ -73,7 +87,7 @@ function WageMarginSummary({ lgvn, company }: { lgvn: Record<string, string>; co
   );
 }
 
-export default function LeadsTab({ marketLeads, clients, competitors, marketZones, zoneFilter, setZoneFilter, onRefresh, toast }: MarketTabProps) {
+export default function LeadsTab({ marketLeads, clients, competitors, marketZones, laborHistory, zoneFilter, setZoneFilter, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
   const [addTab, setAddTab] = useState<'client' | 'lead' | null>(null);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
@@ -83,8 +97,22 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     addTab === 'client' ? JSON.stringify(clientForm) !== JSON.stringify(emptyClientSetupForm) : JSON.stringify(leadForm) !== JSON.stringify(emptyLeadForm)
   ));
   const [saving, setSaving] = useState(false);
+  // "Khách hàng đang hợp tác" — dạng List (mặc định, mọi KH luôn mở sẵn chi tiết NCC) hoặc
+  // Card (lưới ảnh cover gọn, bấm 1 thẻ mới mở chi tiết KH đó bên dưới) — đồng bộ ảnh cover với
+  // module Khách hàng vì cùng đọc thẳng bảng clients (migration 141).
+  const [clientViewMode, setClientViewMode] = usePersistedState<'list' | 'card'>('market_tracked_clients_view_mode', 'list');
+  const [focusedClientId, setFocusedClientId] = useState<string | null>(null);
   const [industries, setIndustries] = useState<string[]>([]);
   const [wageFields, setWageFields] = useState<string[]>([]);
+  // Loại đơn giá theo luật của từng trường (migration 126) — cần để KHÔNG cộng dồn nhầm các mức
+  // lương thay-thế-nhau (Lương CB / Ca 8h / Ca 12h / OT…) khi tính tổng, và để hiện "Tính theo
+  // ca làm việc" (xem SupplierFillCard.tsx, WageDetailTable.tsx).
+  const [wageFieldTypes, setWageFieldTypes] = useState<Record<string, PayrollInputType | null>>({});
+  const applyWageFieldRows = (rows: { name: string; payrollInputType: PayrollInputType | null }[]) => {
+    setWageFields(rows.map(r => r.name));
+    setWageFieldTypes(Object.fromEntries(rows.map(r => [r.name, r.payrollInputType])));
+  };
+  const fieldMappings: WageFieldMapping[] = wageFields.map(name => ({ name, payrollInputType: wageFieldTypes[name] ?? null }));
   const [editClientId, setEditClientId] = useState<string | null>(null);
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
   const [provinceFilter, setProvinceFilter] = useState('all');
@@ -94,6 +122,38 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   // 4 mức lương tối thiểu vùng — nguồn chung ở bảng region_wages (sửa tại tab Lương TT).
   const [regionWages, setRegionWages] = useState<Record<RegionZone, number>>(OFFICIAL_REGION_WAGES);
   useEffect(() => { fetchRegionWages().then(setRegionWages); }, []);
+
+  // "KH đang phục vụ" của các đối thủ — cùng mô tả việc "NCC nào đang cung ứng cho công ty
+  // nào", nhưng nhập ở hồ sơ Đối thủ / hồ sơ KCN. Gộp vào đây để nhập một nơi là thấy ở mọi
+  // nơi (xem supplierLink.ts).
+  const [supplyRows, setSupplyRows] = useState<CompetitorClient[]>([]);
+  const reloadSupply = () => fetchSupplyRows().then(setSupplyRows).catch(e => toast('Lỗi tải NCC từ hồ sơ đối thủ: ' + e.message));
+  useEffect(() => { reloadSupply(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Số LĐ Let's Go VN tại 1 khách hàng = con số MỚI NHẤT đã nhập trong hồ sơ khách hàng
+   * (client_labor_history theo tuần, đã tính sẵn thành client.current_workers — dùng đúng
+   * con số mà trang Khách hàng/Dashboard đang hiển thị). Chỉ khoá ô nhập khi thật sự đã có
+   * lịch sử lao động; chưa nhập tuần nào thì để nguyên số gõ tay, tránh ghi đè thành 0.
+   */
+  const lgvSupplyOf = (client: Client | undefined): LgvSupply | null => {
+    if (!client) return null;
+    const hist = laborHistory[client.id] ?? [];
+    if (!hist.length) return null;
+    const latest = hist[hist.length - 1];
+    return {
+      count: client.current_workers ?? latest.count ?? 0,
+      note: `Số LĐ mới nhất đã nhập trong hồ sơ khách hàng · tuần ${latest.week_label}`
+        + `${latest.updated_by ? ` · ${latest.updated_by}` : ''}`,
+      wageDetail: client.wage_detail,
+      wageDetailClient: client.wage_detail_client,
+    };
+  };
+
+  // Dự án đang tìm hiểu trùng tên với 1 khách hàng đang hợp tác thì cũng lấy số LĐ thật của
+  // khách hàng đó, thay vì để 2 thẻ hiện 2 con số khác nhau cho cùng một nhà máy.
+  const lgvSupplyForLead = (companyName: string): LgvSupply | null =>
+    lgvSupplyOf(clients.find(c => sameCompany(c.name, companyName)));
   // Lương tối thiểu vùng hiện ở đây (cột lương của từng KCN) nên cũng phải cảnh báo khi lỗi thời.
   const [minWageBatches, setMinWageBatches] = useState<MinWageBatch[]>([]);
   useEffect(() => { fetchMinWageBatches().then(setMinWageBatches); }, []);
@@ -128,7 +188,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 
   useEffect(() => {
     fetchIndustries([...marketLeads.map(l => l.industry), ...clients.map(c => c.industry)]).then(setIndustries);
-    fetchWageFields().then(setWageFields);
+    fetchWageFieldRows().then(applyWageFieldRows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -144,11 +204,27 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     const err = await addWageField(name);
     if (err) toast('Lỗi thêm trường lương: ' + err);
     setWageFields(prev => [...new Set([...prev, name])]);
+    setWageFieldTypes(prev => (name in prev ? prev : { ...prev, [name]: null }));
   };
   const handleDeleteWageField = async (name: string) => {
     const err = await deleteWageField(name);
     if (err) toast('Lỗi xoá trường lương: ' + err);
     setWageFields(prev => prev.filter(f => f !== name));
+    setWageFieldTypes(prev => { const { [name]: _omit, ...rest } = prev; void _omit; return rest; });
+  };
+  // Đổi tên kéo theo việc viết lại số liệu đã nhập ở mọi nơi → tải lại từ DB thay vì sửa
+  // state tại chỗ, và refresh dữ liệu công ty/dự án để bảng chi tiết lương hiện tên mới.
+  const handleRenameWageField = async (oldName: string, newName: string) => {
+    const err = await renameWageField(oldName, newName);
+    if (err) { toast('Lỗi đổi tên trường lương: ' + err); return; }
+    applyWageFieldRows(await fetchWageFieldRows());
+    await onRefresh();
+    toast(`Đã đổi tên trường lương thành "${newName.trim()}"`);
+  };
+  const handleReorderWageFields = async (names: string[]) => {
+    setWageFields(names); // đổi ngay cho mượt, DB xác nhận sau
+    const err = await reorderWageFields(names);
+    if (err) { toast('Lỗi sắp xếp trường lương: ' + err); applyWageFieldRows(await fetchWageFieldRows()); }
   };
 
   // Tỉnh/TP suy ra từ tên KCN (marketZones.location), giống cách làm ở tab Lương TT.
@@ -256,6 +332,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditLead = async (leadId: string, patch: EditPatch) => {
     setSaving(true);
     try {
+      const old = marketLeads.find(l => l.id === leadId);
+      const newWageDetail = wageDetailToNumbers(patch.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(patch.wage_detail_client);
       const mapPos = parseLatLngFromLink(patch.map_link);
       const { error } = await supabase.from('market_leads').update({
         region: patch.region || null,
@@ -269,8 +348,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         facebook_url: patch.facebook_url.trim() || null,
         youtube_url: patch.youtube_url.trim() || null,
         tiktok_url: patch.tiktok_url.trim() || null,
-        wage_detail: wageDetailToNumbers(patch.wage_detail),
-        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        // Chỉ bấm mốc "cập nhật lúc" lên khi số liệu THẬT SỰ đổi, không phải mỗi lần bấm Lưu.
+        ...(wageDetailChanged(old?.wage_detail, newWageDetail) ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(wageDetailChanged(old?.wage_detail_client, newWageDetailClient) ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', leadId);
       if (error) throw error;
@@ -290,11 +372,29 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     await supabase.from('competitors').update({ supplying_for }).eq('id', comp.id);
   };
 
-  const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  // Số LĐ được ghi sang competitor_clients khi tên NCC khớp một hồ sơ Đối thủ, để hồ sơ đối
+  // thủ và hồ sơ KCN thấy ngay. Báo lại khi bỏ qua để người dùng biết vì sao không đồng bộ.
+  const pushSupplyQty = async (
+    row: { competitorId: string | null; ccIds: string[] },
+    companyName: string, kcn: string | null, qty: number,
+  ) => {
+    const { skipped } = await writeSupplyQty(row, companyName, kcn, qty, supplyRows);
+    if (skipped === 'multiple') {
+      toast(`"${companyName}" đang có nhiều dòng trùng trong hồ sơ đối thủ — số LĐ chưa đồng bộ, dọn bớt ở hồ sơ đối thủ trước`);
+    }
+    await reloadSupply();
+  };
+
+  const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const newSuppliers = [...lead.suppliers, { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail }];
+      const now = new Date().toISOString();
+      const newSuppliers = [...lead.suppliers, {
+        name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: Object.keys(wageDetail).length ? now : null,
+        wage_detail_client_updated_at: Object.keys(wageDetailClient).length ? now : null,
+      }];
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
       await logActivity({
@@ -303,16 +403,30 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, lead.company_name);
+      const comp = competitors.find(c => c.company_name === name);
+      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, lead.region, qty);
       await onRefresh();
       toast('Đã thêm NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfLead = async (leadId: string, index: number, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfLead = async (leadId: string, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const newSuppliers = lead.suppliers.map((s, i) => i === index ? { ...s, name, qty, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail } : s);
+      // Dòng chỉ có ở competitor_clients (chưa từng nhập ở thẻ công ty) thì thêm mới vào JSON
+      // để giữ được mức lương riêng tại dự án này; dòng đã có thì sửa tại chỗ.
+      // qty đang khoá (số LĐ lấy tự động) thì giữ nguyên giá trị cũ trong JSON — không ghi đè
+      // bằng con số dẫn xuất, để nếu sau này bỏ khoá vẫn còn số đã nhập tay.
+      const now = new Date().toISOString();
+      const entry = {
+        name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: wageDetailChanged(row.wage_detail, wageDetail) ? now : (row.wage_detail_updated_at ?? null),
+        wage_detail_client_updated_at: wageDetailChanged(row.wage_detail_client, wageDetailClient) ? now : (row.wage_detail_client_updated_at ?? null),
+      };
+      const newSuppliers = row.jsonIndex == null
+        ? [...lead.suppliers, entry]
+        : lead.suppliers.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
       const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
       if (error) throw error;
       await logActivity({
@@ -320,24 +434,28 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
+      if (!row.is_us) await pushSupplyQty(row, lead.company_name, lead.region, qty);
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleDeleteSupplierOfLead = async (leadId: string, index: number) => {
+  const handleDeleteSupplierOfLead = async (leadId: string, row: MergedSupplier) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
     try {
-      const removed = lead.suppliers[index];
-      const newSuppliers = lead.suppliers.filter((_, i) => i !== index);
-      const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
-      if (error) throw error;
+      const newSuppliers = row.jsonIndex == null ? lead.suppliers : lead.suppliers.filter((_, i) => i !== row.jsonIndex);
+      if (row.jsonIndex != null) {
+        const { error } = await supabase.from('market_leads').update({ suppliers: newSuppliers }).eq('id', leadId);
+        if (error) throw error;
+      }
+      await deleteSupplyRows(row.ccIds);
       await logActivity({
         user, action: 'update', table: 'market_leads', recordId: leadId,
-        description: `Xoá NCC "${removed?.name}" khỏi công ty/dự án "${lead.company_name}"`,
+        description: `Xoá NCC "${row.name}" khỏi công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
+      await reloadSupply();
       await onRefresh();
       toast('Đã xoá NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -382,6 +500,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     setSaving(true);
     try {
       const mapPos = parseLatLngFromLink(clientForm.map_link);
+      const newWageDetail = wageDetailToNumbers(clientForm.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(clientForm.wage_detail_client);
       const patch = {
         industry: clientForm.industry || null,
         market_workers_needed: parseInt(clientForm.workers_needed) || 0,
@@ -390,8 +510,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_max: toNum(clientForm.wage_max),
         allowance_notes: clientForm.allowance_notes.trim() || null,
         map_link: clientForm.map_link.trim() || null,
-        wage_detail: wageDetailToNumbers(clientForm.wage_detail),
-        wage_detail_client: wageDetailToNumbers(clientForm.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        ...(Object.keys(newWageDetail).length ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(Object.keys(newWageDetailClient).length ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       };
       const { error } = await supabase.from('clients').update(patch).eq('id', clientForm.client_id);
@@ -413,6 +535,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const handleEditClient = async (clientId: string, patch: EditPatch) => {
     setSaving(true);
     try {
+      const old = clients.find(c => c.id === clientId);
+      const newWageDetail = wageDetailToNumbers(patch.wage_detail);
+      const newWageDetailClient = wageDetailToNumbers(patch.wage_detail_client);
       const mapPos = parseLatLngFromLink(patch.map_link);
       const { error } = await supabase.from('clients').update({
         industry: patch.industry || null,
@@ -425,8 +550,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         facebook_url: patch.facebook_url.trim() || null,
         youtube_url: patch.youtube_url.trim() || null,
         tiktok_url: patch.tiktok_url.trim() || null,
-        wage_detail: wageDetailToNumbers(patch.wage_detail),
-        wage_detail_client: wageDetailToNumbers(patch.wage_detail_client),
+        wage_detail: newWageDetail,
+        wage_detail_client: newWageDetailClient,
+        // Chỉ bấm mốc "cập nhật lúc" lên khi số liệu THẬT SỰ đổi, không phải mỗi lần bấm Lưu.
+        ...(wageDetailChanged(old?.wage_detail, newWageDetail) ? { wage_detail_updated_at: new Date().toISOString() } : {}),
+        ...(wageDetailChanged(old?.wage_detail_client, newWageDetailClient) ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }).eq('id', clientId);
       if (error) throw error;
@@ -437,9 +565,14 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     setSaving(false);
   };
 
-  const handleAddSupplierToClient = async (client: Client, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleAddSupplierToClient = async (client: Client, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
-      const newSuppliers = [...(client.market_suppliers ?? []), { name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail }];
+      const now = new Date().toISOString();
+      const newSuppliers = [...(client.market_suppliers ?? []), {
+        name, qty, is_us: false, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: Object.keys(wageDetail).length ? now : null,
+        wage_detail_client_updated_at: Object.keys(wageDetailClient).length ? now : null,
+      }];
       const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
       if (error) throw error;
       await logActivity({
@@ -448,15 +581,26 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, client.name);
+      const comp = competitors.find(c => c.company_name === name);
+      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
       toast('Đã thêm NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleEditSupplierOfClient = async (client: Client, index: number, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>) => {
+  const handleEditSupplierOfClient = async (client: Client, row: MergedSupplier, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     try {
       const current = client.market_suppliers ?? [];
-      const newSuppliers = current.map((s, i) => i === index ? { ...s, name, qty, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail } : s);
+      const now = new Date().toISOString();
+      // Xem chú thích ở handleEditSupplierOfLead — qty khoá thì không ghi đè bằng số dẫn xuất.
+      const entry = {
+        name, qty: row.qtyLocked ? row.jsonQty ?? 0 : qty, is_us: row.is_us, wage_min: wageMin, wage_max: wageMax, wage_detail: wageDetail, wage_detail_client: wageDetailClient,
+        wage_detail_updated_at: wageDetailChanged(row.wage_detail, wageDetail) ? now : (row.wage_detail_updated_at ?? null),
+        wage_detail_client_updated_at: wageDetailChanged(row.wage_detail_client, wageDetailClient) ? now : (row.wage_detail_client_updated_at ?? null),
+      };
+      const newSuppliers = row.jsonIndex == null
+        ? [...current, entry]
+        : current.map((s, i) => i === row.jsonIndex ? { ...s, ...entry } : s);
       const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
       if (error) throw error;
       await logActivity({
@@ -464,23 +608,27 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
+      if (!row.is_us) await pushSupplyQty(row, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleDeleteSupplierOfClient = async (client: Client, index: number) => {
+  const handleDeleteSupplierOfClient = async (client: Client, row: MergedSupplier) => {
     try {
       const current = client.market_suppliers ?? [];
-      const removed = current[index];
-      const newSuppliers = current.filter((_, i) => i !== index);
-      const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
-      if (error) throw error;
+      const newSuppliers = row.jsonIndex == null ? current : current.filter((_, i) => i !== row.jsonIndex);
+      if (row.jsonIndex != null) {
+        const { error } = await supabase.from('clients').update({ market_suppliers: newSuppliers }).eq('id', client.id);
+        if (error) throw error;
+      }
+      await deleteSupplyRows(row.ccIds);
       await logActivity({
         user, action: 'update', table: 'clients', recordId: client.id,
-        description: `Xoá NCC "${removed?.name}" khỏi khách hàng "${client.name}"`,
+        description: `Xoá NCC "${row.name}" khỏi khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
+      await reloadSupply();
       await onRefresh();
       toast('Đã xoá NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -530,9 +678,37 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       <div ref={splitRef} className={`flex items-start ${dragging ? 'select-none' : ''}`}>
       {/* ── Khách hàng đang hợp tác ── */}
       <div className="space-y-2 min-w-0" style={{ width: `${leftPct}%` }}>
-        <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
+          <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
+            <button onClick={() => setClientViewMode('list')} title="Dạng danh sách (luôn mở sẵn chi tiết)" className={`p-1.5 ${clientViewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={13} /></button>
+            <button onClick={() => setClientViewMode('card')} title="Dạng card (có ảnh cover) — bấm 1 thẻ để mở chi tiết" className={`p-1.5 ${clientViewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={13} /></button>
+          </div>
+        </div>
+        {clientViewMode === 'card' && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-1">
+            {trackedClients.map(c => (
+              <div key={c.id} onClick={() => setFocusedClientId(focusedClientId === c.id ? null : c.id)}
+                className={`bg-white border rounded-[10px] overflow-hidden cursor-pointer transition hover:shadow-md ${focusedClientId === c.id ? 'border-blue-400 ring-1 ring-blue-200' : 'border-[#E8E7E2]'}`}>
+                <div className="aspect-video w-full bg-gray-100 overflow-hidden">
+                  {c.cover_image_url ? (
+                    <img src={c.cover_image_url} alt={c.name}
+                      className={`w-full h-full ${c.cover_image_fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                      style={{ objectPosition: `${c.cover_image_pos_x ?? 50}% ${c.cover_image_pos_y ?? 50}%` }} />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] text-[#bbb]">Chưa có ảnh cover</div>
+                  )}
+                </div>
+                <div className="px-2.5 py-2">
+                  <div className="text-[12px] font-medium text-[#111] truncate">{c.name}</div>
+                  <div className="text-[10.5px] text-[#888] truncate">{c.industry || '—'}{(c.industrial_zones || [])[0] ? ` · ${(c.industrial_zones || [])[0]}` : ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="space-y-3">
-          {trackedClients.map(c => (
+          {(clientViewMode === 'list' ? trackedClients : trackedClients.filter(c => c.id === focusedClientId)).map(c => (
             <div key={c.id} className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
               <div className="flex items-start justify-between gap-2 px-4 py-2.5 bg-emerald-50/40 border-b border-[#E8E7E2] flex-wrap">
                 <div className="min-w-0">
@@ -555,18 +731,23 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               {editClientId === c.id && (
                 <ClientEditForm client={c} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
+                  wageFieldTypes={wageFieldTypes}
                   onCancel={() => setEditClientId(null)} onSave={patch => handleEditClient(c.id, patch)} />
               )}
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={c.market_workers_needed ?? 0}
-                  suppliers={c.market_suppliers ?? []}
+                  suppliers={mergeSuppliers(c.market_suppliers ?? [], supplyRows, c.name, competitors, lgvSupplyOf(c))}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
-                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(idx, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfClient(c, idx, name, qty, wageMin, wageMax, wageDetail)}
-                  onDeleteSupplier={idx => handleDeleteSupplierOfClient(c, idx)}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
+                  wageFieldTypes={wageFieldTypes}
+                  companyWageDetailClient={c.wage_detail_client ?? null}
+                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToClient(c, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfClient(c, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onDeleteSupplier={row => handleDeleteSupplierOfClient(c, row)}
                 />
               </div>
             </div>
@@ -575,6 +756,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
             <div className="text-center py-6 text-[12px] text-[#aaa] bg-white border border-dashed border-[#E8E7E2] rounded-[10px]">
               Chưa có khách hàng nào được thiết lập theo dõi thị trường — bấm "Thêm công ty" → chọn "Khách hàng đang hợp tác"
             </div>
+          )}
+          {clientViewMode === 'card' && trackedClients.length > 0 && !focusedClientId && (
+            <div className="text-center py-4 text-[11.5px] text-[#aaa]">Bấm vào 1 thẻ ở trên để xem chi tiết NCC/lương</div>
           )}
           {untrackedClients.length > 0 && (
             <div className="text-[11px] text-[#999]">
@@ -640,18 +824,23 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
               {editLeadId === l.id && (
                 <LeadEditForm lead={l} regionOptions={zoneNames} saving={saving} industries={industries} onAddIndustry={handleAddIndustry}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
+                  wageFieldTypes={wageFieldTypes}
                   onCancel={() => setEditLeadId(null)} onSave={patch => handleEditLead(l.id, patch)} />
               )}
               <div className="p-4">
                 <SupplierFillCard
                   workersNeeded={l.workers_needed}
-                  suppliers={l.suppliers}
+                  suppliers={mergeSuppliers(l.suppliers, supplyRows, l.company_name, competitors, lgvSupplyForLead(l.company_name))}
                   saving={saving}
                   competitors={competitors}
                   wageFields={wageFields} onAddWageField={handleAddWageField} onDeleteWageField={handleDeleteWageField}
-                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail)}
-                  onEditSupplier={(idx, name, qty, wageMin, wageMax, wageDetail) => handleEditSupplierOfLead(l.id, idx, name, qty, wageMin, wageMax, wageDetail)}
-                  onDeleteSupplier={idx => handleDeleteSupplierOfLead(l.id, idx)}
+                  onRenameWageField={handleRenameWageField} onReorderWageFields={handleReorderWageFields}
+                  wageFieldTypes={wageFieldTypes}
+                  companyWageDetailClient={l.wage_detail_client ?? null}
+                  onAddSupplier={(name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleAddSupplierToLead(l.id, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onEditSupplier={(row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient) => handleEditSupplierOfLead(l.id, row, name, qty, wageMin, wageMax, wageDetail, wageDetailClient)}
+                  onDeleteSupplier={row => handleDeleteSupplierOfLead(l.id, row)}
                 />
               </div>
             </div>
@@ -698,10 +887,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="100000" value={clientForm.wage_max} onChange={e => setClientForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={clientForm.wage_detail} onChange={v => setClientForm(f => ({ ...f, wage_detail: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} fieldTypes={wageFieldTypes} />
                   <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={clientForm.wage_detail_client} onChange={v => setClientForm(f => ({ ...f, wage_detail_client: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
-                  <WageMarginSummary lgvn={clientForm.wage_detail} company={clientForm.wage_detail_client} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
+                  <WageMarginSummary lgvn={clientForm.wage_detail} company={clientForm.wage_detail_client} fieldMappings={fieldMappings} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
                   <textarea value={clientForm.allowance_notes} onChange={e => setClientForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần 300k, xăng xe 200k…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
@@ -730,10 +921,12 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <input type="number" step="100000" value={leadForm.wage_max} onChange={e => setLeadForm(f => ({ ...f, wage_max: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="col-span-2 space-y-1.5">
                   <WageDetailTable label="Chi tiết lương · LGVN trả NLĐ" fields={wageFields} value={leadForm.wage_detail} onChange={v => setLeadForm(f => ({ ...f, wage_detail: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} fieldTypes={wageFieldTypes} />
                   <WageDetailTable label="Chi tiết lương · Công ty trả LGVN" fields={wageFields} value={leadForm.wage_detail_client} onChange={v => setLeadForm(f => ({ ...f, wage_detail_client: v }))}
-                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField} />
-                  <WageMarginSummary lgvn={leadForm.wage_detail} company={leadForm.wage_detail_client} />
+                    onAddField={handleAddWageField} onDeleteField={handleDeleteWageField}
+                    onRenameField={handleRenameWageField} onReorderFields={handleReorderWageFields} />
+                  <WageMarginSummary lgvn={leadForm.wage_detail} company={leadForm.wage_detail_client} fieldMappings={fieldMappings} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
                   <textarea value={leadForm.allowance_notes} onChange={e => setLeadForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần, xăng xe…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
@@ -759,7 +952,7 @@ interface EditPatch {
   wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
 }
 
-function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, regionOptions }: {
+function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, saving, wageFields, onAddWageField, onDeleteWageField, onRenameWageField, onReorderWageFields, regionOptions, wageFieldTypes, wageUpdatedAt, wageClientUpdatedAt }: {
   initial: EditPatch;
   industries: string[];
   onAddIndustry: (name: string) => void;
@@ -769,8 +962,14 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   wageFields: string[];
   onAddWageField: (name: string) => void;
   onDeleteWageField: (name: string) => void;
+  onRenameWageField: (oldName: string, newName: string) => void;
+  onReorderWageFields: (names: string[]) => void;
   regionOptions?: string[];
+  wageFieldTypes: Record<string, PayrollInputType | null>;
+  wageUpdatedAt?: string | null;
+  wageClientUpdatedAt?: string | null;
 }) {
+  const fieldMappings: WageFieldMapping[] = wageFields.map(name => ({ name, payrollInputType: wageFieldTypes[name] ?? null }));
   const [patch, setPatch] = useState<EditPatch>(initial);
   useBeforeUnloadWarning(JSON.stringify(patch) !== JSON.stringify(initial));
   return (
@@ -795,13 +994,17 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
           label="Chi tiết lương · LGVN trả NLĐ"
           fields={wageFields} value={patch.wage_detail} onChange={v => setPatch(p => ({ ...p, wage_detail: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
+          onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
+          fieldTypes={wageFieldTypes} updatedAt={wageUpdatedAt}
         />
         <WageDetailTable
           label="Chi tiết lương · Công ty trả LGVN"
           fields={wageFields} value={patch.wage_detail_client} onChange={v => setPatch(p => ({ ...p, wage_detail_client: v }))}
           onAddField={onAddWageField} onDeleteField={onDeleteWageField}
+          onRenameField={onRenameWageField} onReorderFields={onReorderWageFields}
+          updatedAt={wageClientUpdatedAt}
         />
-        <WageMarginSummary lgvn={patch.wage_detail} company={patch.wage_detail_client} />
+        <WageMarginSummary lgvn={patch.wage_detail} company={patch.wage_detail_client} fieldMappings={fieldMappings} />
       </div>
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
         <textarea value={patch.allowance_notes} onChange={e => setPatch(p => ({ ...p, allowance_notes: e.target.value }))} rows={2} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
@@ -824,7 +1027,7 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
   );
 }
 
-type EditFormExtraProps = { industries: string[]; onAddIndustry: (n: string) => void; onCancel: () => void; onSave: (p: EditPatch) => void; saving: boolean; wageFields: string[]; onAddWageField: (n: string) => void; onDeleteWageField: (n: string) => void };
+type EditFormExtraProps = { industries: string[]; onAddIndustry: (n: string) => void; onCancel: () => void; onSave: (p: EditPatch) => void; saving: boolean; wageFields: string[]; onAddWageField: (n: string) => void; onDeleteWageField: (n: string) => void; onRenameWageField: (o: string, n: string) => void; onReorderWageFields: (names: string[]) => void; wageFieldTypes: Record<string, PayrollInputType | null> };
 
 function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraProps) {
   return <EditFormFields initial={{
@@ -840,7 +1043,7 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
     tiktok_url: client.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(client.wage_detail),
     wage_detail_client: wageDetailToStrings(client.wage_detail_client),
-  }} {...rest} />;
+  }} wageUpdatedAt={client.wage_detail_updated_at} wageClientUpdatedAt={client.wage_detail_client_updated_at} {...rest} />;
 }
 
 function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../lib/types').MarketLead; regionOptions: string[] } & EditFormExtraProps) {
@@ -858,5 +1061,5 @@ function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../li
     tiktok_url: lead.tiktok_url ?? '',
     wage_detail: wageDetailToStrings(lead.wage_detail),
     wage_detail_client: wageDetailToStrings(lead.wage_detail_client),
-  }} {...rest} />;
+  }} wageUpdatedAt={lead.wage_detail_updated_at} wageClientUpdatedAt={lead.wage_detail_client_updated_at} {...rest} />;
 }

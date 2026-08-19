@@ -23,6 +23,9 @@ import ExportMdModal from '../components/clients/ExportMdModal';
 import SocialLinksRow from '../components/SocialLinksRow';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
 import DayCell from '../components/DayCell';
+import CoverImageEditor from '../components/CoverImageEditor';
+import SearchSelect from './market/SearchSelect';
+import { fetchIndustries, addIndustry } from './market/industries';
 import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
@@ -152,7 +155,21 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     notes: client.notes || '',
     service_type: client.service_type ?? 'leasing',
     map_link: client.map_link || '',
+    // Ngành nghề + ảnh cover — cùng 2 cột clients.industry/cover_image_* mà Thị Trường >
+    // Công ty/Dự án đang đọc/ghi, nên sửa ở đây thấy ngay bên đó (migration 100, 141).
+    industry: client.industry || '',
+    cover_image_url: client.cover_image_url || '',
+    cover_image_fit: client.cover_image_fit || 'cover',
+    cover_image_pos_x: client.cover_image_pos_x ?? 50,
+    cover_image_pos_y: client.cover_image_pos_y ?? 50,
   });
+  const [industries, setIndustries] = useState<string[]>([]);
+  useEffect(() => { fetchIndustries([client.industry]).then(setIndustries); }, [client.industry]);
+  const handleAddIndustry = async (name: string) => {
+    const err = await addIndustry(name);
+    if (err) toast('Lỗi thêm ngành: ' + err);
+    setIndustries(prev => [...new Set([...prev, name])].sort((a, b) => a.localeCompare(b, 'vi')));
+  };
   const [timelineForm, setTimelineForm] = useState({
     cutoff_day: client.cutoff_day, cutoff_day_end: client.cutoff_day_end,
     calc_day: client.calc_day, calc_day_end: client.calc_day_end,
@@ -518,6 +535,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       const baseUpdates = {
         ...form,
         map_link: form.map_link.trim() || null,
+        industry: form.industry.trim() || null,
+        cover_image_url: form.cover_image_url.trim() || null,
         ...(isValidVnLatLng(mapPos)
           ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() }
           : linkCleared ? { lat: null, lng: null, geocoded_at: null } : {}),
@@ -1404,6 +1423,17 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     )}
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
+                    <label className="text-[12px] text-[#666] font-medium">Ngành nghề</label>
+                    <SearchSelect
+                      value={form.industry}
+                      onChange={v => setForm({ ...form, industry: v })}
+                      options={industries.map(i => ({ value: i, label: i }))}
+                      placeholder="Chọn ngành… — hiện đồng bộ 2 chiều với Thị trường > Công ty/Dự án"
+                      allowAdd
+                      onAdd={handleAddIndustry}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
                     <div className="flex items-center gap-2">
                       <input
@@ -1420,6 +1450,14 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         <span className="text-[11px] text-emerald-600 shrink-0">✓ đã định vị</span>
                       )}
                     </div>
+                  </div>
+                  <div className="flex flex-col gap-1 mb-3">
+                    <label className="text-[12px] text-[#666] font-medium">Ảnh cover (tỷ lệ 16:9) — hiện ở thẻ Card trong danh sách Khách hàng & Thị trường</label>
+                    <CoverImageEditor
+                      value={{ url: form.cover_image_url, fit: form.cover_image_fit, posX: form.cover_image_pos_x, posY: form.cover_image_pos_y }}
+                      onChange={v => setForm({ ...form, cover_image_url: v.url ?? '', cover_image_fit: v.fit ?? 'cover', cover_image_pos_x: v.posX ?? 50, cover_image_pos_y: v.posY ?? 50 })}
+                      urlPlaceholder="Dán link ảnh cổng công ty…"
+                    />
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>

@@ -48,7 +48,8 @@ import SearchSelect from './SearchSelect';
 import RichTextEditor from './RichTextEditor';
 import { REGION_ZONES, regionZoneLabel, regionZoneColorCls } from './regionWage';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
-import { tinyId, expandTinyId } from '../../hooks/useHashSubRoute';
+import { tinyId, expandTinyId, shortId } from '../../hooks/useHashSubRoute';
+import ZoneCompetitors from './ZoneCompetitors';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import SearchBox from '../../components/SearchBox';
 
@@ -120,6 +121,15 @@ function zoneIdFromHash(zones: MarketZone[]): string | null {
   return expandTinyId(parts[2], zones) || zones.find(z => z.id === parts[2])?.id || null;
 }
 
+// Khối con trong hồ sơ KCN có link riêng: #/market/zones/{tinyId}/{section} — parts[3].
+// Nhờ vậy F5 (hoặc gửi link cho người khác) vẫn ở đúng chỗ đang xem thay vì nhảy về đầu trang.
+const ZONE_SECTION_ANCHOR: Record<string, string> = { 'doi-thu': 'zone-competitors' };
+function zoneSectionFromHash(): string | null {
+  const parts = window.location.hash.replace('#/', '').split('/');
+  if (parts[0] !== 'market' || parts[1] !== 'zones') return null;
+  return parts[3] && ZONE_SECTION_ANCHOR[parts[3]] ? parts[3] : null;
+}
+
 // Bộ lọc của tab KCN — nhớ qua F5 để không phải chọn lại (URL vẫn giữ ngắn gọn).
 const ZONE_FILTER_KEY = 'market_zones_filters';
 type ZoneFilters = { provinces: string[]; onlyPriority: boolean; search: string };
@@ -138,11 +148,21 @@ const loadZoneFilters = (): ZoneFilters => {
   return { provinces: [ALL_OPTION], onlyPriority: false, search: '' };
 };
 
-export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, onRefresh, toast }: MarketTabProps) {
+export default function ZonesTab({ marketZones, marketSurveys, competitors, marketLeads, clients, goTab, onRefresh, toast }: MarketTabProps) {
   const { user } = useAuth();
+
+  // Mở hồ sơ 1 đối thủ từ trong hồ sơ KCN: đổi tab trước (useHashTab ghi hash '#/market/comp'),
+  // rồi ghi đè hash kèm id để CompetitorsTab lúc mount đọc được và mở thẳng hồ sơ đó.
+  const openCompetitorProfile = (c: { id: string }) => {
+    goTab('comp', 'all');
+    const hash = `#/market/comp/${shortId(c.id)}`;
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+  };
 
   // Hồ sơ KCN đang mở có link riêng #/market/zones/{shortId} — F5 quay lại đúng chỗ.
   const [selectedId, setSelectedIdRaw] = useState<string | null>(() => zoneIdFromHash(marketZones));
+  // Khối con đang mở trong hồ sơ KCN (hiện có "doi-thu") — nằm ở đoạn thứ 4 của URL.
+  const [section, setSection] = useState<string | null>(() => zoneSectionFromHash());
   // marketZones về sau khi Market tải xong → giải lại id từ URL đúng 1 lần.
   useEffect(() => {
     if (selectedId || !marketZones.length) return;
@@ -152,7 +172,10 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
   }, [marketZones]);
   // Back/Forward của trình duyệt (pushState không tự bắn sự kiện).
   useEffect(() => {
-    const onNav = () => setSelectedIdRaw(zoneIdFromHash(marketZones));
+    const onNav = () => {
+      setSelectedIdRaw(zoneIdFromHash(marketZones));
+      setSection(zoneSectionFromHash());
+    };
     window.addEventListener('popstate', onNav);
     return () => window.removeEventListener('popstate', onNav);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,9 +183,30 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
   const setSelectedId = (id: string | null) => {
     setSelectedIdRaw(id);
+    setSection(null);
     const hash = id ? `#/market/zones/${tinyId(id, marketZones)}` : '#/market/zones';
     if (window.location.hash !== hash) window.history.pushState(null, '', hash);
   };
+
+  // Mở 1 khối con: ghi vào URL rồi cuộn tới. Bấm lại khi đang ở đó thì chỉ cuộn lại.
+  const goSection = (key: string) => {
+    if (!selectedId) return;
+    setSection(key);
+    const hash = `#/market/zones/${tinyId(selectedId, marketZones)}/${key}`;
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+    document.getElementById(ZONE_SECTION_ANCHOR[key])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // F5 / mở link trực tiếp: dữ liệu KCN về sau nên phải đợi khối con render xong mới cuộn được.
+  // Cuộn 2 nhịp vì ảnh cover + biểu đồ phía trên load xong sẽ đẩy lệch vị trí lần cuộn đầu.
+  useEffect(() => {
+    const anchor = section ? ZONE_SECTION_ANCHOR[section] : null;
+    if (!anchor || !selectedId) return;
+    const timers = [120, 600].map(ms => setTimeout(() => {
+      document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, ms));
+    return () => timers.forEach(clearTimeout);
+  }, [section, selectedId]);
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(emptyAddForm);
   const [saving, setSaving] = useState(false);
@@ -457,8 +501,16 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         supabase.from('competitors').update({ zone_name: name }).eq('zone_name', oldName),
         supabase.from('market_leads').update({ region: name }).eq('region', oldName),
         supabase.from('clients').update({ region: name }).eq('region', oldName),
+        // Nhà máy đối thủ đang phục vụ (mục "KH đang phục vụ" trong hồ sơ đối thủ) gắn KCN theo tên.
+        supabase.from('competitor_clients').update({ kcn: name }).eq('kcn', oldName),
         ...clients.filter(c => c.industrial_zones?.includes(oldName)).map(c =>
           supabase.from('clients').update({ industrial_zones: c.industrial_zones.map(z => z === oldName ? name : z) }).eq('id', c.id),
+        ),
+        // "Khu vực hoạt động" của đối thủ là MẢNG tên KCN — chính là nơi lưu việc ghi nhận
+        // đối thủ vào KCN ở khối "Đối thủ đang hoạt động tại KCN này". Không đổi theo thì
+        // các đối thủ đã ghi nhận sẽ rơi khỏi KCN sau khi đổi tên.
+        ...competitors.filter(c => c.active_zones?.includes(oldName)).map(c =>
+          supabase.from('competitors').update({ active_zones: c.active_zones!.map(z => z === oldName ? name : z) }).eq('id', c.id),
         ),
       ]);
 
@@ -487,11 +539,13 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
         supabase.from('kcn_visits').select('id', { count: 'exact', head: true }).eq('zone_id', selected.id),
       ]);
       const clientCount = clients.filter(c => c.industrial_zones?.includes(selected.name)).length;
+      const recordedCompCount = competitors.filter(c => c.active_zones?.includes(selected.name)).length;
 
       const parts: string[] = [];
       if (visitCount) parts.push(`${visitCount} lịch sử khảo sát KCN (sẽ xoá vĩnh viễn)`);
       if (surveyCount) parts.push(`${surveyCount} lần khảo sát lương đang gắn tên KCN này (không xoá, chỉ không còn khớp KCN)`);
-      if (compCount) parts.push(`${compCount} đối thủ đang gắn KCN này`);
+      if (compCount) parts.push(`${compCount} đối thủ đang lấy KCN này làm trụ sở/khu vực chính`);
+      if (recordedCompCount) parts.push(`${recordedCompCount} đối thủ đã ghi nhận hoạt động tại KCN này (hồ sơ đối thủ vẫn còn, chỉ mất phần ghi nhận theo KCN)`);
       if (clientCount) parts.push(`${clientCount} khách hàng đang gắn KCN này (sẽ tự gỡ khỏi hồ sơ họ)`);
       const warning = parts.length ? `\n\nDữ liệu liên quan:\n- ${parts.join('\n- ')}` : '';
       if (!confirm(`Xoá vĩnh viễn khu vực "${selected.name}"? Không thể hoàn tác.${warning}`)) return;
@@ -499,11 +553,16 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
       setSaving(true);
       // Gỡ tên KCN khỏi thẻ "Khu vực" của các khách hàng đang gắn — tránh để lại tag rác
       // trỏ tới 1 KCN không còn tồn tại.
-      await Promise.all(
-        clients.filter(c => c.industrial_zones?.includes(selected.name)).map(c =>
+      await Promise.all([
+        ...clients.filter(c => c.industrial_zones?.includes(selected.name)).map(c =>
           supabase.from('clients').update({ industrial_zones: c.industrial_zones.filter(z => z !== selected.name) }).eq('id', c.id),
         ),
-      );
+        // Tương tự với "Khu vực hoạt động" của đối thủ — gỡ tag trỏ tới KCN không còn tồn tại.
+        // Hồ sơ đối thủ và danh sách nhà máy họ phục vụ vẫn giữ nguyên.
+        ...competitors.filter(c => c.active_zones?.includes(selected.name)).map(c =>
+          supabase.from('competitors').update({ active_zones: c.active_zones!.filter(z => z !== selected.name) }).eq('id', c.id),
+        ),
+      ]);
 
       const { error } = await supabase.from('market_zones').delete().eq('id', selected.id);
       if (error) throw error;
@@ -592,7 +651,10 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
 
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => goTab('wage', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><Coins size={11} /> Lương khu vực này</button>
-          <button onClick={() => goTab('comp', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><Eye size={11} /> Đối thủ tại đây</button>
+          {/* Trước đây nút này nhảy sang tab Đối thủ và lọc theo tên KCN — hầu hết đối thủ khai
+              trụ sở ở nơi khác nên bảng thường trống trơn. Giờ cuộn thẳng xuống khối "Đối thủ
+              đang hoạt động tại KCN này" ngay trong hồ sơ KCN, kèm link riêng để F5 không mất chỗ. */}
+          <button onClick={() => goSection('doi-thu')} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border transition ${section === 'doi-thu' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}><Eye size={11} /> Đối thủ tại đây</button>
           <button onClick={() => goTab('leads', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><Building2 size={11} /> Công ty trong KCN</button>
           <button onClick={() => goTab('quote', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><FileText size={11} /> Tạo báo giá</button>
         </div>
@@ -779,6 +841,16 @@ export default function ZonesTab({ marketZones, marketSurveys, clients, goTab, o
             </div>
           </div>
         </div>
+
+        <ZoneCompetitors
+          zone={selected}
+          competitors={competitors}
+          clients={clients}
+          marketLeads={marketLeads}
+          onRefresh={onRefresh}
+          toast={toast}
+          onOpenCompetitor={openCompetitorProfile}
+        />
 
         <KCNVisitHistory zoneId={selected.id} zoneName={selected.name} toast={toast} onChanged={onRefresh} />
 

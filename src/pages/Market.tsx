@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon, Factory } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
-import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client } from '../lib/types';
+import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client, LaborHistoryEntry } from '../lib/types';
 import ZonesTab from './market/ZonesTab';
 import IndustryTab from './market/IndustryTab';
 import WageTab from './market/WageTab';
@@ -19,6 +19,7 @@ interface MarketProps {
   marketZones: MarketZone[];
   marketLeads: MarketLead[];
   clients: Client[];
+  laborHistory: Record<string, LaborHistoryEntry[]>;
   onRefresh: () => Promise<void>;
   toast: (msg: string) => void;
 }
@@ -33,7 +34,7 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'map', label: 'Bản đồ', icon: <MapIcon size={13} /> },
 ];
 
-export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, onRefresh, toast }: MarketProps) {
+export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, laborHistory, onRefresh, toast }: MarketProps) {
   const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'quote', 'map'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
@@ -45,7 +46,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
   };
 
   const shared = {
-    marketZones, marketSurveys, competitors, marketLeads, clients,
+    marketZones, marketSurveys, competitors, marketLeads, clients, laborHistory,
     zoneFilter, setZoneFilter, goTab, onRefresh, toast,
   };
 

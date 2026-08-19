@@ -330,7 +330,7 @@ function AppInner() {
           <Finance finance={finance} clients={clients} onLoadFinance={loadFinance} onFinanceUpdate={handleFinanceUpdate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}
         {page === 'market' && (
-          <Market marketSurveys={marketSurveys} competitors={competitors} marketZones={marketZones} marketLeads={marketLeads} clients={clients} onRefresh={async () => { await Promise.all([loadMarket(), loadClients()]); }} toast={toast} />
+          <Market marketSurveys={marketSurveys} competitors={competitors} marketZones={marketZones} marketLeads={marketLeads} clients={clients} laborHistory={laborHistory} onRefresh={async () => { await Promise.all([loadMarket(), loadClients()]); }} toast={toast} />
         )}
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}

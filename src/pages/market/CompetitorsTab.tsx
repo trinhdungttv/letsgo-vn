@@ -5,7 +5,7 @@ import {
 } from 'chart.js';
 import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { fmtTr, type MarketTabProps } from './shared';
+import { fmtTr, sameZone, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
@@ -147,7 +147,12 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
     loadLinkTypes();
   };
 
-  const list = zoneFilter === 'all' ? competitors : competitors.filter(c => c.zone_name === zoneFilter || c.zone_name?.includes(zoneFilter));
+  // Lọc theo KCN: xét cả "Khu vực hoạt động" (active_zones) chứ không chỉ trụ sở (zone_name).
+  // Đối thủ ghi nhận vào 1 KCN từ hồ sơ KCN được lưu ở active_zones, nếu chỉ xét zone_name thì
+  // vào đây sẽ thấy bảng trống dù KCN đó đang có đối thủ.
+  const list = zoneFilter === 'all'
+    ? competitors
+    : competitors.filter(c => sameZone(c.zone_name, zoneFilter) || (c.active_zones ?? []).some(z => sameZone(z, zoneFilter)));
 
   // Ô tìm kiếm (phím tắt "/") chỉ lọc DANH SÁCH bên dưới — các biểu đồ tổng quan
   // vẫn giữ nguyên toàn cảnh theo khu vực, không nhảy loạn khi đang gõ.
