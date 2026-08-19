@@ -63,6 +63,36 @@ export function SectionCard({ id, icon, title, badge, open, onToggle, actions, c
   );
 }
 
+/**
+ * Khối phụ gập/mở nằm bên trong một SectionCard — dùng cho bảng chi tiết mà
+ * thường ngày không cần nhìn (đã có biểu đồ tóm tắt ở trên).
+ */
+export function SubSection({ title, badge, open, onToggle, children }: {
+  title: string;
+  badge?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border border-[#EFEDE8] rounded-lg overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="flex items-center justify-between gap-2 w-full px-3 py-2 bg-[#FAFAF8] hover:bg-[#F3F2ED] transition text-left"
+      >
+        <span className="text-[12.5px] font-semibold text-[#333] flex items-center gap-1.5 min-w-0">
+          {open
+            ? <ChevronUp size={12} className="text-[#aaa] shrink-0" />
+            : <ChevronDown size={12} className="text-[#aaa] shrink-0" />}
+          <span className="truncate">{title}</span>
+        </span>
+        {badge != null && <span className="text-[11px] text-[#999] shrink-0">{badge}</span>}
+      </button>
+      {open && <div className="p-3">{children}</div>}
+    </div>
+  );
+}
+
 /** Một dòng nhãn — giá trị trong các khối thông tin. */
 export function InfoRow({ label, children, full }: { label: string; children: ReactNode; full?: boolean }) {
   return (

@@ -28,7 +28,7 @@ import { fetchIndustries, addIndustry } from './market/industries';
 import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
-import { KpiTile, SectionCard, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
+import { KpiTile, SectionCard, SubSection, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -107,6 +107,10 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [editingSocialLinks, setEditingSocialLinks] = useState(false);
   const [socialForm, setSocialForm] = useState({ website_url: '', facebook_url: '', youtube_url: '', tiktok_url: '' });
   const [chartView, setChartView] = useState<'week' | 'month'>('week');
+  // Hai bảng số liệu chi tiết dưới biểu đồ Lao động — mặc định đóng, biểu đồ
+  // phía trên đã đủ cho việc xem hằng ngày.
+  const [openMonthReport, setOpenMonthReport] = useState(false);
+  const [openLaborLog, setOpenLaborLog] = useState(false);
   const [laborWeek, setLaborWeek] = useState(getCurrentWeekLabel());
   const [laborInput, setLaborInput] = useState(String(client.current_workers || 0));
   const [laborMsg, setLaborMsg] = useState(false);
@@ -1128,7 +1132,13 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 )}
               </div>
 
-              <div className="text-[13px] font-semibold text-[#111] mb-2">Báo cáo tăng giảm theo tháng</div>
+              <div className="space-y-2">
+              <SubSection
+                title="Báo cáo tăng giảm theo tháng"
+                badge={`${monthRows.length} tháng`}
+                open={openMonthReport}
+                onToggle={() => setOpenMonthReport(v => !v)}
+              >
               <table className="w-full text-[12.5px]">
                 <thead><tr><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Tháng</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Số LĐ cuối tháng</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">So với tháng trước</th></tr></thead>
                 <tbody>
@@ -1138,16 +1148,21 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       <tr key={r.m} className="border-b border-[#F0EEE9]">
                         <td className="px-3 py-2">{r.m}</td>
                         <td className="px-3 py-2 font-semibold">{r.cnt !== null ? r.cnt.toLocaleString() : '—'}{d !== null && <span className="ml-1" style={{ color: d > 0 ? '#059669' : d < 0 ? '#DC2626' : '#888' }}>({d > 0 ? '+' : ''}{d})</span>}</td>
-                        <td className="px-3 py-2 text-[12px] text-[#888]">{d !== null ? (d > 0 ? 'Tăng' : 'Giảm') + ' so tháng trước' : 'Chưa có so sánh'}</td>
+                        <td className="px-3 py-2 text-[12px] text-[#888]">{d === null ? 'Chưa có so sánh' : d === 0 ? 'Không đổi so tháng trước' : (d > 0 ? 'Tăng' : 'Giảm') + ' so tháng trước'}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+              </SubSection>
 
               {hist.length > 0 && (
-                <>
-                  <div className="text-[13px] font-semibold text-[#111] mt-4 mb-2">Lịch sử nhập liệu</div>
+                <SubSection
+                  title="Lịch sử nhập liệu"
+                  badge={`${hist.length} lần nhập · hiện 12 gần nhất`}
+                  open={openLaborLog}
+                  onToggle={() => setOpenLaborLog(v => !v)}
+                >
                   <table className="w-full text-[12.5px]">
                     <thead><tr><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Tuần</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Số LĐ</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Người cập nhật</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">Ngày điền</th><th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]"></th></tr></thead>
                     <tbody>
@@ -1164,8 +1179,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       ))}
                     </tbody>
                   </table>
-                </>
+                </SubSection>
               )}
+              </div>
                 </SectionCard>
 
                 {/* ── Thanh toán ── */}
