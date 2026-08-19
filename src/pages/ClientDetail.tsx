@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import { ArrowLeft, Edit2, Check, X, ChevronDown, ChevronUp, RefreshCw, MessageCircle, Phone, Mail, Calendar, CheckCircle2, Gift, CalendarDays, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
@@ -62,6 +63,97 @@ const DOC_TYPE_LABELS: Record<ClientDocumentType, string> = {
   appendix: 'Phụ lục',
   other: 'Khác',
 };
+
+/* ─────────────────────────────────────────────────────────────
+   Khối UI dùng chung cho tab "Tổng quan"
+   ───────────────────────────────────────────────────────────── */
+
+/** Các khối gập/mở của tab Tổng quan — dùng chung cho thanh điều hướng nhanh. */
+type SectionKey = 'info' | 'labor' | 'pay' | 'docs' | 'health' | 'hist';
+
+const OVERVIEW_NAV: { key: SectionKey; label: string; icon: string }[] = [
+  { key: 'info',   label: 'Thông tin & Hợp đồng', icon: '📋' },
+  { key: 'labor',  label: 'Lao động',             icon: '👥' },
+  { key: 'pay',    label: 'Thanh toán',           icon: '💰' },
+  { key: 'docs',   label: 'Tài liệu',             icon: '📄' },
+  { key: 'health', label: 'Sức khoẻ',             icon: '❤️' },
+  { key: 'hist',   label: 'Lịch sử',              icon: '🕘' },
+];
+
+/** Ô chỉ số ở dải tóm tắt đầu trang — bấm vào là nhảy tới khối tương ứng. */
+function KpiTile({ label, value, sub, valueColor, tone = 'muted', right, onClick }: {
+  label: string;
+  value: string;
+  sub?: string;
+  valueColor?: string;
+  tone?: 'good' | 'bad' | 'warn' | 'muted';
+  right?: ReactNode;
+  onClick?: () => void;
+}) {
+  const subColor = tone === 'good' ? '#059669' : tone === 'bad' ? '#DC2626' : tone === 'warn' ? '#D97706' : '#9CA3AF';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-left bg-white border border-[#E8E7E2] rounded-[10px] px-3.5 py-2.5 flex items-center justify-between gap-2 hover:border-[#C9C7BE] hover:shadow-sm transition"
+    >
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-wide text-[#9CA3AF] font-semibold truncate">{label}</div>
+        <div className="text-[18px] font-bold leading-tight mt-0.5 truncate" style={{ color: valueColor || '#111' }}>{value}</div>
+        {sub && <div className="text-[11px] mt-0.5 truncate" style={{ color: subColor }}>{sub}</div>}
+      </div>
+      {right && <div className="shrink-0">{right}</div>}
+    </button>
+  );
+}
+
+/** Thẻ khối có tiêu đề gập/mở + chỗ gắn nút hành động riêng của khối. */
+function SectionCard({ id, icon, title, badge, open, onToggle, actions, children }: {
+  id: string;
+  icon: string;
+  title: string;
+  badge?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden scroll-mt-14">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[#E8E7E2]">
+        <button onClick={onToggle} className="flex items-center gap-2 flex-1 min-w-0 text-left group">
+          {open
+            ? <ChevronUp size={13} className="text-[#aaa] shrink-0" />
+            : <ChevronDown size={13} className="text-[#aaa] shrink-0" />}
+          <span className="text-[12.5px] font-semibold text-[#111] group-hover:text-[#1D4ED8] transition truncate">{icon} {title}</span>
+          {badge != null && <span className="text-[11px] text-blue-700 font-medium shrink-0">{badge}</span>}
+        </button>
+        {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
+      </div>
+      {open && <div className="p-4">{children}</div>}
+    </section>
+  );
+}
+
+/** Một dòng nhãn — giá trị trong khối Thông tin. */
+function InfoRow({ label, children, full }: { label: string; children: ReactNode; full?: boolean }) {
+  return (
+    <div className={`flex items-start gap-3 py-1.5 border-b border-dashed border-[#EFEDE8] ${full ? 'xl:col-span-2' : ''}`}>
+      <div className="w-[104px] shrink-0 text-[11.5px] text-[#888] pt-[3px]">{label}</div>
+      <div className="flex-1 min-w-0 text-[12.5px] text-[#111]">{children}</div>
+    </div>
+  );
+}
+
+/** Nút bút chì nhỏ dùng cho các khối sửa nhanh tại chỗ. */
+function PencilButton({ onClick, title }: { onClick: () => void; title?: string }) {
+  return (
+    <button onClick={onClick} title={title}
+      className="p-1 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition shrink-0">
+      <Edit2 size={11} />
+    </button>
+  );
+}
 
 interface ClientDetailProps {
   client: Client;
@@ -130,10 +222,27 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     selectWeek(labels[labels.length - 1]);
     toast(`Đã thêm Tháng ${m}/${y} vào danh sách tuần`);
   };
-  const [openInfo, setOpenInfo] = useState(false);
-  const [openLabor, setOpenLabor] = useState(true);
-  const [openManagerHist, setOpenManagerHist] = useState(false);
-  const [openDocs, setOpenDocs] = useState(false);
+  // Trạng thái gập/mở của từng khối trong tab Tổng quan — nhớ lại theo trình duyệt
+  // để mỗi người giữ được bố cục quen thuộc của mình.
+  const SECTION_LS_KEY = 'client-detail-sections-v1';
+  const DEFAULT_SECTIONS: Record<SectionKey, boolean> = {
+    info: true, labor: true, pay: true, docs: false, health: true, hist: false,
+  };
+  const [sections, setSections] = useState<Record<SectionKey, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(SECTION_LS_KEY);
+      return raw ? { ...DEFAULT_SECTIONS, ...JSON.parse(raw) } : DEFAULT_SECTIONS;
+    } catch { return DEFAULT_SECTIONS; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SECTION_LS_KEY, JSON.stringify(sections)); } catch { /* bỏ qua */ }
+  }, [sections]);
+  const toggleSection = (k: SectionKey) => setSections(s => ({ ...s, [k]: !s[k] }));
+  /** Mở khối rồi cuộn tới — dùng cho thanh điều hướng nhanh và các ô chỉ số. */
+  const gotoSection = (k: SectionKey) => {
+    setSections(s => (s[k] ? s : { ...s, [k]: true }));
+    setTimeout(() => document.getElementById(`cd-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [uploadDocType, setUploadDocType] = useState<ClientDocumentType>('contract');
@@ -525,6 +634,31 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     const counts = months.map(mo => getMonthLast(hist, mo.month));
     return months.map((mo, i) => ({ m: mo.label, cnt: counts[i], prev: i === 0 ? null : counts[i - 1] }));
   }, [hist]);
+
+  /* ── Số liệu cho dải chỉ số nhanh đầu tab Tổng quan ── */
+  const healthScore = useMemo(() => calcHealthScore({
+    currentWorkers: client.current_workers || 0,
+    minWorkers: client.min_workers || 0,
+    paidThisMonth: client.paid_this_month || false,
+    progCutoff: client.prog_cutoff || false,
+    contractEnd: client.contract_end || '',
+    lastContactDate: '',
+    workerHistory: hist.slice(-6).map(h => h.count),
+  }), [client, hist]);
+
+  /** Chênh lệch LĐ của tháng gần nhất so với tháng trước (null nếu thiếu số liệu). */
+  const laborDelta = useMemo(() => {
+    const last = monthRows[monthRows.length - 1];
+    return last && last.cnt !== null && last.prev !== null ? last.cnt - last.prev : null;
+  }, [monthRows]);
+
+  /** Số ngày còn lại của hợp đồng (âm = đã quá hạn, null = chưa nhập ngày hết hạn). */
+  const contractDaysLeft = useMemo(() => {
+    if (!client.contract_end) return null;
+    const end = new Date(client.contract_end).getTime();
+    if (isNaN(end)) return null;
+    return Math.ceil((end - Date.now()) / 86400000);
+  }, [client.contract_end]);
 
   const handleSave = async () => {
     if (!form.name.trim()) { toast('Tên công ty không được để trống'); return; }
@@ -1180,172 +1314,92 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           </div>
           </div>
         ) : (
-          <>
-        {/* Kênh online — Website/Facebook/YouTube/TikTok */}
-        {(() => {
-          const [editSL, setEditSL] = [editingSocialLinks, setEditingSocialLinks];
-          const [temp, setTemp] = [socialForm, setSocialForm];
-          return (
-            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[12.5px] font-semibold text-[#111]">Kênh online</div>
-                {!editSL ? (
-                  <button onClick={() => { setEditSL(true); setTemp({ website_url: client.website_url || '', facebook_url: client.facebook_url || '', youtube_url: client.youtube_url || '', tiktok_url: client.tiktok_url || '' }); }}
-                    className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
-                    <Edit2 size={12} />
+          <div className="max-w-[1500px] mx-auto">
+
+            {/* ══ Dải chỉ số nhanh — bấm vào ô là nhảy thẳng tới khối liên quan ══ */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
+              <KpiTile
+                label="Lao động hiện tại"
+                value={currentWorkers.toLocaleString()}
+                sub={laborDelta === null
+                  ? (client.min_workers ? `Tối thiểu ${client.min_workers.toLocaleString()} LĐ` : 'Chưa có so sánh tháng')
+                  : `${laborDelta > 0 ? '+' : ''}${laborDelta.toLocaleString()} so tháng trước`}
+                tone={laborDelta === null ? 'muted' : laborDelta > 0 ? 'good' : laborDelta < 0 ? 'bad' : 'muted'}
+                onClick={() => gotoSection('labor')}
+              />
+              <KpiTile
+                label="Sức khoẻ khách hàng"
+                value={`${healthScore.total}/100`}
+                sub={hsLabel(healthScore.total)}
+                valueColor={hsColor(healthScore.total)}
+                right={<HealthScoreRing score={healthScore.total} size="sm" />}
+                onClick={() => gotoSection('health')}
+              />
+              <KpiTile
+                label="Hợp đồng hết hạn"
+                value={client.contract_end ? formatDate(client.contract_end) : '—'}
+                sub={contractDaysLeft === null
+                  ? 'Chưa nhập ngày hết hạn'
+                  : contractDaysLeft < 0 ? `Quá hạn ${Math.abs(contractDaysLeft)} ngày` : `Còn ${contractDaysLeft} ngày`}
+                tone={contractDaysLeft === null ? 'muted' : contractDaysLeft < 0 ? 'bad' : contractDaysLeft <= 60 ? 'warn' : 'good'}
+                onClick={() => gotoSection('info')}
+              />
+              <KpiTile
+                label="Loại dự án"
+                value={client.project_type === 'managed' ? 'Không khoán' : 'Đã khoán'}
+                sub={client.project_type === 'managed'
+                  ? 'LGV 100%'
+                  : `LGV ${client.default_lg_pct ?? 60}% · CN ${client.default_cn_pct ?? 40}%`}
+                onClick={() => gotoSection('info')}
+              />
+              <KpiTile
+                label="Thanh toán tháng này"
+                value={client.paid_this_month ? 'Đã thu' : 'Chưa thu'}
+                valueColor={client.paid_this_month ? '#059669' : '#DC2626'}
+                sub="Theo ghi nhận Tài chính"
+                tone={client.paid_this_month ? 'good' : 'warn'}
+                onClick={() => gotoSection('pay')}
+              />
+            </div>
+
+            {/* ══ Thanh điều hướng nhanh — dính trên đầu khi cuộn ══ */}
+            <div className="sticky top-0 z-20 -mx-5 px-5 py-2 mt-3 bg-[#F5F4EF]/95 backdrop-blur border-b border-[#E8E7E2]">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] uppercase tracking-wide text-[#aaa] font-semibold mr-0.5">Đi tới</span>
+                {OVERVIEW_NAV.map(n => (
+                  <button
+                    key={n.key}
+                    onClick={() => gotoSection(n.key)}
+                    className="px-2.5 py-1 rounded-full text-[11.5px] font-medium border border-[#E2E0D9] bg-white text-[#555] hover:border-[#1D4ED8] hover:text-[#1D4ED8] transition"
+                  >
+                    {n.icon} {n.label}
                   </button>
-                ) : (
-                  <div className="flex gap-1.5">
-                    <button onClick={async () => {
-                      const updates = {
-                        website_url: temp.website_url.trim() || null,
-                        facebook_url: temp.facebook_url.trim() || null,
-                        youtube_url: temp.youtube_url.trim() || null,
-                        tiktok_url: temp.tiktok_url.trim() || null,
-                      };
-                      const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
-                      if (!error) { onClientUpdate({ ...client, ...updates }); toast('Đã lưu'); } else toast('Lỗi: ' + error.message);
-                      setEditSL(false);
-                    }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Lưu</button>
-                    <button onClick={() => setEditSL(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huỷ</button>
-                  </div>
-                )}
-              </div>
-              {editSL ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={temp.website_url} onChange={e => setTemp({ ...temp, website_url: e.target.value })} placeholder="Website https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                  <input value={temp.facebook_url} onChange={e => setTemp({ ...temp, facebook_url: e.target.value })} placeholder="Facebook https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                  <input value={temp.youtube_url} onChange={e => setTemp({ ...temp, youtube_url: e.target.value })} placeholder="YouTube https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                  <input value={temp.tiktok_url} onChange={e => setTemp({ ...temp, tiktok_url: e.target.value })} placeholder="TikTok https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                </div>
-              ) : (
-                <SocialLinksRow websiteUrl={client.website_url} facebookUrl={client.facebook_url} youtubeUrl={client.youtube_url} tiktokUrl={client.tiktok_url} />
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Health Score Card */}
-        {(() => {
-          const wHistory = hist.slice(-6).map(h => h.count);
-          const hs = calcHealthScore({
-            currentWorkers: client.current_workers || 0,
-            minWorkers: client.min_workers || 0,
-            paidThisMonth: client.paid_this_month || false,
-            progCutoff: client.prog_cutoff || false,
-            contractEnd: client.contract_end || '',
-            lastContactDate: '',
-            workerHistory: wHistory,
-          });
-          const rows = [
-            { label: 'Ổn định lao động',    score: hs.stability, max: 30, weight: '30%' },
-            { label: 'Thanh toán đúng hạn', score: hs.payment,   max: 25, weight: '25%' },
-            { label: 'Tần suất liên hệ',    score: hs.contact,   max: 20, weight: '20%' },
-            { label: 'HĐ còn lại',          score: hs.contract,  max: 15, weight: '15%' },
-            { label: 'Tăng trưởng LĐ',      score: hs.growth,    max: 10, weight: '10%' },
-          ];
-          return (
-            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-[12.5px] font-semibold text-[#111]">Account Health Score</div>
-                  <div className="text-[11px] mt-0.5" style={{ color: hsColor(hs.total) }}>{hsLabel(hs.total)} — {hs.total}/100 điểm</div>
-                </div>
-                <HealthScoreRing score={hs.total} size="md" />
-              </div>
-              <div className="space-y-2">
-                {rows.map(r => {
-                  const pct = Math.round(r.score / r.max * 100);
-                  const color = pct >= 70 ? '#059669' : pct >= 40 ? '#D97706' : '#DC2626';
-                  return (
-                    <div key={r.label} className="flex items-center gap-2">
-                      <div className="text-[11px] text-[#374151] shrink-0" style={{ width: 160 }}>{r.label}</div>
-                      <div className="flex-1 h-[5px] bg-[#E5E7EB] rounded-full overflow-hidden">
-                        <div style={{ width: `${pct}%`, background: color, height: '100%', borderRadius: 9999, transition: 'width .4s' }} />
-                      </div>
-                      <div className="text-[10.5px] font-bold shrink-0" style={{ color, width: 20, textAlign: 'right' }}>{r.score}</div>
-                      <div className="text-[9.5px] text-[#9CA3AF] shrink-0" style={{ width: 28, textAlign: 'right' }}>{r.weight}</div>
-                    </div>
-                  );
-                })}
+                ))}
               </div>
             </div>
-          );
-        })()}
 
-        {/* Project type & split */}
-        {(() => {
-          const [editPT, setEditPT] = [editingProjectType, setEditingProjectType];
-          const [tempLg, setTempLg] = [tempLgPct, setTempLgPct];
-          const [tempType, setTempType] = [tempProjectType, setTempProjectType];
-          return (
-            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[12.5px] font-semibold text-[#111]">Loai du an & phan chia loi nhuan</div>
-                {!editPT ? (
-                  <button onClick={() => { setEditPT(true); setTempType(client.project_type || 'contracted'); setTempLg(client.default_lg_pct ?? 60); }}
-                    className="p-1.5 rounded-lg border border-gray-200 text-[#999] hover:text-[#555] hover:border-gray-400 transition">
-                    <Edit2 size={12} />
-                  </button>
-                ) : (
-                  <div className="flex gap-1.5">
-                    <button onClick={async () => {
-                      const updates: Partial<Client> = { project_type: tempType as 'managed' | 'contracted', default_lg_pct: tempType === 'managed' ? 100 : tempLg, default_cn_pct: tempType === 'managed' ? 0 : 100 - tempLg };
-                      const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
-                      if (!error) { onClientUpdate({ ...client, ...updates }); toast('Da luu'); }
-                      setEditPT(false);
-                    }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Luu</button>
-                    <button onClick={() => setEditPT(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huy</button>
-                  </div>
-                )}
-              </div>
-              {editPT ? (
-                <div className="flex items-center gap-4">
-                  <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-                    {(['contracted', 'managed'] as const).map(t => (
-                      <button key={t} onClick={() => setTempType(t)}
-                        className={`px-3 py-1.5 text-[12px] font-medium transition ${tempType === t ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#888] hover:bg-gray-50'}`}>
-                        {t === 'managed' ? 'Khong Khoan' : 'Da Khoan'}
-                      </button>
-                    ))}
-                  </div>
-                  {tempType !== 'managed' && (
-                    <div className="flex items-center gap-2 text-[12px]">
-                      <span className="text-[#666]">LGV:</span>
-                      <input type="number" min={0} max={100} value={tempLg}
-                        onChange={e => setTempLg(Math.max(0, Math.min(100, +e.target.value)))}
-                        className="w-[50px] text-[12px] px-2 py-1 border border-gray-300 rounded-lg text-center" />
-                      <span className="text-[#999]">%  CN: {100 - tempLg}%</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center gap-3 text-[12px]">
-                  <span className={`px-2.5 py-1 rounded-lg font-medium ${client.project_type === 'managed' ? 'bg-blue-50 text-blue-700' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
-                    {client.project_type === 'managed' ? 'Khong Khoan - Nhan Luong' : 'Da Nhan Khoan'}
-                  </span>
-                  {client.project_type !== 'managed' && (
-                    <span className="text-[#666]">LGV {client.default_lg_pct ?? 60}% · CN {client.default_cn_pct ?? 40}%</span>
-                  )}
-                  {client.project_type === 'managed' && (
-                    <span className="text-[#888]">LGV 100%</span>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+            {/* ══ Bố cục 2 cột: trái = việc làm hằng ngày, phải = thông tin tham chiếu ══ */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start mt-3">
+              <div className="xl:col-span-8 space-y-4">
 
-        {/* Info & Contract */}
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <button onClick={() => setOpenInfo(!openInfo)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
-            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">📋 Thông tin & Hợp đồng</span>
-            {openInfo ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
-          </button>
-          {openInfo && (
-            <div className="p-4">
-              {editing ? (
-                <>
+                {/* ── Thông tin & Hợp đồng ── */}
+                <SectionCard
+                  id="cd-info"
+                  icon="📋"
+                  title="Thông tin & Hợp đồng"
+                  open={sections.info}
+                  onToggle={() => toggleSection('info')}
+                  actions={editing ? (
+                    <>
+                      <button onClick={handleSave} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={12} /> Lưu</button>
+                      <button onClick={() => setEditing(false)} className="px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Hủy</button>
+                    </>
+                  ) : (
+                    <button onClick={() => { setSections(s => ({ ...s, info: true })); setEditing(true); }} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition"><Edit2 size={11} /> Sửa</button>
+                  )}
+                >
+                  {editing ? (
+                    <>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div className="flex flex-col gap-1 col-span-2">
                       <label className="text-[12px] text-[#666] font-medium">Tên công ty</label>
@@ -1498,224 +1552,184 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     <button onClick={handleSave} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Lưu thay đổi</button>
                     <button onClick={() => setEditing(false)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
                   </div>
-                </>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    ['Ngay bat dau HD', formatDate(client.contract_start)],
-                    ['Ngay het han HD', formatDate(client.contract_end)],
-                  ].map(([label, val]) => (
-                    <div key={label}>
-                      <label className="text-[12px] text-[#666] font-medium">{label}</label>
-                      <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">{val || '—'}</div>
-                    </div>
-                  ))}
-                  <div className="col-span-2">
-                    <label className="text-[12px] text-[#666] font-medium">Chi Nhanh</label>
-                    <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
-                      <span className="text-[13px] text-[#111] font-medium">{branchLabelOf(client, branches)}</span>
-                      <button
-                        onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_id: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
-                      >
-                        <ArrowRightLeft size={11} /> Chuyen chi nhanh
-                      </button>
-                    </div>
-                    {branchTransferForm && (
-                      <div className="mt-2 p-3 rounded-lg border border-teal-200 bg-teal-50 flex flex-col gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-[#666] font-medium">Chi nhanh moi</label>
-                          <select value={branchTransferForm.branch_id} onChange={e => setBranchTransferForm({ ...branchTransferForm, branch_id: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500 bg-white">
-                            <option value="">-- Chon chi nhanh --</option>
-                            {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-                          </select>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-[#666] font-medium">Co hieu luc tu thang</label>
-                          <input type="month" value={branchTransferForm.effective_from} onChange={e => setBranchTransferForm({ ...branchTransferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-[#666] font-medium">Ghi chu (ly do)</label>
-                          <input type="text" value={branchTransferForm.notes} onChange={e => setBranchTransferForm({ ...branchTransferForm, notes: e.target.value })} placeholder="VD: Chuyen nhuong cuoi thang 5" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={handleBranchTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-teal-600 text-white hover:bg-teal-700 transition"><Check size={13} /> Xac nhan</button>
-                          <button onClick={() => setBranchTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Huy</button>
-                        </div>
-                      </div>
-                    )}
-                    {branchHistory.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        <div className="text-[10.5px] text-[#888] font-medium uppercase tracking-wide">Lich su chuyen chi nhanh</div>
-                        {branchHistory.map(h => (
-                          <div key={h.id} className="flex items-center gap-2 text-[11.5px] py-1 border-b border-gray-100 last:border-0">
-                            <span className="text-[#999] w-16 shrink-0">{h.effective_from}</span>
-                            <span className="font-medium text-[#111]">{h.branch_name}</span>
-                            {h.notes && <span className="text-[#888]">— {h.notes}</span>}
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6">
+
+                      {/* Loại dự án & phân chia lợi nhuận — sửa nhanh tại chỗ */}
+                      <InfoRow label="Loại dự án">
+                        {!editingProjectType ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`px-2 py-0.5 rounded-md text-[11.5px] font-medium ${client.project_type === 'managed' ? 'bg-blue-50 text-blue-700' : 'bg-[#EAF3DE] text-[#27500A]'}`}>
+                              {client.project_type === 'managed' ? 'Không khoán — Nhận lương' : 'Đã nhận khoán'}
+                            </span>
+                            <span className="text-[11.5px] text-[#666]">
+                              {client.project_type === 'managed' ? 'LGV 100%' : `LGV ${client.default_lg_pct ?? 60}% · CN ${client.default_cn_pct ?? 40}%`}
+                            </span>
+                            <PencilButton title="Sửa loại dự án" onClick={() => { setEditingProjectType(true); setTempProjectType(client.project_type || 'contracted'); setTempLgPct(client.default_lg_pct ?? 60); }} />
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-[12px] text-[#666] font-medium">Người quản lý</label>
-                    <div className="flex items-center justify-between gap-2 py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px]">
-                      <span className="text-[13px] text-[#111]">{client.manager || '—'}</span>
-                      <button
-                        onClick={() => setTransferForm(transferForm ? null : { manager_name: '', effective_from: new Date().toISOString().slice(0, 7) })}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
-                      >
-                        <ArrowRightLeft size={11} /> Chuyển đổi
-                      </button>
-                    </div>
-                    {transferForm && (
-                      <div className="mt-2 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-[#666] font-medium">Quản lý mới</label>
-                          <select value={transferForm.manager_name} onChange={e => setTransferForm({ ...transferForm, manager_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                            <option value="">— Chọn quản lý —</option>
-                            {managers.map(m => <option key={m.id}>{m.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-[#666] font-medium">Có hiệu lực từ tháng</label>
-                          <input type="month" value={transferForm.effective_from} onChange={e => setTransferForm({ ...transferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={handleManagerTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Xác nhận</button>
-                          <button onClick={() => setTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
-                    <div className="py-1 border-b border-dashed border-[#E8E7E2] min-h-[28px] flex flex-wrap gap-1.5 items-center">
-                      {client.industrial_zones && client.industrial_zones.length > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">{client.industrial_zones[0]}</span>
-                      ) : (
-                        <span className="text-[13px] text-[#111]">—</span>
-                      )}
-                    </div>
-                  </div>
-                  {client.notes && (
-                    <div className="col-span-2">
-                      <label className="text-[12px] text-[#666] font-medium">Ghi chú</label>
-                      <div className="text-[13px] text-[#111] py-1 border-b border-dashed border-[#E8E7E2]">{client.notes}</div>
-                    </div>
-                  )}
-                  <div className="col-span-2">
-                    <label className="text-[12px] text-[#666] font-medium">Lịch thanh toán & tính lương</label>
-                    <div className="flex flex-wrap gap-2 py-1">
-                      {([
-                        { label: 'Chốt công', start: client.cutoff_day, end: client.cutoff_day_end, cls: 'bg-orange-50 border-orange-200 text-orange-700' },
-                        { label: 'Tính lương', start: client.calc_day, end: client.calc_day_end, cls: 'bg-blue-50 border-blue-200 text-blue-700' },
-                        { label: 'Kỳ thanh toán', start: client.payment_start, end: client.payment_end, cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
-                        { label: 'Phát lương', start: client.salary_day, end: client.salary_day_end, cls: 'bg-purple-50 border-purple-200 text-purple-700' },
-                      ]).map(row => (
-                        <span key={row.label} className={`px-2.5 py-1 rounded-full text-[11.5px] font-medium border ${row.cls}`}>
-                          {row.label}: ngày {formatDayRange(row.start, row.end)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[#E8E7E2]">
-            <span className="text-[12.5px] font-semibold text-[#111]">Thanh toan</span>
-          </div>
-          <div className="grid grid-cols-2 divide-x divide-[#E8E7E2]">
-            <div className="p-0">
-              <PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} embedded />
-            </div>
-            <div className="p-0">
-              <PaymentHistory client={client} embedded />
-            </div>
-          </div>
-        </div>
-
-        {/* Documents */}
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <button onClick={() => setOpenDocs(!openDocs)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
-            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">📄 Hợp đồng & Tài liệu — <span className="text-blue-700">{documents.length}</span></span>
-            {openDocs ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
-          </button>
-          {openDocs && (
-            <div className="p-4">
-              <div className="flex items-center gap-2 flex-wrap mb-3 bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2.5">
-                <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value as ClientDocumentType)} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                  {Object.entries(DOC_TYPE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
-                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 cursor-pointer hover:bg-white transition ${uploadingDoc ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <Upload size={13} /> {uploadingDoc ? 'Đang tải lên...' : 'Tải lên PDF'}
-                  <input
-                    type="file"
-                    accept="application/pdf,image/*"
-                    className="hidden"
-                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadDocument(f); e.target.value = ''; }}
-                    disabled={uploadingDoc}
-                  />
-                </label>
-              </div>
-              {documents.length === 0 ? (
-                <div className="text-[12.5px] text-[#999] py-3 text-center">Chưa có tài liệu nào</div>
-              ) : (
-                <div className="space-y-2">
-                  {documents.map(doc => (
-                    <div key={doc.id} className="border border-[#E8E7E2] rounded-lg p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileText size={15} className="text-[#888] shrink-0" />
-                          <div className="min-w-0">
-                            <a href={doc.file_url} target="_blank" rel="noreferrer" className="text-[12.5px] font-medium text-[#111] hover:text-blue-600 truncate block">{doc.name}</a>
-                            <div className="text-[10.5px] text-[#999]">
-                              {DOC_TYPE_LABELS[doc.doc_type]} · {doc.uploaded_by || '—'} · {formatDate(doc.created_at)}
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                                {(['contracted', 'managed'] as const).map(t => (
+                                  <button key={t} onClick={() => setTempProjectType(t)}
+                                    className={`px-2.5 py-1 text-[11.5px] font-medium transition ${tempProjectType === t ? 'bg-[#F5F4EF] text-[#111]' : 'text-[#888] hover:bg-gray-50'}`}>
+                                    {t === 'managed' ? 'Không khoán' : 'Đã khoán'}
+                                  </button>
+                                ))}
+                              </div>
+                              {tempProjectType !== 'managed' && (
+                                <div className="flex items-center gap-1.5 text-[11.5px]">
+                                  <span className="text-[#666]">LGV:</span>
+                                  <input type="number" min={0} max={100} value={tempLgPct}
+                                    onChange={e => setTempLgPct(Math.max(0, Math.min(100, +e.target.value)))}
+                                    className="w-[48px] text-[11.5px] px-1.5 py-1 border border-gray-300 rounded-lg text-center" />
+                                  <span className="text-[#999]">% · CN: {100 - tempLgPct}%</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-1.5">
+                              <button onClick={async () => {
+                                const updates: Partial<Client> = { project_type: tempProjectType as 'managed' | 'contracted', default_lg_pct: tempProjectType === 'managed' ? 100 : tempLgPct, default_cn_pct: tempProjectType === 'managed' ? 0 : 100 - tempLgPct };
+                                const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                                if (!error) { onClientUpdate({ ...client, ...updates }); toast('Đã lưu'); }
+                                setEditingProjectType(false);
+                              }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Lưu</button>
+                              <button onClick={() => setEditingProjectType(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huỷ</button>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {geminiConfigured() && (
-                            <button
-                              onClick={() => handleAskAboutDocument(doc)}
-                              disabled={askingDocId === doc.id}
-                              title="Tóm tắt bằng AI"
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition disabled:opacity-50"
-                            >
-                              <Sparkles size={11} /> {askingDocId === doc.id ? 'Đang đọc...' : 'Tóm tắt AI'}
-                            </button>
-                          )}
-                          <a href={doc.file_url} target="_blank" rel="noreferrer" title="Tải xuống" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition">
-                            <Download size={12} />
-                          </a>
-                          <button onClick={() => handleDeleteDocument(doc)} title="Xóa" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-red-500 hover:bg-red-50 transition">
-                            <Trash2 size={12} />
+                        )}
+                      </InfoRow>
+
+                      <InfoRow label="Loại dịch vụ">
+                        {(client.service_type ?? 'leasing') === 'leasing' ? 'Cho thuê lao động'
+                          : client.service_type === 'recruitment' ? 'Giới thiệu lao động' : 'HOH'}
+                      </InfoRow>
+
+                      <InfoRow label="Bắt đầu HĐ">{formatDate(client.contract_start) || '—'}</InfoRow>
+
+                      <InfoRow label="Hết hạn HĐ">
+                        <span>{formatDate(client.contract_end) || '—'}</span>
+                        {contractDaysLeft !== null && (
+                          <span className="ml-2 text-[11px]" style={{ color: contractDaysLeft < 0 ? '#DC2626' : contractDaysLeft <= 60 ? '#D97706' : '#059669' }}>
+                            {contractDaysLeft < 0 ? `quá hạn ${Math.abs(contractDaysLeft)} ngày` : `còn ${contractDaysLeft} ngày`}
+                          </span>
+                        )}
+                      </InfoRow>
+
+                      <InfoRow label="Chi nhánh">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{branchLabelOf(client, branches)}</span>
+                          <button
+                            onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_id: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
+                          >
+                            <ArrowRightLeft size={11} /> Chuyển chi nhánh
                           </button>
                         </div>
-                      </div>
-                      {docAnswers[doc.id] && (
-                        <div className="mt-2 p-2.5 rounded-lg bg-[#F9F9F7] text-[12px] text-[#444] whitespace-pre-wrap">{docAnswers[doc.id]}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                        {branchTransferForm && (
+                          <div className="mt-2 p-3 rounded-lg border border-teal-200 bg-teal-50 flex flex-col gap-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[#666] font-medium">Chi nhánh mới</label>
+                              <select value={branchTransferForm.branch_id} onChange={e => setBranchTransferForm({ ...branchTransferForm, branch_id: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500 bg-white">
+                                <option value="">-- Chọn chi nhánh --</option>
+                                {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[#666] font-medium">Có hiệu lực từ tháng</label>
+                              <input type="month" value={branchTransferForm.effective_from} onChange={e => setBranchTransferForm({ ...branchTransferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[#666] font-medium">Ghi chú (lý do)</label>
+                              <input type="text" value={branchTransferForm.notes} onChange={e => setBranchTransferForm({ ...branchTransferForm, notes: e.target.value })} placeholder="VD: Chuyển nhượng cuối tháng 5" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-teal-500" />
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={handleBranchTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-teal-600 text-white hover:bg-teal-700 transition"><Check size={13} /> Xác nhận</button>
+                              <button onClick={() => setBranchTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                            </div>
+                          </div>
+                        )}
+                      </InfoRow>
 
-        {/* Labor Tracking */}
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <button onClick={() => setOpenLabor(!openLabor)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
-            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">👥 Theo dõi Lao động — <span className="text-blue-700">{currentWorkers.toLocaleString()} LĐ hiện tại</span></span>
-            {openLabor ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
-          </button>
-          {openLabor && (
-            <div className="p-4">
+                      <InfoRow label="Người quản lý">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{client.manager || '—'}</span>
+                          <button
+                            onClick={() => setTransferForm(transferForm ? null : { manager_name: '', effective_from: new Date().toISOString().slice(0, 7) })}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
+                          >
+                            <ArrowRightLeft size={11} /> Chuyển đổi
+                          </button>
+                        </div>
+                        {transferForm && (
+                          <div className="mt-2 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[#666] font-medium">Quản lý mới</label>
+                              <select value={transferForm.manager_name} onChange={e => setTransferForm({ ...transferForm, manager_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                                <option value="">— Chọn quản lý —</option>
+                                {managers.map(m => <option key={m.id}>{m.name}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[#666] font-medium">Có hiệu lực từ tháng</label>
+                              <input type="month" value={transferForm.effective_from} onChange={e => setTransferForm({ ...transferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={handleManagerTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Xác nhận</button>
+                              <button onClick={() => setTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                            </div>
+                          </div>
+                        )}
+                      </InfoRow>
+
+                      <InfoRow label="Khu công nghiệp">
+                        {client.industrial_zones && client.industrial_zones.length > 0
+                          ? <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">{client.industrial_zones[0]}</span>
+                          : '—'}
+                      </InfoRow>
+
+                      <InfoRow label="Ngành nghề">{client.industry || '—'}</InfoRow>
+
+                      <InfoRow label="Google Maps">
+                        {client.map_link ? (
+                          <span className="flex items-center gap-2 flex-wrap">
+                            <a href={client.map_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Mở bản đồ</a>
+                            {client.lat != null && client.lng != null && <span className="text-[11px] text-emerald-600">✓ đã định vị</span>}
+                          </span>
+                        ) : '—'}
+                      </InfoRow>
+
+                      <InfoRow label="Ghi chú" full>{client.notes || '—'}</InfoRow>
+
+                      <InfoRow label="Lịch lương" full>
+                        <div className="flex flex-wrap gap-1.5">
+                          {([
+                            { label: 'Chốt công', start: client.cutoff_day, end: client.cutoff_day_end, cls: 'bg-orange-50 border-orange-200 text-orange-700' },
+                            { label: 'Tính lương', start: client.calc_day, end: client.calc_day_end, cls: 'bg-blue-50 border-blue-200 text-blue-700' },
+                            { label: 'Kỳ thanh toán', start: client.payment_start, end: client.payment_end, cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                            { label: 'Phát lương', start: client.salary_day, end: client.salary_day_end, cls: 'bg-purple-50 border-purple-200 text-purple-700' },
+                          ]).map(row => (
+                            <span key={row.label} className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${row.cls}`}>
+                              {row.label}: ngày {formatDayRange(row.start, row.end)}
+                            </span>
+                          ))}
+                        </div>
+                      </InfoRow>
+                    </div>
+                  )}
+                </SectionCard>
+
+                {/* ── Theo dõi Lao động ── */}
+                <SectionCard
+                  id="cd-labor"
+                  icon="👥"
+                  title="Theo dõi Lao động"
+                  badge={`${currentWorkers.toLocaleString()} LĐ hiện tại`}
+                  open={sections.labor}
+                  onToggle={() => toggleSection('labor')}
+                >
               <div className="flex items-center gap-2.5 flex-wrap bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-4 py-3 mb-3">
                 <RefreshCw size={16} className="text-[#888]" />
                 <span className="text-[13px] text-[#555] font-medium">Cập nhật LĐ tuần:</span>
@@ -1787,18 +1801,176 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                   </table>
                 </>
               )}
-            </div>
-          )}
-        </div>
+                </SectionCard>
 
-        {/* Manager Transfer History */}
-        <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <button onClick={() => setOpenManagerHist(!openManagerHist)} className="flex items-center justify-between w-full px-4 py-2.5 border-b border-[#E8E7E2] hover:bg-[#FAFAF8] transition">
-            <span className="text-[12.5px] font-semibold text-[#111] flex items-center gap-2">🔄 Lịch sử quản lý</span>
-            {openManagerHist ? <ChevronUp size={13} className="text-[#aaa]" /> : <ChevronDown size={13} className="text-[#aaa]" />}
-          </button>
-          {openManagerHist && (
-            <div className="p-4">
+                {/* ── Thanh toán ── */}
+                <SectionCard
+                  id="cd-pay"
+                  icon="💰"
+                  title="Thanh toán"
+                  badge={client.paid_this_month ? 'Đã thu tháng này' : undefined}
+                  open={sections.pay}
+                  onToggle={() => toggleSection('pay')}
+                >
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-0 lg:divide-x lg:divide-[#E8E7E2] -m-4">
+                    <div><PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} embedded /></div>
+                    <div><PaymentHistory client={client} embedded /></div>
+                  </div>
+                </SectionCard>
+
+                {/* ── Hợp đồng & Tài liệu ── */}
+                <SectionCard
+                  id="cd-docs"
+                  icon="📄"
+                  title="Hợp đồng & Tài liệu"
+                  badge={`${documents.length} tệp`}
+                  open={sections.docs}
+                  onToggle={() => toggleSection('docs')}
+                >
+              <div className="flex items-center gap-2 flex-wrap mb-3 bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2.5">
+                <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value as ClientDocumentType)} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  {Object.entries(DOC_TYPE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 cursor-pointer hover:bg-white transition ${uploadingDoc ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <Upload size={13} /> {uploadingDoc ? 'Đang tải lên...' : 'Tải lên PDF'}
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadDocument(f); e.target.value = ''; }}
+                    disabled={uploadingDoc}
+                  />
+                </label>
+              </div>
+              {documents.length === 0 ? (
+                <div className="text-[12.5px] text-[#999] py-3 text-center">Chưa có tài liệu nào</div>
+              ) : (
+                <div className="space-y-2">
+                  {documents.map(doc => (
+                    <div key={doc.id} className="border border-[#E8E7E2] rounded-lg p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText size={15} className="text-[#888] shrink-0" />
+                          <div className="min-w-0">
+                            <a href={doc.file_url} target="_blank" rel="noreferrer" className="text-[12.5px] font-medium text-[#111] hover:text-blue-600 truncate block">{doc.name}</a>
+                            <div className="text-[10.5px] text-[#999]">
+                              {DOC_TYPE_LABELS[doc.doc_type]} · {doc.uploaded_by || '—'} · {formatDate(doc.created_at)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {geminiConfigured() && (
+                            <button
+                              onClick={() => handleAskAboutDocument(doc)}
+                              disabled={askingDocId === doc.id}
+                              title="Tóm tắt bằng AI"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition disabled:opacity-50"
+                            >
+                              <Sparkles size={11} /> {askingDocId === doc.id ? 'Đang đọc...' : 'Tóm tắt AI'}
+                            </button>
+                          )}
+                          <a href={doc.file_url} target="_blank" rel="noreferrer" title="Tải xuống" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition">
+                            <Download size={12} />
+                          </a>
+                          <button onClick={() => handleDeleteDocument(doc)} title="Xóa" className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-300 text-red-500 hover:bg-red-50 transition">
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      {docAnswers[doc.id] && (
+                        <div className="mt-2 p-2.5 rounded-lg bg-[#F9F9F7] text-[12px] text-[#444] whitespace-pre-wrap">{docAnswers[doc.id]}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+                </SectionCard>
+              </div>
+
+              {/* ══ Cột phải — thông tin tham chiếu ══ */}
+              <div className="xl:col-span-4 space-y-4">
+
+                {/* ── Sức khoẻ khách hàng ── */}
+                <SectionCard
+                  id="cd-health"
+                  icon="❤️"
+                  title="Sức khoẻ khách hàng"
+                  open={sections.health}
+                  onToggle={() => toggleSection('health')}
+                  actions={<HealthScoreRing score={healthScore.total} size="sm" />}
+                >
+                  <div className="text-[11.5px] mb-3 font-medium" style={{ color: hsColor(healthScore.total) }}>
+                    {hsLabel(healthScore.total)} — {healthScore.total}/100 điểm
+                  </div>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Ổn định lao động',    score: healthScore.stability, max: 30, weight: '30%' },
+                      { label: 'Thanh toán đúng hạn', score: healthScore.payment,   max: 25, weight: '25%' },
+                      { label: 'Tần suất liên hệ',    score: healthScore.contact,   max: 20, weight: '20%' },
+                      { label: 'HĐ còn lại',          score: healthScore.contract,  max: 15, weight: '15%' },
+                      { label: 'Tăng trưởng LĐ',      score: healthScore.growth,    max: 10, weight: '10%' },
+                    ].map(r => {
+                      const pct = Math.round(r.score / r.max * 100);
+                      const color = pct >= 70 ? '#059669' : pct >= 40 ? '#D97706' : '#DC2626';
+                      return (
+                        <div key={r.label} className="flex items-center gap-2">
+                          <div className="text-[11px] text-[#374151] shrink-0" style={{ width: 118 }}>{r.label}</div>
+                          <div className="flex-1 h-[5px] bg-[#E5E7EB] rounded-full overflow-hidden">
+                            <div style={{ width: `${pct}%`, background: color, height: '100%', borderRadius: 9999, transition: 'width .4s' }} />
+                          </div>
+                          <div className="text-[10.5px] font-bold shrink-0" style={{ color, width: 18, textAlign: 'right' }}>{r.score}</div>
+                          <div className="text-[9.5px] text-[#9CA3AF] shrink-0" style={{ width: 26, textAlign: 'right' }}>{r.weight}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+
+                {/* ── Kênh online ── */}
+                <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[12.5px] font-semibold text-[#111]">🔗 Kênh online</div>
+                    {!editingSocialLinks ? (
+                      <PencilButton title="Sửa kênh online" onClick={() => { setEditingSocialLinks(true); setSocialForm({ website_url: client.website_url || '', facebook_url: client.facebook_url || '', youtube_url: client.youtube_url || '', tiktok_url: client.tiktok_url || '' }); }} />
+                    ) : (
+                      <div className="flex gap-1.5">
+                        <button onClick={async () => {
+                          const updates = {
+                            website_url: socialForm.website_url.trim() || null,
+                            facebook_url: socialForm.facebook_url.trim() || null,
+                            youtube_url: socialForm.youtube_url.trim() || null,
+                            tiktok_url: socialForm.tiktok_url.trim() || null,
+                          };
+                          const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
+                          if (!error) { onClientUpdate({ ...client, ...updates }); toast('Đã lưu'); } else toast('Lỗi: ' + error.message);
+                          setEditingSocialLinks(false);
+                        }} className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">Lưu</button>
+                        <button onClick={() => setEditingSocialLinks(false)} className="px-2.5 py-1 rounded-lg text-[11px] text-[#666] border border-gray-300 hover:bg-gray-50 transition">Huỷ</button>
+                      </div>
+                    )}
+                  </div>
+                  {editingSocialLinks ? (
+                    <div className="grid grid-cols-1 gap-2">
+                      <input value={socialForm.website_url} onChange={e => setSocialForm({ ...socialForm, website_url: e.target.value })} placeholder="Website https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                      <input value={socialForm.facebook_url} onChange={e => setSocialForm({ ...socialForm, facebook_url: e.target.value })} placeholder="Facebook https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                      <input value={socialForm.youtube_url} onChange={e => setSocialForm({ ...socialForm, youtube_url: e.target.value })} placeholder="YouTube https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                      <input value={socialForm.tiktok_url} onChange={e => setSocialForm({ ...socialForm, tiktok_url: e.target.value })} placeholder="TikTok https://…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                    </div>
+                  ) : (
+                    <SocialLinksRow websiteUrl={client.website_url} facebookUrl={client.facebook_url} youtubeUrl={client.youtube_url} tiktokUrl={client.tiktok_url} />
+                  )}
+                </div>
+
+                {/* ── Lịch sử thay đổi: quản lý + chi nhánh ── */}
+                <SectionCard
+                  id="cd-hist"
+                  icon="🕘"
+                  title="Lịch sử thay đổi"
+                  badge={`${managerHistory.length + branchHistory.length} mốc`}
+                  open={sections.hist}
+                  onToggle={() => toggleSection('hist')}
+                >
+                  <div className="text-[11px] text-[#888] font-semibold uppercase tracking-wide mb-1.5">Chuyển đổi quản lý</div>
               {managerHistory.length > 0 ? (
                 <div className="space-y-2">
                   {[...managerHistory].sort((a, b) => b.effective_from.localeCompare(a.effective_from)).map(h => (
@@ -1811,10 +1983,24 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
               ) : (
                 <div className="text-[13px] text-[#888]">Chưa có lịch sử chuyển đổi quản lý.</div>
               )}
+                  <div className="text-[11px] text-[#888] font-semibold uppercase tracking-wide mt-4 mb-1.5">Chuyển chi nhánh</div>
+                  {branchHistory.length > 0 ? (
+                    <div className="space-y-1">
+                      {[...branchHistory].sort((a, b) => b.effective_from.localeCompare(a.effective_from)).map(h => (
+                        <div key={h.id} className="flex items-start gap-2 text-[12px] px-3 py-2 rounded-lg border border-[#E8E7E2] bg-[#FAFAF8]">
+                          <span className="text-[#999] shrink-0">{monthLabel(h.effective_from)}</span>
+                          <span className="font-medium text-[#111]">{h.branch_name}</span>
+                          {h.notes && <span className="text-[#888]">— {h.notes}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[12.5px] text-[#888]">Chưa có lịch sử chuyển chi nhánh.</div>
+                  )}
+                </SectionCard>
+              </div>
             </div>
-          )}
-        </div>
-          </>
+          </div>
         )}
       </div>
     </>
