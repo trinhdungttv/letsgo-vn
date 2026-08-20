@@ -273,7 +273,7 @@ export default function ContactFormModal({
             <div className="mb-3">
               <AvatarUpload
                 value={form.avatar_url}
-                onChange={v => setForm({ ...form, avatar_url: v })}
+                onChange={v => setForm(prev => ({ ...prev, avatar_url: v }))}
                 name={form.name}
                 toast={toast}
               />
@@ -281,17 +281,17 @@ export default function ContactFormModal({
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className={label}>Họ và tên <span className="text-red-500">*</span></label>
-                <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                <input type="text" value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="Nguyễn Văn A" className={field} />
               </div>
               <div>
                 <label className={label}>Số điện thoại</label>
-                <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })}
+                <input type="tel" value={form.phone} onChange={e => setForm(prev => ({ ...prev, phone: e.target.value }))}
                   placeholder="0909..." className={field} />
               </div>
               <div>
                 <label className={label}>Email</label>
-                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
+                <input type="email" value={form.email} onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))}
                   placeholder="hr@company.com" className={field} />
               </div>
 
@@ -324,18 +324,18 @@ export default function ContactFormModal({
 
               <div>
                 <label className={label}>Chức vụ</label>
-                <RoleSelect value={form.role} onChange={v => setForm({ ...form, role: v })} toast={toast} className={field} />
+                <RoleSelect value={form.role} onChange={v => setForm(prev => ({ ...prev, role: v }))} toast={toast} className={field} />
               </div>
               <div>
                 <label className={label}>Gắn với công ty</label>
                 <select value={form.client_id}
-                  onChange={e => setForm({
-                    ...form,
+                  onChange={e => setForm(prev => ({
+                    ...prev,
                     client_id: e.target.value,
                     // Cờ "liên hệ chính" thuộc về công ty cũ — đổi công ty thì
                     // bỏ cờ, muốn giữ thì tick lại cho công ty mới.
-                    is_primary: e.target.value === (contact?.client_id || '') ? form.is_primary : false,
-                  })}
+                    is_primary: e.target.value === (contact?.client_id || '') ? prev.is_primary : false,
+                  }))}
                   className={field}>
                   <option value="">— Chưa gắn công ty —</option>
                   {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
@@ -349,23 +349,23 @@ export default function ContactFormModal({
               </div>
               <div>
                 <label className={label}>Phụ trách từ ngày</label>
-                <input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} className={field} />
+                <input type="date" value={form.start_date} onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }))} className={field} />
               </div>
               <div>
                 <label className={label}>Kênh tiếp cận</label>
-                <select value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })} className={field}>
+                <select value={form.channel} onChange={e => setForm(prev => ({ ...prev, channel: e.target.value }))} className={field}>
                   <option value="">— Chọn —</option>
                   {CONTACT_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="col-span-2">
                 <label className={label}>Địa chỉ nhà</label>
-                <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
+                <input type="text" value={form.address} onChange={e => setForm(prev => ({ ...prev, address: e.target.value }))}
                   placeholder="123 Đường ABC, Quận 1, TP.HCM" className={field} />
                 <div className="flex items-center gap-1.5 mt-1.5">
                   <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                   <input type="text" value={form.map_link}
-                    onChange={e => setForm({ ...form, map_link: e.target.value })}
+                    onChange={e => setForm(prev => ({ ...prev, map_link: e.target.value }))}
                     placeholder="Dán link Google Maps của địa chỉ này…"
                     className="flex-1 px-2.5 py-1.5 text-[13px] border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   {form.map_link ? (
@@ -403,7 +403,7 @@ export default function ContactFormModal({
             <div className="space-y-2.5">
               <div className="flex items-center gap-2.5">
                 <button type="button"
-                  onClick={() => setForm({ ...form, is_active: !form.is_active })}
+                  onClick={() => setForm(prev => ({ ...prev, is_active: !prev.is_active }))}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}>
                   <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${form.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>
@@ -418,7 +418,7 @@ export default function ContactFormModal({
               </div>
               <label className={`flex items-center gap-2 select-none ${isLinked ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
                 <input type="checkbox" disabled={!isLinked} checked={form.is_primary}
-                  onChange={e => setForm({ ...form, is_primary: e.target.checked })} className="w-4 h-4 accent-amber-500" />
+                  onChange={e => setForm(prev => ({ ...prev, is_primary: e.target.checked }))} className="w-4 h-4 accent-amber-500" />
                 <span className="text-[13px] text-gray-700">
                   Là <b>liên hệ chính</b> của công ty
                   {!isLinked && <span className="text-[11px] text-gray-500"> — cần gắn công ty trước</span>}
@@ -439,17 +439,17 @@ export default function ContactFormModal({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={label}>Ngày sinh</label>
-                  <input type="date" value={form.birthday} onChange={e => setForm({ ...form, birthday: e.target.value })} className={field} />
+                  <input type="date" value={form.birthday} onChange={e => setForm(prev => ({ ...prev, birthday: e.target.value }))} className={field} />
                 </div>
                 <div>
                   <label className={label}>Facebook / LinkedIn</label>
-                  <input type="text" value={form.social_link} onChange={e => setForm({ ...form, social_link: e.target.value })}
+                  <input type="text" value={form.social_link} onChange={e => setForm(prev => ({ ...prev, social_link: e.target.value }))}
                     placeholder="https://facebook.com/..." className={field} />
                 </div>
               </div>
               <div>
                 <label className={label}>Sở thích</label>
-                <TagInput tags={form.hobbies} onChange={v => setForm({ ...form, hobbies: v })} />
+                <TagInput tags={form.hobbies} onChange={v => setForm(prev => ({ ...prev, hobbies: v }))} />
               </div>
               <div>
                 <label className={label}>Ngày đặc biệt khác</label>
@@ -464,12 +464,12 @@ export default function ContactFormModal({
             <div className="space-y-3">
               <div>
                 <label className={label}>Ghi chú ngắn</label>
-                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2}
+                <textarea value={form.notes} onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))} rows={2}
                   placeholder="Thông tin thêm..." className={`${field} resize-none`} />
               </div>
               <div>
                 <label className={label}>Ghi chú chi tiết</label>
-                <RichTextEditor value={form.rich_notes} onChange={v => setForm({ ...form, rich_notes: v })} />
+                <RichTextEditor value={form.rich_notes} onChange={v => setForm(prev => ({ ...prev, rich_notes: v }))} />
               </div>
             </div>
           </div>
