@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { RelationshipRadar } from '../components/crm/RelationshipRadar';
 import ContactFormModal from '../components/contacts/ContactFormModal';
+import { AvatarCircle } from '../components/contacts/AvatarUpload';
 import ContactDeleteDialog from '../components/contacts/ContactDeleteDialog';
 import {
   linkContactToClient, setPrimaryContact, unsetPrimaryContact,
@@ -326,10 +327,15 @@ const CRMLeads: React.FC<Props> = ({ clients, products, toast }) => {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-gray-900">{c.name}</div>
-                        {c.is_primary && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700 mt-0.5">Liên hệ chính</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <AvatarCircle url={c.avatar_url} name={c.name} size={32} />
+                          <div>
+                            <div className="font-semibold text-gray-900">{c.name}</div>
+                            {c.is_primary && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700 mt-0.5">Liên hệ chính</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {linkingId === c.id ? (

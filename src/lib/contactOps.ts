@@ -28,9 +28,12 @@ export interface ContactFormValues {
   channel: string;
   social_link: string;
   rich_notes: string;
+  /** Link Google Maps của địa chỉ nhà riêng. */
+  map_link: string;
+  /** URL ảnh đại diện trong bucket `avatars`. */
+  avatar_url: string;
 }
 
-export const CONTACT_ROLES = ['Giám đốc', 'HR Manager', 'Kế toán', 'Trưởng phòng', 'Nhân viên', 'Khác'];
 export const CONTACT_CHANNELS = ['Zalo', 'Facebook', 'Giới thiệu', 'Gặp trực tiếp'];
 
 export const emptyContactForm = (clientId = ''): ContactFormValues => ({
@@ -40,6 +43,7 @@ export const emptyContactForm = (clientId = ''): ContactFormValues => ({
   is_active: true, is_primary: false,
   notes: '', address: '', birthday: '',
   hobbies: [], channel: '', social_link: '', rich_notes: '',
+  map_link: '', avatar_url: '',
 });
 
 /** Đọc sở thích: cột `hobbies` là TEXT chứa JSON array, dữ liệu cũ có thể là chuỗi thường. */
@@ -69,6 +73,8 @@ export const contactToForm = (c: Contact): ContactFormValues => ({
   channel: c.channel || '',
   social_link: c.social_link || '',
   rich_notes: c.rich_notes || '',
+  map_link: c.map_link || '',
+  avatar_url: c.avatar_url || '',
 });
 
 // ── Trùng số điện thoại ─────────────────────────────────────────────────────
@@ -134,6 +140,21 @@ async function clearPrimaryElsewhere(clientId: string, keepId?: string) {
   await q;
 }
 
+// ── Cột mới cần migration 143 ───────────────────────────────────────────────
+// DB chưa chạy migration 143 thì `map_link` / `avatar_url` chưa tồn tại và mọi
+// thao tác lưu liên hệ sẽ hỏng. Thay vì để app chết, bỏ 2 cột đó ra rồi thử lại
+// — người dùng vẫn lưu được, chỉ là chưa có ảnh và link bản đồ.
+const OPTIONAL_COLUMNS = ['map_link', 'avatar_url'] as const;
+
+const isMissingColumnError = (err: { message?: string; code?: string } | null) =>
+  !!err && (err.code === '42703' || /column .* does not exist|could not find the .* column/i.test(err.message || ''));
+
+function withoutOptionalColumns<T extends Record<string, any>>(payload: T): T {
+  const copy = { ...payload };
+  for (const col of OPTIONAL_COLUMNS) delete copy[col];
+  return copy;
+}
+
 // ── Lưu (thêm / sửa) ────────────────────────────────────────────────────────
 export interface SaveContactCtx {
   user: AppUser | null;
@@ -180,6 +201,8 @@ export async function saveContact(
     channel: form.channel || null,
     social_link: form.social_link.trim() || null,
     rich_notes: form.rich_notes || null,
+    map_link: form.map_link.trim() || null,
+    avatar_url: form.avatar_url.trim() || null,
     updated_at: new Date().toISOString(),
   };
 
@@ -189,12 +212,14 @@ export async function saveContact(
   let saved: Contact;
   if (existing) {
     const oldClientId = existing.client_id || null;
-    const { data, error } = await supabase
+    const runUpdate = (body: typeof payload) => supabase
       .from('contacts')
-      .update(payload)
+      .update(body)
       .eq('id', existing.id)
       .select('*, clients(name)')
       .single();
+    let { data, error } = await runUpdate(payload);
+    if (isMissingColumnError(error)) ({ data, error } = await runUpdate(withoutOptionalColumns(payload)));
     if (error) throw error;
     saved = data as Contact;
 
@@ -211,11 +236,14 @@ export async function saveContact(
       oldData: existing, newData: saved,
     });
   } else {
-    const { data, error } = await supabase
+    const body = { ...payload, created_at: new Date().toISOString() };
+    const runInsert = (b: typeof body) => supabase
       .from('contacts')
-      .insert({ ...payload, created_at: new Date().toISOString() })
+      .insert(b)
       .select('*, clients(name)')
       .single();
+    let { data, error } = await runInsert(body);
+    if (isMissingColumnError(error)) ({ data, error } = await runInsert(withoutOptionalColumns(body)));
     if (error) throw error;
     saved = data as Contact;
 

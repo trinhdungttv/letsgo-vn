@@ -4,12 +4,13 @@
 // Danh sách liên hệ, chỉ khác là ở đây công ty được gắn sẵn.
 // ============================================================================
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, ExternalLink, MapPin } from 'lucide-react';
 import type { Client, Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import ContactFormModal from './contacts/ContactFormModal';
+import { AvatarCircle } from './contacts/AvatarUpload';
 import ContactDeleteDialog from './contacts/ContactDeleteDialog';
 import {
   setPrimaryContact, unsetPrimaryContact,
@@ -134,16 +135,25 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
                       </button>
                     </td>
                     <td className="px-3 py-2.5 font-medium text-[#111]">
-                      {c.name}
-                      {c.is_primary && (
-                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">Liên hệ chính</span>
-                      )}
-                      {c.social_link && (
-                        <a href={c.social_link} target="_blank" rel="noopener noreferrer"
-                          className="ml-1.5 inline-flex text-blue-500 hover:text-blue-700 align-middle" title="Mở Facebook / LinkedIn">
-                          <ExternalLink size={11} />
-                        </a>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <AvatarCircle url={c.avatar_url} name={c.name} size={26} />
+                        <span>{c.name}</span>
+                        {c.is_primary && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">Liên hệ chính</span>
+                        )}
+                        {c.social_link && (
+                          <a href={c.social_link} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex text-blue-500 hover:text-blue-700" title="Mở Facebook / LinkedIn">
+                            <ExternalLink size={11} />
+                          </a>
+                        )}
+                        {c.map_link && (
+                          <a href={c.map_link} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex text-emerald-600 hover:text-emerald-800" title="Mở địa chỉ nhà trên Google Maps">
+                            <MapPin size={11} />
+                          </a>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 text-[#555]">{c.phone || '—'}</td>
                     <td className="px-3 py-2.5 text-[#555]">{c.email || '—'}</td>

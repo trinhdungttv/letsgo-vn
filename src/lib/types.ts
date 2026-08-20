@@ -802,6 +802,10 @@ export interface Contact {
   social_link: string | null;
   channel: string | null;
   rich_notes: string | null;
+  /** Link Google Maps của địa chỉ nhà riêng (migration 143). */
+  map_link?: string | null;
+  /** Ảnh đại diện, URL công khai trong bucket `avatars` (migration 143). */
+  avatar_url?: string | null;
   created_at: string;
   updated_at: string;
   clients?: { name: string } | null;

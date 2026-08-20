@@ -5,12 +5,15 @@
 // ============================================================================
 import { useState, useEffect, useRef, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { X, AlertTriangle, History } from 'lucide-react';
+import { X, AlertTriangle, History, MapPin, ExternalLink, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import type { Client, Contact, ContactClientHistory } from '../../lib/types';
+import { parseLatLngFromLink } from '../../lib/geo';
+import RoleSelect from './RoleSelect';
+import AvatarUpload from './AvatarUpload';
 import {
-  CONTACT_ROLES, CONTACT_CHANNELS, emptyContactForm, contactToForm,
+  CONTACT_CHANNELS, emptyContactForm, contactToForm,
   saveContact, findPhoneDuplicates,
   type ContactFormValues,
 } from '../../lib/contactOps';
@@ -235,6 +238,14 @@ export default function ContactFormModal({
           {/* Thông tin cơ bản */}
           <div>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Thông tin cơ bản</h3>
+            <div className="mb-3">
+              <AvatarUpload
+                value={form.avatar_url}
+                onChange={v => setForm({ ...form, avatar_url: v })}
+                name={form.name}
+                toast={toast}
+              />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className={label}>Họ và tên <span className="text-red-500">*</span></label>
@@ -281,9 +292,7 @@ export default function ContactFormModal({
 
               <div>
                 <label className={label}>Chức vụ</label>
-                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className={field}>
-                  {CONTACT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
+                <RoleSelect value={form.role} onChange={v => setForm({ ...form, role: v })} toast={toast} className={field} />
               </div>
               <div>
                 <label className={label}>Gắn với công ty</label>
@@ -318,9 +327,40 @@ export default function ContactFormModal({
                 </select>
               </div>
               <div className="col-span-2">
-                <label className={label}>Địa chỉ</label>
+                <label className={label}>Địa chỉ nhà</label>
                 <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
                   placeholder="123 Đường ABC, Quận 1, TP.HCM" className={field} />
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <input type="text" value={form.map_link}
+                    onChange={e => setForm({ ...form, map_link: e.target.value })}
+                    placeholder="Dán link Google Maps của địa chỉ này…"
+                    className="flex-1 px-2.5 py-1.5 text-[13px] border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  {form.map_link ? (
+                    <a href={form.map_link} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 shrink-0">
+                      <ExternalLink className="w-3.5 h-3.5" /> Mở
+                    </a>
+                  ) : (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(form.address.trim())}`}
+                      target="_blank" rel="noopener noreferrer"
+                      onClick={e => { if (!form.address.trim()) { e.preventDefault(); toast('Nhập địa chỉ trước để tìm trên Google Maps'); } }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 shrink-0">
+                      <Search className="w-3.5 h-3.5" /> Tìm
+                    </a>
+                  )}
+                </div>
+                {form.map_link && (
+                  <p className="text-[10.5px] mt-1">
+                    {parseLatLngFromLink(form.map_link)
+                      ? <span className="text-emerald-600">✓ Link có toạ độ — định vị được chính xác</span>
+                      : <span className="text-amber-600">
+                          Link chưa có toạ độ. Link rút gọn (maps.app.goo.gl) vẫn mở được,
+                          nhưng muốn định vị chính xác thì mở link rồi copy lại link đầy đủ trên thanh địa chỉ.
+                        </span>}
+                  </p>
+                )}
               </div>
             </div>
           </div>
