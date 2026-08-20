@@ -25,7 +25,11 @@ const RICH_COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b
 // ── Rich Text Editor ────────────────────────────────────────────────────────
 export function RichTextEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const lastValue = useRef(value);
+  // null = chưa từng đổ nội dung vào ô soạn thảo. KHÔNG khởi tạo bằng `value`:
+  // làm vậy thì ở lần chạy đầu, lastValue.current === value nên điều kiện bên
+  // dưới luôn sai và ghi chú đã lưu không bao giờ được hiển thị lại — mở hồ sơ
+  // lên chỉ thấy ô trống, tưởng là mất dữ liệu dù DB vẫn còn nguyên.
+  const lastValue = useRef<string | null>(null);
 
   useEffect(() => {
     const clean = DOMPurify.sanitize(value);
