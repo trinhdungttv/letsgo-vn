@@ -196,7 +196,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   useEffect(() => { setLocalPipelineEntries(pipelineEntries) }, [pipelineEntries])
   const [contacts, setContacts] = useState<Contact[]>([])
   useEffect(() => {
-    supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
+    supabase.from('contacts')
+      .select('id, name, phone, role, client_id, is_primary, is_active, clients(name)')
+      .eq('is_active', true).order('name')
       .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]) })
   }, [])
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null)

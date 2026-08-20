@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
@@ -12,6 +12,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { queueGoogleSync } from '../../lib/googleSync';
 import { logActivity } from '../../lib/audit';
+import { linkContactToClient } from '../../lib/contactOps';
 import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
@@ -106,6 +107,9 @@ export function InlineEdit({ label, value, onSave, type = 'text' }: {
 export interface CompanyProfileModalProps {
   entry: CRMPipelineEntry;
   contacts: Contact[];
+  /** Gọi khi danh sách người liên hệ bị thay đổi từ trong hồ sơ (gắn công ty,
+   *  thêm/sửa/xoá) để trang cha nạp lại — tránh 2 nơi hiển thị lệch nhau. */
+  onContactsChanged?: () => void;
   products: CRMProduct[];
   onClose?: () => void;
   onUpdate: (updated: CRMPipelineEntry) => void;
@@ -130,7 +134,7 @@ export interface CompanyProfileModalProps {
   dealSummary?: { title: string; value: number; onOpen?: () => void };
 }
 
-export function CompanyProfileModal({ entry, contacts, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary }: CompanyProfileModalProps) {
+export function CompanyProfileModal({ entry, contacts, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary }: CompanyProfileModalProps) {
   const { user, token } = useAuth();
   // Chi nhánh — nguồn duy nhất để hiển thị/gán, không đọc cột `region` (tên cũ).
   const { branches } = useBranchData();
@@ -253,6 +257,53 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
         description, oldData: entry, newData: { ...entry, ...localPatch },
       });
     } else toast('Lỗi: ' + error.message);
+  };
+
+  // ── Ô chọn "Người liên hệ (CSKH)" ─────────────────────────────────────────
+  // Nguồn dữ liệu là bảng `contacts` — cùng gốc với CRM → CSKH → Danh sách liên
+  // hệ, nên gắn ở đâu cũng ra kết quả như nhau. Chỉ liệt kê người THUỘC ĐÚNG
+  // công ty này, cộng thêm nhóm "chưa gắn công ty" để gắn nhanh tại chỗ.
+  const ownContacts = useMemo(() => {
+    const list = entry.client_id ? contacts.filter(c => c.client_id === entry.client_id) : [];
+    // Người đang được chọn luôn phải có mặt trong danh sách — kể cả khi đã nghỉ
+    // hoặc đã chuyển công ty — nếu không ô select sẽ hiện trống dù DB vẫn có.
+    const cur = entry.contact_id ? contacts.find(c => c.id === entry.contact_id) : null;
+    if (cur && !list.some(c => c.id === cur.id)) list.unshift(cur);
+    return [...list].sort((a, b) =>
+      (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) ||
+      (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0) ||
+      a.name.localeCompare(b.name, 'vi')
+    );
+  }, [contacts, entry.client_id, entry.contact_id]);
+
+  const freeContacts = useMemo(
+    () => contacts
+      .filter(c => !c.client_id && c.id !== entry.contact_id)
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi')),
+    [contacts, entry.contact_id]
+  );
+
+  const handlePickContact = async (contactId: string | null) => {
+    const contact = contactId ? contacts.find(c => c.id === contactId) || null : null;
+    // Chọn một người ở nhóm "chưa gắn công ty" = gắn luôn người đó vào công ty
+    // này, để trang CSKH thấy ngay công ty gắn thay vì lệch nhau.
+    if (contact && entry.client_id && !contact.client_id) {
+      try {
+        await linkContactToClient(contact, entry.client_id, {
+          user, clientName: () => entry.company_name,
+        });
+        toast(`Đã gắn "${contact.name}" vào ${entry.company_name}`);
+        onContactsChanged?.();
+      } catch (e: any) {
+        toast('Lỗi gắn công ty: ' + e.message);
+        return;
+      }
+    }
+    await updateLink(
+      { contact_id: contactId },
+      { contact_id: contactId, contacts: contact ? { name: contact.name, phone: contact.phone } : null },
+      `Cập nhật người liên hệ cho "${entry.company_name}"${contact ? ` → ${contact.name}` : ''}`
+    );
   };
 
   const cycleRating = async () => {
@@ -771,24 +822,34 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
           <div className="text-[11px] text-[#888] font-medium mb-0.5">Người liên hệ (CSKH)</div>
           <select
             value={entry.contact_id || ''}
-            onChange={e => {
-              const v = e.target.value || null;
-              const contact = contacts.find(c => c.id === v);
-              updateLink(
-                { contact_id: v },
-                { contact_id: v, contacts: contact ? { name: contact.name, phone: contact.phone } : null },
-                `Cập nhật người liên hệ cho "${entry.company_name}"${contact ? ` → ${contact.name}` : ''}`
-              );
-            }}
+            onChange={e => handlePickContact(e.target.value || null)}
             className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
           >
             <option value="">Chưa chọn</option>
-            {contacts.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.role ? ` — ${c.role}` : ''}{(c as any).clients?.name ? ` (${(c as any).clients.name})` : ''}
-              </option>
-            ))}
+            {ownContacts.length > 0 && (
+              <optgroup label="Người liên hệ của công ty này">
+                {ownContacts.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.is_primary ? '★ ' : ''}{c.name}{c.role ? ` — ${c.role}` : ''}{c.is_active ? '' : ' (đã nghỉ)'}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {freeContacts.length > 0 && (
+              <optgroup label="Chưa gắn công ty — chọn sẽ gắn vào công ty này">
+                {freeContacts.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.role ? ` — ${c.role}` : ''}{c.phone ? ` · ${c.phone}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+          {ownContacts.length === 0 && freeContacts.length === 0 && (
+            <p className="text-[10.5px] text-[#999] mt-0.5">
+              Chưa có ai — thêm ở khối "Người liên hệ" bên dưới hoặc ở CRM → CSKH.
+            </p>
+          )}
         </div>
         <div>
           <div className="text-[11px] text-[#888] font-medium mb-0.5">Sản phẩm / Dịch vụ quan tâm</div>
@@ -1048,7 +1109,7 @@ export function CompanyProfileModal({ entry, contacts, products, onClose, onUpda
   );
 
   const blkContacts = entry.client_id ? (
-    <ContactsTab clientId={entry.client_id} toast={toast} />
+    <ContactsTab clientId={entry.client_id} toast={toast} onChanged={onContactsChanged} />
   ) : null;
 
   const blkHistory = (

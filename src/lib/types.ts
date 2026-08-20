@@ -807,6 +807,19 @@ export interface Contact {
   clients?: { name: string } | null;
 }
 
+/** Một lần người liên hệ được gắn / chuyển / gỡ khỏi công ty. Bản ghi bất biến. */
+export interface ContactClientHistory {
+  id: string;
+  contact_id: string;
+  from_client_id: string | null;
+  to_client_id: string | null;
+  from_client_name: string | null;
+  to_client_name: string | null;
+  changed_at: string;
+  changed_by: string | null;
+  note: string | null;
+}
+
 export interface PnlRevenueLine {
   id: string;
   pnl_id: string;

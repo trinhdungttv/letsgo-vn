@@ -194,7 +194,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     payment_start: client.payment_start, payment_end: client.payment_end,
     salary_day: client.salary_day, salary_day_end: client.salary_day_end,
   });
-  const { contacts: primaryContacts } = useContacts(client.id);
+  const { contacts: primaryContacts, reload: reloadContacts } = useContacts(client.id);
 
   useEffect(() => {
     supabase.from('client_branch_history').select('*').eq('client_id', client.id).order('effective_from', { ascending: true })
@@ -673,6 +673,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             <CompanyProfileModal
               entry={profileEntry}
               contacts={primaryContacts}
+              onContactsChanged={reloadContacts}
               products={products}
               onUpdate={setProfileEntry}
               toast={toast}
