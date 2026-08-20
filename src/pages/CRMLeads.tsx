@@ -3,6 +3,7 @@ import { Edit2, Link2, Plus, Search, Star, Trash2, UserX, UserCheck, X } from 'l
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { useHashTab } from '../hooks/useHashSubRoute';
 import { RelationshipRadar } from '../components/crm/RelationshipRadar';
 import ContactFormModal from '../components/contacts/ContactFormModal';
 import { AvatarCircle } from '../components/contacts/AvatarUpload';
@@ -26,7 +27,9 @@ const CRMLeads: React.FC<Props> = ({ clients, products, toast }) => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
-  const [view, setView] = useState<'radar' | 'contacts'>('radar');
+  // Ghi tab đang mở vào URL (#/crm-leads/contacts) — F5 hay bookmark đều quay
+  // lại đúng "Danh sách liên hệ" thay vì luôn rơi về Relationship Radar.
+  const [view, setView] = useHashTab<'radar' | 'contacts'>('crm-leads', ['radar', 'contacts'] as const, 'radar');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
