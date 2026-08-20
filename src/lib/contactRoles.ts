@@ -15,23 +15,41 @@ export interface ContactRole {
 /** Danh sách mặc định, dùng khi DB chưa chạy migration 143. */
 export const FALLBACK_ROLES = ['Giám đốc', 'HR Manager', 'Kế toán', 'Trưởng phòng', 'Nhân viên', 'Khác'];
 
-export async function fetchContactRoles(): Promise<ContactRole[]> {
+/** Bảng chưa tồn tại (chưa chạy migration 143) — Postgres báo lỗi undefined_table. */
+const isMissingTableError = (err: { message?: string; code?: string } | null) =>
+  !!err && (err.code === '42P01' || /could not find the table|does not exist|schema cache/i.test(err.message || ''));
+
+export interface ContactRolesResult {
+  roles: ContactRole[];
+  /** false = bảng contact_roles chưa tồn tại, đang dùng danh sách mặc định — không cho thêm/sửa/xoá. */
+  ready: boolean;
+}
+
+export async function fetchContactRoles(): Promise<ContactRolesResult> {
   const { data, error } = await supabase
     .from('contact_roles')
     .select('id, name, sort_order')
     .order('sort_order')
     .order('name');
   if (error || !data) {
-    return FALLBACK_ROLES.map((name, i) => ({ id: `fallback-${i}`, name, sort_order: (i + 1) * 10 }));
+    return {
+      ready: !isMissingTableError(error),
+      roles: FALLBACK_ROLES.map((name, i) => ({ id: `fallback-${i}`, name, sort_order: (i + 1) * 10 })),
+    };
   }
-  return data as ContactRole[];
+  return { ready: true, roles: data as ContactRole[] };
 }
+
+const NOT_READY_MSG = 'Chưa dùng được: cần chạy migration 143 trên Supabase trước (báo quản trị viên hệ thống).';
 
 export async function addContactRole(name: string): Promise<string | null> {
   const clean = name.trim();
   if (!clean) return 'Tên chức vụ trống';
   const { error } = await supabase.from('contact_roles').insert({ name: clean });
-  if (error) return /duplicate|unique/i.test(error.message) ? 'Chức vụ này đã có' : error.message;
+  if (error) {
+    if (isMissingTableError(error)) return NOT_READY_MSG;
+    return /duplicate|unique/i.test(error.message) ? 'Chức vụ này đã có' : error.message;
+  }
   return null;
 }
 
@@ -44,7 +62,10 @@ export async function renameContactRole(id: string, oldName: string, newName: st
   if (!clean) return 'Tên chức vụ trống';
   if (clean === oldName) return null;
   const { error } = await supabase.from('contact_roles').update({ name: clean }).eq('id', id);
-  if (error) return /duplicate|unique/i.test(error.message) ? 'Đã có chức vụ trùng tên' : error.message;
+  if (error) {
+    if (isMissingTableError(error)) return NOT_READY_MSG;
+    return /duplicate|unique/i.test(error.message) ? 'Đã có chức vụ trùng tên' : error.message;
+  }
   const { error: upErr } = await supabase
     .from('contacts')
     .update({ role: clean, updated_at: new Date().toISOString() })
@@ -65,5 +86,6 @@ export async function countContactsWithRole(name: string): Promise<number> {
 /** Xoá khỏi danh mục. Hồ sơ đang dùng vẫn giữ nguyên chữ chức vụ đã ghi. */
 export async function deleteContactRole(id: string): Promise<string | null> {
   const { error } = await supabase.from('contact_roles').delete().eq('id', id);
-  return error ? error.message : null;
+  if (!error) return null;
+  return isMissingTableError(error) ? NOT_READY_MSG : error.message;
 }
