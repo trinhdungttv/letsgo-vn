@@ -12,6 +12,8 @@ import type { Client, Contact, ContactClientHistory } from '../../lib/types';
 import { parseLatLngFromLink } from '../../lib/geo';
 import RoleSelect from './RoleSelect';
 import AvatarUpload from './AvatarUpload';
+import SpecialDatesEditor, { type SpecialDateDraft } from './SpecialDatesEditor';
+import { fetchSpecialDates, saveSpecialDates } from '../../lib/contactSpecialDates';
 import {
   CONTACT_CHANNELS, emptyContactForm, contactToForm,
   saveContact, findPhoneDuplicates,
@@ -136,6 +138,7 @@ export default function ContactFormModal({
   const [pool, setPool] = useState<Contact[]>([]);
   const [pickedId, setPickedId] = useState('');
   const [history, setHistory] = useState<ContactClientHistory[]>([]);
+  const [specialDates, setSpecialDates] = useState<SpecialDateDraft[]>([]);
 
   const clientName = useCallback(
     (id: string | null) => (id ? clients.find(c => c.id === id)?.name || null : null),
@@ -155,6 +158,12 @@ export default function ContactFormModal({
     supabase.from('contact_client_history').select('*')
       .eq('contact_id', contact.id).order('changed_at', { ascending: false }).limit(20)
       .then(({ data }) => setHistory((data || []) as ContactClientHistory[]));
+  }, [contact]);
+
+  // Ngày đặc biệt đã lưu của người này (sinh nhật nằm riêng ở trường Ngày sinh).
+  useEffect(() => {
+    if (!contact) { setSpecialDates([]); return; }
+    fetchSpecialDates(contact.id).then(rows => setSpecialDates(rows.map(r => ({ id: r.id, label: r.label, date: r.date }))));
   }, [contact]);
 
   // Cảnh báo trùng SĐT (chỉ cảnh báo, vẫn lưu được nếu cố ý).
@@ -190,7 +199,9 @@ export default function ContactFormModal({
     setSaving(true);
     try {
       const saved = await saveContact(form, target, { user, clientName });
+      const dateErr = await saveSpecialDates(saved.id, specialDates);
       toast(target ? 'Đã cập nhật liên hệ' : 'Đã thêm liên hệ mới');
+      if (dateErr) toast(dateErr);
       onSaved(saved);
       onClose();
     } catch (e: any) {
@@ -418,6 +429,10 @@ export default function ContactFormModal({
               <div>
                 <label className={label}>Sở thích</label>
                 <TagInput tags={form.hobbies} onChange={v => setForm({ ...form, hobbies: v })} />
+              </div>
+              <div>
+                <label className={label}>Ngày đặc biệt khác</label>
+                <SpecialDatesEditor items={specialDates} onChange={setSpecialDates} />
               </div>
             </div>
           </div>
