@@ -33,18 +33,27 @@ export async function fetchSpecialDates(contactId: string): Promise<SpecialDate[
  * Số lượng mỗi người rất nhỏ (vài dòng) nên không cần diff phức tạp.
  * Trả về null nếu thành công, hoặc thông báo lỗi thân thiện nếu bảng chưa có.
  */
+const MIGRATION_144_MSG = 'Chưa lưu được ngày đặc biệt: cần chạy migration 144 trên Supabase trước.';
+
 export async function saveSpecialDates(
   contactId: string,
   items: { label: string; date: string }[]
 ): Promise<string | null> {
   const clean = items.filter(i => i.label.trim() && i.date);
   const { error: delErr } = await supabase.from('contact_special_dates').delete().eq('contact_id', contactId);
-  if (delErr) return isMissingTableError(delErr) ? null : delErr.message;
+  if (delErr) {
+    if (!isMissingTableError(delErr)) return delErr.message;
+    // Bảng chưa tồn tại: nếu người dùng KHÔNG có gì cần lưu (chỉ đang xem) thì
+    // im lặng bỏ qua là hợp lý. Nhưng nếu họ vừa nhập ngày đặc biệt, phải báo rõ
+    // — trước đây bước xoá thất bại âm thầm khiến bước chèn không bao giờ chạy,
+    // người dùng tưởng đã lưu mà thực ra chưa có gì được ghi.
+    return clean.length > 0 ? MIGRATION_144_MSG : null;
+  }
   if (clean.length === 0) return null;
   const { error: insErr } = await supabase
     .from('contact_special_dates')
     .insert(clean.map(i => ({ contact_id: contactId, label: i.label.trim(), date: i.date })));
-  if (insErr) return isMissingTableError(insErr) ? 'Chưa lưu được ngày đặc biệt: cần chạy migration 144 trên Supabase trước.' : insErr.message;
+  if (insErr) return isMissingTableError(insErr) ? MIGRATION_144_MSG : insErr.message;
   return null;
 }
 

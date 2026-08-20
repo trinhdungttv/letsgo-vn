@@ -133,6 +133,7 @@ export default function ContactFormModal({
     contact ? contactToForm(contact) : emptyContactForm(defaultClientId)
   );
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [dupes, setDupes] = useState<Contact[]>([]);
   const [dupeAck, setDupeAck] = useState(false);
   const [pool, setPool] = useState<Contact[]>([]);
@@ -197,15 +198,24 @@ export default function ContactFormModal({
       return;
     }
     setSaving(true);
+    setSaveError(null);
     try {
       const saved = await saveContact(form, target, { user, clientName });
-      const dateErr = await saveSpecialDates(saved.id, specialDates);
-      toast(target ? 'Đã cập nhật liên hệ' : 'Đã thêm liên hệ mới');
-      if (dateErr) toast(dateErr);
       onSaved(saved);
-      onClose();
+      const dateErr = await saveSpecialDates(saved.id, specialDates);
+      if (dateErr) {
+        // Liên hệ đã lưu được, chỉ riêng ngày đặc biệt lỗi — giữ modal mở và
+        // báo rõ ràng thay vì đóng lại để lỗi biến mất cùng toast góc màn hình.
+        setSaveError(dateErr);
+        toast('Đã lưu liên hệ, nhưng: ' + dateErr);
+      } else {
+        toast(target ? 'Đã cập nhật liên hệ' : 'Đã thêm liên hệ mới');
+        onClose();
+      }
     } catch (e: any) {
-      toast('Lỗi: ' + e.message);
+      const msg = e?.message || String(e);
+      setSaveError(msg);
+      toast('Lỗi: ' + msg);
     } finally {
       setSaving(false);
     }
@@ -226,6 +236,17 @@ export default function ContactFormModal({
           </h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-md"><X className="w-5 h-5 text-gray-500" /></button>
         </div>
+
+        {saveError && (
+          <div className="mx-6 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div className="flex-1 text-[12.5px] text-red-800">
+              <div className="font-semibold mb-0.5">Không lưu được</div>
+              <div className="break-words">{saveError}</div>
+            </div>
+            <button onClick={() => setSaveError(null)} className="text-red-400 hover:text-red-700 shrink-0"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
 
         <div className="px-6 py-5 space-y-5">
           {/* Chọn người đã có sẵn trong CSKH */}
