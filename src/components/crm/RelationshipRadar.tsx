@@ -84,12 +84,11 @@ const STATUS_FILL: Record<Status, string> = {
 interface Props {
   clients: Client[];
   contacts: Contact[];
-  onContactsChanged?: () => void;
   products: CRMProduct[];
   toast: (m: string) => void;
 }
 
-export function RelationshipRadar({ clients, contacts, onContactsChanged, products, toast }: Props) {
+export function RelationshipRadar({ clients, contacts, products, toast }: Props) {
   const { labelOf } = useBranchLookup();
   const { user } = useAuth();
   const [logs, setLogs] = useState<CSKHLog[]>([]);
@@ -393,7 +392,6 @@ export function RelationshipRadar({ clients, contacts, onContactsChanged, produc
         <CompanyProfileModal
           entry={profileEntry}
           contacts={contacts}
-          onContactsChanged={onContactsChanged}
           products={products}
           onClose={() => setProfileEntry(null)}
           onUpdate={setProfileEntry}

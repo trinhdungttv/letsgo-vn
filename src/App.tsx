@@ -28,7 +28,6 @@ import CRMPipeline from './pages/CRMPipeline';
 import AdminPage from './pages/AdminPage';
 import Workspace from './pages/Workspace';
 import Loans from './pages/Loans';
-import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 
 const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans'];
 
@@ -384,7 +383,6 @@ function AppInner() {
         )}
       </div>
       <Toast message={toastMsg} />
-      {user && <UpcomingDatesReminder userId={user.id} />}
     </div>
   );
 }

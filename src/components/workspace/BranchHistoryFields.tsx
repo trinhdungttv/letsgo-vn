@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, Pencil, Trash2, Check, X, Plus, Send, Link2, Unlink, Search, CalendarDays } from 'lucide-react'
+import { History, ChevronDown, ChevronUp, Activity, AlertTriangle, TrendingUp, Pencil, Trash2, Check, X, Plus, Send, Link2, Unlink } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import type { Branch, MorningPriority, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
 import { GOAL_TYPE_LABELS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS } from '../../lib/types'
@@ -21,6 +21,8 @@ const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
   partial: { label: 'Một phần', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   missed: { label: 'Chưa đạt', cls: 'bg-red-50 text-red-700 border-red-200' },
 }
+
+const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 const inputCls = "w-full text-[11.5px] border border-[#E5E3DD] rounded-md px-2.5 py-2 bg-[#FAFAF8] text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors resize-y min-h-[56px]"
 const editInputCls = "w-full text-[11px] border border-[#E5E3DD] rounded-md px-2 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400 transition-colors resize-y min-h-[40px]"
@@ -86,55 +88,28 @@ export async function recordBranchUpdateSession(
   }
 }
 
-/** Số ngày đã trôi qua kể từ một ngày (yyyy-mm-dd). */
-function daysSince(dateStr: string): number {
-  const from = new Date(`${dateStr}T00:00:00`).getTime()
-  const now = new Date(`${todayStr()}T00:00:00`).getTime()
-  return Math.round((now - from) / 86400000)
+function buildMonthGrid(): (string | null)[] {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth() + 1
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const startWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7
+  const cells: (string | null)[] = []
+  for (let i = 0; i < startWeekday; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+  }
+  return cells
 }
-
-/** "hôm nay" / "3 ngày trước" — đọc nhanh hơn ngày tuyệt đối. */
-function agoLabel(dateStr: string): string {
-  const d = daysSince(dateStr)
-  if (d <= 0) return 'hôm nay'
-  if (d === 1) return 'hôm qua'
-  if (d < 30) return `${d} ngày trước`
-  const m = Math.floor(d / 30)
-  return `${m} tháng trước`
-}
-
-// Class viết đủ chữ (không ghép chuỗi động) để Tailwind sinh đúng CSS.
-const KIND_META = {
-  'Tình trạng': {
-    icon: Activity,
-    chip: 'bg-blue-50 text-blue-700 border-blue-200',
-    chipActive: 'bg-blue-100 text-blue-800 border-blue-400',
-  },
-  'Khó khăn': {
-    icon: AlertTriangle,
-    chip: 'bg-amber-50 text-amber-700 border-amber-200',
-    chipActive: 'bg-amber-100 text-amber-800 border-amber-400',
-  },
-  'Cơ hội': {
-    icon: TrendingUp,
-    chip: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    chipActive: 'bg-emerald-100 text-emerald-800 border-emerald-400',
-  },
-} as const
-
-type Kind = keyof typeof KIND_META
 
 export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, onRecordDateChange }: Props) {
   const [history, setHistory] = useState<MorningPriority[]>([])
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<{ status_note: string; difficulties: string; opportunities: string }>({ status_note: '', difficulties: '', opportunities: '' })
   const [editSaving, setEditSaving] = useState(false)
-  // Form ghi nhận mặc định đóng — mở bằng nút "Ghi nhận mới" ở đầu khối.
-  const [showInputForm, setShowInputForm] = useState(false)
-  const [filterKind, setFilterKind] = useState<Kind | 'all'>('all')
-  const [search, setSearch] = useState('')
-  const [showAllEntries, setShowAllEntries] = useState(false)
+  const [showInputForm, setShowInputForm] = useState(true)
   const [saving, setSaving] = useState(false)
   const { user } = useAuth()
 
@@ -229,7 +204,6 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
         const draft = JSON.parse(saved)
         if (draft.status_note || draft.difficulties || draft.opportunities) {
           onChange({ status_note: draft.status_note || '', difficulties: draft.difficulties || '', opportunities: draft.opportunities || '' })
-          setShowInputForm(true)
         }
       }
     } catch {}
@@ -292,57 +266,10 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [regionKey, branch.region, refreshKey])
 
-  // Tách sẵn từng phiên thành 3 trường để lọc/tìm/xem trước mà không phải mở ra.
-  const parsedHistory = useMemo(() => history.map(h => {
-    const fields = (h.goal_note ? parseGoalNote(h.goal_note) : null)?.filter(f => f.text) ?? []
-    const byKind = {} as Record<Kind, string>
-    for (const f of fields) if (f.label in KIND_META) byKind[f.label as Kind] = f.text
-    return {
-      h,
-      byKind,
-      kinds: fields.map(f => f.label).filter((l): l is Kind => l in KIND_META),
-      haystack: `${h.goal_note ?? ''} ${h.outcome_note ?? ''}`.toLowerCase(),
-    }
-  }), [history])
-
-  const filteredHistory = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return parsedHistory.filter(e => {
-      if (filterKind !== 'all' && !e.kinds.includes(filterKind)) return false
-      if (q && !e.haystack.includes(q)) return false
-      return true
-    })
-  }, [parsedHistory, filterKind, search])
-
-  const visibleHistory = showAllEntries ? filteredHistory : filteredHistory.slice(0, 10)
-
-  /** Gom theo tháng để dòng thời gian có mốc, thay cho lưới lịch cũ. */
-  const groupedHistory = useMemo(() => {
-    const groups: { month: string; items: typeof visibleHistory }[] = []
-    for (const e of visibleHistory) {
-      const month = e.h.priority_date.slice(0, 7)
-      const last = groups[groups.length - 1]
-      if (last && last.month === month) last.items.push(e)
-      else groups.push({ month, items: [e] })
-    }
-    return groups
-  }, [visibleHistory])
-
-  // Số liệu cho dải tóm tắt — trả lời ngay "lâu chưa ghi nhận?" và "đang vướng gì?"
-  const stats = useMemo(() => {
-    const last = parsedHistory[0]?.h.priority_date ?? null
-    const since = last ? daysSince(last) : null
-    const in30 = parsedHistory.filter(e => daysSince(e.h.priority_date) <= 30).length
-    const latestIssue = parsedHistory.find(e => e.byKind['Khó khăn'])
-    return {
-      last,
-      since,
-      in30,
-      issues: parsedHistory.filter(e => e.byKind['Khó khăn']).length,
-      chances: parsedHistory.filter(e => e.byKind['Cơ hội']).length,
-      latestIssue,
-    }
-  }, [parsedHistory])
+  const monthGrid = useMemo(buildMonthGrid, [])
+  const sessionDates = useMemo(() => new Set(history.map(h => h.priority_date)), [history])
+  const today = todayStr()
+  const selectedEntries = selectedDate ? history.filter(h => h.priority_date === selectedDate) : []
 
   const pastSuggestions = useMemo(() => {
     const status: string[] = []
@@ -398,7 +325,6 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   }
 
   function renderEntry(h: MorningPriority, forceOpen = false) {
-    const preview = parsedHistory.find(e => e.h.id === h.id) ?? { byKind: {} as Record<Kind, string> }
     const outcome = h.outcome_status ? OUTCOME_LABELS[h.outcome_status] : null
     const isExpanded = forceOpen || expandedId === h.id
     const isEditing = editingId === h.id
@@ -408,25 +334,9 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
           onClick={() => !forceOpen && !isEditing && setExpandedId(prev => prev === h.id ? null : h.id)}
           className={`flex items-center justify-between gap-2 px-3 py-2 ${forceOpen || isEditing ? 'bg-[#fafafa]' : 'cursor-pointer hover:bg-[#fafafa] transition-colors'}`}
         >
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <span className="text-[11.5px] font-semibold text-[#111] shrink-0 w-[78px]">{formatDate(h.priority_date)}</span>
-            <span className="text-[10px] text-[#bbb] shrink-0 w-[74px]">{agoLabel(h.priority_date)}</span>
-            {/* Chip loại + trích nội dung — xem lướt được mà không cần mở phiên */}
-            <div className="flex items-center gap-1 shrink-0">
-              {(Object.keys(KIND_META) as Kind[]).filter(k => !!preview.byKind[k]).map(k => {
-                const Icon = KIND_META[k].icon
-                return (
-                  <span key={k} title={k} className={`inline-flex items-center gap-0.5 text-[9.5px] px-1.5 py-0.5 rounded-full border ${KIND_META[k].chip}`}>
-                    <Icon size={9} /> {k}
-                  </span>
-                )
-              })}
-            </div>
-            {!isExpanded && !isEditing && (
-              <span className="text-[11px] text-[#999] truncate min-w-0">
-                {preview.byKind['Khó khăn'] || preview.byKind['Tình trạng'] || preview.byKind['Cơ hội'] || h.goal_note || ''}
-              </span>
-            )}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${sessionDates.has(h.priority_date) ? 'bg-blue-500' : 'bg-gray-300'}`} />
+            <span className="text-[11.5px] font-semibold text-[#111]">{formatDate(h.priority_date)}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {!isEditing && (
@@ -518,88 +428,172 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
 
   return (
     <div className="flex flex-col gap-3">
-
-      {/* ── 1. Dải tóm tắt — trả lời ngay "lâu chưa ghi nhận?" và "đang vướng gì?" ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <div className="border border-[#E8E7E2] rounded-lg bg-white px-3 py-2">
-          <div className="text-[9.5px] uppercase tracking-wide text-[#aaa] font-semibold">Ghi nhận gần nhất</div>
-          <div className="text-[14px] font-bold text-[#111] mt-0.5">
-            {stats.last ? formatDate(stats.last) : '—'}
+      {/* 0. Việc nội bộ liên kết — Task nội bộ (chung) gắn với chi nhánh này. Khối riêng, tách
+          bạch khỏi nhật ký Tình trạng/Khó khăn/Cơ hội tự do bên dưới. Chỉ hiện khi có liên kết. */}
+      {linkedTasks.length > 0 && (
+        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+          <div className="flex items-center gap-1.5 px-2.5 py-2 bg-[#fafafa] border-b border-[#E8E7E2]">
+            <Link2 size={12} className="text-[#7C3AED]" />
+            <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Việc nội bộ liên kết</span>
+            <span className="text-[9px] text-[#bbb] ml-auto">{linkedTasks.length} việc</span>
           </div>
-          <div className={`text-[10px] mt-0.5 ${stats.since === null ? 'text-[#bbb]' : stats.since > 14 ? 'text-red-600 font-medium' : 'text-[#999]'}`}>
-            {stats.since === null
-              ? 'Chưa có phiên nào'
-              : stats.since > 14 ? `⚠ ${agoLabel(stats.last!)} — nên cập nhật` : agoLabel(stats.last!)}
+          <div className="flex flex-col divide-y divide-[#F0EFEB]">
+            {linkedTasks.map(t => {
+              const isExpanded = expandedTaskId === t.id
+              const cmts = linkedComments[t.id] ?? []
+              return (
+                <div key={t.id} className="px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}
+                      className="text-[11.5px] font-semibold text-[#111] text-left hover:underline flex-1 min-w-[120px]"
+                    >
+                      {t.title}
+                    </button>
+                    <select
+                      value={t.status in WS_TASK_STATUS_LABELS ? t.status : 'todo'}
+                      onChange={e => changeLinkedTaskStatus(t, e.target.value as WsTaskStatus)}
+                      className={`text-[10px] border rounded-md px-1.5 py-0.5 focus:outline-none font-medium ${WS_TASK_STATUS_COLORS[(t.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
+                    >
+                      {(['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => (
+                        <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                    {t.deadline && <span className="text-[10px] text-[#999] whitespace-nowrap">Hạn: {formatDate(t.deadline)}</span>}
+                    {cmts.length > 0 && <span className="text-[10px] text-[#999]">{cmts.length} bình luận</span>}
+                    <button onClick={() => unlinkTask(t)} title="Bỏ liên kết khỏi chi nhánh" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition">
+                      <Unlink size={11} />
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-2 border border-[#E8E7E2] rounded-lg bg-[#fafafa] overflow-hidden">
+                      {cmts.length > 0 && (
+                        <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                          {cmts.map(cm => (
+                            <div key={cm.id} className="px-2.5 py-1.5 group bg-white">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
+                                <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => { setEditingLinkedCommentId(cm.id); setEditingLinkedCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
+                                  <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteLinkedComment(cm.id, t.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
+                                </div>
+                              </div>
+                              {editingLinkedCommentId === cm.id ? (
+                                <div className="flex gap-1 mt-1">
+                                  <input autoFocus value={editingLinkedCommentText} onChange={e => setEditingLinkedCommentText(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveLinkedCommentEdit(cm.id, t.id); if (e.key === 'Escape') setEditingLinkedCommentId(null) }}
+                                    className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
+                                  <button onClick={() => saveLinkedCommentEdit(cm.id, t.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
+                                  <button onClick={() => setEditingLinkedCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
+                                </div>
+                              ) : (
+                                <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                        <input
+                          type="text" value={linkedCommentInput[t.id] ?? ''}
+                          onChange={e => setLinkedCommentInput(prev => ({ ...prev, [t.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendLinkedComment(t.id) } }}
+                          placeholder="Bình luận tiến độ..."
+                          className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white placeholder:text-[#ccc]"
+                        />
+                        <button
+                          onClick={() => sendLinkedComment(t.id)}
+                          disabled={sendingLinkedComment === t.id || !(linkedCommentInput[t.id] ?? '').trim()}
+                          className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                        >Gửi</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        </div>
-        <div className="border border-[#E8E7E2] rounded-lg bg-white px-3 py-2">
-          <div className="text-[9.5px] uppercase tracking-wide text-[#aaa] font-semibold">Phiên 30 ngày qua</div>
-          <div className="text-[14px] font-bold text-[#111] mt-0.5">{stats.in30}</div>
-          <div className="text-[10px] text-[#999] mt-0.5">tổng cộng {history.length} phiên</div>
-        </div>
-        <button
-          type="button"
-          onClick={() => setFilterKind(k => k === 'Khó khăn' ? 'all' : 'Khó khăn')}
-          className={`text-left border rounded-lg px-3 py-2 transition ${filterKind === 'Khó khăn' ? 'border-amber-400 bg-amber-50' : 'border-[#E8E7E2] bg-white hover:border-amber-300'}`}
-        >
-          <div className="text-[9.5px] uppercase tracking-wide text-[#aaa] font-semibold">Phiên có khó khăn</div>
-          <div className="text-[14px] font-bold text-amber-600 mt-0.5">{stats.issues}</div>
-          <div className="text-[10px] text-[#999] mt-0.5">bấm để lọc riêng</div>
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilterKind(k => k === 'Cơ hội' ? 'all' : 'Cơ hội')}
-          className={`text-left border rounded-lg px-3 py-2 transition ${filterKind === 'Cơ hội' ? 'border-emerald-400 bg-emerald-50' : 'border-[#E8E7E2] bg-white hover:border-emerald-300'}`}
-        >
-          <div className="text-[9.5px] uppercase tracking-wide text-[#aaa] font-semibold">Phiên có cơ hội</div>
-          <div className="text-[14px] font-bold text-emerald-600 mt-0.5">{stats.chances}</div>
-          <div className="text-[10px] text-[#999] mt-0.5">bấm để lọc riêng</div>
-        </button>
-      </div>
-
-      {/* ── 2. Khó khăn mới nhất — đưa lên đầu để xử lý cho kịp ── */}
-      {stats.latestIssue && (
-        <div className="border border-amber-200 bg-amber-50/60 rounded-lg px-3 py-2.5 flex items-start gap-2">
-          <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <div className="text-[9.5px] uppercase tracking-wide text-amber-700 font-semibold">
-              Khó khăn mới nhất · {formatDate(stats.latestIssue.h.priority_date)} ({agoLabel(stats.latestIssue.h.priority_date)})
-            </div>
-            <div className="text-[12px] text-[#4A3208] mt-1 whitespace-pre-line break-words">
-              {stats.latestIssue.byKind['Khó khăn']}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => { setFilterKind('all'); setSearch(''); setExpandedId(stats.latestIssue!.h.id) }}
-            className="text-[10.5px] text-amber-700 hover:underline shrink-0 whitespace-nowrap"
-          >Xem phiên</button>
         </div>
       )}
 
-      {/* ── 3. Ghi nhận phiên mới — đưa lên trên, mặc định đóng ── */}
+      {/* 1. Mini calendar (top) */}
+      <div className="border border-[#E8E7E2] rounded-lg p-2.5 bg-[#fafafa]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">
+              T{new Date().getMonth() + 1}/{new Date().getFullYear()}
+            </span>
+            <span className="text-[9px] text-[#bbb]">{history.length} phiên</span>
+          </div>
+          <div className="grid grid-cols-7 gap-0.5 mb-1">
+            {WEEKDAY_LABELS.map(d => (
+              <div key={d} className="text-[8px] text-center text-[#bbb] font-medium">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-0.5">
+            {monthGrid.map((dateStr, i) => {
+              if (!dateStr) return <div key={`empty-${i}`} />
+              const hasSession = sessionDates.has(dateStr)
+              const isToday = dateStr === today
+              const isSelected = selectedDate === dateStr
+              const day = Number(dateStr.split('-')[2])
+              return (
+                <button
+                  key={dateStr}
+                  type="button"
+                  onClick={() => hasSession && setSelectedDate(prev => prev === dateStr ? null : dateStr)}
+                  className={[
+                    'aspect-square flex items-center justify-center rounded text-[10px] transition-colors',
+                    isSelected ? 'bg-blue-600 text-white font-semibold' : hasSession ? 'bg-blue-100 text-blue-700 font-medium hover:bg-blue-200 cursor-pointer' : 'text-[#ccc] cursor-default',
+                    isToday && !isSelected ? 'ring-1.5 ring-red-400' : '',
+                  ].join(' ')}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+          {/* Selected date entries */}
+          {selectedDate && selectedEntries.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-[#E8E7E2] flex flex-col gap-1">
+              <div className="text-[9px] font-semibold text-[#888] uppercase">{formatDate(selectedDate)}</div>
+              {selectedEntries.map(h => renderEntry(h, true))}
+            </div>
+          )}
+        </div>
+
+      {/* 2. Session history (moved up so operators read past exchanges first) */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-2">
+          <History size={12} className="text-[#888]" />
+          <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Các phiên ghi nhận</span>
+          <span className="text-[9px] text-[#bbb] ml-auto">{history.length} phiên</span>
+        </div>
+        {history.length === 0 ? (
+          <div className="text-[11px] text-[#bbb] py-4 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
+            Chưa có lịch sử trao đổi — ghi nhận phiên đầu tiên ở bên dưới
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-[320px] overflow-y-auto pr-0.5">
+            {history.map(h => renderEntry(h))}
+          </div>
+        )}
+      </div>
+
+      {/* 3. New session form (bottom, vertical layout) */}
       <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
-        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#FAFAF8] border-b border-[#E8E7E2]">
-          <button
-            type="button"
-            onClick={() => setShowInputForm(v => !v)}
-            className="flex items-center gap-2 min-w-0 text-left"
-          >
-            <Plus size={12} className="text-[#7C3AED] shrink-0" />
+        <div
+          className="flex items-center justify-between px-3 py-2 bg-[#FAFAF8] border-b border-[#E8E7E2] cursor-pointer"
+          onClick={() => setShowInputForm(v => !v)}
+        >
+          <div className="flex items-center gap-2">
+            <Plus size={12} className="text-[#7C3AED]" />
             <span className="text-[10.5px] font-semibold text-[#555] uppercase tracking-wide">Ghi nhận phiên mới</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[#999]">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}</span>
             {showInputForm ? <ChevronUp size={12} className="text-[#bbb]" /> : <ChevronDown size={12} className="text-[#bbb]" />}
-          </button>
-          {/* Ngày ghi nhận — trước đây cố định là hôm nay, không sửa được */}
-          <label className="flex items-center gap-1.5 shrink-0">
-            <CalendarDays size={11} className="text-[#aaa]" />
-            <span className="text-[10px] text-[#999]">Ngày ghi nhận</span>
-            <input
-              type="date"
-              value={recordDate}
-              onChange={e => onRecordDateChange(e.target.value)}
-              className="text-[11px] px-1.5 py-0.5 border border-[#E5E3DD] rounded bg-white text-[#333] focus:outline-none focus:border-blue-400"
-            />
-          </label>
+          </div>
         </div>
         {showInputForm && (
           <div className="p-3 flex flex-col gap-3">
@@ -689,156 +683,6 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
                 </span>
               )}
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── 4. Việc nội bộ liên kết (giữ nguyên) ── */}
-      {linkedTasks.length > 0 && (
-        <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
-          <div className="flex items-center gap-1.5 px-2.5 py-2 bg-[#fafafa] border-b border-[#E8E7E2]">
-            <Link2 size={12} className="text-[#7C3AED]" />
-            <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Việc nội bộ liên kết</span>
-            <span className="text-[9px] text-[#bbb] ml-auto">{linkedTasks.length} việc</span>
-          </div>
-          <div className="flex flex-col divide-y divide-[#F0EFEB]">
-            {linkedTasks.map(t => {
-              const isExpanded = expandedTaskId === t.id
-              const cmts = linkedComments[t.id] ?? []
-              return (
-                <div key={t.id} className="px-2.5 py-2">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}
-                      className="text-[11.5px] font-semibold text-[#111] text-left hover:underline flex-1 min-w-[120px]"
-                    >
-                      {t.title}
-                    </button>
-                    <select
-                      value={t.status in WS_TASK_STATUS_LABELS ? t.status : 'todo'}
-                      onChange={e => changeLinkedTaskStatus(t, e.target.value as WsTaskStatus)}
-                      className={`text-[10px] border rounded-md px-1.5 py-0.5 focus:outline-none font-medium ${WS_TASK_STATUS_COLORS[(t.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
-                    >
-                      {(['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => (
-                        <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                    {t.deadline && <span className="text-[10px] text-[#999] whitespace-nowrap">Hạn: {formatDate(t.deadline)}</span>}
-                    {cmts.length > 0 && <span className="text-[10px] text-[#999]">{cmts.length} bình luận</span>}
-                    <button onClick={() => unlinkTask(t)} title="Bỏ liên kết khỏi chi nhánh" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition">
-                      <Unlink size={11} />
-                    </button>
-                  </div>
-                  {isExpanded && (
-                    <div className="mt-2 border border-[#E8E7E2] rounded-lg bg-[#fafafa] overflow-hidden">
-                      {cmts.length > 0 && (
-                        <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
-                          {cmts.map(cm => (
-                            <div key={cm.id} className="px-2.5 py-1.5 group bg-white">
-                              <div className="flex items-center gap-1.5 mb-0.5">
-                                <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
-                                <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                                <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button onClick={() => { setEditingLinkedCommentId(cm.id); setEditingLinkedCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
-                                  <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteLinkedComment(cm.id, t.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
-                                </div>
-                              </div>
-                              {editingLinkedCommentId === cm.id ? (
-                                <div className="flex gap-1 mt-1">
-                                  <input autoFocus value={editingLinkedCommentText} onChange={e => setEditingLinkedCommentText(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') saveLinkedCommentEdit(cm.id, t.id); if (e.key === 'Escape') setEditingLinkedCommentId(null) }}
-                                    className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
-                                  <button onClick={() => saveLinkedCommentEdit(cm.id, t.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
-                                  <button onClick={() => setEditingLinkedCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
-                                </div>
-                              ) : (
-                                <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
-                        <input
-                          type="text" value={linkedCommentInput[t.id] ?? ''}
-                          onChange={e => setLinkedCommentInput(prev => ({ ...prev, [t.id]: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendLinkedComment(t.id) } }}
-                          placeholder="Bình luận tiến độ..."
-                          className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white placeholder:text-[#ccc]"
-                        />
-                        <button
-                          onClick={() => sendLinkedComment(t.id)}
-                          disabled={sendingLinkedComment === t.id || !(linkedCommentInput[t.id] ?? '').trim()}
-                          className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
-                        >Gửi</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── 5. Dòng thời gian các phiên — thay cho lưới lịch cũ ── */}
-      <div>
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <History size={12} className="text-[#888]" />
-          <span className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">Dòng thời gian</span>
-          <div className="flex items-center gap-1">
-            {(['all', 'Tình trạng', 'Khó khăn', 'Cơ hội'] as const).map(k => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setFilterKind(k)}
-                className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
-                  filterKind === k
-                    ? k === 'all' ? 'bg-[#333] text-white border-[#333]' : KIND_META[k].chipActive
-                    : 'bg-white text-[#888] border-[#E8E7E2] hover:border-[#bbb]'
-                }`}
-              >
-                {k === 'all' ? 'Tất cả' : k}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 ml-auto">
-            <Search size={11} className="text-[#bbb]" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm trong nội dung..."
-              className="text-[11px] px-2 py-1 border border-[#E5E3DD] rounded-md bg-white w-[170px] focus:outline-none focus:border-blue-400 placeholder:text-[#ccc]"
-            />
-            <span className="text-[9.5px] text-[#bbb] whitespace-nowrap">{filteredHistory.length}/{history.length} phiên</span>
-          </div>
-        </div>
-
-        {filteredHistory.length === 0 ? (
-          <div className="text-[11px] text-[#bbb] py-5 text-center border border-dashed border-[#E8E7E2] rounded-lg bg-white">
-            {history.length === 0
-              ? 'Chưa có lịch sử trao đổi — bấm "Ghi nhận phiên mới" ở trên để bắt đầu'
-              : 'Không có phiên nào khớp bộ lọc'}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {groupedHistory.map(g => (
-              <div key={g.month} className="flex flex-col gap-1.5">
-                <div className="text-[9.5px] font-semibold text-[#aaa] uppercase tracking-wide px-0.5">
-                  Tháng {Number(g.month.slice(5))}/{g.month.slice(0, 4)} · {g.items.length} phiên
-                </div>
-                {g.items.map(e => renderEntry(e.h))}
-              </div>
-            ))}
-            {filteredHistory.length > visibleHistory.length && (
-              <button
-                type="button"
-                onClick={() => setShowAllEntries(true)}
-                className="text-[11px] text-blue-600 hover:underline py-1.5"
-              >
-                Xem thêm {filteredHistory.length - visibleHistory.length} phiên cũ hơn
-              </button>
-            )}
           </div>
         )}
       </div>

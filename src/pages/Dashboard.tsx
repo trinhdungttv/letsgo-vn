@@ -248,13 +248,6 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     ? ((totalWorkers - monthWorkers.prev) / monthWorkers.prev) * 100
     : null;
 
-  // Id các KH trong phạm vi đang chọn — bảng Cảnh báo & Công việc lọc theo tập
-  // này thay vì so tên tỉnh với clients.region (tên chi nhánh cũ, không khớp).
-  const scopeClientIds = useMemo(
-    () => (scopeMode === 'all' || !selectedScope ? null : new Set(filteredClients.map(c => c.id))),
-    [scopeMode, selectedScope, filteredClients],
-  );
-
   // Khách hàng → tên chi nhánh chuẩn
   const clientToBranch = useMemo(() => {
     const map: Record<string, string> = {};
@@ -798,7 +791,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
           <div className="lg:col-span-3">
             <AlertsTasksPanel
               clients={clients}
-              scopeClientIds={scopeClientIds}
+              regionFilter={scopeMode === 'region' ? selectedScope : null}
               onSelectClient={setSelectedClient}
               onOpenClient={onOpenClient}
               onOpenPipelineEntry={onOpenPipelineEntry}
