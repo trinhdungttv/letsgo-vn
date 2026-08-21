@@ -802,9 +802,26 @@ export interface Contact {
   social_link: string | null;
   channel: string | null;
   rich_notes: string | null;
+  /** Link Google Maps của địa chỉ nhà riêng (migration 143). */
+  map_link?: string | null;
+  /** Ảnh đại diện, URL công khai trong bucket `avatars` (migration 143). */
+  avatar_url?: string | null;
   created_at: string;
   updated_at: string;
   clients?: { name: string } | null;
+}
+
+/** Một lần người liên hệ được gắn / chuyển / gỡ khỏi công ty. Bản ghi bất biến. */
+export interface ContactClientHistory {
+  id: string;
+  contact_id: string;
+  from_client_id: string | null;
+  to_client_id: string | null;
+  from_client_name: string | null;
+  to_client_name: string | null;
+  changed_at: string;
+  changed_by: string | null;
+  note: string | null;
 }
 
 export interface PnlRevenueLine {

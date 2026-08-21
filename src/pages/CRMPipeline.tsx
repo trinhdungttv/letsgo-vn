@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, X, Briefcase,
 } from 'lucide-react';
@@ -67,10 +67,16 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     }
   }, [focusEntryId, localPipeline, onFocusHandled]);
 
-  useEffect(() => {
-    supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
+  // Lấy đủ client_id/is_primary/is_active: hồ sơ công ty lọc người liên hệ theo
+  // đúng công ty đang mở, thiếu các cột này thì ô chọn sẽ rỗng.
+  const loadContacts = useCallback(() => {
+    supabase.from('contacts')
+      .select('id, name, phone, role, client_id, is_primary, is_active, clients(name)')
+      .eq('is_active', true).order('name')
       .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
   }, []);
+
+  useEffect(() => { loadContacts(); }, [loadContacts]);
 
   const handleCreateDeal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -357,6 +363,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         <CompanyProfileModal
           entry={profileEntry}
           contacts={contacts}
+          onContactsChanged={loadContacts}
           products={products}
           onClose={() => setProfileEntry(null)}
           onUpdate={handleUpdate}
