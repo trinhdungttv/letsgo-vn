@@ -20,6 +20,7 @@ import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
 import { todayISO } from '../../utils/suspension'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
 import { branchOf, branchLabel, branchOptions } from '../../lib/branchRef'
+import { selectContacts } from '../../lib/contactOps'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -196,10 +197,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   useEffect(() => { setLocalPipelineEntries(pipelineEntries) }, [pipelineEntries])
   const [contacts, setContacts] = useState<Contact[]>([])
   useEffect(() => {
-    supabase.from('contacts')
-      .select('id, name, phone, role, client_id, is_primary, is_active, clients(name)')
-      .eq('is_active', true).order('name')
-      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]) })
+    selectContacts(q => q.eq('is_active', true).order('name'))
+      .then(setContacts)
+      .catch(() => {})
   }, [])
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null)
 

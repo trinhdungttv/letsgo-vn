@@ -6,6 +6,7 @@ import { useAuth } from '../../lib/auth'
 import type { WinLossRecord, DealType, DealResult, LossReason, Client, Contact } from '../../lib/types'
 import { LOSS_REASON_LABELS, DEAL_TYPE_LABELS } from '../../lib/types'
 import { formatCurrency } from '../../lib/format'
+import { fetchContactsOfClient } from '../../lib/contactOps'
 
 const RESULT_CONFIG = {
   win:     { label: 'Thắng',   bg: 'bg-green-50  border-green-200  text-green-700',  dot: 'bg-green-500'  },
@@ -54,14 +55,13 @@ export function WinLossSection({ clients }: Props) {
   useEffect(() => { load() }, [user])
 
   useEffect(() => {
-    if (!form.client_id) { setContacts([]); return }
-    supabase.from('contacts').select('*').eq('client_id', form.client_id).eq('is_active', true).order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (error) { setContacts([]); return }
-        const list = (data as Contact[]) || []
-        list.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
-        setContacts(list)
-      })
+    const cid = form.client_id
+    if (!cid) { setContacts([]); return }
+    // Một người phụ trách được nhiều công ty (migration 145) — helper lo phần
+    // tra bảng nối và xếp liên hệ chính của ĐÚNG công ty này lên đầu.
+    fetchContactsOfClient(cid, { activeOnly: true })
+      .then(setContacts)
+      .catch(() => setContacts([]))
   }, [form.client_id])
 
   async function load() {

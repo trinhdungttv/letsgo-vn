@@ -8,7 +8,7 @@ import { AlertTriangle, UserX, Trash2, X } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import type { Client, Contact } from '../../lib/types';
 import {
-  getContactUsage, deleteContact, deactivateContact,
+  getContactUsage, deleteContact, deactivateContact, clientIdsOf,
   type ContactUsage,
 } from '../../lib/contactOps';
 
@@ -72,7 +72,9 @@ export default function ContactDeleteDialog({ contact, clients, onClose, onDone,
           <div className="text-[13px] text-gray-700">
             <b>{contact.name}</b>
             {contact.role ? ` — ${contact.role}` : ''}
-            {contact.client_id ? ` @ ${clientName(contact.client_id) || '—'}` : ' (chưa gắn công ty)'}
+            {clientIdsOf(contact).length
+              ? ` @ ${clientIdsOf(contact).map(id => clientName(id)).filter(Boolean).join(', ')}`
+              : ' (chưa gắn công ty)'}
           </div>
 
           {/* Lựa chọn 1 — an toàn */}
@@ -99,10 +101,13 @@ export default function ContactDeleteDialog({ contact, clients, onClose, onDone,
               <p className="text-[11.5px] text-gray-500 mt-1.5">Đang kiểm tra ràng buộc...</p>
             ) : (
               <>
-                {usage.isPrimary && (
+                {usage.primaryCount > 0 && (
                   <div className="flex items-start gap-1.5 mt-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>Đây đang là <b>liên hệ chính</b> của công ty — xoá xong công ty sẽ không còn liên hệ chính.</span>
+                    <span>
+                      Đây đang là <b>liên hệ chính</b> của {usage.primaryCount} công ty — xoá xong
+                      {usage.primaryCount > 1 ? ' các công ty đó' : ' công ty đó'} sẽ không còn liên hệ chính.
+                    </span>
                   </div>
                 )}
                 {refs.length > 0 ? (

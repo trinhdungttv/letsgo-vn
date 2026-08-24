@@ -14,6 +14,7 @@ import { formatDayRange, resolveDay } from './timelineDays';
 import { isSuspended, suspensionMonth, formatSuspensionDate, suspendedDuration } from './suspension';
 import { calcPnl, monthLabel, getManagerForMonth } from '../lib/format';
 import { calcExpectedDue } from '../lib/paymentDate';
+import { isPrimaryAt } from '../lib/contactOps';
 import type {
   Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory,
   ProjectPnl, ProjectPnlCost, PnlRevenueLine, PnlSplitSettings, CostCategory,
@@ -143,7 +144,12 @@ async function fetchRawData(client: Client, fromMonth: string, toMonth: string):
       .gte('month', fromMonth).lte('month', toMonth).order('month'),
     supabase.from('client_manager_history').select('*').eq('client_id', client.id).order('effective_from'),
     supabase.from('client_branch_history').select('*').eq('client_id', client.id).order('effective_from'),
-    supabase.from('contacts').select('*').eq('client_id', client.id).order('created_at'),
+    // Người liên hệ đi qua bảng nối contact_clients (migration 145): một người
+    // phụ trách được nhiều công ty, lọc thẳng contacts.client_id sẽ sót người.
+    supabase.from('contacts')
+      .select('*, contact_clients!inner(client_id, is_primary)')
+      .eq('contact_clients.client_id', client.id)
+      .order('created_at'),
     supabase.from('crm_deals').select('*, crm_products(name), contacts(name, phone)')
       .or(`lead_id.eq.${client.id},client_id.eq.${client.id}`).order('created_at'),
     supabase.from('client_gifts').select('*').eq('client_id', client.id).order('gift_date'),
@@ -337,7 +343,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
       L.push('| Tên | Vai trò | Điện thoại | Email | Chính |');
       L.push('|---|---|---|---|---|');
       for (const c of raw.contacts) {
-        L.push(`| ${c.name} | ${c.role || '—'} | ${c.phone || '—'} | ${c.email || '—'} | ${c.is_primary ? '✔' : ''} |`);
+        L.push(`| ${c.name} | ${c.role || '—'} | ${c.phone || '—'} | ${c.email || '—'} | ${isPrimaryAt(c, client.id) ? '✔' : ''} |`);
       }
       L.push('');
     }

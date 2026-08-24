@@ -15,6 +15,7 @@ import ContactDeleteDialog from './contacts/ContactDeleteDialog';
 import {
   setPrimaryContact, unsetPrimaryContact,
   deactivateContact, reactivateContact,
+  isPrimaryAt, linksOf,
 } from '../lib/contactOps';
 
 interface Props {
@@ -47,8 +48,10 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
   const handleTogglePrimary = async (c: Contact) => {
     if (!c.is_active) { toast('Người đã nghỉ không thể là liên hệ chính'); return; }
     try {
-      if (c.is_primary) await unsetPrimaryContact(c, ctx);
-      else await setPrimaryContact(c, ctx);
+      // Cờ thuộc về CÔNG TY ĐANG MỞ, không phải toàn bộ liên hệ: người này có
+      // thể là liên hệ chính ở đây mà vẫn là người thường ở công ty khác.
+      if (isPrimaryAt(c, clientId)) await unsetPrimaryContact(c, clientId, ctx);
+      else await setPrimaryContact(c, clientId, ctx);
       await reload();
       onChanged?.();
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -76,7 +79,7 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
   }
 
   const activeCount = contacts.filter(c => c.is_active).length;
-  const hasPrimary = contacts.some(c => c.is_primary);
+  const hasPrimary = contacts.some(c => isPrimaryAt(c, clientId));
 
   return (
     <>
@@ -128,18 +131,27 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
                     <td className="px-3 py-2.5">
                       <button
                         onClick={() => handleTogglePrimary(c)}
-                        title={c.is_primary ? 'Liên hệ chính — bấm để bỏ' : 'Đặt làm liên hệ chính'}
+                        title={isPrimaryAt(c, clientId) ? 'Liên hệ chính của công ty này — bấm để bỏ' : 'Đặt làm liên hệ chính của công ty này'}
                         className="inline-flex"
                       >
-                        <Star size={14} className={c.is_primary ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-400'} />
+                        <Star size={14} className={isPrimaryAt(c, clientId) ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-400'} />
                       </button>
                     </td>
                     <td className="px-3 py-2.5 font-medium text-[#111]">
                       <div className="flex items-center gap-1.5">
                         <AvatarCircle url={c.avatar_url} name={c.name} size={26} />
                         <span>{c.name}</span>
-                        {c.is_primary && (
+                        {isPrimaryAt(c, clientId) && (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">Liên hệ chính</span>
+                        )}
+                        {/* Người kiêm nhiệm nhiều nơi: nói rõ họ còn phụ trách đâu,
+                            để đừng ai tưởng bị nhập trùng rồi xoá nhầm. */}
+                        {linksOf(c).length > 1 && (
+                          <span
+                            title={`Còn phụ trách: ${linksOf(c).filter(l => l.client_id !== clientId).map(l => l.clients?.name).filter(Boolean).join(', ')}`}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                            Kiêm {linksOf(c).length - 1} nơi
+                          </span>
                         )}
                         {c.social_link && (
                           <a href={c.social_link} target="_blank" rel="noopener noreferrer"

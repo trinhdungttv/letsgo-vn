@@ -5,7 +5,7 @@
 // ============================================================================
 import { useState, useEffect, useRef, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { X, AlertTriangle, History, MapPin, ExternalLink, Search } from 'lucide-react';
+import { X, AlertTriangle, History, MapPin, ExternalLink, Search, Star, Plus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import type { Client, Contact, ContactClientHistory } from '../../lib/types';
@@ -16,7 +16,7 @@ import SpecialDatesEditor, { type SpecialDateDraft } from './SpecialDatesEditor'
 import { fetchSpecialDates, saveSpecialDates } from '../../lib/contactSpecialDates';
 import {
   CONTACT_CHANNELS, emptyContactForm, contactToForm,
-  saveContact, findPhoneDuplicates,
+  saveContact, findPhoneDuplicates, clientIdsOf, linksOf,
   type ContactFormValues,
 } from '../../lib/contactOps';
 
@@ -187,9 +187,15 @@ export default function ContactFormModal({
     setPickedId(id);
     const c = pool.find(x => x.id === id);
     if (!c) { setForm(emptyContactForm(defaultClientId)); return; }
-    // Nạp toàn bộ dữ liệu người đó rồi gắn vào công ty đang mở — vẫn là 1 bản ghi,
-    // không tạo bản sao.
-    setForm({ ...contactToForm(c), client_id: defaultClientId });
+    // Nạp toàn bộ dữ liệu người đó rồi GẮN THÊM công ty đang mở — vẫn là 1 bản
+    // ghi, không tạo bản sao, và không đụng tới các công ty họ đang phụ trách.
+    const f = contactToForm(c);
+    setForm({
+      ...f,
+      client_ids: defaultClientId && !f.client_ids.includes(defaultClientId)
+        ? [...f.client_ids, defaultClientId]
+        : f.client_ids,
+    });
   };
 
   const picked = pool.find(x => x.id === pickedId) || null;
@@ -225,8 +231,25 @@ export default function ContactFormModal({
     }
   };
 
-  const isLinked = !!form.client_id;
-  const movedCompany = !!contact && (contact.client_id || '') !== form.client_id;
+  const isLinked = form.client_ids.length > 0;
+  // Công ty được gắn thêm / gỡ ra so với lúc mở form — để cảnh báo trước khi lưu.
+  const beforeIds = contact ? clientIdsOf(contact) : [];
+  const addedClients = form.client_ids.filter(id => !beforeIds.includes(id));
+  const removedClients = beforeIds.filter(id => !form.client_ids.includes(id));
+
+  const toggleClient = (id: string, on: boolean) => setForm(prev => ({
+    ...prev,
+    client_ids: on ? [...prev.client_ids, id] : prev.client_ids.filter(x => x !== id),
+    // Gỡ công ty thì cờ liên hệ chính của công ty đó cũng mất theo.
+    primary_client_ids: on ? prev.primary_client_ids : prev.primary_client_ids.filter(x => x !== id),
+  }));
+
+  const togglePrimary = (id: string) => setForm(prev => ({
+    ...prev,
+    primary_client_ids: prev.primary_client_ids.includes(id)
+      ? prev.primary_client_ids.filter(x => x !== id)
+      : [...prev.primary_client_ids, id],
+  }));
 
   const field = 'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
   const label = 'block text-xs font-semibold text-gray-700 mb-1';
@@ -312,7 +335,9 @@ export default function ContactFormModal({
                         {dupes.map(d => (
                           <li key={d.id}>
                             • <b>{d.name}</b>{d.role ? ` — ${d.role}` : ''}
-                            {d.clients?.name ? ` @ ${d.clients.name}` : ' (chưa gắn công ty)'}
+                            {linksOf(d).length
+                              ? ` @ ${linksOf(d).map(l => l.clients?.name).filter(Boolean).join(', ')}`
+                              : ' (chưa gắn công ty)'}
                             {!d.is_active && ' · đã nghỉ'}
                           </li>
                         ))}
@@ -330,23 +355,57 @@ export default function ContactFormModal({
                 <label className={label}>Chức vụ</label>
                 <RoleSelect value={form.role} onChange={v => setForm(prev => ({ ...prev, role: v }))} toast={toast} className={field} />
               </div>
-              <div>
-                <label className={label}>Gắn với công ty</label>
-                <select value={form.client_id}
-                  onChange={e => setForm(prev => ({
-                    ...prev,
-                    client_id: e.target.value,
-                    // Cờ "liên hệ chính" thuộc về công ty cũ — đổi công ty thì
-                    // bỏ cờ, muốn giữ thì tick lại cho công ty mới.
-                    is_primary: e.target.value === (contact?.client_id || '') ? prev.is_primary : false,
-                  }))}
-                  className={field}>
-                  <option value="">— Chưa gắn công ty —</option>
-                  {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
-                </select>
-                {movedCompany && (
+              {/* Một người có thể phụ trách nhiều công ty (nhiều nhà máy của cùng
+                  tập đoàn). Các công ty ngang hàng; ngôi sao = liên hệ chính
+                  RIÊNG của công ty đó. */}
+              <div className="md:col-span-2">
+                <label className={label}>Công ty phụ trách</label>
+                <div className="border border-gray-300 rounded-lg divide-y divide-gray-100">
+                  {form.client_ids.length === 0 ? (
+                    <p className="px-3 py-2.5 text-xs text-gray-400 italic">Chưa gắn công ty nào</p>
+                  ) : (
+                    [...form.client_ids]
+                      .sort((a, b) => (clientName(a) || '').localeCompare(clientName(b) || '', 'vi'))
+                      .map(id => {
+                        const isPri = form.primary_client_ids.includes(id);
+                        return (
+                          <div key={id} className="flex items-center gap-2 px-2.5 py-2">
+                            <button type="button" onClick={() => togglePrimary(id)} disabled={!form.is_active}
+                              title={!form.is_active ? 'Người đã nghỉ không thể là liên hệ chính'
+                                : isPri ? 'Đang là liên hệ chính — bấm để bỏ' : 'Đặt làm liên hệ chính của công ty này'}
+                              className="shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Star className={`w-4 h-4 ${isPri ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-400'}`} />
+                            </button>
+                            <span className="flex-1 text-[13px] text-gray-800 min-w-0 truncate">{clientName(id) || 'Công ty đã xoá'}</span>
+                            {isPri && <span className="text-[10.5px] font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full shrink-0">Liên hệ chính</span>}
+                            <button type="button" onClick={() => toggleClient(id, false)} title="Gỡ công ty này"
+                              className="p-1 rounded hover:bg-red-50 shrink-0">
+                              <X className="w-3.5 h-3.5 text-gray-400 hover:text-red-500" />
+                            </button>
+                          </div>
+                        );
+                      })
+                  )}
+                  <div className="flex items-center gap-1.5 px-2.5 py-2 bg-gray-50/60">
+                    <Plus className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                    <select value="" onChange={e => { if (e.target.value) toggleClient(e.target.value, true); }}
+                      className="flex-1 text-xs bg-transparent focus:outline-none text-gray-600">
+                      <option value="">Thêm công ty…</option>
+                      {clients
+                        .filter(cl => !form.client_ids.includes(cl.id))
+                        .map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {form.client_ids.length > 1 && (
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Kiêm nhiệm {form.client_ids.length} công ty — người này sẽ hiện trong Hồ sơ chăm sóc của cả {form.client_ids.length} nơi.
+                  </p>
+                )}
+                {(addedClients.length > 0 || removedClients.length > 0) && (
                   <p className="text-[11px] text-amber-700 mt-1">
-                    Đổi công ty: {clientName(contact!.client_id) || 'chưa gắn'} → {clientName(form.client_id || null) || 'chưa gắn'}.
+                    {addedClients.length > 0 && <>Gắn thêm: {addedClients.map(id => clientName(id)).filter(Boolean).join(', ')}. </>}
+                    {removedClients.length > 0 && <>Gỡ khỏi: {removedClients.map(id => clientName(id)).filter(Boolean).join(', ')}. </>}
                     Thay đổi sẽ được ghi vào lịch sử.
                   </p>
                 )}
@@ -420,19 +479,16 @@ export default function ContactFormModal({
                   </span>
                 )}
               </div>
-              <label className={`flex items-center gap-2 select-none ${isLinked ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
-                <input type="checkbox" disabled={!isLinked} checked={form.is_primary}
-                  onChange={e => setForm(prev => ({ ...prev, is_primary: e.target.checked }))} className="w-4 h-4 accent-amber-500" />
-                <span className="text-[13px] text-gray-700">
-                  Là <b>liên hệ chính</b> của công ty
-                  {!isLinked && <span className="text-[11px] text-gray-500"> — cần gắn công ty trước</span>}
-                </span>
-              </label>
-              {form.is_primary && isLinked && (
-                <p className="text-[11px] text-gray-500 pl-6">
-                  Mỗi công ty chỉ có 1 liên hệ chính — người đang giữ cờ này sẽ tự động được bỏ.
-                </p>
-              )}
+              {/* Cờ "liên hệ chính" giờ đặt riêng cho từng công ty ở khối
+                  "Công ty phụ trách" phía trên — một người có thể là liên hệ
+                  chính ở công ty A mà không phải ở công ty B. */}
+              <p className="text-[11.5px] text-gray-500">
+                {!isLinked
+                  ? 'Chưa gắn công ty nên chưa đặt được liên hệ chính.'
+                  : form.primary_client_ids.length === 0
+                    ? 'Chưa là liên hệ chính ở đâu — bấm ngôi sao cạnh tên công ty ở trên để đặt.'
+                    : `Liên hệ chính của: ${form.primary_client_ids.map(id => clientName(id)).filter(Boolean).join(', ')}. Mỗi công ty chỉ có 1 người — ai đang giữ cờ sẽ tự động được bỏ.`}
+              </p>
             </div>
           </div>
 

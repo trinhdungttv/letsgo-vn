@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+import { fetchContactsOfClient } from '../lib/contactOps';
 import type { Contact } from '../lib/types';
 
 /**
  * Đọc danh sách người liên hệ của MỘT công ty.
  * Hook này chỉ đọc — mọi thao tác thêm/sửa/gắn công ty/ngưng/xoá đều nằm ở
  * `lib/contactOps.ts` để trang Khách hàng và trang CSKH chạy chung một logic.
+ *
+ * Từ migration 145 quan hệ nằm ở bảng nối `contact_clients` và một người phụ
+ * trách được nhiều công ty; `fetchContactsOfClient` lo phần đó, kể cả khi DB
+ * chưa kịp chạy migration.
  */
 export function useContacts(clientId: string) {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -17,15 +21,7 @@ export function useContacts(clientId: string) {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: err } = await supabase
-        .from('contacts')
-        .select('*, clients(name)')
-        .eq('client_id', clientId)
-        .order('is_primary', { ascending: false })
-        .order('is_active', { ascending: false })
-        .order('created_at', { ascending: false });
-      if (err) throw err;
-      setContacts((data || []) as Contact[]);
+      setContacts(await fetchContactsOfClient(clientId));
     } catch (e: any) {
       setError(e.message);
     } finally {

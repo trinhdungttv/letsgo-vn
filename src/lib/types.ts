@@ -784,8 +784,19 @@ export interface CRMActivity {
   created_at: string;
 }
 
+/** Một dòng nối người liên hệ ↔ công ty (bảng contact_clients, migration 145). */
+export interface ContactClientLink {
+  client_id: string;
+  /** Người này là liên hệ chính CỦA CÔNG TY NÀY. Mỗi công ty tối đa 1 người. */
+  is_primary: boolean;
+  created_at?: string;
+  clients?: { name: string } | null;
+}
+
 export interface Contact {
   id: string;
+  /** LỖI THỜI — cột soi, tự đồng bộ theo dòng nối cũ nhất (migration 145).
+   *  Nguồn thật là `contact_clients`; đọc qua helper trong lib/contactOps. */
   client_id: string | null;
   name: string;
   phone: string | null;
@@ -809,6 +820,9 @@ export interface Contact {
   created_at: string;
   updated_at: string;
   clients?: { name: string } | null;
+  /** Toàn bộ công ty người này phụ trách — NGANG HÀNG, không cái nào là "chính".
+   *  Nạp kèm khi select; rỗng/undefined nghĩa là chưa gắn công ty nào. */
+  contact_clients?: ContactClientLink[];
 }
 
 /** Một lần người liên hệ được gắn / chuyển / gỡ khỏi công ty. Bản ghi bất biến. */

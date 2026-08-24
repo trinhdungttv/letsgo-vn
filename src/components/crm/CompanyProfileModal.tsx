@@ -12,7 +12,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { queueGoogleSync } from '../../lib/googleSync';
 import { logActivity } from '../../lib/audit';
-import { linkContactToClient } from '../../lib/contactOps';
+import { addContactClient, clientIdsOf, isPrimaryAt } from '../../lib/contactOps';
 import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
@@ -261,16 +261,18 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
 
   // ── Ô chọn "Người liên hệ (CSKH)" ─────────────────────────────────────────
   // Nguồn dữ liệu là bảng `contacts` — cùng gốc với CRM → CSKH → Danh sách liên
-  // hệ, nên gắn ở đâu cũng ra kết quả như nhau. Chỉ liệt kê người THUỘC ĐÚNG
-  // công ty này, cộng thêm nhóm "chưa gắn công ty" để gắn nhanh tại chỗ.
+  // hệ, nên gắn ở đâu cũng ra kết quả như nhau. Chỉ liệt kê người CÓ PHỤ TRÁCH
+  // công ty này (kể cả khi họ kiêm nhiệm thêm nơi khác), cộng nhóm "chưa gắn
+  // công ty" để gắn nhanh tại chỗ.
   const ownContacts = useMemo(() => {
-    const list = entry.client_id ? contacts.filter(c => c.client_id === entry.client_id) : [];
+    const cid = entry.client_id;
+    const list = cid ? contacts.filter(c => clientIdsOf(c).includes(cid)) : [];
     // Người đang được chọn luôn phải có mặt trong danh sách — kể cả khi đã nghỉ
     // hoặc đã chuyển công ty — nếu không ô select sẽ hiện trống dù DB vẫn có.
     const cur = entry.contact_id ? contacts.find(c => c.id === entry.contact_id) : null;
     if (cur && !list.some(c => c.id === cur.id)) list.unshift(cur);
     return [...list].sort((a, b) =>
-      (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) ||
+      Number(cid ? isPrimaryAt(b, cid) : false) - Number(cid ? isPrimaryAt(a, cid) : false) ||
       (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0) ||
       a.name.localeCompare(b.name, 'vi')
     );
@@ -278,18 +280,19 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
 
   const freeContacts = useMemo(
     () => contacts
-      .filter(c => !c.client_id && c.id !== entry.contact_id)
+      .filter(c => clientIdsOf(c).length === 0 && c.id !== entry.contact_id)
       .sort((a, b) => a.name.localeCompare(b.name, 'vi')),
     [contacts, entry.contact_id]
   );
 
   const handlePickContact = async (contactId: string | null) => {
     const contact = contactId ? contacts.find(c => c.id === contactId) || null : null;
-    // Chọn một người ở nhóm "chưa gắn công ty" = gắn luôn người đó vào công ty
-    // này, để trang CSKH thấy ngay công ty gắn thay vì lệch nhau.
-    if (contact && entry.client_id && !contact.client_id) {
+    // Chọn một người chưa gắn công ty này = gắn thêm họ vào đây, để trang CSKH
+    // thấy ngay công ty gắn thay vì lệch nhau. Các công ty khác họ đang phụ
+    // trách được giữ nguyên.
+    if (contact && entry.client_id && !clientIdsOf(contact).includes(entry.client_id)) {
       try {
-        await linkContactToClient(contact, entry.client_id, {
+        await addContactClient(contact, entry.client_id, {
           user, clientName: () => entry.company_name,
         });
         toast(`Đã gắn "${contact.name}" vào ${entry.company_name}`);
@@ -830,7 +833,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               <optgroup label="Người liên hệ của công ty này">
                 {ownContacts.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.is_primary ? '★ ' : ''}{c.name}{c.role ? ` — ${c.role}` : ''}{c.is_active ? '' : ' (đã nghỉ)'}
+                    {entry.client_id && isPrimaryAt(c, entry.client_id) ? '★ ' : ''}{c.name}{c.role ? ` — ${c.role}` : ''}{c.is_active ? '' : ' (đã nghỉ)'}
                   </option>
                 ))}
               </optgroup>

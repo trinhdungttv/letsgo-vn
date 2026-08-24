@@ -354,7 +354,7 @@ function AppInner() {
           />
         )}
         {page === 'crm-leads' && (
-          <CRMLeads clients={clients} products={products} toast={toast} />
+          <CRMLeads clients={clients} products={products} onSelectClient={handleSelectClient} toast={toast} />
         )}
         {page === 'crm-prods' && (
           <CRMProds

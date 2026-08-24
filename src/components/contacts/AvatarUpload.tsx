@@ -8,6 +8,7 @@ import { useState, useRef } from 'react';
 import { Camera, Trash2, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resizeImage, formatBytes } from '../../lib/imageResize';
+import { personInitial } from '../../lib/vnName';
 
 /** Ảnh nguồn quá lớn thì canvas dễ hết bộ nhớ trên máy yếu — chặn từ đầu. */
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 export function AvatarCircle({ url, name, size = 36 }: { url?: string | null; name?: string; size?: number }) {
-  const initial = (name || '?').trim().charAt(0).toUpperCase();
+  const initial = personInitial(name);
   if (url) {
     return (
       <img src={url} alt={name || ''} width={size} height={size} loading="lazy"

@@ -11,6 +11,7 @@ import { logActivity } from '../lib/audit';
 import { useBranchData } from '../hooks/useBranchData';
 import { branchOptions, branchOf } from '../lib/branchRef';
 import { CompanyProfileModal, STAGES, RATING_CONFIG } from '../components/crm/CompanyProfileModal';
+import { selectContacts } from '../lib/contactOps';
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
@@ -67,13 +68,12 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     }
   }, [focusEntryId, localPipeline, onFocusHandled]);
 
-  // Lấy đủ client_id/is_primary/is_active: hồ sơ công ty lọc người liên hệ theo
-  // đúng công ty đang mở, thiếu các cột này thì ô chọn sẽ rỗng.
+  // Nạp kèm bảng nối contact_clients: hồ sơ công ty lọc người liên hệ theo đúng
+  // công ty đang mở, mà một người có thể phụ trách nhiều công ty (migration 145).
   const loadContacts = useCallback(() => {
-    supabase.from('contacts')
-      .select('id, name, phone, role, client_id, is_primary, is_active, clients(name)')
-      .eq('is_active', true).order('name')
-      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
+    selectContacts(q => q.eq('is_active', true).order('name'))
+      .then(setContacts)
+      .catch(() => {});
   }, []);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
