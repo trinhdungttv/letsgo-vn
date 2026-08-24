@@ -94,11 +94,11 @@ function daysUntilNextOccurrence(dateStr: string, today: Date): number {
 export async function fetchUpcomingContactEvents(withinDays = 7, today = new Date()): Promise<UpcomingEvent[]> {
   const [{ data: contacts }, { data: specials }] = await Promise.all([
     supabase.from('contacts')
-      .select('id, name, avatar_url, role, birthday, is_active, clients(name)')
+      .select('id, name, avatar_url, role, birthday, is_active, clients!contacts_client_id_fkey(name)')
       .eq('is_active', true)
       .not('birthday', 'is', null),
     supabase.from('contact_special_dates')
-      .select('id, contact_id, label, date, contacts(name, avatar_url, role, is_active, clients(name))'),
+      .select('id, contact_id, label, date, contacts(name, avatar_url, role, is_active, clients!contacts_client_id_fkey(name))'),
   ]);
 
   const events: UpcomingEvent[] = [];

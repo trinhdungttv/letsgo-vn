@@ -15,15 +15,20 @@ import { supabase } from './supabase';
 import { logActivity } from './audit';
 import type { AppUser, Contact, ContactClientLink } from './types';
 
+// `contacts.client_id` (cột soi, FK contacts_client_id_fkey) và bảng nối
+// `contact_clients` CÙNG trỏ tới `clients` → PostgREST thấy 2 đường nối và từ
+// chối đoán nếu viết `clients(name)` trống trơn ("more than one relationship
+// was found"). Phải chỉ đích danh khoá ngoại `clients!contacts_client_id_fkey`
+// cho đường soi; đường qua contact_clients không mập mờ nên để nguyên.
 /** Các cột cần nạp kèm mỗi khi đọc liên hệ — luôn có đủ danh sách công ty. */
-export const CONTACT_SELECT = '*, clients(name), contact_clients(client_id, is_primary, created_at, clients(name))';
+export const CONTACT_SELECT = '*, clients!contacts_client_id_fkey(name), contact_clients(client_id, is_primary, created_at, clients(name))';
 
 // ── Chạy được cả khi DB chưa có bảng nối ────────────────────────────────────
 // Migration 145 do người dùng tự chạy trên Supabase. Nếu code lên trước SQL thì
 // mọi truy vấn kèm `contact_clients` sẽ lỗi và cả trang CSKH lẫn Hồ sơ chăm sóc
 // trắng bảng. Nên phần ĐỌC tự lùi về cột cũ (mỗi người 1 công ty) để app vẫn
 // dùng được; chỉ phần GHI mới báo là cần chạy migration.
-const CONTACT_SELECT_LEGACY = '*, clients(name)';
+const CONTACT_SELECT_LEGACY = '*, clients!contacts_client_id_fkey(name)';
 
 /** null = chưa dò; true/false = DB đã/chưa có bảng nối. Dò một lần rồi nhớ. */
 let junctionReady: boolean | null = null;

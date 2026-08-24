@@ -153,7 +153,7 @@ export default function ContactFormModal({
   // Danh sách người đã có trong CSKH nhưng chưa gắn công ty — để gắn vào công ty này.
   useEffect(() => {
     if (!allowPickExisting || contact) return;
-    supabase.from('contacts').select('*, clients(name)').is('client_id', null).order('name')
+    supabase.from('contacts').select('*, clients!contacts_client_id_fkey(name)').is('client_id', null).order('name')
       .then(({ data }) => setPool((data || []) as Contact[]));
   }, [allowPickExisting, contact]);
 

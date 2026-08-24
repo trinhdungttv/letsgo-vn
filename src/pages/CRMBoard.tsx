@@ -100,7 +100,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
   const [draftSettings, setDraftSettings] = useState<PipelineSettings>(loadSettings);
 
   useEffect(() => {
-    supabase.from('contacts').select('id, name, phone, role, clients(name)').eq('is_active', true).order('name')
+    supabase.from('contacts').select('id, name, phone, role, clients!contacts_client_id_fkey(name)').eq('is_active', true).order('name')
       .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
   }, []);
 
