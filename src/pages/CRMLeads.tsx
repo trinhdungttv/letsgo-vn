@@ -8,6 +8,7 @@ import { RelationshipRadar } from '../components/crm/RelationshipRadar';
 import ContactFormModal from '../components/contacts/ContactFormModal';
 import { AvatarCircle } from '../components/contacts/AvatarUpload';
 import ContactDeleteDialog from '../components/contacts/ContactDeleteDialog';
+import ContactPreviewPopup from '../components/contacts/ContactPreviewPopup';
 import {
   addContactClient, removeContactClient, setPrimaryContact, unsetPrimaryContact,
   deactivateContact, reactivateContact, deleteContact,
@@ -70,6 +71,7 @@ const CRMLeads: React.FC<Props> = ({ clients, products, onSelectClient, toast })
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState<Contact | null>(null);
+  const [previewing, setPreviewing] = useState<Contact | null>(null);
 
   // Dòng đang mở ô chọn "gắn thêm công ty".
   const [linkingId, setLinkingId] = useState<string | null>(null);
@@ -502,17 +504,18 @@ const CRMLeads: React.FC<Props> = ({ clients, products, onSelectClient, toast })
                           </button>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
+                          <button onClick={() => setPreviewing(c)} title="Xem nhanh thông tin"
+                            className="flex items-center gap-2 text-left group/name">
                             <AvatarCircle url={c.avatar_url} name={c.name} size={32} />
                             <div>
-                              <div className="font-semibold text-gray-900">{c.name}</div>
+                              <div className="font-semibold text-gray-900 group-hover/name:text-blue-600 group-hover/name:underline underline-offset-2 transition">{c.name}</div>
                               {primaryClientIdsOf(c).length > 0 && (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700 mt-0.5">
                                   Liên hệ chính{primaryClientIdsOf(c).length > 1 ? ` · ${primaryClientIdsOf(c).length} cty` : ''}
                                 </span>
                               )}
                             </div>
-                          </div>
+                          </button>
                         </td>
                         <td className="px-4 py-3 min-w-[190px]">
                           {/* Mỗi công ty là một thẻ: bấm TÊN để mở hồ sơ khách hàng,
@@ -623,6 +626,15 @@ const CRMLeads: React.FC<Props> = ({ clients, products, onSelectClient, toast })
           onClose={() => setDeleting(null)}
           onDone={() => load()}
           toast={toast}
+        />
+      )}
+
+      {previewing && (
+        <ContactPreviewPopup
+          contact={previewing}
+          branches={branchesOfContact(previewing)}
+          onClose={() => setPreviewing(null)}
+          onEdit={() => { openEdit(previewing); setPreviewing(null); }}
         />
       )}
     </>
