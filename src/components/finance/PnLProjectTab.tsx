@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Plus, Trash2, Settings, X as XIcon, Check, Pencil } from 'lucide-react';
+import { Plus, Trash2, Settings, X as XIcon, Check, Pencil, CopyPlus, ArrowDownUp } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine, PnlInvoiceSettings, ServiceType } from '../../lib/types';
 import { branchOf } from '../../lib/branchRef';
 import { fmtTrieu, calcPnl, shiftMonth, monthLabel, getBranchForMonth, getBranchTypeForMonth } from '../../lib/format';
@@ -38,6 +38,16 @@ interface PnLProjectTabProps {
 const PAYER_LABEL: Record<CostPayer, string> = { lg: 'LGV trả', cn: 'CN trả', ch: 'Chung' };
 const PERIOD_LABELS = ['Kỳ 1', 'Kỳ 2', 'Kỳ 3', 'Kỳ 4'];
 
+type SortMode = 'name-asc' | 'name-desc' | 'newest' | 'oldest' | 'profit-desc';
+const SORT_KEY = 'pnl_project_sort';
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: 'name-asc', label: 'Tên A → Z' },
+  { value: 'name-desc', label: 'Tên Z → A' },
+  { value: 'newest', label: 'Mới thêm trước' },
+  { value: 'oldest', label: 'Thêm lâu nhất trước' },
+  { value: 'profit-desc', label: 'Lợi nhuận cao → thấp' },
+];
+
 export default function PnLProjectTab({
   clients, month, projectsPnl, pnlCosts,
   onAddProject, onUpdateProject, onDeleteProject,
@@ -53,6 +63,12 @@ export default function PnLProjectTab({
   const [newClientIds, setNewClientIds] = useState<string[]>([]);
   const [addSearch, setAddSearch] = useState('');
   const [filterBranch, setFilterBranch] = useState('all');
+  // Thứ tự hiển thị danh sách dự án ở sidebar — ghi nhớ lựa chọn của người dùng.
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(SORT_KEY) : null;
+    return SORT_OPTIONS.some(o => o.value === saved) ? (saved as SortMode) : 'name-asc';
+  });
+  useEffect(() => { try { localStorage.setItem(SORT_KEY, sortMode); } catch { /* bỏ qua */ } }, [sortMode]);
   const [splitEditOpen, setSplitEditOpen] = useState(false);
   const [splitEditMode, setSplitEditMode] = useState<'permanent' | 'temporary'>('permanent');
   const [splitEditMonths, setSplitEditMonths] = useState('2');
@@ -186,6 +202,27 @@ export default function PnLProjectTab({
     [availableClients, addSearch]
   );
 
+  // "Thêm giống tháng trước": lấy đúng danh sách công ty đã nhập P&L ở tháng liền trước
+  // và vẫn còn hợp tác ở tháng này, để nhập lại nhanh rồi tự điều chỉnh số liệu.
+  const prevMonth = useMemo(() => shiftMonth(month, -1), [month]);
+  const prevMonthClientIds = useMemo(
+    () => new Set(projectsPnl.filter(p => p.month === prevMonth).map(p => p.client_id)),
+    [projectsPnl, prevMonth]
+  );
+  const prevMonthTotal = prevMonthClientIds.size;
+  // Chỉ những công ty tháng trước CHƯA có trong tháng này (availableClients đã loại
+  // khách đã ngưng / đã nhập rồi).
+  const prevMonthAvailable = useMemo(
+    () => availableClients.filter(c => prevMonthClientIds.has(c.id)),
+    [availableClients, prevMonthClientIds]
+  );
+  const pickPrevMonth = () => {
+    if (prevMonthAvailable.length === 0) return;
+    setAdding(true);
+    setAddSearch('');
+    setNewClientIds(prev => [...new Set([...prev, ...prevMonthAvailable.map(c => c.id)])]);
+  };
+
   const selected = monthProjects.find(p => p.id === selId) || null;
 
   useEffect(() => {
@@ -236,6 +273,21 @@ export default function PnLProjectTab({
   const costs = selId ? (pnlCosts[selId] || []) : [];
   const hohRevenue = selId ? (revLines[selId] || []).filter(l => l.service_type === 'hoh').reduce((s, l) => s + (l.amount || 0), 0) : 0;
   const hasHoh = hohRevenue > 0 || costs.some(c => c.service_type === 'hoh');
+  // Danh sách sidebar sau khi lọc chi nhánh + sắp xếp theo lựa chọn.
+  const sortedProjects = useMemo(() => {
+    const nameOf = (p: ProjectPnl) => (p.clients?.name || mergedClients.find(c => c.id === p.client_id)?.name || '').trim();
+    const profitOf = (p: ProjectPnl) => calcPnl(p, pnlCosts[p.id] || [], taxOptsFor(p.client_id)).profit;
+    const arr = [...visibleProjects];
+    switch (sortMode) {
+      case 'name-asc': return arr.sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'vi'));
+      case 'name-desc': return arr.sort((a, b) => nameOf(b).localeCompare(nameOf(a), 'vi'));
+      case 'newest': return arr.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      case 'oldest': return arr.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+      case 'profit-desc': return arr.sort((a, b) => profitOf(b) - profitOf(a));
+      default: return arr;
+    }
+  }, [visibleProjects, sortMode, mergedClients, pnlCosts, taxOptsFor]);
+
   const r = selected ? calcPnl(selected, costs, taxOptsFor(selected.client_id), {
     revenue: hohRevenue, lgPct: selected.hoh_lg_pct ?? 100, cnPct: selected.hoh_cn_pct ?? 0,
   }) : null;
@@ -664,6 +716,24 @@ export default function PnLProjectTab({
             <Plus size={13} />
           </button>
         </div>
+        {prevMonthTotal > 0 && (
+          <div className="px-2.5 py-2 border-b border-[#E8E7E2]">
+            {prevMonthAvailable.length > 0 ? (
+              <button
+                onClick={pickPrevMonth}
+                title={`${monthLabel(prevMonth)} có ${prevMonthTotal} công ty — chọn sẵn ${prevMonthAvailable.length} công ty chưa nhập ở tháng này để bạn xem lại rồi bấm Thêm`}
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium border border-[#0F6E56] text-[#0F6E56] bg-white hover:bg-[#0F6E56] hover:text-white transition"
+              >
+                <CopyPlus size={12} />
+                Thêm giống {monthLabel(prevMonth).replace('Tháng ', 'T')} ({prevMonthAvailable.length})
+              </button>
+            ) : (
+              <div className="text-[10.5px] text-[#999] text-center">
+                Đã có đủ {prevMonthTotal} công ty của {monthLabel(prevMonth).replace('Tháng ', 'T')}
+              </div>
+            )}
+          </div>
+        )}
         {adding && (
           <div className="p-2.5 border-b border-[#E8E7E2] space-y-2">
             <input
@@ -692,6 +762,11 @@ export default function PnLProjectTab({
                     className="w-3.5 h-3.5"
                   />
                   {c.name}
+                  {prevMonthClientIds.has(c.id) && (
+                    <span className="text-[9.5px] px-1 py-0.5 rounded bg-[#EAF3DE] text-[#27500A] shrink-0" title={`Đã nhập ở ${monthLabel(prevMonth)}`}>
+                      {monthLabel(prevMonth).replace('Tháng ', 'T')}
+                    </span>
+                  )}
                   {c.cooperation_status === 'suspended' && (
                     <span className="text-[10px] text-orange-600 ml-1" title={suspensionLabel(c) ?? undefined}>
                       (Ngưng {formatSuspensionDate(c)} — tháng cuối)
@@ -703,13 +778,21 @@ export default function PnLProjectTab({
                 </label>
               ))}
             </div>
+            {prevMonthAvailable.length > 0 && (
+              <button
+                onClick={pickPrevMonth}
+                className="w-full py-1.5 rounded-lg text-[11px] font-medium border border-gray-300 bg-white text-[#111] hover:bg-[#F5F4EF] transition"
+              >
+                Chọn nhanh {prevMonthAvailable.length} công ty của {monthLabel(prevMonth).replace('Tháng ', 'T')}
+              </button>
+            )}
             <button onClick={handleAdd} className="w-full py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition">
               Thêm {newClientIds.length > 0 ? `${newClientIds.length} dự án` : 'dự án'}
             </button>
           </div>
         )}
         {monthProjects.length > 0 && (
-          <div className="px-2.5 py-2 border-b border-[#E8E7E2]">
+          <div className="px-2.5 py-2 border-b border-[#E8E7E2] space-y-1.5">
             <select
               value={filterBranch}
               onChange={e => setFilterBranch(e.target.value)}
@@ -720,12 +803,25 @@ export default function PnLProjectTab({
                 <option key={b} value={b}>{b} ({monthProjects.filter(p => (p.branch_manager || '—') === b).length})</option>
               ))}
             </select>
+            <div className="flex items-center gap-1.5">
+              <ArrowDownUp size={12} className="text-[#999] shrink-0" />
+              <select
+                value={sortMode}
+                onChange={e => setSortMode(e.target.value as SortMode)}
+                title="Thứ tự sắp xếp danh sách dự án"
+                className="flex-1 min-w-0 text-[11.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none bg-white"
+              >
+                {SORT_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
         <div>
-          {visibleProjects.length === 0 ? (
+          {sortedProjects.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px] text-[#999]">Chưa có dự án nào</div>
-          ) : visibleProjects.map(p => {
+          ) : sortedProjects.map(p => {
             const c = pnlCosts[p.id] || [];
             const rr = calcPnl(p, c, taxOptsFor(p.client_id));
             const gtldRevenue = (revLines[p.id] || []).filter(l => l.service_type === 'recruitment').reduce((s, l) => s + (l.amount || 0), 0);
