@@ -302,6 +302,10 @@ export default function PnLProjectTab({
   }, [selId]);
 
   const [confirmAction, setConfirmAction] = useState<{ run: () => void; revert?: () => void } | null>(null);
+  // Xác nhận xoá 1 dòng chi phí của tháng đang mở.
+  const [pendingDeleteCost, setPendingDeleteCost] = useState<ProjectPnlCost | null>(null);
+  // Xác nhận xoá hạng mục chi phí (ảnh hưởng mọi tháng, mọi dự án).
+  const [pendingDeleteCat, setPendingDeleteCat] = useState<{ id: string; label: string; usedBy: number | null } | null>(null);
   const guard = (run: () => void, revert?: () => void) => {
     if (lockedSnapshot) setConfirmAction({ run, revert });
     else run();
@@ -586,16 +590,37 @@ export default function PnLProjectTab({
     } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
   };
 
+  // Xoá hạng mục là thao tác TOÀN HỆ THỐNG (mọi tháng, mọi dự án) — khác hẳn xoá
+  // 1 dòng chi phí. Đếm số dòng đang dùng nhãn này để cảnh báo trước khi xoá.
+  const askDeleteCategory = async (cat: CostCategory) => {
+    let usedBy: number | null = null;
+    try {
+      const { count } = await supabase
+        .from('projects_pnl_costs')
+        .select('id', { count: 'exact', head: true })
+        .eq('label', cat.label);
+      usedBy = count ?? 0;
+    } catch { usedBy = null; }
+    setPendingDeleteCat({ id: cat.id, label: cat.label, usedBy });
+  };
+
   const handleDeleteCategory = async (id: string) => {
-    try { await onDeleteCategory(id); } catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
+    try { await onDeleteCategory(id); toast('Đã xoá hạng mục'); }
+    catch (e) { toast('Loi: ' + (e instanceof Error ? e.message : String(e))); }
   };
 
   const updateCostField = async (cost: ProjectPnlCost, fields: Partial<Omit<ProjectPnlCost, 'id' | 'pnl_id'>>) => {
     try { await onUpdateCost(cost.id, fields); } catch (e) { toast('Lỗi: ' + (e instanceof Error ? e.message : String(e))); }
   };
 
+  // Xoá 1 khoản chi phí: CHỈ tác động đúng dòng của tháng đang mở (projects_pnl_costs
+  // gắn theo pnl_id = 1 dự án × 1 tháng). Luôn hỏi xác nhận vì nút thùng rác nằm sát
+  // ô nhập liệu, rất dễ bấm nhầm và trước đây xoá ngay không hỏi.
   const removeCostRow = async (cost: ProjectPnlCost) => {
-    try { await onDeleteCost(cost.id, cost.pnl_id); } catch (e) { toast('Lỗi: ' + (e instanceof Error ? e.message : String(e))); }
+    try {
+      await onDeleteCost(cost.id, cost.pnl_id);
+      toast(`Đã xoá "${cost.label}" khỏi ${monthLabel(month)} — các tháng khác giữ nguyên`);
+    } catch (e) { toast('Lỗi: ' + (e instanceof Error ? e.message : String(e))); }
   };
 
   const applySplitPolicy = async () => {
@@ -1328,7 +1353,8 @@ export default function PnLProjectTab({
                         </select>
                       </td>
                       <td className="py-1.5 text-center">
-                        <button onClick={() => guard(() => removeCostRow(c))} className="text-[#bbb] hover:text-red-600 transition">
+                        <button onClick={() => setPendingDeleteCost(c)} title={`Xoá khoản này khỏi ${monthLabel(month)}`}
+                          className="text-[#bbb] hover:text-red-600 transition">
                           <Trash2 size={13} />
                         </button>
                       </td>
@@ -1626,7 +1652,7 @@ export default function PnLProjectTab({
                       </div>
                       <button onClick={() => { setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition shrink-0"><Pencil size={12} /></button>
-                      <button onClick={() => handleDeleteCategory(cat.id)}
+                      <button onClick={() => askDeleteCategory(cat)} title="Xoá hạng mục khỏi toàn hệ thống"
                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition shrink-0"><Trash2 size={12} /></button>
                     </>
                   )}
@@ -1743,6 +1769,75 @@ export default function PnLProjectTab({
               </button>
               <button onClick={() => setInvoiceSettingsOpen(false)} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-white transition">
                 Huy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingDeleteCost && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCost(null); }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[380px]">
+            <div className="text-[13px] font-semibold text-[#111] mb-2">Xoá khoản chi phí này?</div>
+            <div className="text-[12px] text-[#666] mb-2">
+              <strong className="text-[#111]">{pendingDeleteCost.label}</strong>
+              {pendingDeleteCost.period_label ? ` · ${pendingDeleteCost.period_label}` : ''}
+              {' — '}
+              <strong className={pendingDeleteCost.value ? 'text-red-600' : 'text-[#999]'}>
+                {(pendingDeleteCost.value || 0).toLocaleString('vi-VN')} đ
+              </strong>
+            </div>
+            <div className="text-[11.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2 mb-4">
+              Chỉ xoá trong <strong>{monthLabel(month)}</strong> của dự án này. Các tháng trước và sau giữ nguyên.
+            </div>
+            {(pendingDeleteCost.value || 0) > 0 && (
+              <div className="text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mb-4">
+                ⚠ Khoản này đang có số liệu — xoá xong sẽ phải nhập lại bằng tay.
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { const c = pendingDeleteCost; setPendingDeleteCost(null); removeCostRow(c); }}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-red-600 text-white hover:bg-red-700 transition"
+              >
+                Xoá khỏi {monthLabel(month)}
+              </button>
+              <button
+                onClick={() => setPendingDeleteCost(null)}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition"
+              >
+                Huỷ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingDeleteCat && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70]" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCat(null); }}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 w-[400px]">
+            <div className="text-[13px] font-semibold text-[#111] mb-2">Xoá hạng mục chi phí?</div>
+            <div className="text-[12px] text-[#666] mb-2">
+              Hạng mục <strong className="text-[#111]">{pendingDeleteCat.label}</strong> sẽ biến mất khỏi danh sách chọn.
+            </div>
+            <div className="text-[11.5px] text-red-800 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 mb-4">
+              ⚠ Đây là thao tác <strong>toàn hệ thống</strong> — mọi tháng, mọi dự án, không riêng {monthLabel(month)}.
+              {pendingDeleteCat.usedBy !== null && pendingDeleteCat.usedBy > 0 && (
+                <> Hiện có <strong>{pendingDeleteCat.usedBy}</strong> dòng chi phí đang dùng nhãn này; các dòng đó vẫn giữ số liệu nhưng sẽ bị xếp về nhóm "Chi phí chung".</>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { const id = pendingDeleteCat.id; setPendingDeleteCat(null); handleDeleteCategory(id); }}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium bg-red-600 text-white hover:bg-red-700 transition"
+              >
+                Vẫn xoá hạng mục
+              </button>
+              <button
+                onClick={() => setPendingDeleteCat(null)}
+                className="flex-1 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] transition"
+              >
+                Huỷ
               </button>
             </div>
           </div>
