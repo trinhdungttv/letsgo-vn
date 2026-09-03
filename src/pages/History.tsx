@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RotateCcw, Archive, Database, Clock, HardDriveDownload, ListChecks } from 'lucide-react';
+import { RotateCcw, Archive, Database, Clock, HardDriveDownload, ListChecks, Trash2, AlertTriangle } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { undoActivity, logActivity } from '../lib/audit';
 import { tableLabel, TABLE_LABELS } from '../lib/historyTables';
+import { countClientImpact, purgeClient, type ClientImpact } from '../lib/clientPurge';
 import DataHistoryTab from '../components/history/DataHistoryTab';
 import TimeMachineTab from '../components/history/TimeMachineTab';
 import BackupTab from '../components/history/BackupTab';
@@ -39,6 +40,11 @@ export default function History({ toast, onReload }: Props) {
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [archivedClients, setArchivedClients] = useState<Client[]>([]);
   const [loadingArchive, setLoadingArchive] = useState(true);
+  // Xoá vĩnh viễn: mở bảng "sẽ mất những gì" + bắt gõ lại tên công ty.
+  const [purgeTarget, setPurgeTarget] = useState<Client | null>(null);
+  const [purgeImpact, setPurgeImpact] = useState<ClientImpact | null>(null);
+  const [purgeTyped, setPurgeTyped] = useState('');
+  const [purging, setPurging] = useState(false);
 
   const loadArchived = useCallback(async () => {
     setLoadingArchive(true);
@@ -67,6 +73,39 @@ export default function History({ toast, onReload }: Props) {
       toast('Lỗi: ' + err.message);
     } finally {
       setRestoringId(null);
+    }
+  };
+
+  const openPurge = async (c: Client) => {
+    setPurgeTarget(c); setPurgeImpact(null); setPurgeTyped('');
+    try {
+      setPurgeImpact(await countClientImpact(c.id));
+    } catch (err) {
+      toast('Không đọc được dữ liệu liên quan: ' + (err instanceof Error ? err.message : String(err)));
+      setPurgeTarget(null);
+    }
+  };
+
+  const handlePurge = async () => {
+    if (!purgeTarget) return;
+    const c = purgeTarget;
+    setPurging(true);
+    try {
+      // Ghi nhật ký TRƯỚC khi xoá, để log còn giữ nguyên nội dung công ty.
+      await logActivity({
+        user, action: 'delete', table: 'clients', recordId: c.id,
+        description: `Xoá VĨNH VIỄN công ty "${c.name}" khỏi Lưu trữ`,
+        oldData: c, newData: null,
+      });
+      await purgeClient(c.id);
+      toast(`Đã xoá vĩnh viễn "${c.name}"`);
+      setArchivedClients(prev => prev.filter(ac => ac.id !== c.id));
+      setPurgeTarget(null);
+      onReload();
+    } catch (err) {
+      toast('Lỗi xoá: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -129,6 +168,11 @@ export default function History({ toast, onReload }: Props) {
         {tab === 'backup' && <BackupTab toast={toast} />}
 
         {tab === 'archive' && (
+          <>
+          <div className="bg-gray-50 border border-gray-200 rounded-[10px] px-4 py-2.5 text-[12px] text-gray-500 mb-4">
+            Công ty bị "xóa" ở màn Khách hàng chỉ được <b>lưu trữ</b> — vẫn nằm trong database nên còn hiện ở vài ô chọn (ví dụ "Thêm dự án" của P&amp;L, kèm nhãn <i>Đã lưu trữ</i>).
+            Bấm <b>Khôi phục</b> để đưa trở lại, hoặc <b className="text-red-600">Xoá vĩnh viễn</b> để bỏ hẳn khỏi hệ thống.
+          </div>
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
@@ -152,9 +196,15 @@ export default function History({ toast, onReload }: Props) {
                     <td className="px-3 py-2 text-[#888] whitespace-nowrap">{c.archived_at ? new Date(c.archived_at).toLocaleString('vi-VN') : '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {user?.role === 'admin' ? (
-                        <button onClick={() => handleRestore(c)} disabled={restoringId === c.id} className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline disabled:opacity-50">
-                          <RotateCcw size={11} /> {restoringId === c.id ? 'Đang xử lý...' : 'Khôi phục'}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => handleRestore(c)} disabled={restoringId === c.id} className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline disabled:opacity-50">
+                            <RotateCcw size={11} /> {restoringId === c.id ? 'Đang xử lý...' : 'Khôi phục'}
+                          </button>
+                          <button onClick={() => openPurge(c)} title="Xoá hẳn khỏi hệ thống, không hiện ở bất kỳ danh sách nào nữa"
+                            className="inline-flex items-center gap-1 text-[11.5px] text-red-600 hover:underline">
+                            <Trash2 size={11} /> Xoá vĩnh viễn
+                          </button>
+                        </div>
                       ) : null}
                     </td>
                   </tr>
@@ -163,6 +213,7 @@ export default function History({ toast, onReload }: Props) {
             </table>
             </div>
           </div>
+          </>
         )}
 
         {tab === 'activity' && (
@@ -232,6 +283,92 @@ export default function History({ toast, onReload }: Props) {
         </>
         )}
       </div>
+
+      {purgeTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget && !purging) setPurgeTarget(null); }}>
+          <div className="bg-white rounded-xl shadow-2xl w-[520px] max-h-[85vh] overflow-y-auto">
+            <div className="px-5 py-4 border-b border-[#E8E7E2] flex items-center gap-2">
+              <AlertTriangle size={16} className="text-red-600 shrink-0" />
+              <span className="text-[13.5px] font-semibold text-[#111]">Xoá vĩnh viễn "{purgeTarget.name}"?</span>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <div className="text-[12px] text-[#666]">
+                Khác với "Khôi phục", thao tác này bỏ hẳn công ty khỏi hệ thống — <strong className="text-[#111]">không hoàn tác được từ giao diện</strong>.
+              </div>
+
+              {purgeImpact === null ? (
+                <div className="text-[12px] text-[#999] py-3">Đang kiểm tra dữ liệu liên quan...</div>
+              ) : (
+                <>
+                  {purgeImpact.owned.length > 0 && (
+                    <div className="border border-red-200 bg-red-50 rounded-lg p-3">
+                      <div className="text-[11.5px] font-semibold text-red-800 mb-1.5">
+                        Sẽ xoá theo ({purgeImpact.ownedTotal} bản ghi):
+                      </div>
+                      <ul className="text-[11.5px] text-red-700 space-y-0.5">
+                        {purgeImpact.owned.map(t => (
+                          <li key={t.table}>• {t.label} — <strong>{t.count}</strong></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {purgeImpact.detach.length > 0 && (
+                    <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+                      <div className="text-[11.5px] font-semibold text-amber-800 mb-1.5">
+                        Giữ lại nhưng gỡ liên kết ({purgeImpact.detachTotal} bản ghi):
+                      </div>
+                      <ul className="text-[11.5px] text-amber-700 space-y-0.5">
+                        {purgeImpact.detach.map(t => (
+                          <li key={t.table}>• {t.label} — <strong>{t.count}</strong></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {purgeImpact.ownedTotal === 0 && purgeImpact.detachTotal === 0 && (
+                    <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3 text-[11.5px] text-emerald-800">
+                      Công ty này không có dữ liệu liên quan nào — xoá đi là sạch.
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="text-[11.5px] text-[#666] bg-[#F5F4EF] border border-[#E8E7E2] rounded-lg px-3 py-2">
+                Lưới an toàn: mọi dòng bị xoá vẫn được <b>Nhật ký Database</b> chụp lại, có thể dựng lại bằng <b>Cỗ máy thời gian</b> nếu cần.
+              </div>
+
+              <div>
+                <div className="text-[11.5px] text-[#666] mb-1.5">
+                  Gõ lại chính xác tên công ty để xác nhận: <strong className="text-[#111]">{purgeTarget.name}</strong>
+                </div>
+                <input
+                  autoFocus value={purgeTyped} onChange={e => setPurgeTyped(e.target.value)}
+                  placeholder="Nhập tên công ty..."
+                  className="w-full text-[12.5px] px-3 py-2 border border-gray-300 rounded-lg outline-none focus:border-red-500"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-4 border-t border-[#E8E7E2] flex gap-2">
+              <button
+                onClick={handlePurge}
+                disabled={purging || purgeImpact === null || purgeTyped.trim() !== purgeTarget.name}
+                className="flex-1 py-2 rounded-lg text-[12.5px] font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                {purging ? 'Đang xoá...' : 'Xoá vĩnh viễn'}
+              </button>
+              <button
+                onClick={() => setPurgeTarget(null)} disabled={purging}
+                className="flex-1 py-2 rounded-lg text-[12.5px] font-medium border border-gray-300 text-[#666] hover:bg-[#F5F4EF] disabled:opacity-40 transition"
+              >
+                Huỷ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
