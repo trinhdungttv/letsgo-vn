@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
-import { queueGoogleSync } from '../../lib/googleSync'
 import type { Client, Branch, WorkTask, TaskPriority } from '../../lib/types'
 import { branchOf } from '../../lib/branchRef'
 
@@ -15,7 +14,7 @@ interface Props {
 }
 
 export function GiaoViecModal({ clients, branches, toast, onClose, onCreated }: Props) {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [title, setTitle] = useState('')
   const [clientId, setClientId] = useState('')
   const [taskType, setTaskType] = useState('')
@@ -47,7 +46,6 @@ export function GiaoViecModal({ clients, branches, toast, onClose, onCreated }: 
     setSaving(false)
     if (error) { toast('Có lỗi khi lưu, thử lại'); return }
     toast('Đã giao việc thành công')
-    queueGoogleSync(token)   // nếu giao cho chính mình thì đẩy lên Google ngay; người khác sẽ nhận khi họ sync
     if (onCreated && data) onCreated(data as WorkTask)
     onClose()
   }

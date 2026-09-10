@@ -19,7 +19,6 @@ import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculato
 import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { queueGoogleSync } from '../lib/googleSync';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
 import type { Client, FinanceRecord, CRMPipelineEntry, CRMProduct, Page, KCNSummary, Branch } from '../lib/types';
@@ -86,7 +85,7 @@ function RailCard({ title, icon, count, action, children }: {
 }
 
 export default function Workspace({ clients, pipeline, products, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const { branches, updateBranch } = useBranchData();
 
   // Việc tạo tự động (tái ký HĐ) gắn luôn chi nhánh để khỏi phải vào sửa tay từng việc.
@@ -168,7 +167,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       setShowManualAdd(false);
       setManualSearch('');
       toast(`Đã tạo việc tái ký cho ${client.name}`);
-      queueGoogleSync(token);
     }
   }
 
@@ -196,7 +194,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       setRefreshToken(t => t + 1);
       toast(`Đã tạo ${toInsert.length} việc tái ký`);
       setSelectedContractIds(new Set());
-      queueGoogleSync(token);
     }
   }
 

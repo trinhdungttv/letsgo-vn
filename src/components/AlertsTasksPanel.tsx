@@ -5,7 +5,6 @@ import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib
 import { daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
-import { queueGoogleSync } from '../lib/googleSync';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done';
 
@@ -56,7 +55,7 @@ interface Props {
 }
 
 export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClient, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, isAdmin, onClientUpdate, clientToBranch }: Props) {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [suspendRequests, setSuspendRequests] = useState<CooperationSuspensionRequest[]>([]);
@@ -79,9 +78,9 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
       const doneSince = new Date(Date.now() - 60 * 86400000).toISOString();
       const [{ data: pipelineTasks }, { data: workTasks }, { data: doneRenewals }] = await Promise.all([
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('created_at', { ascending: false }),
-        supabase.from('work_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
+        supabase.from('work_tasks').select('*').is('deleted_at', null).neq('status', 'done').order('due_date', { ascending: true }),
         // Task tái ký đã hoàn tất gần đây — để hiện "Hoàn tất" và không tự sinh lại task mới
-        supabase.from('work_tasks').select('*').eq('task_type', 'Tái ký HĐ').eq('status', 'done').gte('completed_at', doneSince).order('completed_at', { ascending: false }),
+        supabase.from('work_tasks').select('*').is('deleted_at', null).eq('task_type', 'Tái ký HĐ').eq('status', 'done').gte('completed_at', doneSince).order('completed_at', { ascending: false }),
       ]);
 
       const allWorkTasks = (workTasks || []) as WorkTask[];
@@ -232,6 +231,7 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
         const { data: freshExisting } = await supabase
           .from('work_tasks')
           .select('client_id')
+          .is('deleted_at', null)
           .eq('task_type', 'Tái ký HĐ')
           .in('client_id', missing.map(c => c.id))
           .or(`status.neq.done,completed_at.gte.${new Date(Date.now() - 60 * 86400000).toISOString()}`);
@@ -257,7 +257,6 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
         }));
         if (!error) {
           await loadTasks();
-          queueGoogleSync(token);
         }
       } finally {
         syncInFlight.current = false;
@@ -283,7 +282,6 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
     if (detailTask?.id === task.id) setDetailTask(null);
     setDeleteConfirm(null);
     setDeleting(false);
-    queueGoogleSync(token);
   };
 
   // Tick hoàn thành — ghi ngược về Workspace/CRM (nguồn sự thật), panel chỉ ánh xạ lại.
@@ -302,7 +300,6 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
     }
     if (detailTask?.id === task.id) setDetailTask(null);
     await loadTasks();
-    queueGoogleSync(token);
   };
 
   const openDetail = async (task: DashboardTask) => {
