@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
+import { LinkedWorkTasks } from '../components/workspace/LinkedWorkTasks';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
@@ -1398,7 +1399,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 <SectionCard
                   id="cd-hist"
                   icon="🕘"
-                  title="Lịch sử thay đổi"
+                  title="Lịch sử & Công việc"
                   badge={`${managerHistory.length + branchHistory.length} mốc`}
                   open={sections.hist}
                   onToggle={() => toggleSection('hist')}
@@ -1430,6 +1431,10 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                   ) : (
                     <div className="text-[12.5px] text-[#888]">Chưa có lịch sử chuyển chi nhánh.</div>
                   )}
+
+                  {/* Việc gắn với khách này — đọc thẳng work_tasks của Workspace, không nhân bản dữ liệu. */}
+                  <div className="text-[11px] text-[#888] font-semibold uppercase tracking-wide mt-4 mb-1.5">Công việc & trao đổi</div>
+                  <LinkedWorkTasks clientId={client.id} />
                 </SectionCard>
               </div>
             </div>

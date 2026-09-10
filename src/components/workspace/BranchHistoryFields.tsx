@@ -7,6 +7,7 @@ import { formatDate } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import type { WorkspaceTask } from './MyWorkFeed'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
+import { LinkedWorkTasks } from './LinkedWorkTasks'
 
 interface Props {
   branch: Branch
@@ -693,7 +694,10 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
         )}
       </div>
 
-      {/* ── 4. Việc nội bộ liên kết (giữ nguyên) ── */}
+      {/* ── 4a. Việc của tôi gắn với chi nhánh này — cùng bản ghi work_tasks với Workspace ── */}
+      {branch.id && <LinkedWorkTasks branchId={branch.id} refreshKey={refreshKey} />}
+
+      {/* ── 4b. Việc nội bộ liên kết (giữ nguyên) ── */}
       {linkedTasks.length > 0 && (
         <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
           <div className="flex items-center gap-1.5 px-2.5 py-2 bg-[#fafafa] border-b border-[#E8E7E2]">

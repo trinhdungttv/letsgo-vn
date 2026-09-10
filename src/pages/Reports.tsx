@@ -132,6 +132,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from('work_tasks').select('*')
+        .is('deleted_at', null)
         .eq('task_type', 'Tái ký HĐ').order('created_at', { ascending: false });
       const tasks = (data ?? []) as WorkTask[];
       const byClient: Record<string, WorkTask> = {};

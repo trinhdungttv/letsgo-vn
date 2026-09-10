@@ -6,7 +6,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   ChevronDown, Check, X, Trash2, Pencil,
-  MessageSquare, History, Search, Plus,
+  MessageSquare, History, Search, Plus, SlidersHorizontal,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
@@ -14,8 +14,7 @@ import { logActivity } from '../../lib/audit'
 import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact, Branch, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
-import { queueGoogleSync, syncGoogleNow, pulledChanges } from '../../lib/googleSync'
-import { GoogleSyncCard } from './GoogleSyncCard'
+import { usePersistedState } from '../../hooks/usePersistedState'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
 import { todayISO } from '../../utils/suspension'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
@@ -67,6 +66,25 @@ const CATEGORY_TAG: Record<Category, string> = {
   'Hồ sơ':    'bg-violet-50 text-violet-700 border-violet-200',
   'Nội bộ':   'bg-slate-100 text-slate-600 border-slate-200',
   'Khác':     'bg-gray-100 text-gray-600 border-gray-200',
+}
+
+// ---- Nhãn hiển thị trên mỗi dòng việc: bật/tắt ở nút ⚙ đầu khối, nhớ theo trình duyệt ----
+const ROW_FIELDS = [
+  { key: 'category',  label: 'Loại việc' },
+  { key: 'status',    label: 'Trạng thái' },
+  { key: 'waiting',   label: 'Chờ ai · bao lâu' },
+  { key: 'remind',    label: 'Nút "Nhắc lại"' },
+  { key: 'branch',    label: 'Chi nhánh' },
+  { key: 'assignee',  label: 'Người nhận việc' },
+  { key: 'priority',  label: 'Mức ưu tiên' },
+  { key: 'comments',  label: 'Số bình luận' },
+] as const
+type RowFieldKey = typeof ROW_FIELDS[number]['key']
+
+// Chi nhánh tắt sẵn cho dòng việc đỡ rối; bật lại bất cứ lúc nào ở nút ⚙.
+const ROW_FIELDS_DEFAULT: Record<RowFieldKey, boolean> = {
+  category: true, status: true, waiting: true, remind: true,
+  branch: false, assignee: true, priority: true, comments: true,
 }
 
 // Quy tắc bản cũ (Workspace.tsx gốc getWorkTaskCategory): Thăm quan/Hỏi thăm CN → nhóm riêng, không rơi vào Khác
@@ -146,36 +164,8 @@ interface Props {
 }
 
 export function MyWorkFeed({ clients, pipelineEntries, products, branches, onClientUpdate, toast, onStatsChange, refreshToken = 0, quickAddSignal = 0, hideHistory }: Props) {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
-
-  // ---- Đồng bộ Google Calendar ----
-  // googleReload tăng khi sync kéo VỀ thay đổi từ Google -> effect tải data chạy lại.
-  const [googleReload, setGoogleReload] = useState(0)
-  const onGooglePulled = () => setGoogleReload(v => v + 1)
-  // Gọi sau mỗi thao tác tạo/sửa/xoá work_tasks: đẩy thay đổi lên Google (gom 2.5s, fire-and-forget).
-  const pingGoogle = () => queueGoogleSync(token, onGooglePulled)
-  // Poll chiều Google -> web: khi vào trang + mỗi 30s + ngay khi quay lại tab
-  // (Calendar API không có webhook nên không thể tức thời thật sự, đây là mức nhanh nhất hợp lý).
-  useEffect(() => {
-    if (!token) return
-    let cancelled = false
-    const pull = async () => {
-      const res = await syncGoogleNow(token)
-      if (!cancelled && pulledChanges(res?.summary) > 0) setGoogleReload(v => v + 1)
-    }
-    pull()
-    const timer = setInterval(pull, 30 * 1000)
-    const onVisible = () => { if (document.visibilityState === 'visible') pull() }
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', pull)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', pull)
-    }
-  }, [token])
 
   // ---- Data ----
   const [myTasks, setMyTasks] = useState<WorkTask[]>([])
@@ -254,9 +244,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     ;(async () => {
       setLoading(true)
       const [my, ws, dw, dws, pl, dpl] = await Promise.all([
-        supabase.from('work_tasks').select('*').eq('user_id', user.id).neq('status', 'done').order('due_date', { ascending: true }),
+        supabase.from('work_tasks').select('*').eq('user_id', user.id).is('deleted_at', null).neq('status', 'done').order('due_date', { ascending: true }),
         supabase.from('workspace_tasks').select('*').neq('status', 'done').order('deadline', { ascending: true }),
-        supabase.from('work_tasks').select('*').eq('user_id', user.id).eq('status', 'done').gte('completed_at', since).order('completed_at', { ascending: false }),
+        supabase.from('work_tasks').select('*').eq('user_id', user.id).is('deleted_at', null).eq('status', 'done').gte('completed_at', since).order('completed_at', { ascending: false }),
         supabase.from('workspace_tasks').select('*').eq('status', 'done').gte('created_at', since).order('created_at', { ascending: false }),
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('due_date', { ascending: true }),
         supabase.from('crm_pipeline_tasks').select('*').eq('status', 'done').gte('updated_at', since).order('updated_at', { ascending: false }),
@@ -287,7 +277,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       }
     })()
     return () => { cancelled = true }
-  }, [user, refreshToken, googleReload])
+  }, [user, refreshToken])
 
   // ---- Ẩn việc gắn KH đã ngưng hợp tác ----
   const suspendedClientIds = useMemo(
@@ -304,6 +294,21 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     }),
     [myTasks, suspendedClientIds]
   )
+
+  // ---- Nhãn nào hiện trên dòng việc ----
+  const [rowFields, setRowFields] = usePersistedState<Partial<Record<RowFieldKey, boolean>>>('lgvn_workfeed_rowfields', ROW_FIELDS_DEFAULT)
+  // Thiếu khoá (bản lưu cũ, hoặc vừa thêm nhãn mới) thì lấy mặc định thay vì coi như tắt.
+  const showField = (k: RowFieldKey) => rowFields[k] ?? ROW_FIELDS_DEFAULT[k]
+  const [fieldMenuOpen, setFieldMenuOpen] = useState(false)
+  const fieldMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!fieldMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (fieldMenuRef.current && !fieldMenuRef.current.contains(e.target as Node)) setFieldMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [fieldMenuOpen])
 
   // ---- Gộp + nhóm theo thời gian ----
   const [filter, setFilter] = useState<'Tất cả' | Category>('Tất cả')
@@ -456,7 +461,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
         user_id: user.id, client_id: null, title: qTitle.trim(), task_type: 'Văn phòng',
         due_date: qDue || todayStr(), priority: 'medium', branch_id: null, notes: null, status: 'pending',
       }).select().single()
-      if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]); pingGoogle() }
+      if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]) }
     } else if (qKind === 'pipeline') {
       // Gõ tên công ty mới → tạo 1 dòng crm_pipeline (giai đoạn "Tiềm năng") + 1 việc theo dõi đầu
       // tiên + 1 dòng market_leads liên kết (crm_id). Cùng 1 dữ liệu gốc nên hiện ngay ở cả
@@ -536,7 +541,6 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       resetFullForm()
       setFullForm(false)
       toast('Đã lưu công việc')
-      pingGoogle()
     }
   }
 
@@ -572,7 +576,6 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     setDoneWork(prev => [{ ...t, ...patch } as WorkTask, ...prev])
     setReportItem(null)
     await supabase.from('work_tasks').update(patch).eq('id', t.id)
-    pingGoogle()
     if (t.task_type === 'Tái ký HĐ' && newContractEnd && t.client_id) {
       await supabase.from('clients').update({ contract_end: newContractEnd }).eq('id', t.client_id)
       const client = clients.find(c => c.id === t.client_id)
@@ -637,7 +640,6 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     if (status === 'done') { startWorkDone(t); return }
     setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, status } : x))
     await supabase.from('work_tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', t.id)
-    pingGoogle()
   }
 
   async function changeDocStatus(t: WorkTask, step: typeof DOC_STATUS_STEPS[number]) {
@@ -652,7 +654,6 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     }
     setMyTasks(prev => prev.map(x => x.id === t.id ? { ...x, doc_status: step.key, status: 'in_progress', updated_at: now } : x))
     await supabase.from('work_tasks').update({ doc_status: step.key, status: 'in_progress', updated_at: now }).eq('id', t.id)
-    pingGoogle()
   }
 
   async function submitSuspend() {
@@ -680,17 +681,19 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     // Đánh dấu task Ngưng HĐ — còn hiện 1 ngày (badge đỏ) rồi tự ẩn theo quy tắc ân hạn
     const now2 = new Date().toISOString()
     await supabase.from('work_tasks').update({ doc_status: 'ngung_hd', status: 'ngung_hd', updated_at: now2 }).eq('id', suspendTask.id)
-    pingGoogle()
     setMyTasks(prev => prev.map(x => x.id === suspendTask.id ? { ...x, doc_status: 'ngung_hd', status: 'ngung_hd' as TaskStatus, updated_at: now2 } : x))
     setSuspendTask(null)
     setSuspendSaving(false)
     toast(isAdmin ? `Đã ngưng hợp tác với "${client.name}"` : 'Đã gửi yêu cầu ngưng HĐ — chờ Quản trị viên duyệt')
   }
 
+  // Xoá mềm: việc rời khỏi Workspace nhưng vẫn nằm trong lịch sử của Khách hàng /
+  // Chi nhánh. Google Calendar vẫn xoá event như cũ vì engine sync chỉ đọc việc còn
+  // hiệu lực — việc bị đánh dấu xoá cũng "biến mất" dưới góc nhìn của nó.
   async function deleteWork(id: string) {
     setMyTasks(prev => prev.filter(t => t.id !== id))
-    await supabase.from('work_tasks').delete().eq('id', id)
-    pingGoogle()
+    const now = new Date().toISOString()
+    await supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', id)
   }
 
   // ---- ③ «Chờ ai?»: suy từ trạng thái hồ sơ — Chưa/Đang soạn = đến lượt mình, Chờ duyệt = nội bộ, Chờ KH ký = khách ----
@@ -728,7 +731,6 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       const now = new Date().toISOString()
       setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, due_date: nd, updated_at: now } : x))
       await supabase.from('work_tasks').update({ due_date: nd, updated_at: now }).eq('id', it.id)
-      pingGoogle()
     } else if (it.ws) {
       setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, deadline: nd } : x))
       await supabase.from('workspace_tasks').update({ deadline: nd }).eq('id', it.id)
@@ -919,9 +921,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               ) : it.title}
             </div>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-              <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[it.category]}`}>{it.category}</span>
-              {/* Badge trạng thái hồ sơ luôn hiện (yêu cầu GĐ) — chỉ với việc Tái ký HĐ */}
-              {it.work?.task_type === 'Tái ký HĐ' && (() => {
+              {showField('category') && <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[it.category]}`}>{it.category}</span>}
+              {/* Badge trạng thái hồ sơ — chỉ với việc Tái ký HĐ */}
+              {showField('status') && it.work?.task_type === 'Tái ký HĐ' && (() => {
                 const key = (it.work!.doc_status as DocStatus | null) ?? 'chua_soan'
                 const step = DOC_STATUS_STEPS.find(s => s.key === key)
                 return step ? (
@@ -929,10 +931,10 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                 ) : null
               })()}
               {/* ③ «Chờ ai?» + nút Nhắc lưu vết đôn đốc */}
-              {wi && (
+              {showField('waiting') && wi && (
                 <span className={`text-[9.5px] font-bold px-2 py-px rounded-full border ${wi.cls}`}>{wi.label}</span>
               )}
-              {wi && wi.kind !== 'me' && (
+              {showField('remind') && wi && wi.kind !== 'me' && (
                 <button
                   onClick={e => { e.stopPropagation(); remindTask(it.work!) }}
                   className="text-[9.5px] font-bold px-2 py-px rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
@@ -942,14 +944,14 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               )}
               {/* Chi nhánh của việc; việc tạo trước migration 137 chưa có branch_id thì
                   vẫn hiện KCN cũ đã nhập, không để trống chỗ này. */}
-              {workBranch
+              {showField('branch') && (workBranch
                 ? <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(workBranch)}</span>
-                : it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>}
-              {wsSt && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${wsSt.cls}`}>{wsSt.label}</span>}
-              {wsBranch && <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(wsBranch)}</span>}
-              {it.ws?.assignee && <span className="text-[10.5px] text-[#888]">{it.ws.assignee}</span>}
-              {it.work && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${TASK_PRIORITY_COLORS[it.work.priority]}`}>{TASK_PRIORITY_LABELS[it.work.priority]}</span>}
-              {cmts.length > 0 && <span className="text-[10.5px] text-[#999] flex items-center gap-0.5"><MessageSquare size={10} />{cmts.length}</span>}
+                : it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>)}
+              {showField('status') && wsSt && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${wsSt.cls}`}>{wsSt.label}</span>}
+              {showField('branch') && wsBranch && <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(wsBranch)}</span>}
+              {showField('assignee') && it.ws?.assignee && <span className="text-[10.5px] text-[#888]">{it.ws.assignee}</span>}
+              {showField('priority') && it.work && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${TASK_PRIORITY_COLORS[it.work.priority]}`}>{TASK_PRIORITY_LABELS[it.work.priority]}</span>}
+              {showField('comments') && cmts.length > 0 && <span className="text-[10.5px] text-[#999] flex items-center gap-0.5"><MessageSquare size={10} />{cmts.length}</span>}
             </div>
           </div>
           <span className={`text-[11px] whitespace-nowrap shrink-0 ${isOverdue ? 'text-red-600 font-bold' : 'text-[#999]'}`}>{dueLabel(it.due, group)}</span>
@@ -1229,7 +1231,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
         {/* Head: tiêu đề + chip lọc */}
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 flex-wrap">
           <h2 className="text-[13.5px] font-extrabold text-[#0c2340]">Việc của tôi</h2>
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex items-center gap-1 flex-wrap">
             {CATEGORY_CHIPS.map(c => (
               <button
                 key={c}
@@ -1239,11 +1241,37 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                 {c}
               </button>
             ))}
+            {/* Chọn nhãn nào hiện trên dòng việc */}
+            <div className="relative" ref={fieldMenuRef}>
+              <button
+                onClick={() => setFieldMenuOpen(o => !o)}
+                title="Chọn thông tin hiện trên mỗi dòng việc"
+                className={`p-1 rounded-md border transition ${fieldMenuOpen ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-[#E8E7E2] text-[#888] hover:border-blue-300 hover:text-blue-500'}`}
+              >
+                <SlidersHorizontal size={12} />
+              </button>
+              {fieldMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2 w-[190px]">
+                  <div className="text-[10px] font-semibold text-[#888] uppercase tracking-wide px-1 pb-1.5">Hiện trên dòng việc</div>
+                  {ROW_FIELDS.map(f => (
+                    <label key={f.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-[#FAFAF8] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showField(f.key)}
+                        onChange={e => setRowFields(prev => ({ ...prev, [f.key]: e.target.checked }))}
+                        className="accent-blue-600"
+                      />
+                      <span className="text-[11.5px] text-[#333]">{f.label}</span>
+                    </label>
+                  ))}
+                  <div className="text-[9.5px] text-[#bbb] pt-1.5 mt-1 border-t border-[#F0EFEB] px-1">
+                    Lựa chọn được lưu cho các lần sau.
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-
-        {/* Đồng bộ Google Calendar */}
-        <GoogleSyncCard toast={toast} onPulled={onGooglePulled} />
 
         {/* ① Radar 7 ngày */}
         <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto">

@@ -1176,6 +1176,9 @@ export interface WorkTask {
   notes: string | null
   status: TaskStatus
   completed_at: string | null
+  // Xoá mềm: việc đã xoá biến mất khỏi Workspace nhưng vẫn còn trong lịch sử
+  // của Khách hàng / Chi nhánh (migration 146).
+  deleted_at: string | null
   created_at: string
   updated_at: string
   contract_status_note?: string | null
