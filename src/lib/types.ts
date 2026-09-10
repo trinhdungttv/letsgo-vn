@@ -1251,7 +1251,7 @@ export const DOC_STATUS_STEPS: { key: DocStatus; label: string; danger?: boolean
   { key: 'hoan_tat',  label: 'Hoàn tất' },
   { key: 'ngung_hd',  label: 'Ngưng HĐ', danger: true },
 ]
-export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác']
+export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Xử lý phát sinh', 'Văn phòng', 'Khác']
 
 // ─── Module: Quan ly Khoan Vay ─────────────────────────────────────
 

@@ -56,13 +56,14 @@ const DOC_STATUS_BTN: Record<string, string> = {
 // 'Khách mới' = việc BD tìm hiểu/theo đuổi công ty CHƯA ký (nguồn: crm_pipeline_tasks,
 // gộp đọc từ CRM Pipeline — xem phần "Việc BD (CRM Pipeline)" bên dưới). Khác với 'Hợp đồng'
 // (Tái ký HĐ) vốn chỉ áp dụng cho khách ĐANG hợp tác.
-type Category = 'Khách mới' | 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
-const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
+type Category = 'Khách mới' | 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Xử lý phát sinh' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
+const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
 const CATEGORY_TAG: Record<Category, string> = {
   'Khách mới': 'bg-rose-50 text-rose-700 border-rose-200',
   'Hợp đồng': 'bg-blue-50 text-blue-700 border-blue-200',
   'Báo giá':  'bg-amber-50 text-amber-700 border-amber-200',
   'Thăm quan / KH': 'bg-teal-50 text-teal-700 border-teal-200',
+  'Xử lý phát sinh': 'bg-orange-50 text-orange-700 border-orange-200',
   'Hồ sơ':    'bg-violet-50 text-violet-700 border-violet-200',
   'Nội bộ':   'bg-slate-100 text-slate-600 border-slate-200',
   'Khác':     'bg-gray-100 text-gray-600 border-gray-200',
@@ -92,6 +93,7 @@ function workCategory(taskType: string | null): Category {
   if (taskType === 'Tái ký HĐ') return 'Hợp đồng'
   if (taskType === 'Báo giá') return 'Báo giá'
   if (taskType === 'Thăm quan' || taskType === 'Hỏi thăm CN') return 'Thăm quan / KH'
+  if (taskType === 'Xử lý phát sinh') return 'Xử lý phát sinh'
   if (taskType === 'Văn phòng') return 'Nội bộ'
   return 'Khác'
 }
@@ -496,7 +498,11 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   const [fullForm, setFullForm] = useState(false)
   const [fClientId, setFClientId] = useState('')
   const [fDesc, setFDesc] = useState('')
-  const [fType, setFType] = useState(TASK_TYPE_OPTIONS[0])
+  // Nhớ loại việc lần gần nhất đã chọn (theo trình duyệt) — đỡ phải chọn lại mỗi lần,
+  // vì phần lớn các lượt tạo liên tiếp thường cùng một loại việc.
+  const [lastType, setLastType] = usePersistedState('lgvn_workfeed_last_type', TASK_TYPE_OPTIONS[0])
+  const [fType, setFTypeRaw] = useState(lastType)
+  const setFType = (t: string) => { setFTypeRaw(t); setLastType(t) }
   const [fDue, setFDue] = useState(todayStr())
   const [fPriority, setFPriority] = useState<TaskPriority>('medium')
   const [fBranchId, setFBranchId] = useState('')
@@ -514,7 +520,8 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   }
 
   function resetFullForm() {
-    setFClientId(''); setFDesc(''); setFType(TASK_TYPE_OPTIONS[0])
+    // Loại việc CỐ TÌNH không reset — giữ nguyên lựa chọn gần nhất cho lượt tạo tiếp theo.
+    setFClientId(''); setFDesc('')
     setFDue(todayStr()); setFPriority('medium'); setFBranchId(''); setFNotes('')
   }
 
@@ -871,7 +878,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     })),
   ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs, donePipeline, branches])
 
-  const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Hồ sơ', 'Nội bộ', 'Khác']
+  const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
   const filteredHistory = doneHistory.filter(t =>
     (histCat === 'all' || t.category === histCat) &&
     (!histSearch.trim() || t.title.toLowerCase().includes(histSearch.toLowerCase()))
