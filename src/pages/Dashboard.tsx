@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import AlertsTasksPanel from '../components/AlertsTasksPanel';
 import { Bar, Line } from 'react-chartjs-2';
 import {
@@ -10,9 +10,9 @@ import {
   AlertCircle, TrendingUp, Users, BarChart2, Target,
   ChevronDown, X, Phone, Mail, SlidersHorizontal,
 } from 'lucide-react';
-import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry } from '../lib/types';
+import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry, ClientManagerHistory } from '../lib/types';
 import { branchOf } from '../lib/branchRef';
-import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, daysUntil } from '../lib/format';
+import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, getManagerForMonth, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -49,6 +49,7 @@ ChartJS.register(targetLinePlugin);
 interface DashboardProps {
   clients: Client[];
   laborHistory: Record<string, LaborHistoryEntry[]>;
+  managerHistory: Record<string, ClientManagerHistory[]>;
   onOpenBranch?: (region: string) => void;
   onOpenClient?: (id: string) => void;
   onOpenPipelineEntry?: (crmId: string) => void;
@@ -116,7 +117,12 @@ function currentMonthStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, onClientUpdate }: DashboardProps) {
+// Số tháng trong năm nay (1-12, không mang năm, dùng cho vòng lặp "Xu hướng lao động") -> "YYYY-MM"
+function monthStrOfThisYear(monthNum: number): string {
+  return `${new Date().getFullYear()}-${String(monthNum).padStart(2, '0')}`;
+}
+
+export default function Dashboard({ clients, laborHistory, managerHistory, onOpenBranch, onOpenClient, onOpenPipelineEntry, onOpenWorkspace, onClientUpdate }: DashboardProps) {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === 'admin';
   const [scopeMode, setScopeMode] = useState<ScopeMode>('all');
@@ -155,8 +161,13 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
   const branchNames = useMemo(() => branches.map(b => ({ label: b.name, region: b.name })), [branches]);
   const managers = useMemo(() => allManagers.map(m => m.name).sort(), [allManagers]);
 
-  // Filtered clients based on global scope (exclude suspended)
-  const filteredClients = useMemo(() => {
+  // Danh sách KH theo phạm vi đang chọn, tại một THÁNG cụ thể. Chi nhánh/khu vực luôn lấy
+  // theo trạng thái hiện tại (chi nhánh không có khái niệm "lịch sử"), riêng "Quản lý" phải
+  // tra theo client_manager_history của đúng tháng đó — nếu không, khi 1 KH đã đổi người phụ
+  // trách, số liệu tháng cũ sẽ bị gán nhầm hết cho người quản lý MỚI NHẤT thay vì đúng người
+  // phụ trách tại thời điểm đó. Chưa có lịch sử nào (KH cũ, hoặc chưa từng chuyển) thì coi
+  // như người quản lý hiện tại (clients.manager) đã phụ trách từ đầu.
+  const clientsInScopeForMonth = useCallback((month: string): Client[] => {
     const base = clients.filter(c => c.cooperation_status !== 'suspended');
     if (scopeMode === 'all' || !selectedScope) return base;
     if (scopeMode === 'region') {
@@ -169,11 +180,16 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
       if (!br) return base;
       return base.filter(c => branchOf(c, branches)?.id === br.id);
     }
-    return base.filter(c => c.manager === selectedScope);
-  }, [clients, scopeMode, selectedScope, zonesByProvince, branches]);
+    return base.filter(c => (getManagerForMonth(managerHistory[c.id] || [], month) ?? c.manager) === selectedScope);
+  }, [clients, scopeMode, selectedScope, zonesByProvince, branches, managerHistory]);
 
   const curMonth = currentMonthStr();
   const curMonthNum = parseInt(curMonth.split('-')[1], 10);
+
+  const filteredClients = useMemo(
+    () => clientsInScopeForMonth(curMonth),
+    [clientsInScopeForMonth, curMonth],
+  );
 
   // P&L dự án tháng hiện tại — nguồn số liệu thực cho doanh thu/lợi nhuận trên Dashboard
   const [projectsPnl, setProjectsPnl] = useState<ProjectPnl[]>([]);
@@ -229,17 +245,20 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
   // Tăng/giảm lao động so với tháng trước — số thật từ lịch sử lao động,
   // thay cho dòng "+2.8%" vốn được ghi cứng trong mã nguồn.
   const monthWorkers = useMemo(() => {
-    const sumOf = (monthNum: number) => {
+    const sumOf = (monthNum: number, monthClients: Client[]) => {
       if (monthNum < 1) return null;
       let sum = 0, found = false;
-      for (const c of filteredClients) {
+      for (const c of monthClients) {
         const v = getMonthLast(laborHistory[c.id] || [], monthNum);
         if (v !== null) { sum += v; found = true; }
       }
       return found ? sum : null;
     };
-    return { cur: sumOf(curMonthNum), prev: sumOf(curMonthNum - 1) };
-  }, [filteredClients, laborHistory, curMonthNum]);
+    // Tháng trước: dùng đúng người phụ trách của THÁNG TRƯỚC (không phải người hiện tại),
+    // để KH vừa đổi quản lý không bị tính hụt/thừa vào delta của người cũ/mới.
+    const prevClients = curMonthNum - 1 >= 1 ? clientsInScopeForMonth(monthStrOfThisYear(curMonthNum - 1)) : [];
+    return { cur: sumOf(curMonthNum, filteredClients), prev: sumOf(curMonthNum - 1, prevClients) };
+  }, [filteredClients, laborHistory, curMonthNum, clientsInScopeForMonth]);
 
   // Chỉ so sánh khi tháng này ĐÃ có người nhập số. Chưa nhập thì `totalWorkers`
   // vẫn đang là số chốt của tháng trước (current_workers = bản ghi mới nhất),
@@ -300,8 +319,11 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     const months = Array.from({ length: span }, (_, i) => curMonthNum - span + 1 + i);
     const points = months.map(num => {
       if (num === curMonthNum) return totalWorkers || null;
+      // Mỗi tháng trong quá khứ lấy đúng tập KH theo người phụ trách CỦA THÁNG ĐÓ
+      // (phạm vi chi nhánh/khu vực không đổi theo tháng, chỉ "Quản lý" mới cần tra lại).
+      const monthClients = clientsInScopeForMonth(monthStrOfThisYear(num));
       let sum = 0, found = false;
-      for (const c of filteredClients) {
+      for (const c of monthClients) {
         const v = getMonthLast(laborHistory[c.id] || [], num);
         if (v !== null) { sum += v; found = true; }
       }
@@ -309,7 +331,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
       return found ? sum : null;
     });
     return { months, labels: months.map(n => `T${n}`), points };
-  }, [trendRange, curMonthNum, filteredClients, laborHistory, totalWorkers]);
+  }, [trendRange, curMonthNum, clientsInScopeForMonth, laborHistory, totalWorkers]);
 
   const trendRangeLabel = laborTrend.months.length > 1
     ? `T${laborTrend.months[0]}–T${laborTrend.months[laborTrend.months.length - 1]}`
@@ -441,12 +463,20 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
     return map;
   }, [monthPnl]);
 
+  // 2 biểu đồ bên dưới cho chọn lại tháng (pnlMonth) độc lập với tháng hiện tại — khi đang xem
+  // theo "Quản lý" mà chọn một tháng cũ, tập KH phải tra lại theo lịch sử của ĐÚNG tháng đó,
+  // không lấy nguyên filteredClients (vốn luôn tính theo tháng hiện tại).
+  const pnlMonthClients = useMemo(
+    () => clientsInScopeForMonth(pnlMonth),
+    [clientsInScopeForMonth, pnlMonth],
+  );
+
   // Gom nhóm chung cho 2 biểu đồ: lọc theo tên → tính giá trị → nhóm chi nhánh/công ty → sắp xếp.
   const buildChartRows = (
     search: string, group: 'branch' | 'company', sort: 'desc' | 'name',
     valueOf: (c: Client) => number, hideZero: boolean,
   ): { key: string; value: number }[] => {
-    const source = filteredClients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()));
+    const source = pnlMonthClients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()));
     let rows: { key: string; value: number }[];
     if (group === 'company') {
       rows = source.map(c => ({ key: c.name, value: valueOf(c) }));
@@ -487,7 +517,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
       laborMetric === 'mandays' || pnlMonth !== curMonth,
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredClients, laborSearch, laborMetric, laborGroup, laborSort, clientToBranch, monthPnlByClient, pnlMonth, laborHistory],
+    [pnlMonthClients, laborSearch, laborMetric, laborGroup, laborSort, clientToBranch, monthPnlByClient, pnlMonth, laborHistory],
   );
 
   const laborBarData = {
@@ -529,7 +559,7 @@ export default function Dashboard({ clients, laborHistory, onOpenBranch, onOpenC
   const revRows = useMemo(
     () => buildChartRows(revSearch, revGroup, revSort, revValueOf, true),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredClients, revSearch, revMetric, revGroup, revSort, clientToBranch, monthPnlByClient, monthPnlCosts, splitSettingsMap],
+    [pnlMonthClients, revSearch, revMetric, revGroup, revSort, clientToBranch, monthPnlByClient, monthPnlCosts, splitSettingsMap],
   );
 
   const revenueBarData = {

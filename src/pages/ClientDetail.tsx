@@ -92,7 +92,9 @@ interface ClientDetailProps {
 
 export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
   const { user } = useAuth();
-  const { managers } = useManagers();
+  const { managers, add: addManager } = useManagers();
+  const [newManagerForm, setNewManagerForm] = useState<{ name: string; phone: string; email: string } | null>(null);
+  const [savingNewManager, setSavingNewManager] = useState(false);
   const CD_TAB_KEYS = ['overview', 'profile'] as const;
   const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile'>('client-detail', CD_TAB_KEYS, 'overview', 2);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
@@ -435,6 +437,30 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       toast('Đã ghi nhận chuyển đổi quản lý');
     } catch (e: any) {
       toast('Lỗi: ' + e.message);
+    }
+  };
+
+  const handleAddNewManagerInline = async () => {
+    if (!newManagerForm?.name.trim()) { toast('Vui lòng nhập tên quản lý'); return; }
+    setSavingNewManager(true);
+    try {
+      const added = await addManager({
+        name: newManagerForm.name.trim(),
+        phone: newManagerForm.phone || null,
+        email: newManagerForm.email || null,
+        region: null,
+      });
+      await logActivity({
+        user, action: 'insert', table: 'managers', recordId: added.id,
+        description: `Thêm quản lý "${added.name}"`, newData: added,
+      });
+      setTransferForm(prev => prev ? { ...prev, manager_name: added.name } : prev);
+      setNewManagerForm(null);
+      toast('Đã thêm quản lý mới');
+    } catch (e: any) {
+      toast('Lỗi: ' + e.message);
+    } finally {
+      setSavingNewManager(false);
     }
   };
 
@@ -1027,7 +1053,10 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         <div className="flex items-center justify-between gap-2">
                           <span>{client.manager || '—'}</span>
                           <button
-                            onClick={() => setTransferForm(transferForm ? null : { manager_name: '', effective_from: new Date().toISOString().slice(0, 7) })}
+                            onClick={() => {
+                              setTransferForm(transferForm ? null : { manager_name: '', effective_from: new Date().toISOString().slice(0, 7) });
+                              setNewManagerForm(null);
+                            }}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
                           >
                             <ArrowRightLeft size={11} /> Chuyển đổi
@@ -1037,18 +1066,40 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                           <div className="mt-2 p-3 rounded-lg border border-blue-200 bg-blue-50 flex flex-col gap-2">
                             <div className="flex flex-col gap-1">
                               <label className="text-[11px] text-[#666] font-medium">Quản lý mới</label>
-                              <select value={transferForm.manager_name} onChange={e => setTransferForm({ ...transferForm, manager_name: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                              <select
+                                value={transferForm.manager_name}
+                                onChange={e => {
+                                  if (e.target.value === '__new__') {
+                                    setNewManagerForm({ name: '', phone: '', email: '' });
+                                    return;
+                                  }
+                                  setTransferForm({ ...transferForm, manager_name: e.target.value });
+                                }}
+                                className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
+                              >
                                 <option value="">— Chọn quản lý —</option>
                                 {managers.map(m => <option key={m.id}>{m.name}</option>)}
+                                <option value="__new__">+ Thêm quản lý mới...</option>
                               </select>
                             </div>
+                            {newManagerForm && (
+                              <div className="p-2.5 rounded-lg border border-blue-300 bg-white flex flex-col gap-1.5">
+                                <input type="text" autoFocus value={newManagerForm.name} onChange={e => setNewManagerForm({ ...newManagerForm, name: e.target.value })} placeholder="Tên quản lý mới *" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                                <input type="text" value={newManagerForm.phone} onChange={e => setNewManagerForm({ ...newManagerForm, phone: e.target.value })} placeholder="SĐT (không bắt buộc)" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                                <input type="text" value={newManagerForm.email} onChange={e => setNewManagerForm({ ...newManagerForm, email: e.target.value })} placeholder="Email (không bắt buộc)" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                                <div className="flex gap-2">
+                                  <button onClick={handleAddNewManagerInline} disabled={savingNewManager} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition disabled:opacity-50"><Check size={13} /> Thêm & chọn</button>
+                                  <button onClick={() => setNewManagerForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                                </div>
+                              </div>
+                            )}
                             <div className="flex flex-col gap-1">
                               <label className="text-[11px] text-[#666] font-medium">Có hiệu lực từ tháng</label>
                               <input type="month" value={transferForm.effective_from} onChange={e => setTransferForm({ ...transferForm, effective_from: e.target.value })} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
                             </div>
                             <div className="flex gap-2">
                               <button onClick={handleManagerTransfer} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Check size={13} /> Xác nhận</button>
-                              <button onClick={() => setTransferForm(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
+                              <button onClick={() => { setTransferForm(null); setNewManagerForm(null); }} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50">Hủy</button>
                             </div>
                           </div>
                         )}

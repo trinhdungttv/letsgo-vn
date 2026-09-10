@@ -289,7 +289,7 @@ function AppInner() {
       </div>
       <MobileNav currentPage={page} onNavigate={navigate} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
-        {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => setPage('workspace')} onClientUpdate={handleClientUpdate} />}
+        {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} managerHistory={managerHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => setPage('workspace')} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
             clients={clients}
@@ -299,6 +299,7 @@ function AppInner() {
             onSelectClient={handleSelectClient}
             onClientUpdate={handleClientUpdate}
             onLaborUpdate={handleLaborUpdate}
+            onManagerHistoryAdd={handleManagerHistoryAdd}
             onReload={loadClients}
             isAdmin={user?.role === 'admin'}
             marketZones={marketZones}

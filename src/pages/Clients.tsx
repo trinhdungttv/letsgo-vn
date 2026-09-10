@@ -8,7 +8,7 @@ import { useManagers } from '../hooks/useManagers';
 import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
-import type { Client, LaborHistoryEntry, MarketZone, Manager } from '../lib/types';
+import type { Client, LaborHistoryEntry, MarketZone, Manager, ClientManagerHistory } from '../lib/types';
 import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth, prevWeekLabel } from '../lib/format';
 import { branchOf, branchOptions, resolveBranchByLegacyText } from '../lib/branchRef';
 import { supabase } from '../lib/supabase';
@@ -33,6 +33,7 @@ interface ClientsProps {
   onSelectClient: (id: string) => void;
   onClientUpdate: (c: Client) => void;
   onLaborUpdate: (entry: LaborHistoryEntry) => void;
+  onManagerHistoryAdd: (entry: ClientManagerHistory) => void;
   onReload: () => void;
   isAdmin: boolean;
   marketZones: MarketZone[];
@@ -46,6 +47,11 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 interface RenewForm {
   client: Client;
   startDate: string;
@@ -55,7 +61,7 @@ interface RenewForm {
 
 export default function Clients({
   clients, laborHistory, activeRegion, onRegionChange,
-  onSelectClient, onClientUpdate, onLaborUpdate, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
+  onSelectClient, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onReload, isAdmin, marketZones, onMarketZoneAdd, toast,
 }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = usePersistedState<'list' | 'card'>('lgvn_clients_view_mode', 'list');
@@ -132,6 +138,14 @@ export default function Clients({
         const c = clients.find(x => x.id === id);
         if (c) onClientUpdate({ ...c, manager: bulkNewManager });
       });
+      // Ghi lại mốc bàn giao cho từng KH — để P&L/báo cáo sau này tách đúng lợi nhuận
+      // về đúng người phụ trách tại đúng thời điểm, thay vì gán hết cho người mới nhất.
+      const effectiveFrom = currentMonthStr();
+      const { data: histRows, error: histErr } = await supabase.from('client_manager_history')
+        .insert(ids.map(client_id => ({ client_id, manager_name: bulkNewManager, effective_from: effectiveFrom, created_by: user?.full_name || null })))
+        .select();
+      if (histErr) throw histErr;
+      (histRows || []).forEach(h => onManagerHistoryAdd(h as ClientManagerHistory));
       await logActivity({
         user, action: 'update', table: 'clients', recordId: ids[0],
         description: `Chuyển ${ids.length} KH sang quản lý "${bulkNewManager}"`,
@@ -776,6 +790,15 @@ export default function Clients({
       const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
       if (error) throw error;
       onClientUpdate({ ...c, ...updates });
+      // Sửa nhanh cột "Quản lý" cũng là một lần bàn giao — ghi mốc để P&L/báo cáo sau
+      // này tách đúng lợi nhuận về đúng người phụ trách tại đúng thời điểm.
+      if (field === 'manager' && newVal) {
+        const { data, error: histErr } = await supabase.from('client_manager_history')
+          .insert({ client_id: c.id, manager_name: newVal, effective_from: currentMonthStr(), created_by: user?.full_name || null })
+          .select().single();
+        if (histErr) throw histErr;
+        onManagerHistoryAdd(data as ClientManagerHistory);
+      }
       await logActivity({
         user, action: 'update', table: 'clients', recordId: c.id,
         // branch_id lưu UUID — nhật ký phải in ra tên chi nhánh thì mới đọc được.
@@ -832,6 +855,15 @@ export default function Clients({
     const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
     if (error) throw error;
     onClientUpdate({ ...c, ...updates });
+    // Ghi mốc bàn giao — chỉ khi ĐANG có người phụ trách trước đó (đổi người), để KH
+    // mới thêm chưa từng có quản lý sẽ không tạo một mốc "chuyển" vô nghĩa lúc bắt đầu.
+    if (c.manager && c.manager !== managerName) {
+      const { data, error: histErr } = await supabase.from('client_manager_history')
+        .insert({ client_id: c.id, manager_name: managerName, effective_from: currentMonthStr(), created_by: user?.full_name || null })
+        .select().single();
+      if (histErr) throw histErr;
+      onManagerHistoryAdd(data as ClientManagerHistory);
+    }
     await logActivity({
       user, action: 'update', table: 'clients', recordId: c.id,
       description: `Cập nhật Quản lý của "${c.name}": ${c.manager ?? '—'} → ${managerName}`,
@@ -900,6 +932,12 @@ export default function Clients({
           const { error } = await supabase.from('clients').update({ manager: saved.name, updated_at: new Date().toISOString() }).eq('manager', oldName);
           if (error) throw error;
           affected.forEach(c => onClientUpdate({ ...c, manager: saved.name }));
+          // Đây là ĐỔI TÊN (cùng một người), không phải bàn giao — phải cập nhật luôn tên
+          // trong client_manager_history, nếu không lịch sử cũ vẫn mang tên cũ và các báo
+          // cáo tra theo tên quản lý (vd. Hiệu suất theo Quản lý) sẽ bị tách làm hai người.
+          const { error: histErr } = await supabase.from('client_manager_history')
+            .update({ manager_name: saved.name }).eq('manager_name', oldName);
+          if (histErr) throw histErr;
           await logActivity({
             user, action: 'update', table: 'clients', recordId: saved.id,
             description: `Đổi tên quản lý "${oldName}" → "${saved.name}" (${affected.length} khách hàng)`,
