@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList, List, LayoutGrid } from 'lucide-react';
+import { MapPin, Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList, List, LayoutGrid } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
@@ -18,6 +18,7 @@ import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import { ChurnBadge } from '../components/clients/ChurnBadge';
+import BulkCompanyMediaModal from './market/BulkCompanyMediaModal';
 import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
@@ -67,6 +68,7 @@ export default function Clients({
   const [viewMode, setViewMode] = usePersistedState<'list' | 'card'>('lgvn_clients_view_mode', 'list');
   const [quickFilter, setQuickFilter] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showBulkMedia, setShowBulkMedia] = useState(false);
   const [columns, setColumns] = useState(loadColumnSettings);
   const { user } = useAuth();
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -978,6 +980,9 @@ export default function Clients({
                 <Settings className="w-4 h-4" />
               </button>
             )}
+            <button onClick={() => setShowBulkMedia(true)} className="p-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh Ảnh & Google Maps hàng loạt">
+              <MapPin className="w-4 h-4" />
+            </button>
             <button onClick={() => downloadClientTemplate({
               regionNames: regions.map(r => r.name),
               managerNames: managers.map(m => m.name),
@@ -1652,6 +1657,7 @@ export default function Clients({
       </div>
 
       {/* Admin Settings Modal */}
+      {showBulkMedia && <BulkCompanyMediaModal clients={clients.filter(c => !c.archived_at)} leads={[]} onClose={() => setShowBulkMedia(false)} onRefresh={onReload} toast={toast} />}
       {showSettings && isAdmin && (
         <AdminSettings
           regions={regions}

@@ -75,9 +75,14 @@ export default function AddClientModal({
   const branchList = useMemo(() => branchOptions(branches), [branches]);
   const selectedBranch = branches.find(b => b.id === branchId) || null;
   const branchStaffsForBranch = selectedBranch ? allBranchStaffs.filter(s => s.branch_id === selectedBranch.id) : [];
-  const managerOptions = branchStaffsForBranch.length > 0
+  const baseManagerOptions = branchStaffsForBranch.length > 0
     ? branchStaffsForBranch.map(s => s.name)
     : managers.filter(m => !selectedBranch || resolveBranchByLegacyText(m.region, branches)?.id === selectedBranch.id).map(m => m.name);
+  // Trưởng chi nhánh luôn chọn được làm người quản lý, xếp đầu danh sách
+  const branchHead = selectedBranch?.manager_name?.trim() || '';
+  const managerOptions = branchHead
+    ? [branchHead, ...baseManagerOptions.filter(n => n !== branchHead)]
+    : baseManagerOptions;
 
   if (!open) return null;
 
@@ -248,7 +253,7 @@ export default function AddClientModal({
               <label className="text-[11px] text-[#777] block mb-1">Người quản lý</label>
               <select value={manager} onChange={e => setManager(e.target.value)} className="w-full text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none bg-white">
                 <option value="">— Chọn quản lý —</option>
-                {managerOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                {managerOptions.map(m => <option key={m} value={m}>{m}{m === branchHead ? ' (Trưởng chi nhánh)' : ''}</option>)}
               </select>
             </div>
           </div>

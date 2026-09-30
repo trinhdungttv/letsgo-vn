@@ -42,6 +42,7 @@ import FilterDropdown, { ALL_OPTION } from '../../components/FilterDropdown';
 import { KCNVisitHistory } from '../../components/workspace/KCNVisitHistory';
 import { useProvinces } from '../../hooks/useProvinces';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
+import BulkZoneMediaModal from './BulkZoneMediaModal';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchCountries, addCountry } from './countries';
 import SearchSelect from './SearchSelect';
@@ -220,6 +221,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
   useEffect(() => { localStorage.setItem('market_zones_view_mode', viewMode); }, [viewMode]);
   const [dashSettings, setDashSettings] = useState<ZoneDashSettings>(loadZoneDashSettings);
   const [showDashSettings, setShowDashSettings] = useState(false);
+  const [showBulkMedia, setShowBulkMedia] = useState(false);
   const [showZoneMenu, setShowZoneMenu] = useState(false);
   const [showOnlyPriority, setShowOnlyPriority] = useState(savedFilters.onlyPriority);
   useEffect(() => {
@@ -918,6 +920,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
 
   return (
     <div className="space-y-3">
+      {showBulkMedia && <BulkZoneMediaModal zones={marketZones} onClose={() => setShowBulkMedia(false)} onRefresh={onRefresh} toast={toast} />}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <div className="text-[12.5px] font-medium text-[#111]">Hồ sơ khu vực</div>
@@ -967,6 +970,13 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                       <input type="checkbox" checked={dashSettings.provinceBar} onChange={e => setDashSettings(s => ({ ...s, provinceBar: e.target.checked }))} />
                       Tổng LĐ theo tỉnh/thành
                     </label>
+                  </div>
+                  <div className="border-t border-[#F0EFEA] pt-2.5">
+                    <div className="text-[12.5px] font-semibold text-[#111] mb-1">Công cụ</div>
+                    <button onClick={() => { setShowDashSettings(false); setShowBulkMedia(true); }}
+                      className="w-full flex items-center gap-1.5 text-[12px] text-[#444] px-2 py-1.5 rounded-lg hover:bg-[#F9F9F7] text-left">
+                      <ImageIcon size={13} /> Nhập nhanh Ảnh & Google Maps
+                    </button>
                   </div>
                 </div>
               </>

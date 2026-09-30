@@ -140,3 +140,21 @@ export async function nominatimBoundaryNear(query: string, near: LatLng): Promis
 export function isValidVnLatLng(p: LatLng | null): p is LatLng {
   return !!p && p.lat >= 7 && p.lat <= 24.5 && p.lng >= 101 && p.lng <= 111;
 }
+
+export type MapLinkStatus = 'ok' | 'short' | 'bad';
+
+/** Đánh giá link Google Maps có "dùng được" cho tab Bản đồ không (đọc được toạ độ trong VN).
+ * null = ô trống. 'short' = link rút gọn (maps.app.goo.gl…) — app không đọc được toạ độ từ đó. */
+export function mapLinkStatus(link: string | null | undefined): MapLinkStatus | null {
+  const l = (link ?? '').trim();
+  if (!l) return null;
+  if (isValidVnLatLng(parseLatLngFromLink(l))) return 'ok';
+  if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(l)) return 'short';
+  return 'bad';
+}
+
+export const MAP_LINK_STATUS_TEXT: Record<MapLinkStatus, { cls: string; text: string }> = {
+  ok: { cls: 'text-emerald-600', text: '✓ Đọc được toạ độ' },
+  short: { cls: 'text-amber-600', text: '⚠ Link rút gọn — mở link, copy lại link dài trên thanh địa chỉ' },
+  bad: { cls: 'text-red-600', text: '✗ Không có toạ độ (cần dạng …/@lat,lng… hoặc …!3d…!4d…)' },
+};
