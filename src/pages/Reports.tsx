@@ -8,7 +8,7 @@ import { Target, AlertTriangle, FileWarning, Coins, Settings2, TrendingUp, Trend
 import PageHeader from '../components/PageHeader';
 import type { Client, LaborHistoryEntry, ProjectPnl, ProjectPnlCost, Branch, BranchTarget, FinanceRecord, BranchOverhead, WorkTask, WorkTaskComment } from '../lib/types';
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib/types';
-import { getMonthLast, formatCurrency, monthLabel, shiftMonth, daysUntil, formatDate } from '../lib/format';
+import { getMonthLast, getMonthLastFilled, formatCurrency, monthLabel, shiftMonth, daysUntil, formatDate } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { isActiveInMonth } from '../utils/suspension';
 
@@ -228,7 +228,8 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
     for (const c of activeClients) {
       const hist = laborHistory[c.id] || [];
       const cur = getMonthLast(hist, nowMonthNum) ?? c.current_workers ?? null;
-      const prev = getMonthLast(hist, prevNowNum);
+      // Tháng trước chưa nhập → tạm lấy số tháng gần nhất trước đó (tránh delta giả).
+      const prev = getMonthLastFilled(hist, prevNowNum).value;
       rows.push({ client: c, cur, prev, delta: cur !== null && prev !== null ? cur - prev : null });
     }
     return rows;
@@ -240,7 +241,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
   const workersAtPeriod = useMemo(() => {
     let sum = 0;
     for (const c of clientsInMonth(periodMonth)) {
-      const v = getMonthLast(laborHistory[c.id] || [], periodMonthNum);
+      const v = getMonthLastFilled(laborHistory[c.id] || [], periodMonthNum).value;
       if (v !== null) sum += v;
     }
     return sum;
@@ -360,17 +361,23 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
       const [y, m] = mo.split('-').map(Number);
       months.push({ mo, num: m, label: `T${m}/${String(y).slice(2)}` });
     }
-    const totals = months.map(({ mo, num }) => {
+    const estimated: boolean[] = [];
+    const totals = months.map(({ mo, num }, idx) => {
       let sum = 0, found = false;
+      estimated[idx] = false;
       // Từng tháng lấy đúng tập khách còn hợp tác trong tháng đó — khách ngưng
       // giữa kỳ vẫn được tính cho các tháng trước và tháng ngưng.
+      // KH chưa nhập tháng này → tạm lấy số tháng gần nhất trước đó (cùng năm), đánh dấu ước tính.
       for (const c of clientsInMonth(mo)) {
-        const v = getMonthLast(laborHistory[c.id] || [], num);
-        if (v !== null) { sum += v; found = true; }
+        // Nhãn tuần không mang năm → chỉ tự điền cho tháng thuộc năm nay, tháng năm trước giữ nguyên số nhập.
+        const r = mo.startsWith(String(new Date().getFullYear()))
+          ? getMonthLastFilled(laborHistory[c.id] || [], num)
+          : { value: getMonthLast(laborHistory[c.id] || [], num), from: num };
+        if (r.value !== null) { sum += r.value; found = true; if (r.from !== num) estimated[idx] = true; }
       }
       return found ? sum : null;
     });
-    return { labels: months.map(m => m.label), totals };
+    return { labels: months.map(m => m.label), totals, estimated };
   }, [clientsInMonth, laborHistory]);
 
   // ==== Bảng xếp hạng chi nhánh ====
@@ -778,7 +785,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
               <Line
                 data={{
                   labels: laborTrend.labels,
-                  datasets: [{ data: laborTrend.totals, borderColor: C.blue, backgroundColor: 'rgba(29,78,216,0.08)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: C.blue, spanGaps: true }],
+                  datasets: [{ data: laborTrend.totals, borderColor: C.blue, backgroundColor: 'rgba(29,78,216,0.08)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: laborTrend.estimated.map(e => e ? '#fff' : C.blue), pointBorderColor: C.blue, spanGaps: true }],
                 }}
                 options={{
                   responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
@@ -790,6 +797,9 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
                 }}
               />
             </div>
+            {laborTrend.estimated.some(Boolean) && (
+              <div className="mt-1 text-[10.5px] text-[#999]">○ Điểm trắng = có KH chưa nhập số tháng đó nên tạm lấy số tháng gần nhất trước đó (chưa ghi vào dữ liệu).</div>
+            )}
           </div>
         </div>
 

@@ -36,6 +36,20 @@ export function getMonthLast(
   return entries.length ? entries[entries.length - 1].h.count : null;
 }
 
+// Như getMonthLast nhưng tháng trống (chưa ai nhập) thì tạm lấy số của tháng GẦN NHẤT phía trước
+// có dữ liệu. Chỉ tính khi hiển thị, KHÔNG ghi vào DB. `from` = tháng nguồn (khác `month` → ước tính).
+// week_label không mang năm nên chỉ lùi trong cùng năm (không lùi qua T1).
+export function getMonthLastFilled(
+  hist: { week_label: string; count: number }[],
+  month: number
+): { value: number | null; from: number | null } {
+  for (let m = month; m >= 1; m--) {
+    const v = getMonthLast(hist, m);
+    if (v !== null) return { value: v, from: m };
+  }
+  return { value: null, from: null };
+}
+
 // Trả về `n` tháng gần nhất tính theo ngày hôm nay (cũ -> mới, tháng hiện tại ở cuối).
 // Dùng để tự động hiển thị "Theo tháng" / "Báo cáo tăng giảm theo tháng" theo thời gian thực,
 // không hardcode tên tháng.
@@ -251,11 +265,11 @@ export function getBranchTypeForMonth(history: BranchTypeHistory[], month: strin
 // hohOpts: phần doanh thu "HOH" (xuất hộ khách hàng, lấy phí) trong dự án — tách riêng khỏi
 // khoán/lương thông thường, mặc định 100% về Let's Go VN, có thể tuỳ chỉnh tỷ lệ theo dự án.
 export function calcPnl(
-  p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number; manday_rate?: number; total_man_days?: number },
+  p: { project_type: ProjectPnlType; lg_pct: number; cn_pct: number; revenue: number; manday_rate?: number; total_man_days?: number; tet_rate?: number | null; commission_rate?: number | null },
   costs: { value: number; payer: CostPayer; label?: string; service_type?: string }[],
   taxOpts?: { categories?: { label: string; group_type?: string }[]; taxPct?: number; taxExempt?: boolean },
   hohOpts?: { revenue: number; lgPct: number; cnPct: number }
-): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number; hohProfit: number; hohLgP: number; hohCnP: number } {
+): { tc: number; profit: number; lgC: number; cnC: number; shC: number; lgP: number; cnP: number; salaryCost: number; generalCost: number; tax: number; taxPct: number; taxExempt: boolean; profitAfterTax: number; hohProfit: number; hohLgP: number; hohCnP: number; tetFund: number; commission: number; cnPGross: number } {
   const tc = costs.reduce((s, c) => s + (Number(c.value) || 0), 0);
   const profit = p.revenue - tc;
   let lgC = 0, cnC = 0, shC = 0;
@@ -302,9 +316,16 @@ export function calcPnl(
   const hohLgP = hohPostTax * hohLgPct / 100;
   const hohCnP = hohPostTax * hohCnPct / 100;
   const lgP = restLgP + hohLgP;
-  const cnP = restCnP + hohCnP;
+  // Chi phí RIÊNG của chi nhánh (dự án khoán, không áp dụng cho 'managed'): quỹ tết & hoa hồng KH
+  // = số công × đơn giá. Chỉ trừ vào phần Chi nhánh — Let's Go VN và LN dự án không đổi.
+  const isKhoan = p.project_type !== 'managed';
+  const days = Number(p.total_man_days) || 0;
+  const tetFund = isKhoan ? days * (Number(p.tet_rate) || 0) : 0;
+  const commission = isKhoan ? days * (Number(p.commission_rate) || 0) : 0;
+  const cnPGross = restCnP + hohCnP;
+  const cnP = cnPGross - tetFund - commission;
 
-  return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax, hohProfit, hohLgP, hohCnP };
+  return { tc, profit, lgC, cnC, shC, lgP, cnP, salaryCost, generalCost, tax, taxPct, taxExempt: !!taxOpts?.taxExempt, profitAfterTax, hohProfit, hohLgP, hohCnP, tetFund, commission, cnPGross };
 }
 
 export function statusPill(status: string): { label: string; cls: string } {

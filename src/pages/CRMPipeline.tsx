@@ -10,6 +10,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useBranchData } from '../hooks/useBranchData';
 import { branchOptions, branchOf } from '../lib/branchRef';
+import { useMarketRefs, competitorsInZone, linkCompetitor, notifyMarketChanged } from '../components/crm/MarketSupplyBlock';
 import { CompanyProfileModal, STAGES, RATING_CONFIG } from '../components/crm/CompanyProfileModal';
 import { selectContacts } from '../lib/contactOps';
 
@@ -44,7 +45,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
-  const [modalForm, setModalForm] = useState({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
+  const [modalForm, setModalForm] = useState({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '' });
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -55,6 +56,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const [isSubmittingDeal, setIsSubmittingDeal] = useState(false);
 
   const { branches } = useBranchData();
+  const { zones: refZones, competitors: refCompetitors } = useMarketRefs();
 
 
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
@@ -108,6 +110,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
   const handleAdd = async () => {
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
+    const recruitImages = modalForm.images.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
     try {
       const { data, error } = await supabase.from('crm_pipeline').insert({
         company_name: modalForm.name, branch_id: modalForm.branchId || null,
@@ -121,14 +124,18 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
       if (error) throw error;
       // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
       await supabase.from('market_leads').insert({
-        company_name: modalForm.name, region: branches.find(b => b.id === modalForm.branchId)?.name ?? null,
+        company_name: modalForm.name, region: modalForm.zone || (branches.find(b => b.id === modalForm.branchId)?.name ?? null),
         workers_needed: parseInt(modalForm.estimate) || 0,
         source: 'CRM Pipeline', status: 'Chưa LH',
-        suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }],
+        suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }, ...modalForm.ncc.map(name => ({ name, qty: 0, is_us: false }))],
         crm_id: data.id,
+        ...(recruitImages.length ? { recruit_image_urls: recruitImages } : {}),
       });
+      // NCC chọn từ đối thủ → ghi "Đang cung cấp cho" ở hồ sơ đối thủ
+      await Promise.all(modalForm.ncc.map(n => { const c = refCompetitors.find(x => x.company_name === n); return c ? linkCompetitor(c, modalForm.name, modalForm.zone || null) : null; }));
+      if (modalForm.ncc.length || recruitImages.length || modalForm.zone) notifyMarketChanged();
       await onRefresh();
-      setModalForm({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '' });
+      setModalForm({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [], images: '' });
       setShowModal(false);
       toast('Đã thêm vào pipeline!');
       await logActivity({
@@ -311,6 +318,41 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                     <option value="low">Thấp</option>
                   </select>
                 </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Khu công nghiệp</label>
+                <select value={modalForm.zone} onChange={e => setModalForm(f => ({ ...f, zone: e.target.value, ncc: [] }))}
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  <option value="">Chọn KCN (tuỳ chọn)</option>
+                  {refZones.map(z => <option key={z} value={z}>{z}</option>)}
+                </select>
+              </div>
+              {modalForm.zone && (() => {
+                const list = competitorsInZone(refCompetitors, modalForm.zone);
+                return (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[12px] text-[#666] font-medium">Nhà cung ứng khác tại KCN này</label>
+                    {list.length === 0 ? <div className="text-[11.5px] text-[#aaa] italic">Chưa có đối thủ nào ghi nhận ở KCN này</div> : (
+                      <div className="flex flex-wrap gap-1">
+                        {list.map(c => {
+                          const on = modalForm.ncc.includes(c.company_name);
+                          return (
+                            <button type="button" key={c.id} onClick={() => setModalForm(f => ({ ...f, ncc: on ? f.ncc.filter(n => n !== c.company_name) : [...f.ncc, c.company_name] }))}
+                              className={`px-2 py-0.5 rounded-full border text-[11.5px] ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                              {on ? '✓ ' : ''}{c.company_name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Ảnh tuyển dụng (dán link, tuỳ chọn)</label>
+                <textarea rows={2} value={modalForm.images} onChange={e => setModalForm(f => ({ ...f, images: e.target.value }))}
+                  placeholder="Mỗi link một dòng"
+                  className="text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-none" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-[#666] font-medium">Người liên hệ (từ CSKH)</label>

@@ -126,6 +126,7 @@ export interface Client {
   industry?: string | null;
   market_workers_needed?: number | null;
   market_suppliers?: MarketLeadSupplier[];
+  recruit_image_urls?: string[] | null;
   wage_min?: number | null;
   wage_max?: number | null;
   allowance_notes?: string | null;
@@ -166,6 +167,8 @@ export interface BranchStaff {
   phone: string | null;
   email: string | null;
   salary: number;
+  /** Tháng vào làm 'YYYY-MM' (migration 148) — lương chỉ tính từ tháng này; null = mọi tháng. */
+  start_month?: string | null;
   created_at: string;
 }
 
@@ -618,6 +621,8 @@ export interface MarketLead {
   // Liên kết sang crm_pipeline khi đã "Đẩy CRM" (hoặc được tạo sẵn liên kết từ CRM Pipeline/
   // Workspace) — 1-1 tuỳ chọn, cùng mẫu với crm_pipeline.client_id (migration 122).
   crm_id?: string | null;
+  // Ảnh tuyển dụng dán link (migration 147)
+  recruit_image_urls?: string[] | null;
 }
 
 export interface Quote {
@@ -885,6 +890,10 @@ export interface ProjectPnl {
   // mặc định 100% Let's Go VN, tách biệt với lg_pct/cn_pct của Cho thuê lao động.
   hoh_lg_pct?: number;
   hoh_cn_pct?: number;
+  // Chi phí riêng của chi nhánh ở dự án khoán (đ/công, migration 149): quỹ tết & hoa hồng KH,
+  // trừ vào phần CN. null = chưa áp dụng.
+  tet_rate?: number | null;
+  commission_rate?: number | null;
   clients?: { name: string } | null;
 }
 

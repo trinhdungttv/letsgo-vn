@@ -361,6 +361,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     const cs = finData.pnlCosts[p.id] || [];
     return s + cs.reduce((ss, c) => ss + (c.value || 0), 0);
   }, 0);
+  // So doanh thu với THÁNG LIỀN TRƯỚC của tháng đang chọn (cùng nguồn P&L Dự án). Tháng trước
+  // chưa có P&L, hoặc tháng này đang dùng số dự phòng từ bảng Tài chính → không so (tránh % sai).
+  const prevMonthKey = shiftMonth(selectedMonth, -1);
+  const prevPnlRev = finData.projectsPnl.filter(p => p.month === prevMonthKey).reduce((s, p) => s + (p.revenue || 0), 0);
+  const revDeltaPct = pnlTotalRev > 0 && prevPnlRev > 0 ? ((pnlTotalRev - prevPnlRev) / prevPnlRev) * 100 : null;
   const finRev = sortedFinance.reduce((s, r) => s + (r.revenue || 0), 0);
   const finCost = sortedFinance.reduce((s, r) => s + (r.cost_labor || 0) + (r.cost_mgmt || 0) + (r.cost_other || 0), 0);
   const totalRev = pnlTotalRev || finRev;
@@ -491,7 +496,11 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
           <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5">
             <div className="text-[11.5px] text-[#888] mb-1">Doanh thu</div>
             <div className="text-[20px] font-semibold text-[#1D4ED8]">{formatCurrency(totalRev)}</div>
-            <div className="text-[11px] text-[#aaa] mt-0.5">+8.3% so T5</div>
+            <div className="text-[11px] mt-0.5">
+              {revDeltaPct === null
+                ? <span className="text-[#aaa]">{prevPnlRev > 0 ? '\u00A0' : `Chưa có P&L ${monthLabel(prevMonthKey)} để so sánh`}</span>
+                : <span className={revDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-600'}>{revDeltaPct >= 0 ? '+' : ''}{revDeltaPct.toFixed(1)}% <span className="text-[#aaa]">so {monthLabel(prevMonthKey)}</span></span>}
+            </div>
           </div>
           <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5">
             <div className="text-[11.5px] text-[#888] mb-1">Tổng chi phí</div>

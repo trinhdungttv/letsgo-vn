@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { fetchCostRules, resolveRuleRate } from '../../lib/branchCostRules';
 import { Plus, Trash2, Settings, X as XIcon, Check, Pencil, CopyPlus, ArrowDownUp } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, CostPayer, ProjectPnlType, PnlSplitSettings, Branch, CostCategory, CostGroupType, BranchZone, BranchZoneCost, BranchStaff, PnlRevenueLine, PnlInvoiceSettings, ServiceType } from '../../lib/types';
 import { branchOf } from '../../lib/branchRef';
@@ -84,7 +85,7 @@ export default function PnLProjectTab({
   const [hohLgInput, setHohLgInput] = useState('100');
   const [hohCnInput, setHohCnInput] = useState('0');
 
-  type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; suspended_from?: string | null; suspended_at?: string | null; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
+  type MinClient = { id: string; name: string; region: string | null; archived_at: string | null; cooperation_status?: string | null; suspended_from?: string | null; suspended_at?: string | null; service_type?: string; project_type?: string; default_lg_pct?: number; default_cn_pct?: number };
   const [extraClients, setExtraClients] = useState<MinClient[]>([]);
   const [allBranchHistory, setAllBranchHistory] = useState<ClientBranchHistory[]>([]);
   const [branchTypeHistoryMap, setBranchTypeHistoryMap] = useState<Record<string, BranchTypeHistory[]>>({});
@@ -118,7 +119,7 @@ export default function PnLProjectTab({
     return null;
   }, [zoneData]);
   useEffect(() => {
-    supabase.from('clients').select('id, name, branch_id, region, archived_at, cooperation_status, suspended_from, suspended_at, project_type, default_lg_pct, default_cn_pct')
+    supabase.from('clients').select('id, name, branch_id, region, archived_at, cooperation_status, suspended_from, suspended_at, service_type, project_type, default_lg_pct, default_cn_pct')
       .order('name')
       .then(({ data }) => { if (data) setExtraClients(data as MinClient[]); });
     supabase.from('client_branch_history').select('*').order('effective_from')
@@ -130,6 +131,12 @@ export default function PnLProjectTab({
         setBranchTypeHistoryMap(map);
       });
   }, []);
+
+  // Quỹ tết 500đ/công CHỈ áp dụng cho dịch vụ Cho thuê lại lao động (không áp cho Giới thiệu LĐ / HOH).
+  const isLeasingClient = (clientId: string) => {
+    const st = clients.find(c => c.id === clientId)?.service_type ?? extraClients.find(c => c.id === clientId)?.service_type;
+    return (st ?? 'leasing') === 'leasing';
+  };
 
   const mergedClients = useMemo(() => {
     const ids = new Set(clients.map(c => c.id));
@@ -421,6 +428,7 @@ export default function PnLProjectTab({
           mandayRate = prevEntry.manday_rate || mandayRate;
         }
 
+        const costRules = await fetchCostRules(clientId);
         const created = await onAddProject({
           client_id: clientId,
           month,
@@ -437,6 +445,15 @@ export default function PnLProjectTab({
           split_temp_until: splitTempUntil,
           split_reverted: splitReverted,
           invoice_mode: 'single',
+          // Quỹ tết (mặc định 500đ/công) & hoa hồng KH: kế thừa đơn giá tháng trước, tháng đầu tiên tự fill mặc định.
+          // Chỉ gửi khi DB đã có cột (migration 149) để không làm hỏng việc tạo dự án.
+          // Ưu tiên mốc đơn giá đặt ở hồ sơ Khách hàng (theo tháng), rồi tới đơn giá tháng trước, rồi mặc định.
+          ...(projectsPnl.length > 0 && 'tet_rate' in projectsPnl[0]
+            ? {
+                tet_rate: isLeasingClient(clientId) ? (resolveRuleRate(costRules, 'tet', month) ?? prevEntry?.tet_rate ?? 500) : null,
+                commission_rate: resolveRuleRate(costRules, 'commission', month) ?? prevEntry?.commission_rate ?? 0,
+              }
+            : {}),
         });
 
         if (prevCosts.length > 0) {
@@ -1631,6 +1648,56 @@ export default function PnLProjectTab({
               );
             })()}
 
+            {/* Chi phí riêng của chi nhánh (dự án khoán): quỹ tết + hoa hồng KH — trừ vào phần CN */}
+            {selected.project_type !== 'managed' && r && (
+              <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+                <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
+                  <span className="text-[12px] font-medium text-[#111]">Chi phí riêng của chi nhánh</span>
+                  <span className="text-[10.5px] text-[#999]">= số công × đơn giá · trừ vào phần Chi nhánh · đặt theo mốc ở hồ sơ Khách hàng</span>
+                </div>
+                {!('tet_rate' in selected) ? (
+                  <div className="p-3.5 text-[11.5px] text-amber-700 bg-amber-50">Chưa chạy migration 149 — chạy xong rồi tải lại trang để dùng mục này.</div>
+                ) : (
+                  <div className="p-3.5 space-y-2.5">
+                    {([
+                      { key: 'tet_rate' as const, label: 'Quỹ tết / lì xì', hint: 'mặc định 500đ/công · chỉ cho thuê lại LĐ', amount: r.tetFund, fallback: 500 },
+                      { key: 'commission_rate' as const, label: 'Hoa hồng khách hàng', hint: 'mỗi dự án một mức', amount: r.commission, fallback: 0 },
+                    ]).filter(f => f.key !== 'tet_rate' || isLeasingClient(selected.client_id)).map(f => {
+                      const rate = selected[f.key];
+                      return (
+                        <div key={f.key} className="flex items-center gap-3 text-[12px]">
+                          <div className="w-[150px]">
+                            <div className="font-medium text-[#111]">{f.label}</div>
+                            <div className="text-[10px] text-[#999]">{f.hint}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input key={`${selected.id}-${f.key}-${rate ?? 'null'}`} type="text" inputMode="numeric"
+                              defaultValue={rate == null ? '' : Number(rate).toLocaleString('vi-VN')} placeholder={f.fallback ? String(f.fallback) : '0'}
+                              onBlur={e => {
+                                const raw = e.target.value.replace(/\D/g, '');
+                                const v = raw === '' ? null : parseInt(raw);
+                                if (v === (rate ?? null)) return;
+                                guard(() => updateField({ [f.key]: v } as Partial<ProjectPnl>), () => { e.target.value = rate == null ? '' : Number(rate).toLocaleString('vi-VN'); });
+                              }}
+                              className="w-24 text-right text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                            <span className="text-[11px] text-[#888]">đ/công × {(selected.total_man_days || 0).toLocaleString('vi-VN')} công</span>
+                          </div>
+                          <div className="ml-auto text-right">
+                            <span className={`font-semibold ${f.amount > 0 ? 'text-red-600' : 'text-[#bbb]'}`}>{f.amount > 0 ? '− ' : ''}{fmtTrieu(f.amount)}</span> <span className="text-[10px] text-[#999]">đ</span>
+                            {rate == null && <div className="text-[10px] text-amber-600">chưa áp dụng</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center justify-between border-t border-gray-100 pt-2 text-[12px]">
+                      <span className="text-[#555]">Phần CN gộp <strong className="text-[#111]">{fmtTrieu(r.cnPGross)}</strong> − chi phí riêng <strong className="text-red-600">{fmtTrieu(r.tetFund + r.commission)}</strong></span>
+                      <span>= <strong className={r.cnP >= 0 ? 'text-emerald-700' : 'text-red-600'}>{fmtTrieu(r.cnP)}</strong> <span className="text-[10px] text-[#999]">đ CN thực nhận</span></span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Row 4: Result */}
             <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
               <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] text-[12px] font-medium text-[#111]">
@@ -1675,7 +1742,7 @@ export default function PnLProjectTab({
                   <div className="rounded-lg p-3 text-center bg-[#EAF3DE] border border-[#C0DD97]">
                     <div className="text-[10px] uppercase text-[#27500A] mb-1">Chi nhánh</div>
                     <div className="text-[20px] font-medium text-emerald-700">{fmtTrieu(r.cnP)}</div>
-                    <div className="text-[10px] text-emerald-600 mt-0.5">{selected.project_type === 'shared' ? `${selected.cn_pct}% LN` : selected.project_type === 'per_manday' ? `${(selected.manday_rate || 0).toLocaleString('vi-VN')}đ/công × ${(selected.total_man_days || 0).toLocaleString('vi-VN')} công` : 'Nhận lương CĐ'}</div>
+                    <div className="text-[10px] text-emerald-600 mt-0.5">{selected.project_type === 'shared' ? `${selected.cn_pct}% LN` : selected.project_type === 'per_manday' ? `${(selected.manday_rate || 0).toLocaleString('vi-VN')}đ/công × ${(selected.total_man_days || 0).toLocaleString('vi-VN')} công` : 'Nhận lương CĐ'}{r.tetFund + r.commission > 0 ? ` · đã trừ ${fmtTrieu(r.tetFund + r.commission)} CP riêng` : ''}</div>
                   </div>
                 </div>
                 {hasHoh && (

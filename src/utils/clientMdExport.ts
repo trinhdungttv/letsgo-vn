@@ -364,6 +364,11 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
     L.push('| Tháng | Số LĐ | Tăng/giảm so tháng trước | Quản lý phụ trách |');
     L.push('|---|---|---|---|');
     let prev: number | null = null;
+    let anyEstimated = false;
+    // Tháng chưa nhập → tạm lấy số tháng gần nhất phía trước (chỉ trong kỳ xuất, dừng ở tháng ngưng HĐ).
+    // Số tạm được gắn nhãn rõ và KHÔNG dùng để tính tăng/giảm hay xu hướng.
+    const stopMonth = isSuspended(client) ? suspensionMonth(client) : null;
+    let lastKnown: { v: number; m: string } | null = null;
     for (const m of months) {
       const v = laborMap.get(m);
       let delta = '—';
@@ -372,8 +377,19 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
         delta = d === 0 ? '0' : `${d > 0 ? '+' : ''}${d} (${prev ? pct((d / prev) * 100) : '—'})`;
       }
       const mgr = getManagerForMonth(raw.managerHistory, m) || client.manager || '—';
-      L.push(`| ${monthLabel(m)} | ${v != null ? v : MISSING} | ${v != null ? delta : '—'} | ${mgr} |`);
-      if (v != null) prev = v;
+      if (v != null) {
+        L.push(`| ${monthLabel(m)} | ${v} | ${delta} | ${mgr} |`);
+        prev = v; lastKnown = { v, m };
+      } else if (lastKnown && !(stopMonth && m > stopMonth)) {
+        anyEstimated = true;
+        L.push(`| ${monthLabel(m)} | ${MISSING} — tạm lấy ${lastKnown.v} từ ${monthLabel(lastKnown.m)} (ước tính) | — | ${mgr} |`);
+      } else {
+        L.push(`| ${monthLabel(m)} | ${MISSING} | — | ${mgr} |`);
+      }
+    }
+    if (anyEstimated) {
+      L.push('');
+      L.push('> Dòng "tạm lấy … (ước tính)": tháng đó CHƯA nhập, hệ thống hiển thị số tháng gần nhất trước đó chỉ để tham khảo. KHÔNG dùng các dòng này để tính trung bình, tăng/giảm hay xu hướng.');
     }
     L.push('');
     const known = months.map(m => laborMap.get(m)).filter((v): v is number => v != null);

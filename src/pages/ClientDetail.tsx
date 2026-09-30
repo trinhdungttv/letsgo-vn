@@ -16,6 +16,7 @@ import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
 import { askGeminiAboutDocument, geminiConfigured } from '../lib/gemini';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
+import ClientBranchCosts from '../components/clients/ClientBranchCosts';
 import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 import PaymentHistory from '../components/clients/PaymentHistory';
@@ -65,7 +66,7 @@ const DOC_TYPE_LABELS: Record<ClientDocumentType, string> = {
 };
 
 /** Các khối gập/mở của tab "Tổng quan" — dùng chung cho thanh điều hướng nhanh. */
-type SectionKey = 'info' | 'labor' | 'pay' | 'docs' | 'health' | 'hist';
+type SectionKey = 'info' | 'labor' | 'pay' | 'docs' | 'health' | 'hist' | 'costs';
 
 const OVERVIEW_NAV: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'info',   label: 'Thông tin & Hợp đồng', icon: '📋' },
@@ -151,7 +152,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   };
   // Trạng thái gập/mở của từng khối trong tab Tổng quan (nhớ theo trình duyệt).
   const { sections, setSections, toggle: toggleSection, goto: gotoSection } = useSectionState<SectionKey>(
-    { info: true, labor: true, pay: true, docs: false, health: true, hist: false },
+    { info: true, labor: true, pay: true, docs: false, health: true, hist: false, costs: false },
     'client-detail-sections-v1',
     'cd',
   );
@@ -1250,6 +1251,17 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     <div><PaymentTermsSection client={client} onUpdate={onClientUpdate} toast={toast} embedded /></div>
                     <div><PaymentHistory client={client} embedded /></div>
                   </div>
+                </SectionCard>
+
+                {/* ── Chi phí riêng của chi nhánh (quỹ tết / hoa hồng KH) ── */}
+                <SectionCard
+                  id="cd-costs"
+                  icon="🧾"
+                  title="Chi phí riêng chi nhánh"
+                  open={sections.costs}
+                  onToggle={() => toggleSection('costs')}
+                >
+                  <ClientBranchCosts client={client} toast={toast} />
                 </SectionCard>
 
                 {/* ── Hợp đồng & Tài liệu ── */}

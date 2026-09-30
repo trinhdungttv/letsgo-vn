@@ -68,6 +68,24 @@ export default function BranchFinance({
   toast,
 }: Props) {
   const now = new Date();
+  const [skips, setSkips] = useState<Set<string>>(new Set());
+  const staffIdsKey = branchStaffs.map(st => st.id).join(',');
+  useEffect(() => {
+    if (!staffIdsKey) { setSkips(new Set()); return; }
+    supabase.from('branch_staff_month_skips').select('staff_id, month').in('staff_id', staffIdsKey.split(','))
+      .then(({ data, error }) => { if (!error) setSkips(new Set((data ?? []).map((r: any) => `${r.staff_id}|${r.month}`))); });
+  }, [staffIdsKey]);
+  const skipStaffThisMonth = async (st: BranchStaff) => {
+    if (!confirm(`Bỏ lương của "${st.name}" khỏi chi phí tháng ${monthLabel(month)}?\n\nChỉ ẩn ở tháng này — nhân sự và các tháng khác không bị xoá. Có thể hoàn lại bất cứ lúc nào.`)) return;
+    const { error } = await supabase.from('branch_staff_month_skips').insert({ staff_id: st.id, month });
+    if (error) { toast(/does not exist|schema cache/i.test(error.message) ? 'Chưa chạy migration 148 — chạy xong rồi thử lại' : /row-level security/i.test(error.message) ? 'Bảng chưa có quyền ghi (RLS) — chạy phần policy cuối file migration 148' : 'Lỗi: ' + error.message); return; }
+    setSkips(prev => new Set(prev).add(`${st.id}|${month}`));
+  };
+  const restoreStaffThisMonth = async (st: BranchStaff) => {
+    const { error } = await supabase.from('branch_staff_month_skips').delete().eq('staff_id', st.id).eq('month', month);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    setSkips(prev => { const n = new Set(prev); n.delete(`${st.id}|${month}`); return n; });
+  };
   const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   // Persist month in URL hash segment (e.g. #/branches/xxx/finance/2026-05)
@@ -140,7 +158,13 @@ export default function BranchFinance({
   const operationalOverhead = monthOverhead.filter(o => o.cost_type === 'Vận hành');
   const fixedTotal = fixedOverhead.reduce((s, o) => s + (o.value || 0), 0);
   const operationalTotal = operationalOverhead.reduce((s, o) => s + (o.value || 0), 0);
-  const staffSalaryTotal = branchStaffs.reduce((s, st) => s + (st.salary || 0), 0);
+  // Lương nhân sự VP theo THÁNG: chỉ tính từ tháng vào làm (start_month; trống = mọi tháng) và
+  // trừ những người đã bị bỏ khỏi riêng tháng này (branch_staff_month_skips) — không xoá nhân sự.
+  const staffActiveIn = useCallback((m: string) => branchStaffs.filter(st => !st.start_month || st.start_month <= m), [branchStaffs]);
+  const isSkipped = (staffId: string, m: string) => skips.has(`${staffId}|${m}`);
+  const monthStaff = staffActiveIn(month).filter(st => !isSkipped(st.id, month));
+  const skippedStaff = staffActiveIn(month).filter(st => isSkipped(st.id, month) && st.salary > 0);
+  const staffSalaryTotal = monthStaff.reduce((s, st) => s + (st.salary || 0), 0);
   const overheadTotal = fixedTotal + operationalTotal;
   const totalCpCn = overheadTotal + staffSalaryTotal;
 
@@ -330,10 +354,10 @@ export default function BranchFinance({
         const r = calcPnl(p, cs);
         return s + r.cnP;
       }, 0);
-      const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0) + staffSalaryTotal;
+      const oh = overhead.filter(o => o.month === m).reduce((s, o) => s + (o.value || 0), 0) + staffActiveIn(m).filter(st => !skips.has(`${st.id}|${m}`)).reduce((a, st) => a + (st.salary || 0), 0);
       return { month: m, rev, cost, lnCn, oh, lnRong: lnCn - oh };
     });
-  }, [chartMonths, projectsPnl, pnlCostsMap, overhead, staffSalaryTotal, matchesBranch]);
+  }, [chartMonths, projectsPnl, pnlCostsMap, overhead, staffActiveIn, skips, matchesBranch]);
 
   const handleAddCategory = async () => {
     const label = newCatLabel.trim();
@@ -618,17 +642,27 @@ export default function BranchFinance({
             )}
 
             {/* Staff salary */}
-            {staffSalaryTotal > 0 && (
+            {(staffSalaryTotal > 0 || skippedStaff.length > 0) && (
               <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
                 <div className="text-[10px] text-[#999] uppercase font-semibold tracking-wide flex items-center gap-1">
                   <CircleDollarSign size={11} /> Lương nhân sự VP
                 </div>
-                {branchStaffs.filter(st => st.salary > 0).map(st => (
-                  <div key={st.id} className="flex justify-between text-[12px] px-1">
-                    <span className="text-[#555]">{st.name} — {st.role || 'NV'}</span>
-                    <span className="text-[#111]">{fmtVnd(st.salary)} đ</span>
+                {monthStaff.filter(st => st.salary > 0).map(st => (
+                  <div key={st.id} className="group flex justify-between items-center text-[12px] px-1">
+                    <span className="text-[#555]">{st.name} — {st.role || 'NV'}{st.start_month ? <span className="text-[10px] text-[#aaa]"> · từ {monthLabel(st.start_month)}</span> : null}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[#111]">{fmtVnd(st.salary)} đ</span>
+                      <button onClick={() => skipStaffThisMonth(st)} title="Bỏ khỏi chi phí tháng này" className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"><X size={12} /></button>
+                    </span>
                   </div>
                 ))}
+                {skippedStaff.length > 0 && (
+                  <div className="text-[10.5px] text-[#999] px-1 pt-0.5">
+                    Đã bỏ khỏi tháng này: {skippedStaff.map((st, i) => (
+                      <span key={st.id}>{i > 0 ? ', ' : ''}{st.name} <button onClick={() => restoreStaffThisMonth(st)} className="text-blue-600 hover:underline">(hoàn lại)</button></span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex justify-between text-[12px] font-medium pt-1 border-t border-gray-50">
                   <span className="text-[#666]">Tổng lương NS</span>
                   <span className="text-red-600">{fmtVnd(staffSalaryTotal)} đ</span>

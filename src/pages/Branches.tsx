@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, History, Pencil, X,
-  Filter, Check, Settings2,
+  Filter, Check, Settings2, Eye, EyeOff,
 } from 'lucide-react';
+import { usePersistedState } from '../hooks/usePersistedState';
 import { useBranchData } from '../hooks/useBranchData';
 import { useBranchStaffs } from '../hooks/useBranchStaffs';
 import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
@@ -11,6 +12,7 @@ import { useManagers } from '../hooks/useManagers';
 import { useOverheadCategories } from '../hooks/useOverheadCategories';
 import { useHashSubRoute } from '../hooks/useHashSubRoute';
 import BranchZones from '../components/branches/BranchZones';
+import RoleCombo from '../components/branches/RoleCombo';
 import BranchFinance from '../components/branches/BranchFinance';
 import AddBranchModal from '../components/branches/AddBranchModal';
 import { supabase } from '../lib/supabase';
@@ -100,7 +102,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
   const selected = branches.find(b => b.id === selectedId) || null;
   const { staffs: branchStaffs, loading: staffLoading, add: addStaff, update: updateStaff, remove: removeStaff } = useBranchStaffs(selected?.id ?? null);
-  const [staffForm, setStaffForm] = useState<{ name: string; role: string; phone: string; email: string; salary: number }>({ name: '', role: '', phone: '', email: '', salary: 0 });
+  const [staffForm, setStaffForm] = useState<{ name: string; role: string; phone: string; email: string; salary: number; start_month: string }>({ name: '', role: '', phone: '', email: '', salary: 0, start_month: '' });
+  // Cài đặt hiển thị (nhớ trên trình duyệt): ẩn KH đã ngưng hợp tác khỏi bảng Vận hành
+  const [hideSuspended, setHideSuspended] = usePersistedState<boolean>('lgvn_branch_ops_hide_suspended', false);
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [staffFormOpen, setStaffFormOpen] = useState(false);
   const [salaryHistoryMap, setSalaryHistoryMap] = useState<Record<string, { id: string; amount: number; effective_from: string; notes: string | null }[]>>({});
@@ -1146,6 +1150,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
             {activeTab === 'operations' && (() => {
               const isCompanyPhase = activeKhoan?.type === 'company';
+              const suspendedCount = (stats?.branchClients ?? []).filter(c => c.cooperation_status === 'suspended').length;
+              const visibleClients = (stats?.branchClients ?? []).filter(c => !hideSuspended || c.cooperation_status !== 'suspended');
               return (
               <>
               {isCompanyPhase && (
@@ -1158,7 +1164,17 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center gap-2">
                   <Building2 size={15} className="text-[#999]" />
                   <div className="text-[12.5px] font-semibold text-[#111] flex-1">Khách hàng đang phụ trách</div>
-                  <span className="text-[11px] text-[#999]">{stats?.branchClients.length || 0} KH · {stats?.workers.toLocaleString() || 0} LĐ tổng</span>
+                  <span className="text-[11px] text-[#999]">
+                    {(stats?.branchClients ?? []).filter(c => !hideSuspended || c.cooperation_status !== 'suspended').length} KH · {stats?.workers.toLocaleString() || 0} LĐ tổng
+                    {hideSuspended && suspendedCount > 0 ? ` · ẩn ${suspendedCount} KH ngưng` : ''}
+                  </span>
+                  {suspendedCount > 0 && (
+                    <button onClick={() => setHideSuspended(v => !v)}
+                      className={`p-1 rounded-md transition ${hideSuspended ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-[#888] hover:bg-[#F5F4EF]'}`}
+                      title={hideSuspended ? `Đang ẩn ${suspendedCount} KH đã ngưng — bấm để hiện lại` : `Ẩn ${suspendedCount} KH đã ngưng hợp tác`}>
+                      {hideSuspended ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  )}
                   {!isCompanyPhase && (
                     <button onClick={() => { setEditPctMode(v => !v); setEditingPctId(null); }}
                       className={`p-1 rounded-md transition ${editPctMode ? 'bg-blue-50 text-blue-600' : 'text-[#ccc] hover:text-[#888] hover:bg-[#F5F4EF]'}`}
@@ -1184,7 +1200,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       </tr>
                     </thead>
                     <tbody>
-                      {stats.branchClients.map(c => {
+                      {visibleClients.map(c => {
                         const d = daysUntil(c.contract_end);
                         return (
                           <tr key={c.id} className="border-t border-[#F0EEE9]">
@@ -1520,38 +1536,49 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center gap-2">
                     <Users size={15} className="text-[#2563EB]" />
-                    <div className="text-[12px] font-semibold text-[#444] uppercase tracking-wide flex-1">Nhan su van phong chi nhanh</div>
-                    <span className="text-[11px] text-[#999] mr-2">{branchStaffs.length} nguoi</span>
+                    <div className="text-[12px] font-semibold text-[#444] uppercase tracking-wide flex-1">Nhân sự văn phòng chi nhánh</div>
+                    <span className="text-[11px] text-[#999] mr-2">{branchStaffs.length} người</span>
                     <button
-                      onClick={() => { setStaffForm({ name: '', role: '', phone: '', email: '', salary: 0 }); setEditingStaffId(null); setStaffFormOpen(true); }}
+                      onClick={() => { setStaffForm({ name: '', role: '', phone: '', email: '', salary: 0, start_month: '' }); setEditingStaffId(null); setStaffFormOpen(true); }}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition"
                     >
-                      <Plus size={12} /> Them
+                      <Plus size={12} /> Thêm
                     </button>
                   </div>
 
                   {staffFormOpen && (
-                    <div className="px-4 py-3 border-b border-[#E8E7E2] bg-blue-50/30">
-                      <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div className="px-5 py-4 border-b border-[#E8E7E2] bg-[#FAFAF8]">
+                      <div className="text-[12.5px] font-semibold text-[#111] mb-3">{editingStaffId ? 'Cập nhật nhân sự' : 'Thêm nhân sự mới'}</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3.5 mb-4">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Ho ten *</label>
-                          <input value={staffForm.name} onChange={e => setStaffForm(f => ({ ...f, name: e.target.value }))} className="field-input" placeholder="Nhap ho ten" />
+                          <label className="text-[11.5px] font-medium text-[#555]">Họ tên <span className="text-red-500">*</span></label>
+                          <input value={staffForm.name} onChange={e => setStaffForm(f => ({ ...f, name: e.target.value }))} className="w-full text-[13px] px-3 py-2 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400" placeholder="Nhập họ tên" autoFocus />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Chuc vu</label>
-                          <input value={staffForm.role} onChange={e => setStaffForm(f => ({ ...f, role: e.target.value }))} className="field-input" placeholder="VD: Nhan vien kinh doanh" />
+                          <label className="text-[11.5px] font-medium text-[#555]">Chức vụ</label>
+                          <RoleCombo value={staffForm.role} onChange={v => setStaffForm(f => ({ ...f, role: v }))} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">So dien thoai</label>
-                          <input value={staffForm.phone} onChange={e => setStaffForm(f => ({ ...f, phone: e.target.value }))} className="field-input" placeholder="SDT" />
+                          <label className="text-[11.5px] font-medium text-[#555]">Số điện thoại</label>
+                          <input value={staffForm.phone} onChange={e => setStaffForm(f => ({ ...f, phone: e.target.value }))} className="w-full text-[13px] px-3 py-2 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400" placeholder="09xx xxx xxx" inputMode="tel" />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Email</label>
-                          <input value={staffForm.email} onChange={e => setStaffForm(f => ({ ...f, email: e.target.value }))} className="field-input" placeholder="Email" />
+                          <label className="text-[11.5px] font-medium text-[#555]">Email</label>
+                          <input type="email" value={staffForm.email} onChange={e => setStaffForm(f => ({ ...f, email: e.target.value }))} className="w-full text-[13px] px-3 py-2 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400" placeholder="ten@congty.com" />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10.5px] font-medium text-[#999] uppercase tracking-wide">Muc luong (d/thang)</label>
-                          <input type="number" min={0} value={staffForm.salary || ''} onChange={e => setStaffForm(f => ({ ...f, salary: +e.target.value || 0 }))} className="field-input" placeholder="VD: 8000000" />
+                          <label className="text-[11.5px] font-medium text-[#555]">Mức lương (đ/tháng)</label>
+                          <div className="relative">
+                            <input inputMode="numeric" value={staffForm.salary ? staffForm.salary.toLocaleString('vi-VN') : ''}
+                              onChange={e => setStaffForm(f => ({ ...f, salary: parseInt(e.target.value.replace(/\D/g, '')) || 0 }))}
+                              className="w-full text-[13px] px-3 py-2 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400 pr-8 text-right" placeholder="8.000.000" />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-gray-400">đ</span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11.5px] font-medium text-[#555]">Tháng vào làm</label>
+                          <input type="month" value={staffForm.start_month} onChange={e => setStaffForm(f => ({ ...f, start_month: e.target.value }))} className="w-full text-[13px] px-3 py-2 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400" />
+                          <div className="text-[10.5px] text-[#999] leading-snug">Lương tính vào chi phí chi nhánh từ tháng này. Để trống = mọi tháng.</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1560,42 +1587,45 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                           onClick={async () => {
                             try {
                               if (editingStaffId) {
-                                await updateStaff(editingStaffId, { name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary });
+                                const orig = branchStaffs.find(x => x.id === editingStaffId);
+                                // Chỉ gửi start_month khi có đổi — để DB chưa chạy migration 148 vẫn lưu được các trường khác.
+                                const startChanged = (orig?.start_month || '') !== staffForm.start_month;
+                                await updateStaff(editingStaffId, { name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary, ...(startChanged ? { start_month: staffForm.start_month || null } : {}) });
                                 await logActivity({ user, action: 'update', table: 'branch_staffs', recordId: editingStaffId, description: `Cap nhat nhan su "${staffForm.name}" tai chi nhanh "${selected?.name}"` });
-                                toast('Da cap nhat');
+                                toast('Đã cập nhật');
                               } else {
-                                const added = await addStaff({ name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary });
+                                const added = await addStaff({ name: staffForm.name, role: staffForm.role || null, phone: staffForm.phone || null, email: staffForm.email || null, salary: staffForm.salary, ...(staffForm.start_month ? { start_month: staffForm.start_month } : {}) });
                                 await logActivity({ user, action: 'insert', table: 'branch_staffs', recordId: added.id, description: `Them nhan su "${staffForm.name}" vao chi nhanh "${selected?.name}"` });
-                                toast('Da them nhan su');
+                                toast('Đã thêm nhân sự');
                               }
                               setStaffFormOpen(false);
                               setEditingStaffId(null);
-                            } catch (err: unknown) { toast('Loi: ' + errMsg(err)); }
+                            } catch (err: unknown) { toast('Lỗi: ' + errMsg(err)); }
                           }}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition disabled:opacity-50"
                         >
-                          <Save size={12} /> {editingStaffId ? 'Cap nhat' : 'Luu'}
+                          <Save size={12} /> {editingStaffId ? 'Cập nhật' : 'Lưu'}
                         </button>
                         <button onClick={() => { setStaffFormOpen(false); setEditingStaffId(null); }} className="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-gray-50 transition">
-                          Huy
+                          Hủy
                         </button>
                       </div>
                     </div>
                   )}
 
                   {staffLoading ? (
-                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Dang tai...</div>
+                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Đang tải...</div>
                   ) : branchStaffs.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Chua co nhan su. Bam "Them" de bat dau.</div>
+                    <div className="px-4 py-8 text-center text-[12px] text-[#999]">Chưa có nhân sự. Bấm "Thêm" để bắt đầu.</div>
                   ) : (
                     <div className="overflow-x-auto">
                     <table className="w-full text-[12px]">
                       <thead>
                         <tr className="text-[10px] text-[#999] uppercase bg-[#F5F4EF]">
-                          <th className="text-left font-medium px-4 py-2">Ho ten</th>
-                          <th className="text-left font-medium px-3 py-2">Chuc vu</th>
-                          <th className="text-right font-medium px-3 py-2">Luong</th>
-                          <th className="text-left font-medium px-3 py-2">SDT</th>
+                          <th className="text-left font-medium px-4 py-2">Họ tên</th>
+                          <th className="text-left font-medium px-3 py-2">Chức vụ</th>
+                          <th className="text-right font-medium px-3 py-2">Lương</th>
+                          <th className="text-left font-medium px-3 py-2">SĐT</th>
                           <th className="text-center font-medium px-3 py-2 w-20"></th>
                         </tr>
                       </thead>
@@ -1619,7 +1649,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                               <div className="flex items-center justify-center gap-1">
                                 <button
                                   onClick={() => {
-                                    setStaffForm({ name: s.name, role: s.role || '', phone: s.phone || '', email: s.email || '', salary: s.salary || 0 });
+                                    setStaffForm({ name: s.name, role: s.role || '', phone: s.phone || '', email: s.email || '', salary: s.salary || 0, start_month: s.start_month || '' });
                                     setEditingStaffId(s.id);
                                     setStaffFormOpen(true);
                                   }}
@@ -1635,7 +1665,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                                       await removeStaff(s.id);
                                       await logActivity({ user, action: 'delete', table: 'branch_staffs', recordId: s.id, description: `Xoa nhan su "${s.name}" khoi chi nhanh "${selected?.name}"` });
                                       toast('Da xoa');
-                                    } catch (err: unknown) { toast('Loi: ' + errMsg(err)); }
+                                    } catch (err: unknown) { toast('Lỗi: ' + errMsg(err)); }
                                   }}
                                   className="p-1 rounded hover:bg-red-50 text-[#999] hover:text-red-600 transition"
                                   title="Xoa"
@@ -1660,7 +1690,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                                     const { data, error } = await supabase.from('staff_salary_history').insert({
                                       staff_id: s.id, amount: newSalaryForm.amount, effective_from: newSalaryForm.effective_from, notes: newSalaryForm.notes || null,
                                     }).select().single();
-                                    if (error) { toast('Loi: ' + error.message); return; }
+                                    if (error) { toast('Lỗi: ' + error.message); return; }
                                     await updateStaff(s.id, { salary: newSalaryForm.amount });
                                     setSalaryHistoryMap(prev => ({ ...prev, [s.id]: [data as any, ...(prev[s.id] || [])] }));
                                     setNewSalaryForm({ amount: 0, effective_from: '', notes: '' });

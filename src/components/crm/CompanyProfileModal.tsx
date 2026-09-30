@@ -15,6 +15,7 @@ import { addContactClient, clientIdsOf, isPrimaryAt } from '../../lib/contactOps
 import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
+import MarketSupplyBlock from './MarketSupplyBlock';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 
 export const STAGES = [
@@ -936,6 +937,8 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
     </>
   );
 
+  const blkMarket = <MarketSupplyBlock entry={entry} toast={toast} />;
+
   const blkNotes = (
     <>
       {/* Ghi chú nội bộ — comment thread */}
@@ -1526,6 +1529,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           <div className="p-5 space-y-5">
             {blkBasicInfo}
             {blkWorkerBar}
+            {blkMarket}
             {blkNotes}
             {blkAppendix}
             {blkActivate}
@@ -1676,6 +1680,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
             <div className="space-y-5">
               {blkBasicInfo}
               {blkWorkerBar}
+              {blkMarket}
             </div>
           </SectionCard>
 

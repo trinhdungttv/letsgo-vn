@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { Client, ProjectPnl, ProjectPnlCost, PnlSplitSettings, FinanceRecord, Branch, MarketZone, Manager, LaborHistoryEntry, ClientManagerHistory } from '../lib/types';
 import { branchOf } from '../lib/branchRef';
-import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, getManagerForMonth, daysUntil } from '../lib/format';
+import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel, getMonthLast, getMonthLastFilled, getManagerForMonth, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -245,11 +245,12 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
   // Tăng/giảm lao động so với tháng trước — số thật từ lịch sử lao động,
   // thay cho dòng "+2.8%" vốn được ghi cứng trong mã nguồn.
   const monthWorkers = useMemo(() => {
-    const sumOf = (monthNum: number, monthClients: Client[]) => {
+    // fill=true: KH chưa nhập tháng đó thì tạm lấy số tháng gần nhất phía trước có dữ liệu.
+    const sumOf = (monthNum: number, monthClients: Client[], fill = false) => {
       if (monthNum < 1) return null;
       let sum = 0, found = false;
       for (const c of monthClients) {
-        const v = getMonthLast(laborHistory[c.id] || [], monthNum);
+        const v = fill ? getMonthLastFilled(laborHistory[c.id] || [], monthNum).value : getMonthLast(laborHistory[c.id] || [], monthNum);
         if (v !== null) { sum += v; found = true; }
       }
       return found ? sum : null;
@@ -257,7 +258,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
     // Tháng trước: dùng đúng người phụ trách của THÁNG TRƯỚC (không phải người hiện tại),
     // để KH vừa đổi quản lý không bị tính hụt/thừa vào delta của người cũ/mới.
     const prevClients = curMonthNum - 1 >= 1 ? clientsInScopeForMonth(monthStrOfThisYear(curMonthNum - 1)) : [];
-    return { cur: sumOf(curMonthNum, filteredClients), prev: sumOf(curMonthNum - 1, prevClients) };
+    return { cur: sumOf(curMonthNum, filteredClients), prev: sumOf(curMonthNum - 1, prevClients, true) };
   }, [filteredClients, laborHistory, curMonthNum, clientsInScopeForMonth]);
 
   // Chỉ so sánh khi tháng này ĐÃ có người nhập số. Chưa nhập thì `totalWorkers`
@@ -317,20 +318,23 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
   const laborTrend = useMemo(() => {
     const span = trendRange === 'ytd' ? curMonthNum : Math.min(Number(trendRange), curMonthNum);
     const months = Array.from({ length: span }, (_, i) => curMonthNum - span + 1 + i);
-    const points = months.map(num => {
+    const estimated: boolean[] = [];
+    const points = months.map((num, idx) => {
+      estimated[idx] = false;
       if (num === curMonthNum) return totalWorkers || null;
       // Mỗi tháng trong quá khứ lấy đúng tập KH theo người phụ trách CỦA THÁNG ĐÓ
       // (phạm vi chi nhánh/khu vực không đổi theo tháng, chỉ "Quản lý" mới cần tra lại).
       const monthClients = clientsInScopeForMonth(monthStrOfThisYear(num));
       let sum = 0, found = false;
       for (const c of monthClients) {
-        const v = getMonthLast(laborHistory[c.id] || [], num);
-        if (v !== null) { sum += v; found = true; }
+        // KH chưa nhập tháng này → tạm lấy số tháng gần nhất trước đó (đánh dấu ước tính).
+        const r = getMonthLastFilled(laborHistory[c.id] || [], num);
+        if (r.value !== null) { sum += r.value; found = true; if (r.from !== num) estimated[idx] = true; }
       }
-      // Tháng chưa nhập liệu → null (đứt nét) thay vì 0, tránh đường tụt giả tạo.
+      // Không KH nào có số (kể cả tháng trước) → null (đứt nét) thay vì 0, tránh đường tụt giả tạo.
       return found ? sum : null;
     });
-    return { months, labels: months.map(n => `T${n}`), points };
+    return { months, labels: months.map(n => `T${n}`), points, estimated };
   }, [trendRange, curMonthNum, clientsInScopeForMonth, laborHistory, totalWorkers]);
 
   const trendRangeLabel = laborTrend.months.length > 1
@@ -508,7 +512,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
   const workersOf = (c: Client) =>
     pnlMonth === curMonth
       ? (c.current_workers || 0)
-      : (getMonthLast(laborHistory[c.id] || [], pnlMonthNum) ?? 0);
+      : (getMonthLastFilled(laborHistory[c.id] || [], pnlMonthNum).value ?? 0);
 
   const laborRows = useMemo(
     () => buildChartRows(
@@ -811,17 +815,22 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
                 } as any;
                 return trendChart === 'bar' ? (
                   <Bar
-                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, backgroundColor: 'rgba(59,130,246,0.75)', borderRadius: 4, maxBarThickness: 34 }] }}
+                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, backgroundColor: laborTrend.estimated.map(e => e ? 'rgba(59,130,246,0.3)' : 'rgba(59,130,246,0.75)'), borderRadius: 4, maxBarThickness: 34 }] }}
                     options={trendOpts}
                   />
                 ) : (
                   <Line
-                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.45, cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: 3, spanGaps: true }] }}
+                    data={{ labels: laborTrend.labels, datasets: [{ data: laborTrend.points, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, tension: 0.45, cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: 3, pointBackgroundColor: laborTrend.estimated.map(e => e ? '#fff' : '#3B82F6'), pointBorderColor: '#3B82F6', spanGaps: true }] }}
                     options={trendOpts}
                   />
                 );
               })()}
             </div>
+            {laborTrend.estimated.some(Boolean) && (
+              <div className="px-4 pb-2.5 -mt-1 text-[10.5px] text-[#999]">
+                ○ Cột/điểm nhạt = có KH chưa nhập số tháng đó nên tạm lấy số tháng gần nhất trước đó (chưa ghi vào dữ liệu).
+              </div>
+            )}
           </div>
 
           {/* Alerts + Tasks */}

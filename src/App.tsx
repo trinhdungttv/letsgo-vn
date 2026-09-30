@@ -115,6 +115,14 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadFinance, loadMarket, resolveHashIds]);
 
+  // CRM (hồ sơ công ty) sửa NCC/ảnh tuyển dụng của Thị trường → nạp lại để trang Thị trường không
+  // giữ dữ liệu cũ rồi ghi đè lên khi bấm lưu.
+  useEffect(() => {
+    const onMarketChanged = () => { loadMarket(); loadClients(); };
+    window.addEventListener('lgvn:market-changed', onMarketChanged);
+    return () => window.removeEventListener('lgvn:market-changed', onMarketChanged);
+  }, [loadMarket, loadClients]);
+
   useEffect(() => {
     if (!window.location.hash || window.location.hash === '#/') {
       window.history.replaceState(null, '', `#/${page}`);

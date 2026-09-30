@@ -20,7 +20,7 @@ import { wageMonthlyTotal } from './shiftCalc';
 import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLabel, regionWageOf, regionZoneColorCls,
   fetchMinWageBatches, type MinWageBatch } from './regionWage';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
-import { fmtTr } from './shared';
+import { fmtTr, sameZone } from './shared';
 import type { Client, CompetitorClient } from '../../lib/types';
 import {
   type MergedSupplier, type LgvSupply, mergeSuppliers, fetchSupplyRows, writeSupplyQty,
@@ -372,6 +372,32 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     await supabase.from('competitors').update({ supplying_for }).eq('id', comp.id);
   };
 
+  // NCC gắn vào công ty/dự án nằm trong KCN nào → tự ghi nhận KCN đó vào "Khu vực hoạt động"
+  // (competitors.active_zones) của hồ sơ đối thủ, để khối "Đối thủ đang hoạt động tại KCN" tự có.
+  // Bỏ qua nếu đã ghi nhận (so khớp chặt sameZone) hoặc KCN không khớp KCN chính thức nào.
+  const syncCompetitorActiveZones = async (supplierName: string, zones: (string | null | undefined)[]) => {
+    const comp = competitors.find(c => c.company_name === supplierName);
+    if (!comp) return;
+    const current = comp.active_zones ?? [];
+    const toAdd: string[] = [];
+    for (const z of zones) {
+      if (!z) continue;
+      const official = marketZones.find(mz => sameZone(mz.name, z));
+      if (!official) continue;
+      if (current.some(a => sameZone(a, official.name)) || toAdd.includes(official.name)) continue;
+      toAdd.push(official.name);
+    }
+    if (!toAdd.length) return;
+    const active_zones = [...current, ...toAdd];
+    const { error } = await supabase.from('competitors').update({ active_zones }).eq('id', comp.id);
+    if (error) { toast('Không tự ghi nhận KCN cho đối thủ: ' + error.message); return; }
+    await logActivity({
+      user, action: 'update', table: 'competitors', recordId: comp.id,
+      description: `Tự ghi nhận KCN "${toAdd.join(', ')}" cho đối thủ "${comp.company_name}" (từ NCC ở Công ty/Dự án)`,
+      oldData: comp, newData: { ...comp, active_zones },
+    });
+  };
+
   // Số LĐ được ghi sang competitor_clients khi tên NCC khớp một hồ sơ Đối thủ, để hồ sơ đối
   // thủ và hồ sơ KCN thấy ngay. Báo lại khi bỏ qua để người dùng biết vì sao không đồng bộ.
   const pushSupplyQty = async (
@@ -403,6 +429,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, lead.company_name);
+      await syncCompetitorActiveZones(name, [lead.region]);
       const comp = competitors.find(c => c.company_name === name);
       if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, lead.region, qty);
       await onRefresh();
@@ -434,7 +461,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
-      if (!row.is_us) await pushSupplyQty(row, lead.company_name, lead.region, qty);
+      if (!row.is_us) { await pushSupplyQty(row, lead.company_name, lead.region, qty); await syncCompetitorActiveZones(name, [lead.region]); }
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -581,6 +608,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
       await syncCompetitorSupplyingFor(name, client.name);
+      await syncCompetitorActiveZones(name, client.industrial_zones ?? []);
       const comp = competitors.find(c => c.company_name === name);
       if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
@@ -608,7 +636,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
-      if (!row.is_us) await pushSupplyQty(row, client.name, client.industrial_zones?.[0] ?? null, qty);
+      if (!row.is_us) { await pushSupplyQty(row, client.name, client.industrial_zones?.[0] ?? null, qty); await syncCompetitorActiveZones(name, client.industrial_zones ?? []); }
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
