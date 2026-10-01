@@ -133,6 +133,7 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   const [editSaving, setEditSaving] = useState(false)
   // Form ghi nhận mặc định đóng — mở bằng nút "Ghi nhận mới" ở đầu khối.
   const [showInputForm, setShowInputForm] = useState(false)
+  const [showTop, setShowTop] = useState(false)
   const [filterKind, setFilterKind] = useState<Kind | 'all'>('all')
   const [search, setSearch] = useState('')
   const [showAllEntries, setShowAllEntries] = useState(false)
@@ -520,6 +521,23 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
   return (
     <div className="flex flex-col gap-3">
 
+      {/* ── Tổng quan + Ghi nhận phiên mới: mặc định ẩn, mở khi cần ── */}
+      <button
+        type="button"
+        onClick={() => setShowTop(v => !v)}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E8E7E2] bg-[#FAFAF8] hover:bg-white text-left"
+      >
+        {showTop ? <ChevronUp size={13} className="text-[#999]" /> : <ChevronDown size={13} className="text-[#999]" />}
+        <span className="text-[10.5px] font-semibold text-[#555] uppercase tracking-wide">Tổng quan &amp; Ghi nhận phiên mới</span>
+        {!showTop && (showInputForm || !!(branch.status_note || branch.difficulties || branch.opportunities)) && (
+          <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-px">● Có bản nháp chưa lưu</span>
+        )}
+        {!showTop && stats.latestIssue && (
+          <span className="text-[10px] text-amber-700 truncate">Có khó khăn mới nhất — bấm để xem</span>
+        )}
+      </button>
+      {showTop && (
+        <>
       {/* ── 1. Dải tóm tắt — trả lời ngay "lâu chưa ghi nhận?" và "đang vướng gì?" ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         <div className="border border-[#E8E7E2] rounded-lg bg-white px-3 py-2">
@@ -693,6 +711,9 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
           </div>
         )}
       </div>
+
+        </>
+      )}
 
       {/* ── 4a. Việc của tôi gắn với chi nhánh này — cùng bản ghi work_tasks với Workspace ── */}
       {branch.id && <LinkedWorkTasks branchId={branch.id} refreshKey={refreshKey} />}

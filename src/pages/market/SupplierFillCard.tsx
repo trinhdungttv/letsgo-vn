@@ -6,6 +6,7 @@ import SearchSelect from './SearchSelect';
 import WageDetailTable from './WageDetailTable';
 import { wageDetailToStrings, wageDetailToNumbers, wageDetailAgeLabel } from './wageFields';
 import { fmtVnd } from '../../lib/payroll/format';
+import { withoutRange, rangeLabel } from '../../lib/payroll/wageRange';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
 import type { WageFieldMapping } from '../../lib/payroll/rateCard';
 import { wageMonthlyTotal, monthlyForPatternFromWageDetail, allowsExtraOt, SHIFT_PATTERN_LABELS, type ShiftPattern } from './shiftCalc';
@@ -47,7 +48,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
   if (cols.length === 0) return <div className="text-[11px] text-[#aaa] px-1 py-2">Chọn ít nhất 1 NCC để so sánh.</div>;
 
   const fieldsOf = (pick: (s: MarketLeadSupplier) => Record<string, number> | null | undefined) =>
-    [...new Set(cols.flatMap(s => Object.keys(pick(s) ?? {})))];
+    [...new Set(cols.flatMap(s => Object.keys(withoutRange(pick(s)))))];
   const sellFields = fieldsOf(s => s.wage_detail_client);
   const costFields = fieldsOf(s => s.wage_detail);
   const margin = (s: MarketLeadSupplier) => clientTotal(s, fieldMappings) - detailTotal(s, fieldMappings);
@@ -105,7 +106,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
           {sellFields.map(f => (
             <tr key={'sell-' + f} className="border-t border-[#F0EEE9]">
               <td className={rowLabel}>{f}</td>
-              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{tr(s.wage_detail_client?.[f])}</td>)}
+              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{rangeLabel(s.wage_detail_client, f, fmtVnd)}</td>)}
             </tr>
           ))}
           {!sellFields.length && (
@@ -122,7 +123,7 @@ function WageCompareTable({ suppliers, selected, fieldMappings }: { suppliers: M
           {costFields.map(f => (
             <tr key={'cost-' + f} className="border-t border-[#F0EEE9]">
               <td className={rowLabel}>{f}</td>
-              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{tr(s.wage_detail?.[f])}</td>)}
+              {cols.map((s, i) => <td key={i} className="text-right px-2 py-1 text-[#333]">{rangeLabel(s.wage_detail, f, fmtVnd)}</td>)}
             </tr>
           ))}
           {!costFields.length && (
@@ -265,11 +266,11 @@ function SupplierInlineForm({ form, setForm, competitorNames, onSubmit, onCancel
           <span className="ml-auto text-[10px] font-normal text-[#aaa]">dùng chung mọi NCC — sửa ở "Công ty trả LGVN" phía trên</span>
         </div>
         <div className="p-2 space-y-0.5">
-          {companyWageDetailClient && Object.keys(companyWageDetailClient).length > 0 ? (
-            Object.entries(companyWageDetailClient).map(([k, v]) => (
+          {companyWageDetailClient && Object.keys(withoutRange(companyWageDetailClient)).length > 0 ? (
+            Object.keys(withoutRange(companyWageDetailClient)).map(k => (
               <div key={k} className="flex items-center justify-between text-[11.5px] text-[#555]">
                 <span className="truncate">{k}</span>
-                <span className="font-medium text-[#333]">{fmtVnd(v)}</span>
+                <span className="font-medium text-[#333]">{rangeLabel(companyWageDetailClient, k, fmtVnd)}</span>
               </div>
             ))
           ) : (
@@ -470,8 +471,8 @@ export default function SupplierFillCard({
           }
           const p = shareOf(s.qty);
           const wage = wageFmt(s.wage_min, s.wage_max);
-          const costCount = Object.keys(s.wage_detail ?? {}).length;
-          const sellCount = Object.keys(s.wage_detail_client ?? {}).length;
+          const costCount = Object.keys(withoutRange(s.wage_detail)).length;
+          const sellCount = Object.keys(withoutRange(s.wage_detail_client)).length;
           const marginVal = clientTotal(s, fieldMappings) - detailTotal(s, fieldMappings);
           const hasBothSides = clientTotal(s, fieldMappings) > 0 && detailTotal(s, fieldMappings) > 0;
           return (

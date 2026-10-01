@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useHashTab } from '../hooks/useHashSubRoute';
-import { ArrowLeft, Edit2, Check, X, RefreshCw, ArrowRightLeft, FileText, Upload, Trash2, Sparkles, Download } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, X, RefreshCw, ArrowRightLeft, FileText, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
 import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, ClientGift, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
+import { ContractCompareTables } from '../components/ContractCompareTables';
 import { LinkedWorkTasks } from '../components/workspace/LinkedWorkTasks';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
@@ -157,8 +158,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     'cd',
   );
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
-  const [uploadingDoc, setUploadingDoc] = useState(false);
-  const [uploadDocType, setUploadDocType] = useState<ClientDocumentType>('contract');
   const [askingDocId, setAskingDocId] = useState<string | null>(null);
   const [docAnswers, setDocAnswers] = useState<Record<string, string>>({});
   const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
@@ -252,36 +251,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadDocuments(); }, [client.id]);
-
-  const handleUploadDocument = async (file: File) => {
-    setUploadingDoc(true);
-    try {
-      const path = `${client.id}/${Date.now()}-${file.name}`;
-      const { error: upErr } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data } = supabase.storage.from('documents').getPublicUrl(path);
-      const { error: insErr, data: row } = await supabase.from('client_documents').insert({
-        client_id: client.id,
-        name: file.name,
-        file_url: data.publicUrl,
-        file_path: path,
-        doc_type: uploadDocType,
-        uploaded_by: user?.full_name || null,
-      }).select().single();
-      if (insErr) throw insErr;
-      setDocuments(prev => [row as ClientDocument, ...prev]);
-      toast('Đã tải lên tài liệu');
-      await logActivity({
-        user, action: 'insert', table: 'client_documents', recordId: row.id,
-        description: `Tải lên tài liệu "${file.name}" (${DOC_TYPE_LABELS[uploadDocType]}) cho "${client.name}"`,
-        newData: row,
-      });
-    } catch (e) {
-      toast('Lỗi: ' + errMsg(e));
-    } finally {
-      setUploadingDoc(false);
-    }
-  };
 
   const handleDeleteDocument = async (doc: ClientDocument) => {
     if (!confirm(`Xóa tài liệu "${doc.name}"?`)) return;
@@ -1273,24 +1242,14 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                   open={sections.docs}
                   onToggle={() => toggleSection('docs')}
                 >
-              <div className="flex items-center gap-2 flex-wrap mb-3 bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2.5">
-                <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value as ClientDocumentType)} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
-                  {Object.entries(DOC_TYPE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
-                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 cursor-pointer hover:bg-white transition ${uploadingDoc ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <Upload size={13} /> {uploadingDoc ? 'Đang tải lên...' : 'Tải lên PDF'}
-                  <input
-                    type="file"
-                    accept="application/pdf,image/*"
-                    className="hidden"
-                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadDocument(f); e.target.value = ''; }}
-                    disabled={uploadingDoc}
-                  />
-                </label>
-              </div>
-              {documents.length === 0 ? (
-                <div className="text-[12.5px] text-[#999] py-3 text-center">Chưa có tài liệu nào</div>
-              ) : (
+              {/* Không tải file lên nữa: HĐ / Phụ lục được cập nhật ở Workspace (loại việc "Hợp đồng" / "Phụ lục"
+                  + chọn khách hàng) và hiện ở đây, đồng thời hiện ở hồ sơ Chi nhánh — cùng 1 bản ghi work_tasks. */}
+              <LinkedWorkTasks clientId={client.id} taskTypes={['Hợp đồng', 'Phụ lục']} title="Hợp đồng & Phụ lục" emptyHint="Chưa có Hợp đồng / Phụ lục nào — tạo ở Workspace > Việc của tôi, chọn loại việc “Hợp đồng” hoặc “Phụ lục” và chọn khách hàng này. Bấm vào từng dòng để xem / tạo bảng và nội dung của hợp đồng đó." />
+              <ContractCompareTables clientId={client.id} orphansOnly toast={toast} />
+              {documents.length > 0 && (
+                <div className="text-[10px] font-semibold text-[#555] uppercase tracking-wide mt-3 mb-1.5">Tệp đã tải lên trước đây</div>
+              )}
+              {documents.length > 0 && (
                 <div className="space-y-2">
                   {documents.map(doc => (
                     <div key={doc.id} className="border border-[#E8E7E2] rounded-lg p-2.5">

@@ -8,6 +8,7 @@
 // Dữ liệu CŨ không cần chuyển đổi: DB vốn đã lưu bằng đồng, chỉ tầng hiển thị đổi.
 import { supabase } from '../../lib/supabase';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
+import { isRangeKey, RANGE_SUFFIX } from '../../lib/payroll/wageRange';
 
 /** 1 trường lương chi tiết + loại đơn giá theo luật mà nó tương ứng (migration 126).
  *  payrollInputType = null → khoản phụ cấp thuần (ăn ca, xăng xe…), không quy ra đơn giá giờ được. */
@@ -46,7 +47,8 @@ export async function reorderWageFields(names: string[]): Promise<string | null>
 /** Đổi khoá trong 1 object chi tiết lương, giữ nguyên thứ tự các khoá khác. */
 function renameKey(d: Record<string, number> | null | undefined, from: string, to: string) {
   if (!d || !(from in d)) return null;
-  return Object.fromEntries(Object.entries(d).map(([k, v]) => [k === from ? to : k, v]));
+  const fromMax = from + '__max';
+  return Object.fromEntries(Object.entries(d).map(([k, v]) => [k === from ? to : k === fromMax ? to + '__max' : k, v]));
 }
 
 /**
@@ -143,7 +145,14 @@ export async function setWageFieldPayrollType(name: string, payrollInputType: Pa
 export const wageDetailToStrings = (d: Record<string, number> | null | undefined): Record<string, string> =>
   Object.fromEntries(Object.entries(d ?? {}).map(([k, v]) => [k, String(v)]));
 export const wageDetailToNumbers = (d: Record<string, string>): Record<string, number> =>
-  Object.fromEntries(Object.entries(d).filter(([, v]) => v.trim()).map(([k, v]) => [k, parseFloat(v) || 0]));
+  Object.fromEntries(Object.entries(d)
+    .filter(([k, v]) => {
+      if (!v.trim()) return false;
+      // Khoá "__max" chỉ giữ khi đúng là khoảng: có giá trị thấp và cao hơn giá trị thấp.
+      if (isRangeKey(k)) { const lo = parseFloat(d[k.slice(0, -RANGE_SUFFIX.length)] || '0') || 0; return lo > 0 && (parseFloat(v) || 0) > lo; }
+      return true;
+    })
+    .map(([k, v]) => [k, parseFloat(v) || 0]));
 
 /** So 2 bảng chi tiết lương có THAY ĐỔI thật không (bỏ qua khoản rỗng/=0) — chỉ bấm mốc
  *  "cập nhật lúc" lên khi số liệu thật sự đổi, không phải mỗi lần bấm Lưu (migration 140). */

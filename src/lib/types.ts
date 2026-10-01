@@ -1192,6 +1192,11 @@ export interface WorkTask {
   updated_at: string
   contract_status_note?: string | null
   doc_status?: string | null
+  // Phụ lục trực thuộc Hợp đồng nào (migration 154)
+  parent_task_id?: string | null
+  // Hợp đồng/Phụ lục bị vô hiệu (thanh lý / hết hiệu lực) — migration 155
+  voided_at?: string | null
+  void_reason?: string | null
 }
 
 export interface CooperationSuspensionRequest {
@@ -1260,7 +1265,7 @@ export const DOC_STATUS_STEPS: { key: DocStatus; label: string; danger?: boolean
   { key: 'hoan_tat',  label: 'Hoàn tất' },
   { key: 'ngung_hd',  label: 'Ngưng HĐ', danger: true },
 ]
-export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Xử lý phát sinh', 'Văn phòng', 'Khác']
+export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Hợp đồng', 'Phụ lục', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Xử lý phát sinh', 'Văn phòng', 'Khác']
 
 // ─── Module: Quan ly Khoan Vay ─────────────────────────────────────
 

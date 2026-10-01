@@ -12,6 +12,7 @@ import SocialLinksRow from '../../components/SocialLinksRow';
 import SearchBox from '../../components/SearchBox';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import WageDetailTable from './WageDetailTable';
+import { isRangeKey } from '../../lib/payroll/wageRange';
 import { fetchIndustries, addIndustry } from './industries';
 import { fetchWageFieldRows, addWageField, deleteWageField, renameWageField, reorderWageFields, wageDetailToStrings, wageDetailToNumbers, wageDetailChanged } from './wageFields';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
@@ -52,7 +53,7 @@ function computeWageMargin(lgvn: Record<string, string>, company: Record<string,
   const hasLgvn = Object.values(lgvn).some(v => v.trim());
   const hasCompany = Object.values(company).some(v => v.trim());
   if (!hasLgvn || !hasCompany) return null;
-  const allFields = [...new Set([...Object.keys(lgvn), ...Object.keys(company)])];
+  const allFields = [...new Set([...Object.keys(lgvn), ...Object.keys(company)])].filter(k => !isRangeKey(k));
   const rows = allFields
     .map(field => {
       const l = parseFloat(lgvn[field] || '0') || 0;

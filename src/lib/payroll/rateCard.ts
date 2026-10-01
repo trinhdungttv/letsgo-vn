@@ -4,6 +4,7 @@
 // VÌ SAO CẦN CHỈNH TAY ĐÈ LÊN KẾT QUẢ TÍNH: hệ số pháp lý cho ra số lẻ (vd 28.846đ/giờ), còn
 // thực tế công ty niêm yết số tròn (30.000đ/giờ) hoặc cộng thêm khoản ngoài luật. Nên bảng đơn
 // giá phải sửa tay được, và số đã sửa mới là số đem đi so sánh/đồng bộ — chứ không phải số lý thuyết.
+import { isRangeKey } from './wageRange';
 import { basisHoursOf, coefficientOf, type PayrollInputType } from './coefficients';
 import type { RateCardRow } from './reverseCalcEngine';
 
@@ -179,5 +180,5 @@ export function allowancesFromWageDetail(
 ): Record<string, number> {
   if (!wageDetail) return {};
   const rateFieldNames = new Set(fields.filter(f => f.payrollInputType).map(f => f.name));
-  return Object.fromEntries(Object.entries(wageDetail).filter(([name, v]) => !rateFieldNames.has(name) && v > 0));
+  return Object.fromEntries(Object.entries(wageDetail).filter(([name, v]) => !isRangeKey(name) && !rateFieldNames.has(name) && v > 0));
 }

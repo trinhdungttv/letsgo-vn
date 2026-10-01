@@ -11,8 +11,10 @@ import MinWageStaleBanner from '../components/MinWageStaleBanner';
 import { fetchIndustries } from './market/industries';
 import QuoteHistory from './market/QuoteHistory';
 
+import { isRangeKey } from '../lib/payroll/wageRange';
+
 const sumWageDetail = (d: Record<string, number> | null | undefined) =>
-  Object.values(d ?? {}).reduce((a, b) => a + (b || 0), 0);
+  Object.entries(d ?? {}).reduce((a, [k, b]) => a + (isRangeKey(k) ? 0 : (b || 0)), 0);
 
 interface QuotesProps {
   marketZones: MarketZone[];

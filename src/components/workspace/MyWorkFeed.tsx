@@ -16,6 +16,8 @@ import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIO
 import { formatDate } from '../../lib/format'
 import { usePersistedState } from '../../hooks/usePersistedState'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
+import { contractTitle } from '../../lib/contractTitle'
+import { ContractCompareTables } from '../ContractCompareTables'
 import { todayISO } from '../../utils/suspension'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
 import { branchOf, branchLabel, branchOptions } from '../../lib/branchRef'
@@ -90,7 +92,7 @@ const ROW_FIELDS_DEFAULT: Record<RowFieldKey, boolean> = {
 
 // Quy tắc bản cũ (Workspace.tsx gốc getWorkTaskCategory): Thăm quan/Hỏi thăm CN → nhóm riêng, không rơi vào Khác
 function workCategory(taskType: string | null): Category {
-  if (taskType === 'Tái ký HĐ') return 'Hợp đồng'
+  if (taskType === 'Tái ký HĐ' || taskType === 'Hợp đồng' || taskType === 'Phụ lục') return 'Hợp đồng'
   if (taskType === 'Báo giá') return 'Báo giá'
   if (taskType === 'Thăm quan' || taskType === 'Hỏi thăm CN') return 'Thăm quan / KH'
   if (taskType === 'Xử lý phát sinh') return 'Xử lý phát sinh'
@@ -508,6 +510,18 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   const [fBranchId, setFBranchId] = useState('')
   const [fNotes, setFNotes] = useState('')
   const [fSaving, setFSaving] = useState(false)
+  // Phụ lục phải thuộc 1 Hợp đồng của khách: nạp danh sách HĐ của khách đang chọn.
+  const [fParentId, setFParentId] = useState('')
+  const [parentOptions, setParentOptions] = useState<{ id: string; title: string }[]>([])
+  useEffect(() => {
+    setFParentId('')
+    if (fType !== 'Phụ lục' || !fClientId) { setParentOptions([]); return }
+    let off = false
+    supabase.from('work_tasks').select('id, title').eq('client_id', fClientId).eq('task_type', 'Hợp đồng').is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => { if (!off) { const o = (data || []) as { id: string; title: string }[]; setParentOptions(o); if (o.length === 1) setFParentId(o[0].id) } })
+    return () => { off = true }
+  }, [fType, fClientId])
 
   const activeClients = useMemo(() => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'), [clients])
 
@@ -530,7 +544,8 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     setFSaving(true)
     const selectedClient = clients.find(c => c.id === fClientId) || null
     // Quy tắc bản cũ: tiêu đề = "Tên KH — mô tả" nếu có gắn khách hàng
-    const title = selectedClient ? `${selectedClient.name} — ${fDesc.trim()}` : fDesc.trim()
+    const isContract = fType === 'Hợp đồng' || fType === 'Phụ lục'
+    const title = isContract ? contractTitle(selectedClient?.name, fType, fDesc) : selectedClient ? `${selectedClient.name} — ${fDesc.trim()}` : fDesc.trim()
     const { data, error } = await supabase.from('work_tasks').insert({
       user_id: user.id,
       client_id: selectedClient?.id || null,
@@ -541,6 +556,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       branch_id: fBranchId || null,
       notes: fNotes.trim() || null,
       status: 'pending',
+      parent_task_id: fType === 'Phụ lục' && fParentId ? fParentId : null,
     }).select().single()
     setFSaving(false)
     if (!error && data) {
@@ -1027,6 +1043,13 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               </div>
             )}
 
+            {/* --- Hợp đồng / Phụ lục: bảng + nội dung của khách hàng, xem & sửa ngay tại đây (cùng dữ liệu với hồ sơ KH) --- */}
+            {it.work && (it.work.task_type === 'Hợp đồng' || it.work.task_type === 'Phụ lục') && (
+              it.work.client_id
+                ? <ContractCompareTables clientId={it.work.client_id} taskId={it.work.id} toast={toast} />
+                : <div className="text-[11.5px] text-[#999]">Việc này chưa gắn khách hàng nên chưa có bảng/nội dung Hợp đồng.</div>
+            )}
+
             {/* --- Việc BD (CRM Pipeline): giai đoạn / trạng thái / xem hồ sơ / xoá --- */}
             {it.pipeline && (
               <div className="flex items-center gap-2 flex-wrap">
@@ -1360,9 +1383,16 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   className="flex-1 text-[12.5px] px-3 py-1.5 rounded-[9px] border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400"
                 />
                 <div className="flex gap-2 flex-wrap">
-                  <select value={qKind} onChange={e => setQKind(e.target.value as typeof qKind)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none">
+                  <select value={qKind} onChange={e => {
+                      const v = e.target.value
+                      // Hợp đồng / Phụ lục phải gắn khách hàng → mở form đầy đủ với loại việc chọn sẵn
+                      if (v === 'contract' || v === 'appendix') { setFType(v === 'contract' ? 'Hợp đồng' : 'Phụ lục'); setQuickOpen(false); setFullForm(true); setFDesc(qTitle); return }
+                      setQKind(v as typeof qKind)
+                    }} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none">
                     <option value="work">Việc của tôi</option>
                     <option value="pipeline">Công ty mới (CRM)</option>
+                    <option value="contract">Hợp đồng (gắn khách hàng)</option>
+                    <option value="appendix">Phụ lục (gắn khách hàng)</option>
                     <option value="ws_task">Task nội bộ (chung)</option>
                     <option value="ws_doc">Hồ sơ · HĐ (chung)</option>
                   </select>
@@ -1382,11 +1412,11 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             <div className="border border-[#E8E7E2] rounded-lg p-3 flex flex-col gap-2 bg-white">
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Tên công việc</label>
+                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">{fType === 'Hợp đồng' ? 'Tên Hợp đồng' : fType === 'Phụ lục' ? 'Tên Phụ lục' : 'Tên công việc'}</label>
                   <input
                     autoFocus
                     className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400"
-                    placeholder="VD: đàm phán giá tái ký, soạn HĐ mới..."
+                    placeholder={fType === 'Hợp đồng' ? 'VD: Cung ứng 2026 (tự thêm "HĐ" phía trước)' : fType === 'Phụ lục' ? 'VD: 01/PLHDDV-AMPACS-LGVN (tự thêm "Phụ lục")' : 'VD: đàm phán giá tái ký, soạn HĐ mới...'}
                     value={fDesc} onChange={e => setFDesc(e.target.value)}
                   />
                 </div>
@@ -1442,6 +1472,21 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   value={fNotes} onChange={e => setFNotes(e.target.value)}
                   className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 resize-none" />
               </div>
+              {fType === 'Phụ lục' && (
+                <div>
+                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Thuộc Hợp đồng</label>
+                  <select value={fParentId} onChange={e => setFParentId(e.target.value)}
+                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400">
+                    <option value="">{!fClientId ? '— Chọn khách hàng trước —' : parentOptions.length ? '— Chọn Hợp đồng —' : '— Khách này chưa có Hợp đồng (tạo việc loại "Hợp đồng" trước) —'}</option>
+                    {parentOptions.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+                  </select>
+                </div>
+              )}
+              {(fType === 'Hợp đồng' || fType === 'Phụ lục') && (
+                <div className="text-[11px] text-[#888] bg-[#F9F9F7] border border-[#E8E7E2] rounded-md px-2.5 py-1.5">
+                  Bảng thay đổi &amp; nội dung {fType} thuộc về từng việc: bấm <b>Lưu công việc</b>, rồi mở dòng việc vừa tạo để tạo bảng / dán nội dung.
+                </div>
+              )}
               <div className="flex justify-end gap-2">
                 <button onClick={() => { resetFullForm(); setFullForm(false) }}
                   className="text-[12px] px-3 py-1.5 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-[#f4f4f1] transition-colors">Huỷ</button>

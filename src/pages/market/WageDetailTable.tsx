@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Plus, X, Pencil, GripVertical, Check, Clock 
 import ShiftPicker from './ShiftPicker';
 import type { PayrollInputType } from '../../lib/payroll/coefficients';
 import { wageDetailAgeLabel } from './wageFields';
+import { isRangeKey, rangeKey } from '../../lib/payroll/wageRange';
 
 /** Hiển thị số có dấu phẩy ngăn cách nghìn khi gõ (5130000 → 5,130,000); giá trị lưu vẫn
  *  là chuỗi số thuần (không dấu phẩy) để wageDetailToNumbers() parseFloat được bình thường. */
@@ -75,7 +76,7 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
     setBusy(false);
   };
 
-  const filled = Object.values(value).filter(v => v.trim()).length;
+  const filled = Object.entries(value).filter(([k, v]) => !isRangeKey(k) && v.trim()).length;
 
   const setField = (name: string, v: string) => onChange({ ...value, [name]: v });
 
@@ -92,8 +93,8 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
     if (!confirm(`Xoá trường "${name}" khỏi hệ thống? Áp dụng cho MỌI công ty/NCC, không chỉ mục này.`)) return;
     setBusy(true);
     await onDeleteField(name);
-    const { [name]: _omit, ...rest } = value;
-    void _omit;
+    const { [name]: _omit, [rangeKey(name)]: _omitMax, ...rest } = value;
+    void _omit; void _omitMax;
     onChange(rest);
     setBusy(false);
   };
@@ -162,14 +163,26 @@ export default function WageDetailTable({ fields, value, onChange, onAddField, o
                   className="text-[#ccc] hover:text-blue-600 shrink-0 opacity-40 group-hover:opacity-100 transition"><Pencil size={11} /></button>
               ))}
               {renaming !== f && (
-                <input
-                  type="text" inputMode="numeric"
-                  value={formatVnd(value[f] ?? '')}
-                  onChange={e => setField(f, stripVnd(e.target.value))}
-                  placeholder="đ"
-                  title="Nhập bằng ĐỒNG (vd 250000), khớp đơn vị với Tính bảng lương"
-                  className="w-28 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none text-right"
-                />
+                <>
+                  <input
+                    type="text" inputMode="numeric"
+                    value={formatVnd(value[f] ?? '')}
+                    onChange={e => setField(f, stripVnd(e.target.value))}
+                    placeholder="đ"
+                    title="Nhập bằng ĐỒNG (vd 250000), khớp đơn vị với Tính bảng lương. Có nhiều mức thì nhập mức THẤP ở ô này, mức CAO ở ô bên cạnh."
+                    className="w-24 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none text-right"
+                  />
+                  <span className="text-[#bbb] text-[11px] shrink-0">–</span>
+                  <input
+                    type="text" inputMode="numeric"
+                    value={formatVnd(value[rangeKey(f)] ?? '')}
+                    onChange={e => setField(rangeKey(f), stripVnd(e.target.value))}
+                    placeholder="đến"
+                    title="Tuỳ chọn: mức CAO của khoảng (VD 240.000 – 260.000 vì công ty có nhiều bộ phận). Bỏ trống nếu chỉ có 1 mức."
+                    className={`w-24 text-[12px] px-2 py-1 rounded border outline-none text-right ${
+                      (value[rangeKey(f)] ?? '') && (parseFloat(value[rangeKey(f)]) || 0) <= (parseFloat(value[f] || '0') || 0) ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}
+                  />
+                </>
               )}
               {renaming !== f && (
                 <button type="button" onClick={() => removeField(f)} disabled={busy} title="Xoá trường này khỏi hệ thống"
