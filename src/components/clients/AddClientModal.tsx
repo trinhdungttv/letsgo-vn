@@ -8,6 +8,7 @@ import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import { normalizeDayRange } from '../../utils/timelineDays';
 import DayCell from '../DayCell';
 import { branchOptions, resolveBranchByLegacyText } from '../../lib/branchRef';
+import MapLinkHint from '../MapLinkHint';
 
 interface AddClientModalProps {
   open: boolean;
@@ -333,6 +334,7 @@ export default function AddClientModal({
               <input type="text" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none" />
             </div>
             <input type="text" placeholder="Link Google Maps (…/@lat,lng…) → tự định vị lên Bản đồ Thị trường" value={mapLink} onChange={e => setMapLink(e.target.value)} className="w-full mt-2.5 text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none" />
+            <MapLinkHint value={mapLink} className="mt-1" />
             <textarea rows={2} placeholder="Ghi chú nội bộ..." value={notes} onChange={e => setNotes(e.target.value)} className="w-full mt-2.5 text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none resize-none" />
           </div>
         </div>

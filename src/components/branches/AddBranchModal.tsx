@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X as XIcon, Check, AlertCircle } from 'lucide-react';
 import type { Branch, Manager, BranchType } from '../../lib/types';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
+import MapLinkHint from '../MapLinkHint';
 
 interface AddBranchModalProps {
   open: boolean;
@@ -198,6 +199,7 @@ export default function AddBranchModal({
           <div>
             <label className="text-[11px] text-[#777] block mb-1">Link Google Maps</label>
             <input type="text" value={mapLink} onChange={e => setMapLink(e.target.value)} placeholder="https://maps.app.goo.gl/..." className="w-full text-[13px] px-2.5 py-2 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+            <MapLinkHint value={mapLink} className="mt-1" />
           </div>
         </div>
 

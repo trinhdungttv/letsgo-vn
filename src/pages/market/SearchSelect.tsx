@@ -8,7 +8,7 @@ import { ChevronDown, Check, Plus } from 'lucide-react';
 export default function SearchSelect({ value, onChange, options, placeholder, className, allowAdd, onAdd }: {
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; badge?: string }[];
   placeholder?: string;
   className?: string;
   allowAdd?: boolean;
@@ -70,7 +70,9 @@ export default function SearchSelect({ value, onChange, options, placeholder, cl
     <div className={className}>
       <button ref={triggerRef} type="button" onClick={toggle}
         className="w-full flex items-center justify-between gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:border-gray-400 transition text-left">
-        <span className={`truncate ${displayLabel ? 'text-[#222]' : 'text-[#999]'}`}>{displayLabel || placeholder || 'Chọn…'}</span>
+        <span className={`truncate ${displayLabel ? 'text-[#222]' : 'text-[#999]'}`}>{displayLabel || placeholder || 'Chọn…'}
+          {selected?.badge && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">{selected.badge}</span>}
+        </span>
         <ChevronDown size={13} className="text-[#999] flex-none" />
       </button>
       {open && rect && createPortal(
@@ -96,7 +98,10 @@ export default function SearchSelect({ value, onChange, options, placeholder, cl
             {filtered.map((o, i) => (
               <button key={o.value} type="button" onClick={() => pick(o.value)} onMouseEnter={() => setHighlight(i)}
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 text-left text-[12px] ${i === highlight ? 'bg-[#F5F4F1]' : ''} ${o.value === value ? 'font-medium text-blue-700' : 'text-[#333]'}`}>
-                <span className="truncate">{o.label}</span>
+                <span className="truncate flex items-center gap-1.5 min-w-0">
+                  <span className="truncate">{o.label}</span>
+                  {o.badge && <span className="flex-none text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">{o.badge}</span>}
+                </span>
                 {o.value === value && <Check size={12} className="flex-none" />}
               </button>
             ))}

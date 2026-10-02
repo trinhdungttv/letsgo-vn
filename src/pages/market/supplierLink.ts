@@ -22,6 +22,7 @@ import { insertCompetitorClient, updateCompetitorClient } from './competitorClie
 export const companyKey = (s?: string | null) => (s ?? '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase()
+  .replace(/đ/g, 'd') // đ không tách dấu qua NFD nên phải đổi riêng
   .replace(/[^a-z0-9]+/g, ' ')
   .trim();
 
@@ -189,4 +190,68 @@ export async function deleteSupplyRows(ccIds: string[]) {
   if (!ccIds.length) return;
   const { error } = await supabase.from('competitor_clients').delete().in('id', ccIds);
   if (error) throw error;
+}
+
+/**
+ * Dòng "NCC đang cung ứng" suy ra từ thẻ Công ty/Dự án (JSON `market_suppliers` / `suppliers`)
+ * mà CHƯA có dòng tương ứng trong `competitor_clients`. Xảy ra khi NCC được nhập từ trước khi
+ * có cơ chế đồng bộ, hoặc khi gõ tên lệch hồ sơ đối thủ lúc nhập. Chỉ để HIỂN THỊ — hồ sơ Đối
+ * thủ và hồ sơ KCN dùng nó để không bỏ sót; muốn sửa sale/số LĐ thì bấm "Lưu vào danh sách".
+ */
+export type DerivedSupplyRow = CompetitorClient & {
+  derived: true;
+  /** Mọi KCN của công ty đó (khách hàng có thể thuộc nhiều KCN). */
+  zones: string[];
+};
+
+export const isDerivedRow = (r: CompetitorClient): r is DerivedSupplyRow => (r as DerivedSupplyRow).derived === true;
+
+export function deriveSupplyFromCompanies(
+  competitors: Competitor[],
+  clients: { id: string; name: string; industrial_zones?: string[] | null; market_suppliers?: MarketLeadSupplier[] | null }[],
+  leads: { id: string; company_name: string; region: string | null; suppliers?: MarketLeadSupplier[] | null }[],
+  ccRows: CompetitorClient[],
+): DerivedSupplyRow[] {
+  const out: DerivedSupplyRow[] = [];
+  const seen = new Set<string>();
+
+  const consider = (companyName: string, zones: string[], suppliers: MarketLeadSupplier[] | null | undefined, srcId: string) => {
+    for (const s of suppliers ?? []) {
+      if (s.is_us) continue;
+      const comp = competitors.find(c => sameCompany(c.company_name, s.name));
+      if (!comp) continue;
+      const key = `${comp.id}|${companyKey(companyName)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Đã có dòng thật cho đúng cặp (đối thủ, công ty) → không suy ra thêm.
+      if (ccRows.some(r => r.competitor_id === comp.id && sameCompany(r.client_name, companyName))) continue;
+      out.push({
+        id: `derived:${key}:${srcId}`, competitor_id: comp.id, client_name: companyName,
+        kcn: zones[0] ?? '', worker_count: s.qty ?? 0, derived: true, zones,
+      });
+    }
+  };
+
+  for (const c of clients) consider(c.name, c.industrial_zones ?? [], c.market_suppliers, c.id);
+  for (const l of leads) consider(l.company_name, l.region ? [l.region] : [], l.suppliers, l.id);
+
+  // Cột "Đang cung cấp cho" (competitors.supplying_for) — các thẻ tên hiện ngoài danh sách đối
+  // thủ (KUKA, AMPACS…). Có thể chưa nằm trong JSON NCC của thẻ công ty nên xét riêng; KCN
+  // lấy từ hồ sơ công ty cùng tên nếu có.
+  for (const comp of competitors) {
+    for (const name of comp.supplying_for ?? []) {
+      const key = `${comp.id}|${companyKey(name)}`;
+      if (!companyKey(name) || seen.has(key)) continue;
+      seen.add(key);
+      if (ccRows.some(r => r.competitor_id === comp.id && sameCompany(r.client_name, name))) continue;
+      const cl = clients.find(c => sameCompany(c.name, name));
+      const ld = leads.find(l => sameCompany(l.company_name, name));
+      const zones = cl?.industrial_zones?.length ? cl.industrial_zones : ld?.region ? [ld.region] : [];
+      out.push({
+        id: `derived:${key}:supplying`, competitor_id: comp.id, client_name: cl?.name ?? ld?.company_name ?? name,
+        kcn: zones[0] ?? '', worker_count: 0, derived: true, zones,
+      });
+    }
+  }
+  return out;
 }

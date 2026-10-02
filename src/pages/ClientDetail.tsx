@@ -32,6 +32,7 @@ import { formatDayRange, normalizeDayRange } from '../utils/timelineDays';
 import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMonth, todayISO } from '../utils/suspension';
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
 import { KpiTile, SectionCard, SubSection, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
+import MapLinkHint from '../components/MapLinkHint';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -871,6 +872,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         <span className="text-[11px] text-emerald-600 shrink-0">✓ đã định vị</span>
                       )}
                     </div>
+                    <MapLinkHint value={form.map_link} />
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Ảnh cover (tỷ lệ 16:9) — hiện ở thẻ Card trong danh sách Khách hàng & Thị trường</label>

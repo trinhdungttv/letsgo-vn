@@ -32,6 +32,10 @@ function oldNamesOfProvince(name: string): string[] {
   return match ? match.oldNames.map(o => o.replace(/\s*\(cũ\)\s*$/, '').trim()) : [];
 }
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
+import MapLinkHint from '../../components/MapLinkHint';
+import { LinkHealthDot, linkHealthCls, linkHealthTitle } from '../../components/LinkHealthDot';
+import { useLinkHealth } from '../../lib/linkCheck';
+import { deriveSupplyFromCompanies, type DerivedSupplyRow } from './supplierLink';
 
 interface Props {
   competitor: Competitor;
@@ -42,18 +46,25 @@ interface Props {
   onBack: () => void;
   onRefresh: () => Promise<void>;
   toast: (msg: string) => void;
+  /** Mở sẵn ở chế độ chỉnh sửa (từ nút ✎ ngoài danh sách). */
+  initialEditing?: boolean;
 }
 
 interface LgClient { id: string; name: string; industrial_zones: string[] }
 
-export default function CompetitorDetail({ competitor, allCompetitors, marketZones, clients, marketLeads, onBack, onRefresh, toast }: Props) {
+export default function CompetitorDetail({ competitor, allCompetitors, marketZones, clients, marketLeads, onBack, onRefresh, toast, initialEditing }: Props) {
   const { user } = useAuth();
   const [lgClients, setLgClients] = useState<LgClient[]>([]);
   const [compClients, setCompClients] = useState<CompetitorClient[]>([]);
+  // NCC đã gắn ở thẻ Công ty/Dự án (Thị trường) nhưng chưa có dòng trong danh sách này.
+  const derivedClients = useMemo(
+    () => deriveSupplyFromCompanies([competitor], clients, marketLeads, compClients),
+    [competitor, clients, marketLeads, compClients],
+  );
   const [logs, setLogs] = useState<CompetitorLog[]>([]);
   const { provinces } = useProvinces();
 
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(!!initialEditing);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     company_name: competitor.company_name,
@@ -81,6 +92,10 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
   // Nút liên kết nhanh (Bản đồ/Website/Facebook/TikTok…) — cấu hình chung, quản lý ở tab
   // Đối thủ (nút cài đặt). Loại tự thêm (field null) lưu giá trị vào custom_links[key].
   const [linkTypes, setLinkTypes] = useState<CompetitorLinkType[]>([]);
+  const health = useLinkHealth([
+    ...linkTypes.map(t => getLinkUrl(competitor, t) ?? ''),
+    competitor.social_other_url ?? '',
+  ]);
   useEffect(() => { fetchLinkTypes().then(setLinkTypes); }, []);
   const [customLinkDrafts, setCustomLinkDrafts] = useState<Record<string, string>>(competitor.custom_links ?? {});
 
@@ -324,6 +339,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       toast(`Đã thêm "${trimmed}" vào Công ty/Dự án đang tìm hiểu`);
     } catch (e: any) { toast('Lỗi: ' + e.message); }
     setClientForm(f => ({ ...f, client_name: trimmed }));
+  };
+
+  const saveDerivedRow = async (r: DerivedSupplyRow) => {
+    const { error } = await insertCompetitorClient(competitor.id, { client_name: r.client_name, kcn: r.zones[0] ?? null, worker_count: r.worker_count ?? 0 });
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    toast(`Đã lưu "${r.client_name}" vào danh sách`);
+    await load();
   };
 
   const load = async () => {
@@ -620,6 +642,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                     <div className="flex flex-col gap-1">
                       <label className="text-[11px] text-[#888]">Bản đồ (link Google Maps)</label>
                       <input value={form.map_link} onChange={e => setForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…" className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                      <MapLinkHint value={form.map_link} />
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[11px] text-[#888]">Website</label>
@@ -691,13 +714,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                           {activeLinks.map(({ t, url }) => {
                             const Icon = iconForLinkKey(t.key);
                             return (
-                              <a key={t.id} href={url!} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">
-                                <Icon size={11} /> {t.label} <ExternalLink size={9} className="text-[#999]" />
+                              <a key={t.id} href={url!} target="_blank" rel="noopener noreferrer" title={linkHealthTitle(health[url!.trim()])} className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border text-[#333] hover:bg-white transition ${linkHealthCls(health[url!.trim()])}`}>
+                                <LinkHealthDot info={health[url!.trim()]} /> <Icon size={11} /> {t.label} <ExternalLink size={9} className="text-[#999]" />
                               </a>
                             );
                           })}
                           {competitor.social_other_url && (
-                            <a href={competitor.social_other_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-[#F9F9F7] border border-[#E8E7E2] text-[#333] hover:bg-white hover:border-blue-300 transition">Khác <ExternalLink size={9} className="text-[#999]" /></a>
+                            <a href={competitor.social_other_url} target="_blank" rel="noopener noreferrer" title={linkHealthTitle(health[competitor.social_other_url.trim()])} className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border text-[#333] hover:bg-white transition ${linkHealthCls(health[competitor.social_other_url.trim()])}`}><LinkHealthDot info={health[competitor.social_other_url.trim()]} /> Khác <ExternalLink size={9} className="text-[#999]" /></a>
                           )}
                         </div>
                       );
@@ -806,7 +829,23 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                       </td>
                     </tr>
                   ))}
-                  {compClients.length === 0 && (
+                  {derivedClients.map(r => (
+                    <tr key={r.id} className="border-b border-[#F0EEE9] last:border-0 bg-amber-50/40">
+                      <td className="px-3 py-2 font-medium">{r.client_name}</td>
+                      <td className="px-3 py-2 text-[#666]">{r.kcn || '—'}</td>
+                      <td className="px-3 py-2">{(r.worker_count ?? 0).toLocaleString('vi-VN')}</td>
+                      <td className="px-3 py-2 text-[#aaa]">—</td>
+                      <td className="px-3 py-2 text-[#aaa]">—</td>
+                      <td className="px-3 py-2 text-[#aaa]">—</td>
+                      <td className="px-3 py-2">
+                        <span title="Đối thủ này đã được thêm làm NCC ở thẻ Công ty/Dự án (tab Công ty/Dự án) nhưng chưa có trong danh sách này" className="px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[11px] font-medium whitespace-nowrap">Từ Công ty/Dự án</span>
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap text-right">
+                        <button onClick={() => saveDerivedRow(r)} title="Lưu vào danh sách để nhập sale / số LĐ" className="px-2 py-1 rounded text-[11px] border border-blue-300 text-blue-700 hover:bg-blue-50">Lưu vào danh sách</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {compClients.length === 0 && derivedClients.length === 0 && (
                     <tr><td colSpan={8} className="text-center py-5 text-[#aaa]">Chưa có dữ liệu</td></tr>
                   )}
                 </tbody>

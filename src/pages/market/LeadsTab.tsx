@@ -23,6 +23,8 @@ import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLab
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr, sameZone } from './shared';
 import type { Client, CompetitorClient } from '../../lib/types';
+import MapLinkHint from '../../components/MapLinkHint';
+import { isSuspended, formatSuspensionDate } from '../../utils/suspension';
 import {
   type MergedSupplier, type LgvSupply, mergeSuppliers, fetchSupplyRows, writeSupplyQty,
   deleteSupplyRows, sameCompany,
@@ -367,7 +369,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   // NCC được chọn từ hồ sơ Đối thủ → tự đồng bộ ngược cột "Đang cung cấp cho" bên đó,
   // để 1 nguồn dữ liệu duy nhất, không phải nhập tay 2 nơi.
   const syncCompetitorSupplyingFor = async (supplierName: string, companyName: string) => {
-    const comp = competitors.find(c => c.company_name === supplierName);
+    const comp = competitors.find(c => sameCompany(c.company_name, supplierName));
     if (!comp || comp.supplying_for?.includes(companyName)) return;
     const supplying_for = [...(comp.supplying_for ?? []), companyName];
     await supabase.from('competitors').update({ supplying_for }).eq('id', comp.id);
@@ -377,7 +379,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   // (competitors.active_zones) của hồ sơ đối thủ, để khối "Đối thủ đang hoạt động tại KCN" tự có.
   // Bỏ qua nếu đã ghi nhận (so khớp chặt sameZone) hoặc KCN không khớp KCN chính thức nào.
   const syncCompetitorActiveZones = async (supplierName: string, zones: (string | null | undefined)[]) => {
-    const comp = competitors.find(c => c.company_name === supplierName);
+    const comp = competitors.find(c => sameCompany(c.company_name, supplierName));
     if (!comp) return;
     const current = comp.active_zones ?? [];
     const toAdd: string[] = [];
@@ -431,7 +433,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       });
       await syncCompetitorSupplyingFor(name, lead.company_name);
       await syncCompetitorActiveZones(name, [lead.region]);
-      const comp = competitors.find(c => c.company_name === name);
+      const comp = competitors.find(c => sameCompany(c.company_name, name));
       if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, lead.region, qty);
       await onRefresh();
       toast('Đã thêm NCC');
@@ -610,7 +612,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       });
       await syncCompetitorSupplyingFor(name, client.name);
       await syncCompetitorActiveZones(name, client.industrial_zones ?? []);
-      const comp = competitors.find(c => c.company_name === name);
+      const comp = competitors.find(c => sameCompany(c.company_name, name));
       if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, client.industrial_zones?.[0] ?? null, qty);
       await onRefresh();
       toast('Đã thêm NCC');
@@ -899,7 +901,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                   <SearchSelect
                     value={clientForm.client_id}
                     onChange={v => setClientForm(f => ({ ...f, client_id: v }))}
-                    options={untrackedClients.map(c => ({ value: c.id, label: c.name }))}
+                    options={untrackedClients.map(c => ({
+                      value: c.id, label: c.name,
+                      badge: isSuspended(c) ? (formatSuspensionDate(c) ? `Ngưng ${formatSuspensionDate(c)}` : 'Ngưng') : undefined,
+                    }))}
                     placeholder={untrackedClients.length ? 'Chọn khách hàng…' : 'Tất cả khách hàng đã thiết lập'}
                   />
                 </div>
@@ -926,7 +931,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
                   <textarea value={clientForm.allowance_notes} onChange={e => setClientForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần 300k, xăng xe 200k…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
-                  <input value={clientForm.map_link} onChange={e => setClientForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <input value={clientForm.map_link} onChange={e => setClientForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <MapLinkHint value={clientForm.map_link} /></div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
@@ -960,7 +966,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
                   <textarea value={leadForm.allowance_notes} onChange={e => setLeadForm(f => ({ ...f, allowance_notes: e.target.value }))} rows={2} placeholder="Phụ cấp chuyên cần, xăng xe…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
-                  <input value={leadForm.map_link} onChange={e => setLeadForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <input value={leadForm.map_link} onChange={e => setLeadForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng… (tuỳ chọn)" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <MapLinkHint value={leadForm.map_link} /></div>
               </div>
             )}
 
@@ -1038,7 +1045,8 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Phụ cấp / ghi chú</label>
         <textarea value={patch.allowance_notes} onChange={e => setPatch(p => ({ ...p, allowance_notes: e.target.value }))} rows={2} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
       <div className="col-span-2 flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Link Google Maps</label>
-        <input value={patch.map_link} onChange={e => setPatch(p => ({ ...p, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+        <input value={patch.map_link} onChange={e => setPatch(p => ({ ...p, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+        <MapLinkHint value={patch.map_link} /></div>
       <div className="col-span-2 flex flex-col gap-1.5">
         <label className="text-[11px] text-[#666] font-medium">Kênh online — theo dõi hoạt động công ty</label>
         <div className="grid grid-cols-2 gap-2">

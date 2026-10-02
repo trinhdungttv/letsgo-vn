@@ -53,6 +53,7 @@ import { tinyId, expandTinyId, shortId } from '../../hooks/useHashSubRoute';
 import ZoneCompetitors from './ZoneCompetitors';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import SearchBox from '../../components/SearchBox';
+import MapLinkHint from '../../components/MapLinkHint';
 
 function normalizeZoneName(s: string): string {
   return s
@@ -1220,7 +1221,8 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select></div>
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Link Google Maps</label>
-                <input value={addForm.map_link} onChange={e => setAddForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <input value={addForm.map_link} onChange={e => setAddForm(f => ({ ...f, map_link: e.target.value }))} placeholder="https://maps.google.com/…/@lat,lng…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                <MapLinkHint value={addForm.map_link} /></div>
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Đặc thù sơ bộ</label>
                 <textarea value={addForm.characteristics} onChange={e => setAddForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y leading-relaxed" /></div>
             </div>

@@ -1,15 +1,18 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Bar, Doughnut } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2, Pencil, Images, ChevronRight, ChevronDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtTr, sameZone, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import type { Competitor } from '../../lib/types';
 import CompetitorDetail from './CompetitorDetail';
+import BulkCompetitorMediaModal from './BulkCompetitorMediaModal';
+import CompetitorLinksPanel from './CompetitorLinksPanel';
+import { deriveSupplyFromCompanies } from './supplierLink';
 import { shortId, expandId } from '../../hooks/useHashSubRoute';
 import { useSlashSearch, matchesSearch } from '../../hooks/useSlashSearch';
 import SearchBox from '../../components/SearchBox';
@@ -71,6 +74,60 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   const [saving, setSaving] = useState(false);
   const [selectedCompetitorId, setSelectedCompetitorIdRaw] = useState<string | null>(() => competitorIdFromHash(competitors));
   const selectedCompetitor = competitors.find(c => c.id === selectedCompetitorId) || null;
+  const [showBulkMedia, setShowBulkMedia] = useState(false);
+  // Dòng đối thủ đang mở rộng để nhập mạng xã hội (chỉ ở dạng bảng).
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) => setExpandedIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // Mở hồ sơ thẳng ở chế độ chỉnh sửa (nút ✎ ngoài danh sách).
+  const [openInEdit, setOpenInEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Xoá hẳn 1 nhà cung ứng đối thủ. Báo rõ sẽ mất những gì (kèm số dòng) trước khi xoá; dữ liệu
+  // đi kèm (KH đang phục vụ, nhật ký tình báo) xoá trước để không bị mồ côi, và toàn bộ được lưu
+  // vào nhật ký hệ thống (audit_logs) để tra lại nếu lỡ tay.
+  const handleDeleteCompetitor = async (c: Competitor) => {
+    setDeletingId(c.id);
+    try {
+      const [{ data: ccRows }, { data: logRows }] = await Promise.all([
+        supabase.from('competitor_clients').select('*').eq('competitor_id', c.id),
+        supabase.from('competitor_logs').select('*').eq('competitor_id', c.id),
+      ]);
+      const nCc = ccRows?.length ?? 0, nLog = logRows?.length ?? 0;
+      const ok = confirm(
+        `XOÁ HẲN nhà cung ứng "${c.company_name}"?\n\n` +
+        `Sẽ mất cùng lúc:\n` +
+        `• Hồ sơ đối thủ (ảnh, giám đốc, liên hệ, link, ghi chú…)\n` +
+        `• ${nCc} dòng "KH đang phục vụ"\n` +
+        `• ${nLog} ghi chú trong Nhật ký tình báo\n\n` +
+        `Khu vực/KCN và thẻ Công ty/Dự án không bị ảnh hưởng. Không thể hoàn tác trên màn hình này.`,
+      );
+      if (!ok) return;
+      if (nCc) { const { error } = await supabase.from('competitor_clients').delete().eq('competitor_id', c.id); if (error) throw error; }
+      if (nLog) { const { error } = await supabase.from('competitor_logs').delete().eq('competitor_id', c.id); if (error) throw error; }
+      const { error } = await supabase.from('competitors').delete().eq('id', c.id);
+      if (error) throw error;
+      await logActivity({
+        user, action: 'delete', table: 'competitors', recordId: c.id,
+        description: `Xoá nhà cung ứng đối thủ "${c.company_name}" (kèm ${nCc} dòng KH đang phục vụ, ${nLog} ghi chú tình báo)`,
+        oldData: { ...c, _competitor_clients: ccRows ?? [], _competitor_logs: logRows ?? [] },
+      });
+      await onRefresh();
+      toast(`Đã xoá "${c.company_name}"`);
+    } catch (e: any) { toast('Lỗi xoá: ' + e.message); }
+    finally { setDeletingId(null); }
+  };
+
+  // Các KCN đối thủ này đang làm, ngoài trụ sở: ghi nhận tay (active_zones) + KCN của các công ty
+  // họ đang cung ứng (NCC ở thẻ Công ty/Dự án, "Đang cung cấp cho"). Bỏ trùng và bỏ KCN = trụ sở.
+  const workZonesOf = (c: Competitor): string[] => {
+    const all = [...(c.active_zones ?? []), ...deriveSupplyFromCompanies([c], clients, marketLeads, []).flatMap(r => r.zones)];
+    const out: string[] = [];
+    for (const z of all) {
+      if (!z || sameZone(z, c.zone_name) || out.some(o => sameZone(o, z))) continue;
+      out.push(z);
+    }
+    return out;
+  };
 
   // Danh sách competitors chỉ có sau khi Market tải xong — re-resolve id từ URL 1 lần khi data về.
   useEffect(() => {
@@ -88,7 +145,8 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competitors]);
 
-  const openCompetitor = (c: Competitor) => {
+  const openCompetitor = (c: Competitor, edit = false) => {
+    setOpenInEdit(edit);
     setSelectedCompetitorIdRaw(c.id);
     const hash = `#/market/comp/${shortId(c.id)}`;
     if (window.location.hash !== hash) window.history.pushState(null, '', hash);
@@ -245,7 +303,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
   };
 
   if (selectedCompetitor) {
-    return <CompetitorDetail competitor={selectedCompetitor} allCompetitors={competitors} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={closeCompetitor} onRefresh={onRefresh} toast={toast} />;
+    return <CompetitorDetail competitor={selectedCompetitor} allCompetitors={competitors} marketZones={marketZones} clients={clients} marketLeads={marketLeads} onBack={closeCompetitor} onRefresh={onRefresh} toast={toast} initialEditing={openInEdit} />;
   }
 
   const renderCompChart = (key: string) => {
@@ -477,6 +535,9 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 </>
               )}
             </div>
+            <button onClick={() => setShowBulkMedia(true)} title="Nhập nhanh ảnh, vị trí (Maps) và người đứng đầu cho nhiều đối thủ" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-[#666] hover:bg-[#F9F9F7] transition">
+              <Images size={13} /> Nhập nhanh
+            </button>
             <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm đối thủ
             </button>
@@ -486,7 +547,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
         <div className="overflow-x-auto rounded-b-[10px]">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
-              {['Nhà cung ứng', 'Khu vực', 'Tổng LĐ', 'Lương trả LĐ PT', 'Phí DV PT (₫)', 'Phí DV TN (₫)', 'Phí DV KTV (₫)', 'Phí/công (₫)', 'Xu hướng', 'Đang cung cấp cho'].map(h => (
+              {['Nhà cung ứng', 'Khu vực', 'Tổng LĐ', 'Lương trả LĐ PT', 'Phí DV PT (₫)', 'Phí DV TN (₫)', 'Phí DV KTV (₫)', 'Phí/công (₫)', 'Xu hướng', 'Đang cung cấp cho', ''].map(h => (
                 <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
               ))}
             </tr></thead>
@@ -497,11 +558,25 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 const wn = diff == null ? null : diff < -3 ? { cls: 'bg-red-50 text-red-700', txt: `▼ Thấp hơn TT ${Math.abs(diff)}%` }
                   : diff > 3 ? { cls: 'bg-emerald-50 text-emerald-700', txt: `▲ Cao hơn TT ${diff}%` }
                     : { cls: 'bg-amber-50 text-amber-700', txt: '≈ Bằng TT' };
+                const isOpen = expandedIds.has(c.id);
+                const linkCount = linkTypes.filter(t => getLinkUrl(c, t)).length + (c.social_other_url ? 1 : 0);
                 return (
-                  <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
+                  <Fragment key={c.id}>
+                  <tr className={`border-b border-[#F0EEE9] ${isOpen ? 'bg-[#FBFBF9]' : 'last:border-0'}`}>
                     <td className="px-3 py-2">
-                      <button onClick={() => openCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
-                      {c.notes && <div className={`text-[10.5px] ${c.notes.includes('⚠') ? 'text-red-500' : 'text-[#aaa]'}`}>{c.notes}</div>}
+                      <div className="flex items-start gap-1">
+                        <button onClick={() => toggleExpanded(c.id)} title={isOpen ? 'Thu gọn' : 'Mở rộng để thêm mạng xã hội / liên kết'}
+                          className="mt-0.5 p-0.5 rounded hover:bg-gray-100 text-[#999] hover:text-[#333] shrink-0">
+                          {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => openCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
+                            {linkCount > 0 && <span title={`${linkCount} liên kết đã nhập`} className="text-[9.5px] px-1.5 py-px rounded-full bg-gray-100 text-[#666]">{linkCount} link</span>}
+                          </div>
+                          {c.notes && <div className={`text-[10.5px] ${c.notes.includes('⚠') ? 'text-red-500' : 'text-[#aaa]'}`}>{c.notes}</div>}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-[11.5px]">{c.zone_name}</td>
                     <td className="px-3 py-2">{(c.total_workers ?? 0).toLocaleString('vi-VN')}</td>
@@ -519,7 +594,23 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                         <span key={i} className="inline-block bg-[#F9F9F7] border border-[#E8E7E2] px-1.5 py-0.5 rounded text-[10.5px] mr-1 mb-1">{s}</span>
                       )) : <span className="text-[11px] text-[#aaa]">Chưa rõ</span>}
                     </td>
+                    <td className="px-2 py-2 whitespace-nowrap text-right">
+                      <button onClick={() => openCompetitor(c, true)} title="Sửa nhà cung ứng" className="p-1 rounded hover:bg-blue-50 text-[#bbb] hover:text-blue-600"><Pencil size={13} /></button>
+                      <button onClick={() => handleDeleteCompetitor(c)} disabled={deletingId === c.id} title="Xoá nhà cung ứng" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-600 disabled:opacity-40"><Trash2 size={13} /></button>
+                    </td>
                   </tr>
+                  {isOpen && (
+                    <tr className="border-b border-[#F0EEE9] last:border-0">
+                      <td colSpan={11} className="p-0">
+                        <CompetitorLinksPanel
+                          competitor={c} linkTypes={linkTypes} toast={toast}
+                          onAddType={async label => { const err = await addLinkType(label, linkTypes); if (!err) loadLinkTypes(); return err; }}
+                          onSaved={onRefresh}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
               {visibleList.length === 0 && (
@@ -556,31 +647,52 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 )}
                 <div className="p-3.5">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-[12.5px] font-semibold text-[#1D4ED8] truncate">{c.company_name}</div>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[10.5px] text-[#888] flex items-center gap-1"><MapPin size={10} /> {c.zone_name}</span>
-                        {linkTypes.map(t => {
-                          const url = getLinkUrl(c, t);
-                          if (!url) return null;
-                          const Icon = iconForLinkKey(t.key);
-                          return (
-                            <a
-                              key={t.id}
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={t.label}
-                              onClick={e => e.stopPropagation()}
-                              className="w-5 h-5 rounded-full bg-[#F9F9F7] border border-[#E8E7E2] text-[#666] flex items-center justify-center hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition shrink-0"
-                            >
-                              <Icon size={10} />
-                            </a>
-                          );
-                        })}
+                      <div className="flex items-start justify-between gap-2 mt-0.5">
+                        <div className="flex items-center gap-1 flex-wrap min-w-0">
+                          <span className="text-[10.5px] text-[#888] flex items-center gap-1 shrink-0"><MapPin size={10} /> {c.zone_name}</span>
+                          {(() => {
+                            const zs = workZonesOf(c);
+                            if (!zs.length) return null;
+                            const short = (z: string) => z.replace(/^KCN\s+/i, '');
+                            return (
+                              <>
+                                {zs.slice(0, 3).map(z => (
+                                  <span key={z} title={z} className="text-[9.5px] px-1.5 py-px rounded-full bg-sky-50 text-sky-700 border border-sky-100 whitespace-nowrap">{short(z)}</span>
+                                ))}
+                                {zs.length > 3 && <span title={zs.slice(3).join(', ')} className="text-[9.5px] text-[#999]">+{zs.length - 3}</span>}
+                              </>
+                            );
+                          })()}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {linkTypes.map(t => {
+                            const url = getLinkUrl(c, t);
+                            if (!url) return null;
+                            const Icon = iconForLinkKey(t.key);
+                            return (
+                              <a
+                                key={t.id}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={t.label}
+                                onClick={e => e.stopPropagation()}
+                                className="w-5 h-5 rounded-full bg-[#F9F9F7] border border-[#E8E7E2] text-[#666] flex items-center justify-center hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition shrink-0"
+                              >
+                                <Icon size={10} />
+                              </a>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
-                    {trendIcon(c.trend)}
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {trendIcon(c.trend)}
+                      <button onClick={e => { e.stopPropagation(); openCompetitor(c, true); }} title="Sửa nhà cung ứng" className="p-1 rounded hover:bg-blue-50 text-[#bbb] hover:text-blue-600"><Pencil size={12} /></button>
+                      <button onClick={e => { e.stopPropagation(); handleDeleteCompetitor(c); }} disabled={deletingId === c.id} title="Xoá nhà cung ứng" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-600 disabled:opacity-40"><Trash2 size={12} /></button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-2 mt-2.5 pt-2.5 border-t border-gray-100 text-center">
                     <div><div className="text-[13px] font-bold text-[#111]">{(c.total_workers ?? 0).toLocaleString('vi-VN')}</div><div className="text-[9px] text-[#999] uppercase">LĐ</div></div>
@@ -606,6 +718,8 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
         </div>
         )}
       </div>
+
+      {showBulkMedia && <BulkCompetitorMediaModal competitors={competitors} linkTypes={linkTypes} onClose={() => setShowBulkMedia(false)} onRefresh={onRefresh} toast={toast} />}
 
       {showAdd && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

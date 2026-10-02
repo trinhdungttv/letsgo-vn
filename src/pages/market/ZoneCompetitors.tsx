@@ -6,6 +6,7 @@ import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
 import { formatCurrency } from '../../lib/format';
 import { fmtTr, sameZone, isNationwide } from './shared';
+import { deriveSupplyFromCompanies, isDerivedRow } from './supplierLink';
 import { matchesSearch } from '../../hooks/useSlashSearch';
 import SearchSelect from './SearchSelect';
 import {
@@ -100,8 +101,10 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
   // Gom mọi tín hiệu hiện diện của từng đối thủ tại KCN này.
   const presences = useMemo(() => {
     const factoriesByComp = new Map<string, CompetitorClient[]>();
-    for (const r of ccRows) {
-      if (!sameZone(r.kcn, zone.name)) continue;
+    // Thêm các NCC đã gắn ở thẻ Công ty/Dự án nhưng chưa có dòng trong competitor_clients.
+    const allRows = [...ccRows, ...deriveSupplyFromCompanies(competitors, clients, marketLeads, ccRows)];
+    for (const r of allRows) {
+      if (!sameZone(r.kcn, zone.name) && !(isDerivedRow(r) && r.zones.some(z => sameZone(z, zone.name)))) continue;
       if (!compById.has(r.competitor_id)) continue; // đối thủ đã bị xoá → bỏ qua
       const arr = factoriesByComp.get(r.competitor_id) ?? [];
       arr.push(r);
@@ -123,7 +126,7 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
       || b.workers - a.workers
       || a.c.company_name.localeCompare(b.c.company_name, 'vi'),
     );
-  }, [competitors, ccRows, zone.name, compById]);
+  }, [competitors, clients, marketLeads, ccRows, zone.name, compById]);
 
   const unrecordedCount = presences.filter(p => !p.recorded).length;
   const knownWorkers = presences.reduce((s, p) => s + p.workers, 0);
@@ -442,7 +445,18 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
                               ))}
                             </tr></thead>
                             <tbody>
-                              {p.factories.map(f => editingRow === f.id ? (
+                              {p.factories.map(f => isDerivedRow(f) ? (
+                                <tr key={f.id} className="border-b border-[#F0EEE9] last:border-0 bg-amber-50/40">
+                                  <td className="px-2.5 py-1.5 text-[#222]"><Building2 size={10} className="inline text-[#bbb] mr-1" />{f.client_name}
+                                    <span title="NCC này được gắn ở thẻ Công ty/Dự án (tab Công ty/Dự án). Mở hồ sơ đối thủ để lưu vào danh sách và nhập sale/số LĐ." className="ml-1.5 px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-medium whitespace-nowrap">Từ Công ty/Dự án</span>
+                                  </td>
+                                  <td className="px-2.5 py-1.5 font-medium text-red-600">{(f.worker_count ?? 0).toLocaleString('vi-VN')}</td>
+                                  <td className="px-2.5 py-1.5 text-[#aaa]">—</td>
+                                  <td className="px-2.5 py-1.5 text-[#aaa]">—</td>
+                                  <td className="px-2.5 py-1.5 text-[#aaa]">—</td>
+                                  <td className="px-2.5 py-1.5" />
+                                </tr>
+                              ) : editingRow === f.id ? (
                                 <tr key={f.id} className="border-b border-[#F0EEE9] last:border-0 bg-blue-50/40">
                                   <td className="px-2.5 py-1.5"><input value={editForm.client_name} onChange={e => setEditForm(v => ({ ...v, client_name: e.target.value }))} className={`${inputCls} w-44`} /></td>
                                   <td className="px-2.5 py-1.5">
