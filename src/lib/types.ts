@@ -278,6 +278,8 @@ export interface CRMPipelineEntry {
   contact_id: string | null;
   product_id: string | null;
   custom_price: number | null;
+  /** Thông tin báo giá điền sẵn (migration 156). */
+  quote_info?: import('./quoteInfo').QuoteInfo | null;
   contacts?: { name: string; phone: string | null } | null;
   crm_products?: { name: string; category: string | null; price?: number } | null;
   created_at: string;

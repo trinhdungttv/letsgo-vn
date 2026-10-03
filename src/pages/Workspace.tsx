@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FileText, Send, ClipboardList, FileWarning, Phone, MapPin, ChevronDown,
   Settings, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
@@ -16,6 +16,7 @@ import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
 import { QuoteModal } from '../components/workspace/QuoteModal';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
+import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
@@ -107,6 +108,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
 
   // ---- Modals thao tác nhanh ----
   const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [showCostPlan, setShowCostPlan] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
   const [showPayrollCalc, setShowPayrollCalc] = useState(false);
@@ -513,13 +515,14 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
 
         {/* ==== QUICK ACTIONS ==== */}
         {!hidden('quick_actions') && (
-          <div className={`${mobileTab === 'viec' ? 'grid' : 'hidden'} xl:grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4`}>
+          <div className={`${mobileTab === 'viec' ? 'grid' : 'hidden'} xl:grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4`}>
             <button onClick={() => setShowPayrollCalc(true)}
               className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 border border-blue-600 text-[12px] font-semibold text-white hover:bg-blue-700 transition-colors">
               <Calculator size={14} /> Tính bảng lương
             </button>
             {[
               { label: 'Tạo báo giá', icon: <FileText size={14} />, onClick: () => setShowQuoteModal(true) },
+              { label: 'Phương án giá', icon: <PieChart size={14} />, onClick: () => setShowCostPlan(true) },
               { label: 'Giao việc', icon: <Send size={14} />, onClick: () => setShowGiaoViec(true) },
               { label: 'Ghi nhận LĐ', icon: <ClipboardList size={14} />, onClick: () => setShowBulkLabor(true) },
             ].map(a => (
@@ -748,6 +751,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
 
       {/* ==== Modals thao tác nhanh ==== */}
       {showQuoteModal && <QuoteModal clients={clients} toast={toast} onClose={() => setShowQuoteModal(false)} />}
+      {showCostPlan && <CostPlanModal clients={clients} pipeline={pipeline} branches={branches} toast={toast} onClose={() => setShowCostPlan(false)} />}
       {showGiaoViec && (
         <GiaoViecModal
           clients={clients}

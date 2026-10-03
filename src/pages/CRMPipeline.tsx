@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Plus, X, Briefcase,
+  Plus, X, Briefcase, Columns3, RotateCcw,
 } from 'lucide-react';
+import { usePersistedState } from '../hooks/usePersistedState';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
 import type { CRMPipelineEntry, CRMDeal, CRMProduct, Contact } from '../lib/types';
@@ -11,7 +12,7 @@ import { logActivity } from '../lib/audit';
 import { useBranchData } from '../hooks/useBranchData';
 import { branchOptions, branchOf } from '../lib/branchRef';
 import { useMarketRefs, competitorsInZone, linkCompetitor, notifyMarketChanged } from '../components/crm/MarketSupplyBlock';
-import { CompanyProfileModal, STAGES, RATING_CONFIG } from '../components/crm/CompanyProfileModal';
+import { CompanyProfileModal, STAGES, RATING_CONFIG, ARCHIVED_STAGES } from '../components/crm/CompanyProfileModal';
 import { selectContacts } from '../lib/contactOps';
 
 interface CRMPipelineProps {
@@ -49,6 +50,10 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  // Ẩn bớt cột không cần thiết — nhớ theo trình duyệt. Chỉ ẩn hiển thị, thẻ vẫn nằm nguyên ở giai đoạn đó.
+  const [hiddenCols, setHiddenCols] = usePersistedState<string[]>('crm_pipeline_hidden_cols', []);
+  const [showColMenu, setShowColMenu] = useState(false);
+  const [showAllArchived, setShowAllArchived] = useState<Record<string, boolean>>({});
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [showDealModal, setShowDealModal] = useState(false);
@@ -192,6 +197,35 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const archivedKNN = localPipeline.filter(e => e.stage === 'khong-nhu-cau');
   const archivedNgung = localPipeline.filter(e => e.stage === 'ngung');
 
+  const COLUMN_DEFS = [
+    ...STAGES.map(s => ({ id: s.id, label: s.label, count: localPipeline.filter(e => e.stage === s.id).length })),
+    { id: 'khong-nhu-cau', label: 'Không hợp tác', count: archivedKNN.length },
+    { id: 'ngung', label: 'Ngưng HĐ', count: archivedNgung.length },
+  ];
+  const isHidden = (id: string) => hiddenCols.includes(id);
+  const visibleStages = STAGES.filter(s => !isHidden(s.id));
+  const toggleCol = (id: string) => {
+    const visibleCount = COLUMN_DEFS.filter(c => !isHidden(c.id)).length;
+    if (!isHidden(id) && visibleCount <= 1) { toast('Cần để lại ít nhất 1 cột'); return; }
+    setHiddenCols(h => h.includes(id) ? h.filter(x => x !== id) : [...h, id]);
+  };
+  const hiddenDefs = COLUMN_DEFS.filter(c => isHidden(c.id));
+
+  const handleRestore = async (entry: CRMPipelineEntry) => {
+    if (!confirm(`Khôi phục "${entry.company_name}" về giai đoạn Tiềm năng?`)) return;
+    try {
+      const { error } = await supabase.from('crm_pipeline').update({ stage: 'tiem-nang', sub_status: null }).eq('id', entry.id);
+      if (error) throw error;
+      await onRefresh();
+      toast(`Đã khôi phục "${entry.company_name}" về Tiềm năng`);
+      await logActivity({
+        user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
+        description: `Khôi phục "${entry.company_name}" về Tiềm năng (trước đó: ${ARCHIVED_STAGES[entry.stage]?.label ?? entry.stage})`,
+        oldData: entry, newData: { ...entry, stage: 'tiem-nang', sub_status: null },
+      });
+    } catch (e: any) { toast('Lỗi: ' + e.message); }
+  };
+
   return (
     <>
       <PageHeader
@@ -199,6 +233,36 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         subtitle="Phễu bán hàng — kéo thả thẻ để chuyển giai đoạn"
         actions={
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowColMenu(v => !v)}
+                title="Ẩn / hiện các cột"
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${showColMenu || hiddenCols.length ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}
+              >
+                <Columns3 size={13} /> Cột{hiddenCols.length ? ` (ẩn ${hiddenCols.length})` : ''}
+              </button>
+              {showColMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowColMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 z-20 w-[240px] bg-white border border-[#E8E7E2] rounded-[12px] shadow-xl p-3">
+                    <div className="text-[12px] font-semibold text-[#111] mb-0.5">Hiển thị cột</div>
+                    <div className="text-[10.5px] text-[#999] mb-2">Bỏ tick để ẩn cột. Chỉ ẩn hiển thị — thẻ công ty vẫn ở nguyên giai đoạn.</div>
+                    <div className="space-y-0.5">
+                      {COLUMN_DEFS.map((c, i) => (
+                        <label key={c.id} className={`flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[#F9F9F7] cursor-pointer text-[12px] ${i === STAGES.length ? 'mt-1.5 border-t border-[#F0EEE9] pt-2' : ''}`}>
+                          <input type="checkbox" checked={!isHidden(c.id)} onChange={() => toggleCol(c.id)} />
+                          <span className="flex-1">{c.label}</span>
+                          <span className="text-[10.5px] text-[#aaa]">{c.count}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {hiddenCols.length > 0 && (
+                      <button onClick={() => setHiddenCols([])} className="mt-2 inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"><RotateCcw size={10} /> Hiện lại tất cả</button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <button
               onClick={() => setShowDealModal(true)}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-[#1D4ED8] text-[#1D4ED8] hover:bg-blue-50 transition"
@@ -216,9 +280,20 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
       />
 
       <div className="flex-1 overflow-y-auto p-5">
+        {hiddenDefs.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[11.5px] text-[#888]">
+            Đang ẩn:
+            {hiddenDefs.map(c => (
+              <button key={c.id} onClick={() => toggleCol(c.id)} title="Bấm để hiện lại"
+                className="px-2 py-0.5 rounded-full bg-white border border-[#E8E7E2] text-[#555] hover:border-blue-300 hover:text-blue-700">
+                {c.label} ({c.count}) <span className="text-[#bbb]">+</span>
+              </button>
+            ))}
+          </div>
+        )}
         {/* Kanban */}
-        <div className="grid grid-cols-5 gap-2 mb-4">
-          {STAGES.map(stage => {
+        <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${Math.max(visibleStages.length, 1)}, minmax(0, 1fr))` }}>
+          {visibleStages.map(stage => {
             const items = localPipeline.filter(e => e.stage === stage.id);
             const isOver = dragOver === stage.id;
             return (
@@ -263,25 +338,41 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         </div>
 
         {/* Archived */}
-        <div className="grid grid-cols-2 gap-2.5">
-          {[
-            { label: 'Không nhu cầu', items: archivedKNN },
-            { label: 'Ngưng HĐ',      items: archivedNgung },
-          ].map(sec => (
-            <div key={sec.label} className="bg-[#F5F4EF] rounded-lg p-3">
-              <div className="text-[11.5px] font-semibold text-[#888] mb-2">{sec.label} ({sec.items.length})</div>
-              <div className="space-y-1">
-                {sec.items.slice(0, 3).map(e => (
-                  <button key={e.id} onClick={() => setProfileEntry(e)}
-                    className="w-full text-left text-[12px] text-[#555] hover:text-[#111] transition truncate py-0.5">
-                    {e.company_name}{(() => { const n = branchOf(e, branches)?.name ?? e.region; return n ? ` · ${n}` : ''; })()}
-                  </button>
-                ))}
-                {sec.items.length > 3 && <div className="text-[11px] text-[#bbb]">+{sec.items.length - 3} khác</div>}
-              </div>
-            </div>
-          ))}
-        </div>
+        {(!isHidden('khong-nhu-cau') || !isHidden('ngung')) && (
+          <div className={`grid gap-2.5 ${!isHidden('khong-nhu-cau') && !isHidden('ngung') ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {[
+              { id: 'khong-nhu-cau', label: 'Không hợp tác', items: archivedKNN },
+              { id: 'ngung',         label: 'Ngưng HĐ',      items: archivedNgung },
+            ].filter(sec => !isHidden(sec.id)).map(sec => {
+              const all = !!showAllArchived[sec.id];
+              const shown = all ? sec.items : sec.items.slice(0, 3);
+              return (
+                <div key={sec.id} className="bg-[#F5F4EF] rounded-lg p-3">
+                  <div className="text-[11.5px] font-semibold text-[#888] mb-2">{sec.label} ({sec.items.length})</div>
+                  <div className="space-y-0.5">
+                    {shown.map(e => (
+                      <div key={e.id} className="flex items-center gap-1 group">
+                        <button onClick={() => setProfileEntry(e)}
+                          className="flex-1 min-w-0 text-left text-[12px] text-[#555] hover:text-[#111] transition truncate py-0.5">
+                          {e.company_name}{(() => { const n = branchOf(e, branches)?.name ?? e.region; return n ? ` · ${n}` : ''; })()}
+                          {e.sub_status && <span className="text-[10.5px] text-red-400"> — {e.sub_status}</span>}
+                        </button>
+                        <button onClick={() => handleRestore(e)} title="Khôi phục về Tiềm năng"
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#999] hover:text-blue-600 hover:bg-white transition shrink-0"><RotateCcw size={11} /></button>
+                      </div>
+                    ))}
+                    {sec.items.length > 3 && (
+                      <button onClick={() => setShowAllArchived(m => ({ ...m, [sec.id]: !all }))} className="text-[11px] text-blue-600 hover:underline">
+                        {all ? 'Thu gọn' : `Xem tất cả (+${sec.items.length - 3})`}
+                      </button>
+                    )}
+                    {sec.items.length === 0 && <div className="text-[11px] text-[#bbb]">Chưa có</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Add modal */}

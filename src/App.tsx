@@ -28,6 +28,8 @@ import CRMPipeline from './pages/CRMPipeline';
 import AdminPage from './pages/AdminPage';
 import Workspace from './pages/Workspace';
 import Loans from './pages/Loans';
+import SharedCostPlan from './pages/SharedCostPlan';
+import { parseShareHash } from './lib/costPlan/api';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 
 const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans'];
@@ -40,6 +42,16 @@ function Toast({ message }: { message: string }) {
 function AppInner() {
   const { user, loading: authLoading, logout, rolePermissions } = useAuth();
 
+  // Link chia sẻ "Phương án giá" (#/p/<mã>) — mở được KHÔNG cần đăng nhập, chỉ cần mã 4 số.
+  // Khi đang ở link này thì không nạp dữ liệu toàn app (người ngoài không có quyền).
+  const [shareCode, setShareCode] = useState<string | null>(() => parseShareHash(window.location.hash));
+  useEffect(() => {
+    const sync = () => setShareCode(parseShareHash(window.location.hash));
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); };
+  }, []);
+
   const {
     clients, setClients,
     laborHistory, setLaborHistory,
@@ -48,7 +60,7 @@ function AppInner() {
     marketSurveys, competitors, marketZones, setMarketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
-  } = useAppData(!!user);
+  } = useAppData(!!user && !shareCode);
 
   const {
     leads,
@@ -57,7 +69,7 @@ function AppInner() {
     activities, setActivities,
     pipeline,
     reloadPipeline,
-  } = useCRMData(!!user);
+  } = useCRMData(!!user && !shareCode);
 
   function parseHash(): Page {
     const h = window.location.hash.replace('#/', '').split('/')[0];
@@ -249,6 +261,8 @@ function AppInner() {
     if (selectedDealId === d.id) setSelectedDealId(d.id);
   }, [setDeals, selectedDealId]);
   const handleActivityCreate = useCallback((a: CRMActivity) => setActivities(prev => [a, ...prev]), [setActivities]);
+
+  if (shareCode) return <SharedCostPlan code={shareCode} />;
 
   if (authLoading) {
     return (

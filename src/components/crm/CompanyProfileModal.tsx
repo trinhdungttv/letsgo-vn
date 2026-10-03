@@ -16,6 +16,7 @@ import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
 import MarketSupplyBlock from './MarketSupplyBlock';
+import QuoteInfoBlock from './QuoteInfoBlock';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 
 export const STAGES = [
@@ -24,6 +25,18 @@ export const STAGES = [
   { id: 'quan-tam',   label: 'Quan tâm/Chờ', headerBg: 'bg-emerald-50', headerText: 'text-emerald-700', border: 'border-emerald-200'},
   { id: 'dam-phan',   label: 'Đàm phán HĐ',  headerBg: 'bg-violet-50',  headerText: 'text-violet-700',  border: 'border-violet-200' },
   { id: 'hop-tac',    label: 'Đang HT',       headerBg: 'bg-teal-50',    headerText: 'text-teal-700',    border: 'border-teal-200'   },
+];
+
+/** Hai giai đoạn "lưu trữ" — không hiện thành cột kanban nhưng vẫn là giai đoạn hợp lệ. */
+export const ARCHIVED_STAGES: Record<string, { label: string; cls: string }> = {
+  'khong-nhu-cau': { label: 'Không hợp tác', cls: 'bg-red-50 text-red-700 border-red-200' },
+  'ngung':         { label: 'Ngưng HĐ',      cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+};
+
+/** Lý do thường gặp khi khách không hợp tác — lưu vào crm_pipeline.sub_status. */
+export const DECLINE_REASONS = [
+  'Không có nhu cầu', 'Đã chọn nhà cung ứng khác', 'Giá cao / không phù hợp',
+  'Không liên lạc được', 'Khác',
 ];
 
 export const RATING_CONFIG: Record<string, { dot: string; label: string; badge: string }> = {
@@ -238,7 +251,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
-  const patchEntry = async (patch: Partial<CRMPipelineEntry>, description: string) => {
+  const patchEntry = async (patch: Partial<CRMPipelineEntry>, description: string): Promise<boolean> => {
     const { error } = await supabase.from('crm_pipeline').update(patch).eq('id', entry.id);
     if (!error) {
       onUpdate({ ...entry, ...patch });
@@ -246,7 +259,68 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
         user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
         description, oldData: entry, newData: { ...entry, ...patch },
       });
-    } else toast('Lỗi: ' + error.message);
+      return true;
+    }
+    toast('Lỗi: ' + error.message);
+    return false;
+  };
+
+  // Đổi tên công ty: cùng 1 công ty còn xuất hiện ở Thị trường → Công ty/Dự án (market_leads.crm_id)
+  // và, nếu đã là khách hàng, ở hồ sơ Khách hàng — đổi đồng bộ để không lệch tên giữa các nơi.
+  const renameCompany = async (raw: string) => {
+    const name = raw.trim();
+    const old = entry.company_name;
+    if (!name || name === old) return;
+    const { data: leads } = await supabase.from('market_leads').select('id').eq('crm_id', entry.id);
+    const places = ['• Hồ sơ CRM Pipeline'];
+    if (leads?.length) places.push(`• ${leads.length} dự án ở Thị trường → Công ty/Dự án`);
+    if (entry.client_id) places.push('• Hồ sơ Khách hàng');
+    if (places.length > 1 && !confirm(`Đổi tên "${old}" → "${name}"?\n\nTên mới sẽ được cập nhật đồng bộ ở:\n${places.join('\n')}`)) return;
+    if (!await patchEntry({ company_name: name }, `Đổi tên công ty "${old}" thành "${name}"`)) return;
+    if (leads?.length) {
+      const { error } = await supabase.from('market_leads').update({ company_name: name }).eq('crm_id', entry.id);
+      if (error) toast('Đã đổi tên ở Pipeline nhưng chưa đồng bộ được Thị trường: ' + error.message);
+    }
+    if (entry.client_id) {
+      const { error } = await supabase.from('clients').update({ name }).eq('id', entry.client_id);
+      if (error) toast('Đã đổi tên ở Pipeline nhưng chưa đồng bộ được hồ sơ Khách hàng: ' + error.message);
+    }
+    toast(`Đã đổi tên thành "${name}"`);
+  };
+
+  // Không hợp tác / khôi phục.
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declineReason, setDeclineReason] = useState(DECLINE_REASONS[0]);
+  const [declineNote, setDeclineNote] = useState('');
+  const [declining, setDeclining] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState(entry.company_name);
+  useEffect(() => { setNameDraft(entry.company_name); setRenaming(false); }, [entry.id, entry.company_name]);
+
+  const logNoteInteraction = async (content: string) => {
+    await supabase.from('crm_interactions').insert({
+      crm_id: entry.id, interaction_type: 'note', content, interaction_date: new Date().toISOString().split('T')[0],
+    });
+  };
+  const handleDecline = async () => {
+    setDeclining(true);
+    const detail = declineNote.trim();
+    const ok = await patchEntry(
+      { stage: 'khong-nhu-cau', sub_status: declineReason },
+      `Đánh dấu "${entry.company_name}" KHÔNG HỢP TÁC — ${declineReason}${detail ? `: ${detail}` : ''}`,
+    );
+    if (ok) {
+      await logNoteInteraction(`Không hợp tác — ${declineReason}${detail ? `: ${detail}` : ''}`);
+      toast(`"${entry.company_name}" đã chuyển sang Không hợp tác (vẫn khôi phục được)`);
+      setDeclineOpen(false); setDeclineNote('');
+      onClose?.();
+    }
+    setDeclining(false);
+  };
+  const handleRestore = async () => {
+    if (!confirm(`Khôi phục "${entry.company_name}" về giai đoạn Tiềm năng?`)) return;
+    const ok = await patchEntry({ stage: 'tiem-nang', sub_status: null }, `Khôi phục "${entry.company_name}" về Tiềm năng (trước đó: ${ARCHIVED_STAGES[entry.stage]?.label ?? entry.stage})`);
+    if (ok) { await logNoteInteraction('Khôi phục về Tiềm năng'); toast('Đã khôi phục về Tiềm năng'); onClose?.(); }
   };
 
   const updateLink = async (dbPatch: Partial<CRMPipelineEntry>, localPatch: Partial<CRMPipelineEntry>, description: string) => {
@@ -738,7 +812,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
         <InlineEdit
           label="Tên công ty"
           value={entry.company_name}
-          onSave={v => patchEntry({ company_name: v }, `Đổi tên công ty "${entry.company_name}" thành "${v}"`)}
+          onSave={v => renameCompany(v)}
         />
         {/*
           Chi nhánh — ghi thẳng vào branch_id (khoá duy nhất), không đụng tới
@@ -938,6 +1012,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
   );
 
   const blkMarket = <MarketSupplyBlock entry={entry} toast={toast} />;
+  const blkQuote = <QuoteInfoBlock entry={entry} onUpdate={onUpdate} toast={toast} />;
 
   const blkNotes = (
     <>
@@ -1098,6 +1173,17 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
         >
           <Rocket size={14} />
           {activating ? 'Đang xử lý...' : 'Bắt đầu hợp tác'}
+        </button>
+      )}
+
+      {!isLinkedToClient && !ARCHIVED_STAGES[entry.stage] && (
+        <button onClick={() => setDeclineOpen(true)} className="block text-[12px] text-orange-600 hover:text-orange-700 transition">
+          Khách không hợp tác…
+        </button>
+      )}
+      {!isLinkedToClient && ARCHIVED_STAGES[entry.stage] && (
+        <button onClick={handleRestore} className="block text-[12px] text-blue-600 hover:text-blue-700 transition">
+          Khôi phục về Tiềm năng
         </button>
       )}
 
@@ -1466,14 +1552,62 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
     </>
   );
 
+  const declineDialog = declineOpen ? (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" onClick={e => { e.stopPropagation(); setDeclineOpen(false); }}>
+      <div className="bg-white rounded-[12px] w-full max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-[14px] font-semibold text-[#111] mb-1">Khách không hợp tác</h3>
+        <p className="text-[11.5px] text-[#888] mb-3">
+          "{entry.company_name}" sẽ chuyển sang nhóm <b>Không hợp tác</b> (ẩn khỏi các cột chính). Không xoá dữ liệu nào — có thể khôi phục bất cứ lúc nào.
+        </p>
+        <div className="space-y-2.5">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11.5px] text-[#666] font-medium">Lý do</label>
+            <select value={declineReason} onChange={e => setDeclineReason(e.target.value)} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+              {DECLINE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[11.5px] text-[#666] font-medium">Ghi chú thêm (tuỳ chọn)</label>
+            <textarea value={declineNote} onChange={e => setDeclineNote(e.target.value)} rows={2} placeholder="VD: đang dùng NCC khác đến hết 2027…" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-y" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={() => setDeclineOpen(false)} className="px-3 py-1.5 rounded-lg text-[12px] border border-gray-300 text-[#666]">Huỷ</button>
+          <button onClick={handleDecline} disabled={declining} className="px-3.5 py-1.5 rounded-lg text-[12px] font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+            {declining ? 'Đang lưu…' : 'Xác nhận không hợp tác'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   /* ═══ Biến thể 'modal' — bảng trượt từ phải, giữ nguyên bố cục cũ ═══ */
   const modalContent = (
     <div className="bg-white w-full max-w-lg h-full flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+      {declineDialog}
       {/* Header */}
       <div className="bg-white border-b border-[#E8E7E2] px-5 py-4 shrink-0">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
-            <h2 className="text-[16px] font-bold text-[#111] leading-tight">{entry.company_name}</h2>
+            {renaming ? (
+              <div className="flex items-center gap-1">
+                <input
+                  autoFocus value={nameDraft} onChange={e => setNameDraft(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { setRenaming(false); void renameCompany(nameDraft); }
+                    if (e.key === 'Escape') { setNameDraft(entry.company_name); setRenaming(false); }
+                  }}
+                  className="flex-1 min-w-0 text-[15px] font-bold px-2 py-0.5 border border-blue-500 rounded-lg outline-none"
+                />
+                <button onClick={() => { setRenaming(false); void renameCompany(nameDraft); }} title="Lưu tên" className="p-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Check size={13} /></button>
+                <button onClick={() => { setNameDraft(entry.company_name); setRenaming(false); }} title="Huỷ" className="p-1 text-gray-400 hover:text-gray-600"><X size={13} /></button>
+              </div>
+            ) : (
+              <h2 className="group flex items-center gap-1.5 text-[16px] font-bold text-[#111] leading-tight">
+                <span className="truncate">{entry.company_name}</span>
+                <button onClick={() => setRenaming(true)} title="Sửa tên công ty" className="p-1 rounded text-[#bbb] hover:text-blue-600 hover:bg-blue-50 shrink-0"><Pencil size={13} /></button>
+              </h2>
+            )}
             {(clientBranchId || entry.branch_id) && (
               <div className="flex items-center gap-1 mt-1 text-[12px] text-[#888]">
                 <MapPin size={11} />
@@ -1493,6 +1627,11 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               {stageInfo.label}
             </span>
           )}
+          {ARCHIVED_STAGES[entry.stage] && (
+            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${ARCHIVED_STAGES[entry.stage].cls}`}>
+              {ARCHIVED_STAGES[entry.stage].label}{entry.sub_status ? ` · ${entry.sub_status}` : ''}
+            </span>
+          )}
           <button
             onClick={cycleRating}
             className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] font-medium transition hover:opacity-80 ${ratingInfo.badge}`}
@@ -1500,6 +1639,16 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
             <span className={`w-2 h-2 rounded-full ${ratingInfo.dot}`} />
             {ratingInfo.label}
           </button>
+          {!isLinkedToClient && !ARCHIVED_STAGES[entry.stage] && (
+            <button onClick={() => setDeclineOpen(true)} className="px-2.5 py-0.5 rounded-full border border-red-200 text-[11px] font-medium text-red-600 hover:bg-red-50 transition">
+              Không hợp tác
+            </button>
+          )}
+          {!isLinkedToClient && ARCHIVED_STAGES[entry.stage] && (
+            <button onClick={handleRestore} className="px-2.5 py-0.5 rounded-full border border-blue-200 text-[11px] font-medium text-blue-600 hover:bg-blue-50 transition">
+              ↺ Khôi phục
+            </button>
+          )}
         </div>
       </div>
 
@@ -1530,6 +1679,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
             {blkBasicInfo}
             {blkWorkerBar}
             {blkMarket}
+            {blkQuote}
             {blkNotes}
             {blkAppendix}
             {blkActivate}
@@ -1591,6 +1741,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
 
   return (
     <div className="max-w-[1500px] mx-auto">
+      {declineDialog}
 
       {/* ── Thanh trạng thái & hành động nhanh ── */}
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
@@ -1681,6 +1832,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               {blkBasicInfo}
               {blkWorkerBar}
               {blkMarket}
+              {blkQuote}
             </div>
           </SectionCard>
 
