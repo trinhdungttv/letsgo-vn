@@ -476,9 +476,9 @@ export default function SupplierFillCard({
           const marginVal = clientTotal(s, fieldMappings) - detailTotal(s, fieldMappings);
           const hasBothSides = clientTotal(s, fieldMappings) > 0 && detailTotal(s, fieldMappings) > 0;
           return (
-            <div key={i} className="flex items-center gap-2 group">
+            <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 group">
               <span className={`text-[12px] min-w-[110px] shrink-0 ${s.is_us ? 'text-blue-700 font-medium' : ''}`}>{s.is_us ? '● ' : ''}{s.name}</span>
-              <div className="flex-1 h-[11px] bg-[#F0EEE9] rounded overflow-hidden"><div className={`h-[11px] rounded ${s.is_us ? 'bg-blue-600' : 'bg-[#B8D4F0]'}`} style={{ width: `${Math.min(p, 100)}%` }} /></div>
+              <div className="flex-1 min-w-[60px] h-[11px] bg-[#F0EEE9] rounded overflow-hidden"><div className={`h-[11px] rounded ${s.is_us ? 'bg-blue-600' : 'bg-[#B8D4F0]'}`} style={{ width: `${Math.min(p, 100)}%` }} /></div>
               <span
                 title={s.qtyNote}
                 className={`text-[12px] font-medium min-w-[52px] text-right ${s.is_us ? 'text-blue-700' : ''} ${s.qtyLocked ? 'border-b border-dotted border-current/40 cursor-help' : ''}`}

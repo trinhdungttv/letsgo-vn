@@ -18,7 +18,46 @@ body {
 @media (max-width: 767px) {
   input, textarea, select {
     font-size: 16px !important;
+    /* Ô nhập là flex item mặc định không co nhỏ hơn bề rộng tự nhiên (~20 ký tự ở 16px)
+       → đẩy cả hàng tràn ngang trên điện thoại. Cho phép co lại. */
+    min-width: 0;
   }
+
+  /* Modal (lớp phủ fixed + căn giữa): khi nội dung cao hơn màn hình thì phần đầu/cuối
+     bị cắt mà không cuộn được (không tới được nút Lưu). Cho lớp phủ cuộn được, căn
+     giữa bằng margin auto để modal ngắn vẫn nằm giữa còn modal dài thì bắt đầu từ trên. */
+  .fixed.inset-0.flex.items-center.justify-center {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    align-items: flex-start;
+  }
+  .fixed.inset-0.flex.items-center.justify-center > * {
+    margin-top: auto;
+    margin-bottom: auto;
+    max-width: 100%;
+  }
+
+  /* Gợi ý phím tắt chỉ có ý nghĩa trên máy tính */
+  kbd {
+    display: none;
+  }
+}
+
+/* Màn hình cảm ứng (không rê chuột được): các nút "chỉ hiện khi hover" (sửa/xoá/ghi chú…
+   dạng opacity-0 group-hover:opacity-100) sẽ không bao giờ thấy → hiện sẵn. */
+@media (hover: none) {
+  .opacity-0[class*="group-hover"][class*=":opacity-100"],
+  .opacity-40[class*="group-hover"][class*=":opacity-100"] {
+    opacity: 1;
+  }
+}
+
+/* Ẩn thanh cuộn ngang cho dải tab/chip cuộn được trên điện thoại */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes spin {

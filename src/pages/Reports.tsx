@@ -596,8 +596,8 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
             : `${periodLabel(mode, selMonth)} · doanh thu, lợi nhuận, lao động theo chi nhánh`
         }
         actions={
-          <div className="flex items-center gap-2">
-            <div className="flex bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <div className="flex bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg overflow-hidden shrink-0">
               {(['month', 'quarter', 'year'] as PeriodMode[]).map(m => (
                 <button key={m} onClick={() => setMode(m)}
                   className={`px-3 py-1.5 text-[12px] ${mode === m ? 'bg-navy text-white font-medium' : 'text-[#555] hover:bg-[#F0EEE9]'}`}>
@@ -606,7 +606,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
               ))}
             </div>
             <input type="month" value={selMonth} onChange={e => e.target.value && setSelMonth(e.target.value)}
-              className="h-[30px] px-2 text-[12px] border border-[#E8E7E2] rounded-lg bg-white" />
+              className="h-[30px] px-2 text-[12px] border border-[#E8E7E2] rounded-lg bg-white flex-1 md:flex-none w-0 md:w-auto" />
             <button onClick={() => setShowTargets(true)}
               className="h-[30px] px-2.5 sm:px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5">
               <Target size={13} /><span className="hidden sm:inline">Mục tiêu</span>

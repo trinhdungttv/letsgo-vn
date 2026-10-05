@@ -7,17 +7,18 @@ import type { RefObject } from 'react';
  * Ref lấy từ useSlashSearch() để phím "/" nhảy đúng vào ô này.
  */
 export default function SearchBox({
-  value, onChange, inputRef, placeholder = 'Tìm...', className = '', width = 'w-[210px]',
+  value, onChange, inputRef, placeholder = 'Tìm...', className = '', width = 'md:w-[210px]',
 }: {
   value: string;
   onChange: (v: string) => void;
   inputRef?: RefObject<HTMLInputElement>;
   placeholder?: string;
   className?: string;
+  /** Bề rộng trên máy tính (class có tiền tố md:) — điện thoại luôn giãn hết hàng */
   width?: string;
 }) {
   return (
-    <div className={`relative ${width} ${className}`}>
+    <div className={`relative w-full ${width} ${className}`}>
       <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#aaa] pointer-events-none" />
       <input
         ref={inputRef}

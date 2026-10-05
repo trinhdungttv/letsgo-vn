@@ -287,8 +287,8 @@ export default function AdminPage({ toast }: AdminPageProps) {
   return (
     <>
       <PageHeader title="Admin" subtitle="Yêu cầu quyền · Quản lý tài khoản · Ma trận phân quyền" />
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        <div className="flex gap-2">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0">
           {([
             { key: 'requests', label: 'Yêu cầu quyền truy cập' },
             { key: 'accounts', label: 'Quản lý tài khoản' },
@@ -296,7 +296,7 @@ export default function AdminPage({ toast }: AdminPageProps) {
             { key: 'branding', label: 'Logo App' },
           ] as { key: Tab; label: string }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === t.key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === t.key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
               {t.label}
             </button>
           ))}

@@ -143,7 +143,7 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
   };
 
   return (
-    <div className="space-y-6">
+    <>
       <PageHeader
         title="CRM Dashboard"
         actions={
@@ -166,8 +166,10 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
         }
       />
 
+      {/* Vùng cuộn riêng — trước đây trang không cuộn được (phần dưới bị cắt) và thẻ dính sát mép */}
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4 md:space-y-6">
       {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 md:gap-4">
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="text-xs font-medium text-gray-600 mb-1">Dự án đang chạy</div>
           <div className="text-2xl font-bold text-gray-900 mb-1">{runningProjects.total}</div>
@@ -194,7 +196,7 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
       </div>
 
       {/* Stage Distribution */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
         <h3 className="text-sm font-semibold text-gray-900 mb-4">Phân bố giai đoạn</h3>
         <div className="flex gap-1 h-8 mb-4 rounded-full overflow-hidden border border-gray-200 bg-gray-50">
           {PIPELINE_STAGES.map(stageConfig => {
@@ -211,7 +213,7 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
             );
           })}
         </div>
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 gap-y-3">
           {PIPELINE_STAGES.map(stageConfig => (
             <div key={stageConfig.id} className="text-center">
               <div className="text-xs font-medium text-gray-900 mb-1">{stageConfig.label}</div>
@@ -222,9 +224,9 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
       </div>
 
       {/* Top Pipeline & Recent Activities */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Top Pipeline */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Công ty tiềm năng hàng đầu</h3>
           <div className="space-y-3">
             {topPipeline.length > 0 ? (
@@ -254,7 +256,7 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
         </div>
 
         {/* Recent Activities */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Hoạt động gần đây</h3>
           <div className="space-y-3">
             {recentActivitiesData.length > 0 ? (
@@ -286,7 +288,8 @@ const CRMDash: React.FC<Props> = ({ activities, clients, pipeline, isAdmin, onNa
         </div>
         <WinLossSection clients={clients} />
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

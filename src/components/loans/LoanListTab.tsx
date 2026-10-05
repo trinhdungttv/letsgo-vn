@@ -44,7 +44,7 @@ export function LoanListTab({ loans, rateHistory, payments, disbursements, onEdi
   return (
     <div className="space-y-3">
       {/* Tong hop dau bang: tong no + tong lai */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
         {[
           { label: 'Tổng dư nợ đang vay', value: fmtVND(totalPrincipal), sub: `${activeList.length} khoản`, color: 'text-red-600' },
           { label: 'Tổng lãi tháng này (ước)', value: fmtVND(totalInterest), sub: 'ngày thực/365', color: 'text-amber-600' },

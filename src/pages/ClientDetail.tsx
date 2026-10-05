@@ -562,13 +562,14 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
 
   return (
     <>
-      <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-[#E8E7E2] shrink-0">
-        <div className="flex items-center gap-2.5">
-          <button onClick={onBack} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
-            <ArrowLeft size={13} /> Quay lại
+      {/* Điện thoại: hàng 1 = nút quay lại (icon) + tên; hàng 2 = loại dịch vụ + nút thao tác */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 md:px-6 py-2.5 md:py-3 bg-white border-b border-[#E8E7E2] shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1 basis-[220px]">
+          <button onClick={onBack} aria-label="Quay lại" className="shrink-0 inline-flex items-center justify-center gap-1 w-9 h-9 md:w-auto md:h-auto md:px-2.5 md:py-1 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
+            <ArrowLeft size={13} className="hidden md:block" /><ArrowLeft size={18} className="md:hidden" /> <span className="hidden md:inline">Quay lại</span>
           </button>
-          <div>
-            <div className="text-[14px] font-semibold text-[#111] flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="text-[15px] md:text-[14px] font-semibold text-[#111] flex items-center flex-wrap gap-x-2 gap-y-0.5 leading-snug">
               {client.name}
               {isSuspended(client) && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">
@@ -576,7 +577,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 </span>
               )}
             </div>
-            <div className="text-[11.5px] text-[#888]">{branchLabelOf(client, branches)} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
+            <div className="text-[11.5px] text-[#888] truncate">{branchLabelOf(client, branches)} · <span className={pill.cls.includes('emerald') ? 'text-emerald-600' : pill.cls.includes('amber') ? 'text-amber-600' : 'text-red-600'}>{pill.label}</span></div>
             {isSuspended(client) && (
               suspEdit !== null ? (
                 <div className="flex items-center gap-1.5 mt-1">
@@ -612,7 +613,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full md:w-auto">
           <select
             value={form.service_type}
             onChange={async e => {
@@ -630,24 +631,24 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                 toast('Da cap nhat loai hinh dich vu');
               } catch (err: any) { toast('Loi: ' + err.message); }
             }}
-            className="text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white"
+            className="flex-1 md:flex-none text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white"
           >
             <option value="leasing">Cho thue lao dong</option>
             <option value="recruitment">Gioi thieu lao dong</option>
             <option value="hoh">HOH</option>
           </select>
-          <button onClick={() => setShowExportMd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-emerald-500 text-emerald-700 hover:bg-emerald-50 transition">
-            <Download size={13} /> Xuất MD
+          <button onClick={() => setShowExportMd(true)} title="Xuất MD" className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-emerald-500 text-emerald-700 hover:bg-emerald-50 transition">
+            <Download size={13} /> <span className="hidden sm:inline">Xuất MD</span><span className="sm:hidden">MD</span>
           </button>
-          <button onClick={() => setEditing(!editing)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition">
-            {editing ? <><X size={13} /> Hủy</> : <><Edit2 size={13} /> Sửa thông tin</>}
+          <button onClick={() => setEditing(!editing)} className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition">
+            {editing ? <><X size={13} /> Hủy</> : <><Edit2 size={13} /> Sửa<span className="hidden sm:inline"> thông tin</span></>}
           </button>
         </div>
       </div>
       {showExportMd && <ExportMdModal client={client} onClose={() => setShowExportMd(false)} toast={toast} />}
 
       {/* Tab bar */}
-      <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-6">
+      <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-2 md:px-6">
         {(['overview', 'profile'] as const).map(tab => (
           <button
             key={tab}
@@ -663,7 +664,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         {activeTab === 'profile' ? (
           profileLoading || !profileEntry ? (
             <div className="text-[12px] text-[#999] text-center py-8">Đang tải hồ sơ...</div>
@@ -994,7 +995,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                             onClick={() => setBranchTransferForm(branchTransferForm ? null : { branch_id: '', effective_from: new Date().toISOString().slice(0, 7), notes: '' })}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 text-[#555] hover:bg-[#FAFAF8] transition shrink-0"
                           >
-                            <ArrowRightLeft size={11} /> Chuyển chi nhánh
+                            <ArrowRightLeft size={11} /> Chuyển<span className="hidden sm:inline"> chi nhánh</span>
                           </button>
                         </div>
                         {branchTransferForm && (

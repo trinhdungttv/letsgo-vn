@@ -157,7 +157,7 @@ export function WinLossSection({ clients }: Props) {
     <div className="flex flex-col">
 
       {/* KPI bar */}
-      <div className="grid grid-cols-4 gap-0 border-b border-[#E8E7E2]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-0 border-b border-[#E8E7E2]">
         {[
           { label: 'Tỷ lệ thắng', value: `${stats.winRate}%`, icon: <Trophy size={12} className="text-yellow-500" />, color: stats.winRate >= 60 ? 'text-green-600' : stats.winRate >= 40 ? 'text-yellow-600' : 'text-red-500' },
           { label: 'Deals thắng', value: stats.totalWins, icon: <TrendingUp size={12} className="text-green-500" />, color: 'text-green-600' },
@@ -172,13 +172,13 @@ export function WinLossSection({ clients }: Props) {
       </div>
 
       {/* Filter + Add */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#E8E7E2]">
-        <div className="flex gap-1">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[#E8E7E2]">
+        <div className="flex gap-1 overflow-x-auto no-scrollbar min-w-0">
           {(['all', 'win', 'loss', 'pending'] as FilterResult[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
+              className={`shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1.5 md:py-1 rounded-full border transition-all ${
                 filter === f
                   ? 'bg-blue-600 text-white border-blue-600'
                   : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-200'

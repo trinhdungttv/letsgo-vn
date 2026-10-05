@@ -103,10 +103,10 @@ export default function IndustryValueChain({ industryId, toast }: Props) {
         <span className="text-[10.5px] text-[#999]">đọc trước biến động: đơn hàng giảm ở đâu thì nhà máy nào cắt LĐ</span>
       </div>
 
-      <div className="p-3 grid grid-cols-3 gap-2">
+      <div className="p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         {COLS.map((c, ci) => (
           <div key={c.kind} className="relative">
-            {ci > 0 && <ArrowRight size={12} className="absolute -left-[13px] top-2 text-[#ccc]" />}
+            {ci > 0 && <ArrowRight size={12} className="hidden sm:block absolute -left-[13px] top-2 text-[#ccc]" />}
             <div className={`bg-[#F9F9F7] rounded-lg border-l-[3px] ${c.accent} px-2.5 py-2 h-full`}>
               <div className="flex items-center gap-1 text-[11.5px] font-medium text-[#111]">
                 {c.icon} {c.label}

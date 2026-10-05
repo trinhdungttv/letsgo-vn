@@ -83,7 +83,7 @@ export default function PerformanceTab({
       </div>
 
       {/* Branch cards */}
-      <div className="grid grid-cols-3 gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {sortedBranches.map((br, i) => {
           const nc = netOf(br.name, selMonth);
           const np = netOf(br.name, cmpMonth);
@@ -174,9 +174,10 @@ export default function PerformanceTab({
                     </div>
                   </div>
                   <div className="overflow-x-auto">
-                  <table className="w-full text-[12px]">
+                  {/* min-w: điện thoại cuộn ngang thay vì ép nhãn/tháng thành 3–4 dòng */}
+                  <table className="w-full min-w-[520px] md:min-w-0 text-[12px]">
                     <thead>
-                      <tr className="text-[10px] text-[#999] uppercase">
+                      <tr className="text-[10px] text-[#999] uppercase whitespace-nowrap">
                         <th className="text-left font-medium pb-1.5">Chỉ số</th>
                         <th className="text-right font-medium pb-1.5">{monthLabel(d)}</th>
                         <th className="text-right font-medium pb-1.5">{monthLabel(cmpMonth)}</th>

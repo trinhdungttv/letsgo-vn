@@ -1243,7 +1243,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               </button>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input
               type="date"
               value={intDate}
@@ -1255,7 +1255,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               onChange={e => setIntContent(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addInteraction()}
               placeholder="Nội dung..."
-              className="col-span-2 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+              className="sm:col-span-2 text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
             />
           </div>
           <button
@@ -1364,7 +1364,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
       {/* Add form */}
       <div className="bg-[#F9F9F7] rounded-lg p-4 space-y-3">
         <div className="text-[12px] font-semibold text-[#333]">Thêm quà mới</div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input
             type="date"
             value={giftDate}
@@ -1409,7 +1409,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           <div className="text-center text-[12px] text-gray-400 py-6">Chưa có quà tặng</div>
         ) : gifts.map(g => editingGiftId === g.id ? (
           <div key={g.id} className="bg-[#F9F9F7] rounded-lg p-3 space-y-2 border border-blue-200">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <input
                 type="date"
                 value={editGiftDate}
@@ -1553,7 +1553,7 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
   );
 
   const declineDialog = declineOpen ? (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" onClick={e => { e.stopPropagation(); setDeclineOpen(false); }}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-3 md:p-0" onClick={e => { e.stopPropagation(); setDeclineOpen(false); }}>
       <div className="bg-white rounded-[12px] w-full max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
         <h3 className="text-[14px] font-semibold text-[#111] mb-1">Khách không hợp tác</h3>
         <p className="text-[11.5px] text-[#888] mb-3">

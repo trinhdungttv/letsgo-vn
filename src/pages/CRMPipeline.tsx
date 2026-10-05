@@ -54,6 +54,8 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const [hiddenCols, setHiddenCols] = usePersistedState<string[]>('crm_pipeline_hidden_cols', []);
   const [showColMenu, setShowColMenu] = useState(false);
   const [showAllArchived, setShowAllArchived] = useState<Record<string, boolean>>({});
+  // Điện thoại: xem từng giai đoạn một (chip chọn giai đoạn) thay vì 5 cột chen nhau.
+  const [mobileStage, setMobileStage] = usePersistedState<string>('crm_pipeline_mobile_stage', STAGES[0]?.id ?? '');
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [showDealModal, setShowDealModal] = useState(false);
@@ -151,24 +153,30 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
-  const handleDrop = async (targetStage: string) => {
-    if (!dragId) return;
-    const entry = localPipeline.find(e => e.id === dragId);
-    if (!entry || entry.stage === targetStage) { setDragId(null); setDragOver(null); return; }
+  // Chuyển giai đoạn — dùng chung cho kéo thả (máy tính) và ô chọn "Chuyển" (điện thoại, không kéo thả được).
+  const moveEntry = async (entryId: string, targetStage: string) => {
+    const entry = localPipeline.find(e => e.id === entryId);
+    if (!entry || entry.stage === targetStage) return;
     const stageLabel = STAGES.find(s => s.id === targetStage)?.label || targetStage;
-    setLocalPipeline(prev => prev.map(e => e.id === dragId ? { ...e, stage: targetStage } : e));
-    setDragId(null); setDragOver(null);
+    setLocalPipeline(prev => prev.map(e => e.id === entryId ? { ...e, stage: targetStage } : e));
     try {
-      const { error } = await supabase.from('crm_pipeline').update({ stage: targetStage }).eq('id', dragId);
+      const { error } = await supabase.from('crm_pipeline').update({ stage: targetStage }).eq('id', entryId);
       if (error) throw error;
       await onRefresh();
       toast(`${entry.company_name} → ${stageLabel}`);
       await logActivity({
-        user, action: 'update', table: 'crm_pipeline', recordId: dragId,
+        user, action: 'update', table: 'crm_pipeline', recordId: entryId,
         description: `Chuyển "${entry.company_name}" sang giai đoạn "${stageLabel}"`,
         oldData: entry, newData: { ...entry, stage: targetStage },
       });
     } catch (e: any) { toast('Lỗi: ' + e.message); await onRefresh(); }
+  };
+
+  const handleDrop = async (targetStage: string) => {
+    if (!dragId) return;
+    const id = dragId;
+    setDragId(null); setDragOver(null);
+    await moveEntry(id, targetStage);
   };
 
   const handleDelete = async (id: string) => {
@@ -267,19 +275,19 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
               onClick={() => setShowDealModal(true)}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-[#1D4ED8] text-[#1D4ED8] hover:bg-blue-50 transition"
             >
-              <Briefcase size={13} /> Tạo thương vụ mới
+              <Briefcase size={13} /> <span className="hidden sm:inline">Tạo thương vụ mới</span><span className="sm:hidden">Thương vụ</span>
             </button>
             <button
               onClick={() => setShowModal(true)}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"
             >
-              <Plus size={13} /> Thêm công ty
+              <Plus size={13} /> <span className="hidden sm:inline">Thêm công ty</span><span className="sm:hidden">Công ty</span>
             </button>
           </div>
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5">
         {hiddenDefs.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[11.5px] text-[#888]">
             Đang ẩn:
@@ -291,8 +299,68 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
             ))}
           </div>
         )}
-        {/* Kanban */}
-        <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${Math.max(visibleStages.length, 1)}, minmax(0, 1fr))` }}>
+        {/* Kanban — điện thoại: chip chọn giai đoạn + danh sách thẻ rộng đủ đọc tên */}
+        {(() => {
+          if (!visibleStages.length) return null;
+          const cur = visibleStages.find(s => s.id === mobileStage) ?? visibleStages[0];
+          const items = localPipeline.filter(e => e.stage === cur.id);
+          return (
+            <div className="md:hidden mb-4">
+              <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 pb-2.5">
+                {visibleStages.map(stage => {
+                  const n = localPipeline.filter(e => e.stage === stage.id).length;
+                  const active = stage.id === cur.id;
+                  return (
+                    <button key={stage.id} onClick={() => setMobileStage(stage.id)}
+                      className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-[12.5px] font-semibold border transition ${active ? `${stage.headerBg} ${stage.headerText} border-current` : 'bg-white text-[#666] border-[#E8E7E2]'}`}>
+                      {stage.label}
+                      <span className={`text-[11px] px-1.5 rounded-full ${active ? 'bg-white/70' : 'bg-[#F1F0EA] text-[#888]'}`}>{n}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="space-y-2">
+                {items.length === 0 && (
+                  <div className="text-center text-[12.5px] text-[#aaa] py-8 bg-white border border-dashed border-[#E2E0D9] rounded-xl">Chưa có công ty ở giai đoạn này</div>
+                )}
+                {items.map(entry => {
+                  const rc = RATING_CONFIG[entry.rating || 'normal'] || RATING_CONFIG.normal;
+                  return (
+                    <div key={entry.id} className="bg-white border border-[#E8E7E2] rounded-xl flex items-stretch overflow-hidden">
+                      <button onClick={() => setProfileEntry(entry)} className="flex-1 min-w-0 text-left px-3.5 py-3 active:bg-[#F9F9F7]">
+                        <div className="flex items-start gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-1 ${rc.dot}`} title={rc.label} />
+                          <div className="min-w-0">
+                            <div className="text-[14px] font-semibold text-[#111] leading-snug line-clamp-2">{entry.company_name}</div>
+                            <div className="text-[12px] text-[#888] truncate mt-0.5">
+                              {branchOf(entry, branches)?.name ?? entry.region ?? '—'}
+                              {entry.worker_estimate ? ` · ~${entry.worker_estimate} LĐ` : ''}
+                              {entry.last_contact ? ` · LH ${entry.last_contact}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                      {/* Ô chọn gốc của hệ điều hành — chạm là mở danh sách giai đoạn */}
+                      <label className="relative shrink-0 flex flex-col items-center justify-center gap-0.5 w-[68px] border-l border-[#F0EEE9] text-[#1D4ED8] active:bg-blue-50">
+                        <Columns3 size={15} />
+                        <span className="text-[10.5px] font-semibold">Chuyển</span>
+                        <select
+                          value={entry.stage}
+                          onChange={e => moveEntry(entry.id, e.target.value)}
+                          aria-label={`Chuyển giai đoạn ${entry.company_name}`}
+                          className="absolute inset-0 opacity-0 w-full h-full"
+                        >
+                          {STAGES.map(st => <option key={st.id} value={st.id}>{st.label}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+        <div className="hidden md:grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${Math.max(visibleStages.length, 1)}, minmax(0, 1fr))` }}>
           {visibleStages.map(stage => {
             const items = localPipeline.filter(e => e.stage === stage.id);
             const isOver = dragOver === stage.id;
@@ -339,7 +407,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
         {/* Archived */}
         {(!isHidden('khong-nhu-cau') || !isHidden('ngung')) && (
-          <div className={`grid gap-2.5 ${!isHidden('khong-nhu-cau') && !isHidden('ngung') ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          <div className={`grid gap-2.5 ${!isHidden('khong-nhu-cau') && !isHidden('ngung') ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
             {[
               { id: 'khong-nhu-cau', label: 'Không hợp tác', items: archivedKNN },
               { id: 'ngung',         label: 'Ngưng HĐ',      items: archivedNgung },
@@ -353,12 +421,12 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                     {shown.map(e => (
                       <div key={e.id} className="flex items-center gap-1 group">
                         <button onClick={() => setProfileEntry(e)}
-                          className="flex-1 min-w-0 text-left text-[12px] text-[#555] hover:text-[#111] transition truncate py-0.5">
+                          className="flex-1 min-w-0 text-left text-[13px] md:text-[12px] text-[#555] hover:text-[#111] transition truncate py-1.5 md:py-0.5">
                           {e.company_name}{(() => { const n = branchOf(e, branches)?.name ?? e.region; return n ? ` · ${n}` : ''; })()}
                           {e.sub_status && <span className="text-[10.5px] text-red-400"> — {e.sub_status}</span>}
                         </button>
                         <button onClick={() => handleRestore(e)} title="Khôi phục về Tiềm năng"
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#999] hover:text-blue-600 hover:bg-white transition shrink-0"><RotateCcw size={11} /></button>
+                          className="md:opacity-0 md:group-hover:opacity-100 p-2 md:p-0.5 rounded text-[#999] hover:text-blue-600 hover:bg-white transition shrink-0"><RotateCcw size={13} className="md:hidden" /><RotateCcw size={11} className="hidden md:block" /></button>
                       </div>
                     ))}
                     {sec.items.length > 3 && (
@@ -377,7 +445,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
       {/* Add modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 md:p-0">
           <div className="bg-white rounded-[10px] border border-[#E8E7E2] w-full max-w-sm p-6 shadow-xl">
             <h2 className="text-[15px] font-semibold text-[#111] mb-4">Thêm công ty mới</h2>
             <div className="space-y-3">

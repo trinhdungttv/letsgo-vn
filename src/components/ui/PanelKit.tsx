@@ -97,7 +97,7 @@ export function SubSection({ title, badge, open, onToggle, children }: {
 export function InfoRow({ label, children, full }: { label: string; children: ReactNode; full?: boolean }) {
   return (
     <div className={`flex items-start gap-3 py-1.5 border-b border-dashed border-[#EFEDE8] ${full ? 'xl:col-span-2' : ''}`}>
-      <div className="w-[104px] shrink-0 text-[11.5px] text-[#888] pt-[3px]">{label}</div>
+      <div className="w-[84px] sm:w-[104px] shrink-0 text-[11.5px] text-[#888] pt-[3px]">{label}</div>
       <div className="flex-1 min-w-0 text-[12.5px] text-[#111]">{children}</div>
     </div>
   );
@@ -119,14 +119,16 @@ export function QuickNav<K extends string>({ items, onGo }: {
   onGo: (k: K) => void;
 }) {
   return (
-    <div className="sticky top-0 z-20 -mx-5 px-5 py-2 bg-[#F5F4EF]/95 backdrop-blur border-b border-[#E8E7E2]">
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-[10px] uppercase tracking-wide text-[#aaa] font-semibold mr-0.5">Đi tới</span>
+    // -mx/px khớp padding vùng cuộn của trang (p-3 trên điện thoại, p-5 trên máy tính).
+    // Điện thoại: 1 dải cuộn ngang thay vì xếp 3 dòng chiếm nửa màn hình khi dính trên đầu.
+    <div className="sticky top-0 z-20 -mx-3 px-3 md:-mx-5 md:px-5 py-2 bg-[#F5F4EF]/95 backdrop-blur border-b border-[#E8E7E2]">
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar md:flex-wrap">
+        <span className="text-[10px] uppercase tracking-wide text-[#aaa] font-semibold mr-0.5 shrink-0">Đi tới</span>
         {items.map(n => (
           <button
             key={n.key}
             onClick={() => onGo(n.key)}
-            className="px-2.5 py-1 rounded-full text-[11.5px] font-medium border border-[#E2E0D9] bg-white text-[#555] hover:border-[#1D4ED8] hover:text-[#1D4ED8] transition"
+            className="shrink-0 whitespace-nowrap px-2.5 py-1.5 md:py-1 rounded-full text-[12px] md:text-[11.5px] font-medium border border-[#E2E0D9] bg-white text-[#555] hover:border-[#1D4ED8] hover:text-[#1D4ED8] transition"
           >
             {n.icon} {n.label}
           </button>

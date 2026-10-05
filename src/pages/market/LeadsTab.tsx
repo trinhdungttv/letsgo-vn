@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin, List, LayoutGrid } from 'lucide-react';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { supabase } from '../../lib/supabase';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
@@ -188,6 +189,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   }, [dragging]);
 
   useEffect(() => { localStorage.setItem('market_leads_split_pct', String(leftPct)); }, [leftPct]);
+  // Điện thoại: không chia đôi màn hình (mỗi bên chỉ còn ~170px) — xếp 2 khối chồng lên nhau.
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     fetchIndustries([...marketLeads.map(l => l.industry), ...clients.map(c => c.industry)]).then(setIndustries);
@@ -679,7 +682,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       </div>
 
       <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3 py-2 flex items-center gap-2 flex-wrap">
-        <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên công ty / dự án..." width="w-[230px]" />
+        <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên công ty / dự án..." width="md:w-[230px]" />
         <span className="text-[12px] text-[#888] shrink-0">Tỉnh/TP:</span>
         <SearchSelect
           value={provinceFilter}
@@ -706,9 +709,9 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         )}
       </div>
 
-      <div ref={splitRef} className={`flex items-start ${dragging ? 'select-none' : ''}`}>
+      <div ref={splitRef} className={`flex ${isMobile ? 'flex-col gap-5' : 'items-start'} ${dragging ? 'select-none' : ''}`}>
       {/* ── Khách hàng đang hợp tác ── */}
-      <div className="space-y-2 min-w-0" style={{ width: `${leftPct}%` }}>
+      <div className="space-y-2 min-w-0" style={isMobile ? undefined : { width: `${leftPct}%` }}>
         <div className="flex items-center justify-between gap-2">
           <div className="text-[12.5px] font-semibold text-[#111] flex items-center gap-1.5"><Users size={13} /> Khách hàng đang hợp tác</div>
           <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
@@ -801,7 +804,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 
       <div
         onMouseDown={() => setDragging(true)}
-        className="relative w-3 shrink-0 self-stretch flex items-center justify-center cursor-col-resize group"
+        className="relative w-3 shrink-0 self-stretch hidden md:flex items-center justify-center cursor-col-resize group"
         title="Kéo để đổi chiều rộng"
       >
         <div className={`w-1 h-full min-h-[80px] rounded-full transition ${dragging ? 'bg-blue-400' : 'bg-[#E8E7E2] group-hover:bg-blue-300'}`} />
@@ -809,7 +812,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       </div>
 
       {/* ── Dự án / Công ty đang tìm hiểu ── */}
-      <div className="space-y-2 min-w-0" style={{ width: `${100 - leftPct}%` }}>
+      <div className="space-y-2 min-w-0" style={isMobile ? undefined : { width: `${100 - leftPct}%` }}>
         <div className="text-[12.5px] font-semibold text-[#111]">Dự án / Công ty đang tìm hiểu</div>
         <div className="space-y-3">
           {list.map(l => (

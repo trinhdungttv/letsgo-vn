@@ -453,7 +453,7 @@ export default function BranchFinance({
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
         <div className="bg-[#F5F4EF] rounded-lg p-3 text-center">
           <div className="text-[10px] uppercase text-[#999] mb-1">Doanh thu</div>
           <div className="text-[18px] font-semibold text-[#0F6E56]">{fmtVnd(totalRevenue)} đ</div>
@@ -514,9 +514,9 @@ export default function BranchFinance({
 
       {/* Overhead costs */}
       <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-        <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
+        <div className="px-3.5 py-2.5 border-b border-[#E8E7E2] flex flex-wrap items-center justify-between gap-2">
           <div className="text-[12px] font-medium text-[#111]">Chi phí chi nhánh — {monthLabel(month)}</div>
-          <div className="flex gap-1.5 items-center">
+          <div className="flex flex-wrap gap-1.5 items-center">
             <button onClick={copyFromPrevMonth} className="flex items-center gap-1 text-[11px] text-[#666] hover:text-[#111] border border-gray-200 px-2 py-1 rounded-lg transition">
               <Copy size={11} /> Sao chép T.trước
             </button>

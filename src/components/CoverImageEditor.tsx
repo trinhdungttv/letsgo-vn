@@ -31,15 +31,19 @@ export default function CoverImageEditor({ value, onChange, urlPlaceholder = 'D�
   const posX = value.posX ?? 50;
   const posY = value.posY ?? 50;
 
-  const handleDragStart = (e: React.MouseEvent) => {
+  // Pointer events (chuột + ngón tay) thay cho mouse events — trên điện thoại kéo ảnh được.
+  // Delta tính từ clientX/Y của lần di chuyển trước (movementX không ổn định với cảm ứng).
+  const handleDragStart = (e: React.PointerEvent) => {
     e.preventDefault();
     setDragging(true);
     const box = imgBoxRef.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    const onMove = (ev: MouseEvent) => {
-      const dxPct = (ev.movementX / rect.width) * 100;
-      const dyPct = (ev.movementY / rect.height) * 100;
+    let lastX = e.clientX, lastY = e.clientY;
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - lastX) / rect.width) * 100;
+      const dyPct = ((ev.clientY - lastY) / rect.height) * 100;
+      lastX = ev.clientX; lastY = ev.clientY;
       const cur = valueRef.current;
       const next: CoverImageValue = {
         ...cur,
@@ -51,11 +55,13 @@ export default function CoverImageEditor({ value, onChange, urlPlaceholder = 'D�
     };
     const onUp = () => {
       setDragging(false);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   return (
@@ -86,7 +92,8 @@ export default function CoverImageEditor({ value, onChange, urlPlaceholder = 'D�
           </div>
           <div
             ref={imgBoxRef}
-            onMouseDown={fit === 'contain' ? undefined : handleDragStart}
+            onPointerDown={fit === 'contain' ? undefined : handleDragStart}
+            style={fit === 'contain' ? undefined : { touchAction: 'none' }}
             className={`aspect-video w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${fit === 'contain' ? '' : dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
           >
             <img

@@ -129,7 +129,7 @@ export default function Loans({ toast }: Props) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-5 pt-4 pb-0">
+      <div className="px-3 md:px-5 pt-4 pb-0">
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-[17px] font-semibold flex items-center gap-2">
@@ -161,7 +161,7 @@ export default function Loans({ toast }: Props) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5">
         {tab === 'dashboard' && <LoanDashboardTab loans={loans} confirmations={confirmations} payments={payments} renewals={renewals} />}
         {tab === 'calendar' && <LoanCalendarTab loans={loans} confirmations={confirmations} />}
         {tab === 'list' && (
@@ -261,7 +261,7 @@ function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose, borr
             onChange={(id, name) => { setF('collateral_id', id); setF('collateral', name); }}
             onAddNew={addCollateral} />
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Dư nợ gốc (VND)" value={String(form.principal)} onChange={v => setF('principal', Number(v) || 0)} type="number" />
             <Field label="Lãi suất (%/năm)" value={String(form.interest_rate)} onChange={v => setF('interest_rate', Number(v) || 0)} type="number" />
             <SelectField label="Loại lãi suất" value={form.rate_type} onChange={v => setF('rate_type', v)} options={[
@@ -277,7 +277,7 @@ function LoanFormModal({ form, setForm, editingId, saving, onSave, onClose, borr
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Kỳ hạn (tháng)" value={String(form.term_months ?? '')} onChange={v => setF('term_months', v ? Number(v) : null)} type="number" />
             <Field label="Ngày chi lãi hằng tháng" value={String(form.payment_day ?? '')} onChange={v => setF('payment_day', v ? Number(v) : null)} type="number" />
             <SelectField label="Trạng thái" value={form.status} onChange={v => setF('status', v)} options={[

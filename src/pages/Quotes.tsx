@@ -204,7 +204,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
   return (
     <>
       <PageHeader title="Báo giá tự động" subtitle="Điền thông tin → Xem trước → Tải Excel" />
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5">
         <MinWageStaleBanner dbBatches={minWageBatches} className="mb-3" />
         <div className="flex gap-1.5 mb-4">
           <button onClick={() => setView('form')} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${view === 'form' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
@@ -298,8 +298,8 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-3 mb-3 p-3 bg-[#F9F9F7] rounded-lg">
-              <div className="text-[12px] text-[#555] font-medium col-span-3">Đơn giá lao động đề xuất (₫/người/tháng)</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3 p-3 bg-[#F9F9F7] rounded-lg">
+              <div className="text-[12px] text-[#555] font-medium col-span-full">Đơn giá lao động đề xuất (₫/người/tháng)</div>
               {[{ key: 'pt', label: 'Phổ thông' }, { key: 'tn', label: 'Tay nghề' }, { key: 'ktv', label: 'Kỹ thuật viên' }].map(f => (
                 <div key={f.key} className="flex flex-col gap-1">
                   <label className="text-[11.5px] text-[#888]">{f.label}</label>
@@ -309,8 +309,8 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
               ))}
             </div>
 
-            <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-[#F9F9F7] rounded-lg">
-              <div className="text-[12px] text-[#555] font-medium col-span-3">Phí dịch vụ đề xuất (₫/người/tháng)</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 p-3 bg-[#F9F9F7] rounded-lg">
+              <div className="text-[12px] text-[#555] font-medium col-span-full">Phí dịch vụ đề xuất (₫/người/tháng)</div>
               {[{ key: 'pt', label: 'Phổ thông' }, { key: 'tn', label: 'Tay nghề' }, { key: 'ktv', label: 'Kỹ thuật viên' }].map(f => (
                 <div key={f.key} className="flex flex-col gap-1">
                   <label className="text-[11.5px] text-[#888]">{f.label}</label>

@@ -172,7 +172,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
   };
 
   return (
-    <div className="space-y-4">
+    <>
       <PageHeader
         title="Sản phẩm / Dịch vụ"
         actions={
@@ -184,8 +184,9 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
         }
       />
 
-      {/* Product Grid — nhóm theo loại hình dịch vụ */}
-      <div className="space-y-6">
+      {/* Product Grid — nhóm theo loại hình dịch vụ.
+          Vùng cuộn riêng + padding: trước đây trang không cuộn được và thẻ dính sát mép. */}
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-6">
         {products.length > 0 ? (
           groupOrder.map(category => {
             const items = grouped[category];
@@ -201,7 +202,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
                 {PRICE_HINTS[category] && (
                   <div className="text-[11px] text-gray-500 mb-2.5">{PRICE_HINTS[category]}</div>
                 )}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                   {items.map(product => (
                     <div key={product.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
                       <div className="p-4">
@@ -258,7 +259,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
 
       {/* Modal */}
       {showModal && isAdmin && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-3 md:p-0">
           <div className="bg-white rounded-lg max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-base font-semibold text-gray-900">
@@ -343,7 +344,7 @@ const CRMProds: React.FC<Props> = ({ products, deals, onProductCreate, onProduct
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

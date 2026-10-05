@@ -5,6 +5,7 @@ import {
 } from 'chart.js';
 import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical, Star } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
 
@@ -255,20 +256,25 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
     };
   }, [infoDragging]);
   useEffect(() => { localStorage.setItem('market_zone_info_split_pct', String(infoLeftPct)); }, [infoLeftPct]);
+  // Điện thoại: không chia đôi hồ sơ KCN (mỗi bên chỉ còn ~150px) — xếp 2 khối chồng lên nhau.
+  const isMobile = useIsMobile();
 
   // Kéo ảnh cover để chỉnh object-position — cùng cơ chế với Đối thủ (CompetitorDetail); khung
   // xem trước cao h-36 khớp đúng chiều cao thumbnail thẻ KCN thật (ZonesTab card view).
   const imgBoxRef = useRef<HTMLDivElement>(null);
   const [draggingImg, setDraggingImg] = useState(false);
-  const handleImgDragStart = (e: React.MouseEvent) => {
+  // Pointer events để kéo được cả bằng ngón tay trên điện thoại.
+  const handleImgDragStart = (e: React.PointerEvent) => {
     e.preventDefault();
     setDraggingImg(true);
     const box = imgBoxRef.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    const onMove = (ev: MouseEvent) => {
-      const dxPct = (ev.movementX / rect.width) * 100;
-      const dyPct = (ev.movementY / rect.height) * 100;
+    let lastX = e.clientX, lastY = e.clientY;
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - lastX) / rect.width) * 100;
+      const dyPct = ((ev.clientY - lastY) / rect.height) * 100;
+      lastX = ev.clientX; lastY = ev.clientY;
       setEditForm(f => f && ({
         ...f,
         image_pos_x: Math.min(100, Math.max(0, (f.image_pos_x ?? 50) - dxPct)),
@@ -277,11 +283,13 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
     };
     const onUp = () => {
       setDraggingImg(false);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   const selected = marketZones.find(z => z.id === selectedId) || null;
@@ -662,7 +670,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
           <button onClick={() => goTab('quote', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><FileText size={11} /> Tạo báo giá</button>
         </div>
 
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888]">Số công ty</div><div className="text-[16px] font-medium">{selected.total_companies ?? 0}</div><div className="text-[10.5px] text-[#aaa]">FDI: {selected.fdi_companies ?? 0}</div></div>
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888]">Tổng LĐ</div><div className="text-[16px] font-medium text-blue-700">{(selected.total_workers ?? 0).toLocaleString('vi-VN')}</div><div className="text-[10.5px] text-[#aaa]">Toàn KCN</div></div>
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888]">Lấp đầy</div><div className={`text-[16px] font-medium ${occColor(selected.occupancy_pct).split(' ')[0]}`}>{selected.occupancy_pct ?? 0}%</div><div className="text-[10.5px] text-[#aaa]">{selected.area || '—'}</div></div>
@@ -671,9 +679,9 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Thông tin khu vực <span className="text-[11px] font-normal text-[#aaa]">· Click ô để sửa</span></div>
-          <div ref={infoSplitRef} className={`p-4 flex items-start ${infoDragging ? 'select-none' : ''}`}>
-            <div className="space-y-2.5 min-w-0" style={{ width: `${infoLeftPct}%` }}>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Tỉnh / Thành phố</span>
+          <div ref={infoSplitRef} className={`p-3 md:p-4 flex ${isMobile ? 'flex-col gap-2.5' : 'items-start'} ${infoDragging ? 'select-none' : ''}`}>
+            <div className="space-y-2.5 min-w-0" style={isMobile ? undefined : { width: `${infoLeftPct}%` }}>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Tỉnh / Thành phố</span>
                 <select value={editForm.location || ''} onChange={e => {
                   if (e.target.value === '__new__') {
                     const v = prompt('Nhập tên Tỉnh/Thành phố mới:');
@@ -687,7 +695,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   <option value="__new__">+ Thêm tỉnh/thành mới…</option>
                 </select>
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Vùng lương tối thiểu</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Vùng lương tối thiểu</span>
                 <select value={editForm.region_zone || ''} onChange={e => setEditForm(f => ({ ...f, region_zone: e.target.value || null }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
                   <option value="">— Chưa gán vùng —</option>
                   {REGION_ZONES.map(z => <option key={z.key} value={z.key}>{z.label} · Vùng {z.key}</option>)}
@@ -698,7 +706,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   </span>
                 )}
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Google Maps</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Google Maps</span>
                 <div className="flex gap-1.5 flex-1 min-w-0 items-center">
                   <input value={editForm.map_link || ''} onChange={e => setEditForm(f => ({ ...f, map_link: e.target.value }))}
                     title={editForm.map_link || ''} placeholder="Dán link → tự định vị lên Bản đồ"
@@ -714,7 +722,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   )}
                 </div>
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Ảnh cover</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Ảnh cover</span>
                 <div className="flex gap-1.5 flex-1 min-w-0 items-center">
                   <input value={editForm.image_url || ''} onChange={e => setEditForm(f => ({ ...f, image_url: e.target.value }))}
                     title={editForm.image_url || ''} placeholder="Dán link ảnh cổng KCN…"
@@ -727,7 +735,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                 </div>
               </div>
               {editForm.image_url && (
-                <div className="flex gap-3"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Chế độ hiển thị</span>
+                <div className="flex gap-3"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0 pt-1">Chế độ hiển thị</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1 mb-1.5">
                       <button
@@ -747,7 +755,8 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                     </div>
                     <div
                       ref={imgBoxRef}
-                      onMouseDown={editForm.image_fit === 'contain' ? undefined : handleImgDragStart}
+                      onPointerDown={editForm.image_fit === 'contain' ? undefined : handleImgDragStart}
+                      style={editForm.image_fit === 'contain' ? undefined : { touchAction: 'none' }}
                       className={`h-36 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${editForm.image_fit === 'contain' ? '' : draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
                     >
                       <img
@@ -771,10 +780,10 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   </div>
                 </div>
               )}
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Ban quản lý</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Ban quản lý</span>
                 <input value={editForm.operator || ''} onChange={e => setEditForm(f => ({ ...f, operator: e.target.value }))} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Diện tích · Năm TL</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Diện tích · Năm TL</span>
                 <div className="flex gap-1.5 flex-1 min-w-0 items-center">
                   <input value={editForm.area || ''} onChange={e => setEditForm(f => ({ ...f, area: e.target.value }))} className="text-[12.5px] w-16 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7]" />
                   <span className="text-[11px] text-[#999] shrink-0">Ha</span>
@@ -786,7 +795,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                   })()}
                 </div>
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">Nguồn lao động</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">Nguồn lao động</span>
                 <select value={editForm.labor_availability} onChange={e => setEditForm(f => ({ ...f, labor_availability: e.target.value }))} className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none bg-white min-w-0 flex-1">
                   {LABOR_AVAIL_OPTIONS.map(o => <option key={o}>{o}</option>)}
                 </select>
@@ -803,42 +812,42 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
 
             <div
               onMouseDown={() => setInfoDragging(true)}
-              className="relative w-3 shrink-0 self-stretch flex items-center justify-center cursor-col-resize group"
+              className="relative w-3 shrink-0 self-stretch hidden md:flex items-center justify-center cursor-col-resize group"
               title="Kéo để đổi chiều rộng"
             >
               <div className={`w-1 h-full min-h-[80px] rounded-full transition ${infoDragging ? 'bg-blue-400' : 'bg-[#E8E7E2] group-hover:bg-blue-300'}`} />
               <GripVertical size={12} className="absolute text-[#bbb] group-hover:text-blue-500 pointer-events-none" />
             </div>
 
-            <div className="space-y-2.5 min-w-0" style={{ width: `${100 - infoLeftPct}%` }}>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Ngành nghề chủ yếu</span>
+            <div className="space-y-2.5 min-w-0" style={isMobile ? undefined : { width: `${100 - infoLeftPct}%` }}>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0 pt-1">Ngành nghề chủ yếu</span>
                 <MultiPicker tags={editForm.industries || []} options={industryOptions} color="bg-blue-50 text-blue-700"
                   placeholder="+ chọn ngành nghề…" onAddOption={handleAddIndustryOption}
                   onAdd={v => setEditForm(f => ({ ...f, industries: [...(f?.industries || []), v] }))}
                   onRemove={i => setEditForm(f => ({ ...f, industries: (f?.industries || []).filter((_, idx) => idx !== i) }))} />
               </div>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">FDI từ quốc gia</span>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0 pt-1">FDI từ quốc gia</span>
                 <MultiPicker tags={editForm.countries || []} options={countryOptions} color="bg-violet-50 text-violet-700"
                   placeholder="+ chọn quốc gia…" onAddOption={handleAddCountryOption}
                   onAdd={v => setEditForm(f => ({ ...f, countries: [...(f?.countries || []), v] }))}
                   onRemove={i => setEditForm(f => ({ ...f, countries: (f?.countries || []).filter((_, idx) => idx !== i) }))} />
               </div>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Đặc thù</span>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0 pt-1">Đặc thù</span>
                 <textarea value={editForm.characteristics || ''} onChange={e => setEditForm(f => ({ ...f, characteristics: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
               </div>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-emerald-600 w-[130px] shrink-0 pt-1">✓ Điểm mạnh</span>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-emerald-600 w-[96px] sm:w-[130px] shrink-0 pt-1">✓ Điểm mạnh</span>
                 <textarea value={editForm.strengths || ''} onChange={e => setEditForm(f => ({ ...f, strengths: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
               </div>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-red-500 w-[130px] shrink-0 pt-1">✗ Điểm yếu</span>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-red-500 w-[96px] sm:w-[130px] shrink-0 pt-1">✗ Điểm yếu</span>
                 <textarea value={editForm.weaknesses || ''} onChange={e => setEditForm(f => ({ ...f, weaknesses: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
               </div>
-              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0">P. Kinh Doanh</span>
+              <div className="flex gap-3 items-center"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0">P. Kinh Doanh</span>
                 <div className="flex items-center gap-2 text-[12.5px] min-w-0">
                   <input type="number" value={editForm.lgv_clients ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_clients: parseInt(e.target.value) || 0 }))} className="w-14 min-w-0 px-2 py-1 rounded border border-gray-200 outline-none" /> KH ·
                   <input type="number" value={editForm.lgv_workers ?? 0} onChange={e => setEditForm(f => ({ ...f, lgv_workers: parseInt(e.target.value) || 0 }))} className="w-16 min-w-0 px-2 py-1 rounded border border-gray-200 outline-none" /> LĐ
                 </div>
               </div>
-              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[130px] shrink-0 pt-1">Ghi chú chiến lược</span>
+              <div className="flex gap-3 items-start"><span className="text-[11.5px] text-[#888] w-[96px] sm:w-[130px] shrink-0 pt-1">Ghi chú chiến lược</span>
                 <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} rows={2} className="text-[12.5px] flex-1 min-w-0 px-2 py-1 rounded border border-transparent hover:border-gray-200 focus:border-blue-400 outline-none bg-transparent focus:bg-[#F9F9F7] resize-y leading-relaxed" />
               </div>
             </div>
@@ -927,7 +936,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
           <div className="text-[12.5px] font-medium text-[#111]">Hồ sơ khu vực</div>
           <div className="text-[11px] text-[#888]">Click vào khu vực để xem & chỉnh sửa hồ sơ đầy đủ</div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên KCN..." />
           <FilterDropdown label="Tỉnh/Thành" options={provinceNames} selected={activeProvinces} onChange={setActiveProvinces} />
           <button
@@ -943,7 +952,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
           </div>
           <div className="relative shrink-0">
             <button onClick={() => setShowDashSettings(v => !v)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-medium border transition ${showDashSettings ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}>
-              <Settings size={13} /> Tuỳ chọn hiển thị
+              <Settings size={13} /> <span className="hidden sm:inline">Tuỳ chọn hiển thị</span>
             </button>
             {showDashSettings && (
               <>
@@ -983,7 +992,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
               </>
             )}
           </div>
-          <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+          <button onClick={() => setShowAdd(true)} className="ml-auto md:ml-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
             <Plus size={13} /> Thêm khu vực
           </button>
         </div>
@@ -1107,12 +1116,12 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
       )}
 
       {viewMode === 'list' && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
           {filteredZones.map(z => (
             <div key={z.id} onClick={() => setSelectedId(z.id)} className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 cursor-pointer hover:border-blue-300 transition">
               <div className="flex items-start justify-between gap-1">
                 <div className="text-[12px] font-medium text-[#111]">{z.name}</div>
-                <button onClick={e => handleTogglePriority(z, e)} title={z.is_priority ? 'Bỏ đánh dấu' : 'Đánh dấu đặc biệt quan tâm'} className="shrink-0 -mt-0.5 -mr-0.5 p-0.5 rounded hover:bg-amber-50">
+                <button onClick={e => handleTogglePriority(z, e)} title={z.is_priority ? 'Bỏ đánh dấu' : 'Đánh dấu đặc biệt quan tâm'} className="shrink-0 -mt-1.5 -mr-1.5 p-1.5 md:-mt-0.5 md:-mr-0.5 md:p-0.5 rounded hover:bg-amber-50">
                   <Star size={13} className={z.is_priority ? 'fill-amber-400 text-amber-500' : 'text-gray-300'} />
                 </button>
               </div>

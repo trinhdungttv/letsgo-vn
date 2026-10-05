@@ -494,9 +494,9 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
             Nhà cung ứng đối thủ
             {search && <span className="ml-1.5 text-[11px] font-normal text-[#888]">— {visibleList.length}/{list.length} kết quả</span>}
           </div>
-          <div className="flex items-center gap-2">
-            <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên đối thủ..." />
-            <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <SearchBox value={search} onChange={setSearch} inputRef={searchRef} placeholder="Tìm tên đối thủ..." className="flex-1 md:flex-none" />
+            <div className="flex border border-gray-300 rounded-lg overflow-hidden shrink-0">
               <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
               <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
             </div>
@@ -563,7 +563,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 return (
                   <Fragment key={c.id}>
                   <tr className={`border-b border-[#F0EEE9] ${isOpen ? 'bg-[#FBFBF9]' : 'last:border-0'}`}>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 min-w-[160px]">
                       <div className="flex items-start gap-1">
                         <button onClick={() => toggleExpanded(c.id)} title={isOpen ? 'Thu gọn' : 'Mở rộng để thêm mạng xã hội / liên kết'}
                           className="mt-0.5 p-0.5 rounded hover:bg-gray-100 text-[#999] hover:text-[#333] shrink-0">
@@ -578,7 +578,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-[11.5px]">{c.zone_name}</td>
+                    <td className="px-3 py-2 text-[11.5px] whitespace-nowrap">{c.zone_name}</td>
                     <td className="px-3 py-2">{(c.total_workers ?? 0).toLocaleString('vi-VN')}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{fmtTr(c.wage_paid)}</div>

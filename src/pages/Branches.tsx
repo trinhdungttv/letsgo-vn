@@ -571,12 +571,13 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           <ArrowLeft size={14} /> Tất cả chi nhánh
         </button>
 
-        <div className="grid grid-cols-[240px_1fr] gap-3 items-start">
+        {/* Điện thoại: 1 cột — thẻ chi nhánh gọn (ảnh trái, tên phải) + tab cuộn ngang ở trên, nội dung bên dưới */}
+        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-start">
           {/* Sidebar */}
-          <div className="flex flex-col gap-2.5 self-start">
+          <div className="flex flex-col gap-2.5 self-start min-w-0">
           <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
-            <div className="px-4 py-4 border-b border-[#E8E7E2] text-center">
-              <div className="flex justify-center mb-2">
+            <div className="px-3 py-3 md:px-4 md:py-4 md:border-b border-[#E8E7E2] flex md:block items-center gap-3 text-left md:text-center">
+              <div className="flex justify-center md:mb-2 shrink-0">
                 <input
                   type="file" accept="image/*" id="manager-avatar-input" className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); e.target.value = ''; }}
@@ -594,7 +595,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <button
                       type="button"
                       onClick={e => { e.preventDefault(); e.stopPropagation(); handleRemoveAvatar(); }}
-                      className="absolute -top-1 -right-1 w-[18px] h-[18px] rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                      className="absolute -top-1 -right-1 w-[18px] h-[18px] rounded-full bg-red-500 text-white hidden md:flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
                       title="Xóa ảnh"
                     >
                       <X size={10} />
@@ -602,25 +603,37 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   )}
                 </label>
               </div>
+              <div className="min-w-0 flex-1">
               <div className="text-[14px] font-semibold text-[#111]">{selected.name}</div>
-              <div className="text-[11.5px] text-[#666] flex items-center justify-center gap-1 mt-0.5">
+              <div className="text-[11.5px] text-[#666] flex items-center md:justify-center gap-1 mt-0.5">
                 <User size={12} /> {selected.manager_name || '—'}
               </div>
-              <div className="mt-2">
+              <div className="mt-1.5 md:mt-2 flex flex-wrap items-center md:justify-center gap-1.5">
                 {stats?.alerts.length ? (
                   <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#FAEEDA] text-[#633806]">Cần xử lý</span>
                 ) : (
                   <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#E1F5EE] text-[#085041]">Hoạt động tốt</span>
                 )}
+                {/* Điện thoại: thay cho thẻ "Hình thức khoán" bên cột trái (ẩn trên mobile) — chạm để xem/sửa */}
+                {branchTypeHistory[0] && (
+                  <button
+                    onClick={() => { setActiveTab('profile'); setShowTypeHistory(true); setEditingTypeId(null); }}
+                    className={`md:hidden inline-flex text-[10px] px-2 py-0.5 rounded-full font-semibold ${branchTypeHistory[0].branch_type === 'company' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}
+                  >
+                    {branchTypeHistory[0].branch_type === 'company' ? 'Dự án CT' : `Khoán${branchTypeHistory[0].lg_pct > 0 ? ` ${branchTypeHistory[0].lg_pct}/${branchTypeHistory[0].cn_pct}` : ''}`}
+                    {' · T'}{Number(branchTypeHistory[0].effective_from.split('-')[1])}/{branchTypeHistory[0].effective_from.split('-')[0]} ›
+                  </button>
+                )}
+              </div>
               </div>
             </div>
-            <div className="py-1.5">
+            <div className="flex md:block overflow-x-auto no-scrollbar border-t md:border-t-0 border-[#E8E7E2] px-1 md:px-0 md:py-1.5">
               {TABS.map(t => (
                 <button
                   key={t.key}
                   onClick={() => setActiveTab(t.key)}
-                  className={`flex items-center gap-2.5 px-4 py-2 text-[12.5px] w-full text-left transition border-l-[2.5px] ${
-                    activeTab === t.key ? 'bg-[#F5F4EF] text-[#111] border-l-[#0F6E56] font-medium' : 'text-[#666] border-l-transparent hover:bg-[#F5F4EF]'
+                  className={`flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2.5 md:py-2 text-[12.5px] shrink-0 whitespace-nowrap md:w-full text-left transition border-b-2 md:border-b-0 md:border-l-[2.5px] ${
+                    activeTab === t.key ? 'md:bg-[#F5F4EF] text-[#111] border-b-[#0F6E56] md:border-l-[#0F6E56] font-medium' : 'text-[#666] border-b-transparent md:border-l-transparent md:hover:bg-[#F5F4EF]'
                   }`}
                 >
                   <span className={activeTab === t.key ? 'text-[#0F6E56]' : 'text-[#999]'}>{t.icon}</span>
@@ -630,8 +643,8 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
             </div>
           </div>
 
-          {/* Khoan timeline - sidebar */}
-          <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
+          {/* Khoan timeline - sidebar (điện thoại: tóm tắt thành nhãn trong thẻ chi nhánh) */}
+          <div className="hidden md:block bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#444] uppercase tracking-wide">
                 <ClipboardList size={12} className="text-[#1D4ED8]" />
@@ -679,11 +692,11 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           </div>
 
           {/* Main content */}
-          <div className="space-y-3">
+          <div className="space-y-3 min-w-0">
             {activeTab === 'profile' && (
               <div className="space-y-3">
                 {/* Action bar */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="text-[13px] font-semibold text-[#111]">Hồ sơ chi nhánh</div>
                   <div className="flex items-center gap-2">
                     <button onClick={saveProfile} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
@@ -734,7 +747,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                   </div>
                   <div className="px-3 py-2 flex flex-col gap-1.5">
                     {/* Row 1: Core info */}
-                    <div className="grid grid-cols-4 gap-2 items-end">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
                       <InlineField label="Tên CN">
                         <input value={form.name || ''} onChange={e => setF({ name: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
                       </InlineField>
@@ -746,7 +759,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                       </InlineField>
                     </div>
                     {/* Row 2: Status + address */}
-                    <div className={`grid ${selected.short_name !== 'LGV' ? 'grid-cols-6' : 'grid-cols-3'} gap-2 items-end`}>
+                    <div className={`grid grid-cols-2 ${selected.short_name !== 'LGV' ? 'md:grid-cols-6' : 'md:grid-cols-3'} gap-2 items-end`}>
                       <InlineField label="Trạng thái">
                         <select value={form.status || 'active'} onChange={e => setF({ status: e.target.value as BranchStatus })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors">
                           <option value="active">Hoạt động</option>
@@ -793,7 +806,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     </div>
                     {/* Row 3: Address + notes in one line */}
                     {selected.short_name !== 'LGV' && (
-                      <div className="grid grid-cols-2 gap-2 items-end">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
                         <InlineField label="Địa chỉ VP">
                           <input value={form.address || ''} onChange={e => setF({ address: e.target.value })} className="w-full text-[11.5px] px-2 py-1 border border-[#E5E3DD] rounded bg-[#FAFAF8] text-[#333] focus:outline-none focus:border-blue-400 focus:bg-white transition-colors" />
                         </InlineField>
@@ -816,7 +829,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                     <History size={14} className="text-[#7C3AED]" />
                     <span className="text-[12px] font-semibold text-[#444] uppercase tracking-wide">Lịch sử trao đổi & Tình trạng</span>
                   </div>
-                  <div className="p-4">
+                  <div className="p-3 md:p-4">
                     <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
                   </div>
                 </div>
@@ -1780,7 +1793,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
 
         {/* Khoan confirmation modal */}
         {khoanConfirm && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setKhoanConfirm(null); }}>
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setKhoanConfirm(null); }}>
             <div className="bg-white rounded-xl shadow-2xl p-5 w-[480px] max-h-[80vh] overflow-y-auto">
               <div className="text-[14px] font-semibold text-[#111] mb-1">
                 {khoanConfirm.mode === 'common' ? 'Xác nhận áp dụng mức khoán chung' : 'Xác nhận khoán theo từng dự án'}
@@ -1887,24 +1900,25 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
           </div>
           <div className="text-[12px] text-[#999] mt-0.5">{branches.length} chi nhánh đang hoạt động</div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5">
-            <button onClick={() => setViewMode('grid')} className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'grid' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
-              <LayoutGrid size={12} /> Cards
+        {/* Điện thoại: 1 hàng full-width — nút xem chỉ còn icon, bộ lọc giãn đều */}
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5 shrink-0">
+            <button onClick={() => setViewMode('grid')} title="Dạng thẻ" className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'grid' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
+              <LayoutGrid size={12} /> <span className="hidden sm:inline">Cards</span>
             </button>
-            <button onClick={() => setViewMode('list')} className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'list' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
-              <List size={12} /> Danh sách
+            <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md flex items-center gap-1 transition ${viewMode === 'list' ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
+              <List size={12} /> <span className="hidden sm:inline">Danh sách</span>
             </button>
           </div>
-          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5">
+          <div className="flex bg-[#F5F4EF] rounded-lg p-0.5 gap-0.5 flex-1 md:flex-none min-w-0">
             {([['all', 'Tất cả'], ['contracted', 'Đã khoán'], ['company', 'Dự án CT']] as const).map(([val, label]) => (
               <button key={val} onClick={() => setFilterType(val)}
-                className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md transition ${filterType === val ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
+                className={`flex-1 md:flex-none px-2 md:px-2.5 py-1.5 text-[11px] font-medium rounded-md transition whitespace-nowrap ${filterType === val ? 'bg-white text-[#111] shadow-sm' : 'text-[#888] hover:text-[#555]'}`}>
                 {label}
               </button>
             ))}
           </div>
-          <button onClick={() => setAdding(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
+          <button onClick={() => setAdding(v => !v)} className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
             <Plus size={12} /> Thêm CN
           </button>
         </div>
@@ -1924,7 +1938,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
       />
 
       {/* KPI strip */}
-      <div className="grid grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
         <Kpi label="Tổng lao động" value={totalWorkers.toLocaleString()} accent="#0F6E56" icon={<Users size={14} />} />
         <Kpi label="Tổng KH active" value={String(totalActiveClients)} sub={`Trên ${branches.length} chi nhánh`} accent="#185FA5" icon={<Building2 size={14} />} />
 

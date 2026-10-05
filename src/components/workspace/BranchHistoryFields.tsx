@@ -412,9 +412,9 @@ export function BranchHistoryFields({ branch, onChange, refreshKey, recordDate, 
         >
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <span className="text-[11.5px] font-semibold text-[#111] shrink-0 w-[78px]">{formatDate(h.priority_date)}</span>
-            <span className="text-[10px] text-[#bbb] shrink-0 w-[74px]">{agoLabel(h.priority_date)}</span>
+            <span className="hidden sm:inline text-[10px] text-[#bbb] shrink-0 w-[74px]">{agoLabel(h.priority_date)}</span>
             {/* Chip loại + trích nội dung — xem lướt được mà không cần mở phiên */}
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1 shrink min-w-0 overflow-hidden sm:shrink-0">
               {(Object.keys(KIND_META) as Kind[]).filter(k => !!preview.byKind[k]).map(k => {
                 const Icon = KIND_META[k].icon
                 return (

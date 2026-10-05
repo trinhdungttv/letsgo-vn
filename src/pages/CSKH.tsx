@@ -35,7 +35,7 @@ export default function CSKH({ logs, onRefresh, toast }: CSKHProps) {
       <PageHeader title="CSKH" subtitle="Chăm sóc khách hàng" actions={
         <button onClick={() => setShowModal(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition"><Plus size={13} /> Thêm log</button>
       } />
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5">
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
@@ -67,7 +67,7 @@ export default function CSKH({ logs, onRefresh, toast }: CSKHProps) {
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 md:p-0">
           <div className="bg-white rounded-[10px] border border-[#E8E7E2] w-full max-w-lg p-6">
             <h2 className="text-[15px] font-semibold text-[#111] mb-4">Thêm log CSKH</h2>
             <div className="space-y-3">

@@ -356,7 +356,7 @@ const CRMLeads: React.FC<Props> = ({ clients, products, onSelectClient, toast })
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         {/* View tabs */}
         <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5 w-fit">
           {([

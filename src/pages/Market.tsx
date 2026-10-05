@@ -53,13 +53,14 @@ export default function Market({ marketSurveys, competitors, marketZones, market
   return (
     <>
       <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Báo giá" />
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        <div className="flex gap-1.5 flex-wrap">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
+        {/* Điện thoại: 7 tab thành 1 dải cuộn ngang thay vì xếp 3 dòng */}
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 md:flex-wrap">
           {TABS.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${
+              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${
                 tab === t.id ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'
               }`}
             >

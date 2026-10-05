@@ -111,7 +111,7 @@ export default function PaymentCalendarTab({ clients, mode, onModeChange }: Prop
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-5 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
         <KpiCard label="Qua han" value={kpi.overdue} sub="can doc thuc ngay" color="text-red-600" />
         <KpiCard label="Sap den han" value={kpi.urgent + kpi.soon} sub="can theo doi" color="text-amber-600" />
         <KpiCard label="Binh thuong" value={kpi.ok} sub="con xa" color="text-emerald-600" />
@@ -144,7 +144,8 @@ export default function PaymentCalendarTab({ clients, mode, onModeChange }: Prop
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] text-center py-12 text-[#aaa] text-[13px]">Không có dữ liệu</div>
       ) : (
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#F9F9F7]">
+          {/* Điện thoại: ẩn hàng tiêu đề, mỗi dòng xếp 2 cột có nhãn nhỏ (12 cột quá chật) */}
+          <div className="hidden md:block px-4 py-2.5 border-b border-[#E8E7E2] bg-[#F9F9F7]">
             <div className="grid grid-cols-12 text-[11px] text-[#888] font-medium">
               <div className="col-span-4">Khách hàng</div>
               <div className="col-span-2">Điều khoản</div>
@@ -159,8 +160,8 @@ export default function PaymentCalendarTab({ clients, mode, onModeChange }: Prop
                 ? { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', label: 'Da thu tien', dot: 'bg-blue-400' }
                 : (result && result.status !== 'paid') ? getDueStatusConfig(result.status, result.daysRemaining) : null;
               return (
-                <div key={c.id} className={`px-4 py-3 grid grid-cols-12 items-center gap-2 hover:bg-[#FAFAF8] transition border-l-2 ${paid ? 'border-l-blue-400 opacity-60' : result?.status==='overdue' ? 'border-l-red-400' : result?.status==='urgent' ? 'border-l-amber-400' : 'border-l-transparent'}`}>
-                  <div className="col-span-4 min-w-0">
+                <div key={c.id} className={`px-3 md:px-4 py-3 grid grid-cols-2 md:grid-cols-12 items-center gap-x-2 gap-y-1.5 md:gap-2 hover:bg-[#FAFAF8] transition border-l-2 ${paid ? 'border-l-blue-400 opacity-60' : result?.status==='overdue' ? 'border-l-red-400' : result?.status==='urgent' ? 'border-l-amber-400' : 'border-l-transparent'}`}>
+                  <div className="col-span-2 md:col-span-4 min-w-0">
                     <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
                     <div className="text-[11px] text-[#888]">
                       {labelOf(c)}
@@ -171,7 +172,7 @@ export default function PaymentCalendarTab({ clients, mode, onModeChange }: Prop
                       )}
                     </div>
                   </div>
-                  <div className="col-span-2 flex flex-col items-start gap-0.5">
+                  <div className="col-span-1 md:col-span-2 flex flex-col items-start gap-0.5">
                     {mode === 'actual' && hasActualOverride(c) ? (
                       <GroupBadge group={c.payment_actual_mode === 'fixed' ? 2 : 1} actual />
                     ) : (
@@ -181,13 +182,15 @@ export default function PaymentCalendarTab({ clients, mode, onModeChange }: Prop
                       </>
                     )}
                   </div>
-                  <div className="col-span-2 text-[12px] text-[#555]">
+                  <div className="col-span-1 md:col-span-2 text-[12px] text-[#555] text-right md:text-left">
+                    <span className="md:hidden text-[10.5px] text-[#999]">Xuất HĐ </span>
                     {c.invoice_date ? formatDateVN(new Date(c.invoice_date)) : <span className="text-[#ccc]">—</span>}
                   </div>
-                  <div className="col-span-2 text-[13px] font-semibold text-[#111]">
+                  <div className="col-span-1 md:col-span-2 text-[13px] font-semibold text-[#111]">
+                    <span className="md:hidden block text-[10.5px] font-normal text-[#999]">Dự kiến thu</span>
                     {result ? result.label : <span className="text-[#ccc] font-normal text-[12px]">Chưa nhập HĐ</span>}
                   </div>
-                  <div className="col-span-2 text-right">
+                  <div className="col-span-1 md:col-span-2 text-right">
                     {statusCfg ? (
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-full border font-medium ${statusCfg.bg} ${statusCfg.text} ${statusCfg.border}`}>
                         {statusCfg.label}

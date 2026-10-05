@@ -244,7 +244,7 @@ export function RelationshipRadar({ clients, contacts, onContactsChanged, produc
 
       {/* Tabs */}
       <div className="px-3.5 pt-2.5 flex">
-        <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5">
+        <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5 max-w-full overflow-x-auto no-scrollbar">
           {TABS.map(t => {
             const count = t.key === 'all' ? counts.red : t.key === 'cold' ? counts.cold : counts.ok;
             const badgeColor = t.key === 'all' ? 'bg-red-50 text-red-700' : t.key === 'cold' ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-700';
@@ -279,15 +279,15 @@ export function RelationshipRadar({ clients, contacts, onContactsChanged, produc
         ))}
       </div>
 
-      {/* List */}
-      <div className="px-3.5 pb-3.5 max-h-[480px] overflow-y-auto">
+      {/* List — điện thoại: bỏ vùng cuộn lồng (cuộn trong cuộn khó vuốt), để cả trang cuộn */}
+      <div className="px-3.5 pb-3.5 md:max-h-[480px] md:overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="py-8 text-center text-[#bbb]">
             <CheckCircle2 size={22} className="mx-auto mb-1.5" />
             <div className="text-[11px]">Không có mục nào trong nhóm này</div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
             {filtered.map(it => {
               const st = getStatus(it, thresholds);
               const pct = getHeatPct(it, thresholds);
@@ -318,21 +318,21 @@ export function RelationshipRadar({ clients, contacts, onContactsChanged, produc
                   </div>
                   <div className="flex items-center justify-end gap-1">
                     {it.client.phone ? (
-                      <a href={`tel:${it.client.phone}`} onClick={e => e.stopPropagation()} className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888] hover:text-blue-600 hover:border-blue-200 transition-colors" title={it.client.phone}>
-                        <Phone size={10} />
+                      <a href={`tel:${it.client.phone}`} onClick={e => e.stopPropagation()} className="p-2 md:p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888] hover:text-blue-600 hover:border-blue-200 transition-colors" title={it.client.phone}>
+                        <Phone size={10} className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
                       </a>
                     ) : (
-                      <span className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#ddd]"><Phone size={10} /></span>
+                      <span className="p-2 md:p-1 rounded-md border border-[#E8E7E2] bg-white text-[#ddd]"><Phone size={10} className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" /></span>
                     )}
-                    <span className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888]" title={labelOf(it.client)}>
-                      <MapPin size={10} />
+                    <span className="p-2 md:p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888]" title={labelOf(it.client)}>
+                      <MapPin size={10} className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
                     </span>
                     <button
                       onClick={e => { e.stopPropagation(); openLogModal(it); }}
-                      className="p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888] hover:text-blue-600 hover:border-blue-200 transition-colors"
+                      className="p-2 md:p-1 rounded-md border border-[#E8E7E2] bg-white text-[#888] hover:text-blue-600 hover:border-blue-200 transition-colors"
                       title="Ghi nhận chăm sóc"
                     >
-                      <Pencil size={10} />
+                      <Pencil size={10} className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
                     </button>
                   </div>
                 </div>

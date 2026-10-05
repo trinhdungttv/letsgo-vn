@@ -203,12 +203,12 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* Header bar */}
-      <div className="bg-white border-b border-gray-200 px-5 py-4 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <div className="bg-white border-b border-gray-200 px-3 md:px-5 py-3 md:py-4 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={onBack}
-              className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+              className="shrink-0 flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
             >
               <ChevronLeft className="w-4 h-4" />
               Pipeline
@@ -237,13 +237,13 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
                 onClick={() => setEditingTitle(true)}
                 className="flex items-center gap-2 group"
               >
-                <h2 className="text-lg font-semibold text-gray-900">{deal.title}</h2>
+                <h2 className="text-base md:text-lg font-semibold text-gray-900 text-left">{deal.title}</h2>
                 <Pencil className="w-4 h-4 text-gray-400 group-hover:text-gray-600 opacity-0 group-hover:opacity-100" />
               </button>
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 ml-auto">
             <button
               onClick={() => handleStageChange('won')}
               className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
@@ -261,8 +261,9 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
       </div>
 
       {/* Stage progress bar */}
-      <div className="bg-white border-b border-gray-200 px-5 py-4 shrink-0">
-        <div className="flex items-center gap-2">
+      {/* Điện thoại: dải bước cuộn ngang được thay vì bị ép chữ chồng lên nhau */}
+      <div className="bg-white border-b border-gray-200 px-3 md:px-5 py-3 md:py-4 shrink-0 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-2 min-w-max md:min-w-0">
           {ACTIVE_STAGES.map((step, idx) => {
             const state = getStepState(step);
             const stepConfig = STAGES[step];
@@ -298,7 +299,7 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
                 </button>
 
                 {/* Label */}
-                <div className={`text-xs font-medium ${
+                <div className={`text-xs font-medium whitespace-nowrap ${
                   state === 'done'
                     ? 'text-emerald-700'
                     : state === 'current'
@@ -312,7 +313,7 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
 
                 {/* Connector line */}
                 {!isLast && (
-                  <div className={`flex-1 h-0.5 max-w-[60px] ${
+                  <div className={`flex-1 h-0.5 min-w-[16px] max-w-[60px] ${
                     state === 'done'
                       ? 'bg-emerald-300'
                       : dealStage === 'lost'
@@ -327,9 +328,10 @@ export default function CRMDeal({ deal, leads, products, activities, onDealUpdat
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-y-auto p-5 flex gap-5">
+      {/* Điện thoại: 2 khối xếp chồng (trước là cột trái 280px cố định + cột phải bị ép) */}
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 flex flex-col md:flex-row gap-3 md:gap-5">
         {/* Left panel - Deal overview */}
-        <div className="w-[280px] shrink-0">
+        <div className="w-full md:w-[280px] shrink-0">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <h3 className="text-xs font-semibold uppercase text-gray-600 mb-4">Tổng quan thương vụ</h3>
 

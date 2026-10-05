@@ -25,6 +25,7 @@ import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
 import { anchorDay, dayLabel, isDynamicDay } from '../utils/timelineDays';
 import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, todayISO, isActiveInMonth, suspensionDate } from '../utils/suspension';
 import ServiceTypeBadge from '../components/ServiceTypeBadge';
+import MobileActionSheet from '../components/ui/MobileActionSheet';
 
 interface ClientsProps {
   clients: Client[];
@@ -975,6 +976,23 @@ export default function Clients({
         subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết${isAdmin ? ' · Double-click vào Chi nhánh/Quản lý/Chốt/Bắt đầu HĐ/Hết HĐ/TT để sửa nhanh' : ''}`}
         actions={
           <div className="flex items-center gap-2">
+            {/* Điện thoại: chỉ giữ nút chính "Thêm KH", các thao tác phụ gom vào "⋯" */}
+            <MobileActionSheet
+              title="Thao tác khách hàng"
+              actions={[
+                { key: 'labor', label: 'Nhập nhanh số lao động', hint: 'Cho nhiều công ty cùng lúc', icon: <ClipboardList size={16} />, onClick: openBulkLabor },
+                { key: 'media', label: 'Nhập ảnh & Google Maps', hint: 'Hàng loạt', icon: <MapPin size={16} />, onClick: () => setShowBulkMedia(true) },
+                { key: 'csv', label: 'Xuất CSV danh sách KH', icon: <FileDown size={16} />, onClick: exportToCSV },
+                { key: 'import', label: isImporting ? 'Đang nhập...' : 'Import Excel', icon: <FileUp size={16} />, disabled: isImporting, onClick: () => fileInputRef.current?.click() },
+                { key: 'template', label: 'Tải file mẫu Excel', icon: <FileDown size={16} />, onClick: () => downloadClientTemplate({
+                  regionNames: regions.map(r => r.name),
+                  managerNames: managers.map(m => m.name),
+                  zoneNames: marketZones.map(z => z.name),
+                }) },
+                ...(isAdmin ? [{ key: 'settings', label: 'Cài đặt', hint: 'Chi nhánh, quản lý, cột hiển thị', icon: <Settings size={16} />, onClick: () => setShowSettings(true) }] : []),
+              ]}
+            />
+            <div className="hidden md:flex items-center gap-2">
             {isAdmin && (
               <button onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Cài đặt">
                 <Settings className="w-4 h-4" />
@@ -1018,7 +1036,8 @@ export default function Clients({
             <button onClick={openBulkLabor} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh số lao động cho nhiều công ty">
               <ClipboardList size={13} /> Nhập nhanh LĐ
             </button>
-            <button onClick={() => setAddModalOpen(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
+            </div>
+            <button onClick={() => setAddModalOpen(true)} className="inline-flex items-center gap-1 px-3 h-9 md:h-auto md:py-1.5 rounded-lg text-[13px] md:text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
               <Plus size={13} /> Thêm KH
             </button>
           </div>
@@ -1027,7 +1046,7 @@ export default function Clients({
       <div className="flex-1 overflow-y-auto">
         {/* Bulk Action Bar */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 px-5 py-2 bg-blue-50 border-b border-blue-200 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 md:px-5 py-2 bg-blue-50 border-b border-blue-200 text-[11.5px]">
             <span className="font-semibold text-blue-700">{selectedIds.size} KH được chọn</span>
             <div className="w-px h-4 bg-blue-200" />
             <button
@@ -1053,7 +1072,7 @@ export default function Clients({
 
         {/* Churn Banner */}
         {churnClients.length > 0 && (
-          <div className="flex items-center gap-2 px-5 py-2 bg-red-50 border-b border-red-200 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 md:px-5 py-2 bg-red-50 border-b border-red-200 text-[11.5px]">
             <span className="text-red-600 font-semibold">⚠ Churn Risk:</span>
             <span className="text-red-700 font-medium">{churnClients.slice(0, 3).map(c => c.name).join(', ')}{churnClients.length > 3 ? ` +${churnClients.length - 3} khác` : ''}</span>
             <span className="text-gray-500">— lao động giảm liên tiếp. Cần xử lý ngay.</span>
@@ -1062,7 +1081,7 @@ export default function Clients({
 
         {/* Incomplete info banner */}
         {incompleteClients.length > 0 && (
-          <div className="flex items-center gap-2 px-5 py-2 bg-amber-50 border-b border-amber-200 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 md:px-5 py-2 bg-amber-50 border-b border-amber-200 text-[11.5px]">
             <span className="text-amber-700 font-semibold">⚠ Thiếu thông tin:</span>
             <span className="text-amber-800 font-medium">{incompleteClients.slice(0, 3).map(c => c.name).join(', ')}{incompleteClients.length > 3 ? ` +${incompleteClients.length - 3} khác` : ''}</span>
             <span className="text-gray-500">— chưa có chi nhánh/quản lý/lịch lương. Bổ sung khi rảnh.</span>
@@ -1070,7 +1089,7 @@ export default function Clients({
         )}
 
         {/* KPI Cards */}
-        <div className="flex gap-2 px-5 py-3 border-b border-[#E8E7E2] bg-white overflow-x-auto">
+        <div className="flex gap-2 px-4 md:px-5 py-3 border-b border-[#E8E7E2] bg-white overflow-x-auto no-scrollbar">
           <div className="flex-1 min-w-[120px] bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg px-3 py-2">
             <div className="text-[9.5px] text-[#9CA3AF] font-medium uppercase tracking-wide">Tổng KH Active</div>
             <div className="text-[20px] font-bold text-[#0c2340] leading-tight mt-1">{activeClients.length}</div>
@@ -1104,19 +1123,20 @@ export default function Clients({
         </div>
 
         {/* Keyboard shortcut hint */}
-        <div className="flex items-center gap-4 px-5 py-1.5 bg-[#F9F9F7] border-b border-[#E8E7E2] text-[10px] text-[#9CA3AF]">
+        <div className="hidden md:flex items-center gap-4 px-5 py-1.5 bg-[#F9F9F7] border-b border-[#E8E7E2] text-[10px] text-[#9CA3AF]">
           <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">/</kbd> Tìm kiếm</span>
           <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">N</kbd> Thêm KH</span>
           <span><kbd className="bg-white border border-gray-300 rounded px-1 py-0.5 text-[9px] font-mono">Esc</kbd> Xóa filter</span>
         </div>
 
-        <div className="p-5">
+        <div className="p-3 md:p-5">
         {/* Filters: Khu công nghiệp - Chi nhánh - Quản lý */}
         <div className="flex flex-wrap gap-2 mb-3 items-center">
           <FilterDropdown label="Khu công nghiệp" options={zoneNames} selected={activeZones} onChange={setActiveZones} />
           <FilterDropdown label="Chi nhánh" options={regionNames} selected={activeRegion} onChange={onRegionChange} />
           <FilterDropdown label="Quản lý" options={managerNames} selected={activeManagers} onChange={setActiveManagers} />
-          <div className="flex gap-1.5 ml-auto flex-wrap">
+          {/* Điện thoại: chip lọc nhanh thành 1 dải cuộn ngang thay vì xếp nhiều dòng */}
+          <div className="flex gap-1.5 md:ml-auto w-full md:w-auto overflow-x-auto no-scrollbar md:flex-wrap -mx-3 px-3 md:mx-0 md:px-0">
             {[
               { key: 'expiring',   label: '⏰ Sắp hết HĐ', count: expiringCount },
               { key: 'unpaid',     label: '💸 Chưa TT',    count: unpaidCount },
@@ -1127,7 +1147,7 @@ export default function Clients({
               <button
                 key={f.key}
                 onClick={() => setQuickFilter(quickFilter === f.key ? null : f.key)}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border transition ${
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 md:py-1 rounded-full text-[11.5px] md:text-[11px] font-medium border transition whitespace-nowrap shrink-0 ${
                   quickFilter === f.key
                     ? 'bg-[#1D4ED8] text-white border-[#1D4ED8]'
                     : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:border-blue-300 hover:text-blue-600'
@@ -1154,19 +1174,91 @@ export default function Clients({
         )}
 
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E7E2] gap-2">
+          <div className="flex items-center justify-between px-3 md:px-4 py-2.5 border-b border-[#E8E7E2] gap-2">
             <span className="text-[12.5px] font-semibold text-[#111] shrink-0">Danh sách ({filtered.length})</span>
-            <div className="flex items-center gap-2">
-              <input ref={searchInputRef} type="text" placeholder="Tìm kiếm... (/ để focus)" value={search} onChange={e => setSearch(e.target.value)}
-                className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-[220px] outline-none focus:border-blue-500" />
+            <div className="flex items-center gap-2 flex-1 md:flex-none justify-end min-w-0">
+              <input ref={searchInputRef} type="search" placeholder="Tìm kiếm... (/ để focus)" value={search} onChange={e => setSearch(e.target.value)}
+                className="text-[12px] px-2.5 py-1.5 border border-gray-300 rounded-lg w-full md:w-[220px] outline-none focus:border-blue-500" />
               <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
                 <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`p-1.5 ${viewMode === 'list' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><List size={14} /></button>
                 <button onClick={() => setViewMode('card')} title="Dạng card (có ảnh cover)" className={`p-1.5 ${viewMode === 'card' ? 'bg-gray-100 text-[#111]' : 'text-[#999] hover:bg-gray-50'}`}><LayoutGrid size={14} /></button>
               </div>
             </div>
           </div>
+          {/* Điện thoại: danh sách dạng dòng gọn thay cho bảng 15 cột (phải cuộn ngang rất dài).
+              Chạm vào dòng để mở hồ sơ — sửa nhanh từng ô vẫn dùng bảng trên máy tính. */}
           {viewMode === 'list' && (
-          <div className="overflow-x-auto">
+            <div className="md:hidden divide-y divide-[#F0EEE9]">
+              {filtered.length === 0 ? (
+                <div className="text-center py-8 text-[#aaa] text-[13px]">Không có dữ liệu</div>
+              ) : filtered.map(c => {
+                const delta = getDelta(c.id);
+                const d = daysUntil(c.contract_end);
+                const pill = statusPill(c.status);
+                const minW = c.min_workers || 0;
+                const curW = c.current_workers || 0;
+                const underMin = minW > 0 && curW < minW;
+                const wHistory = (laborHistory[c.id] || [])
+                  .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1).slice(-6).map(h => h.count);
+                const hs = c.service_type === 'recruitment'
+                  ? calcHealthScore({ serviceType: 'recruitment', overdueInvoiceCount: 0, unpaidInvoiceCount: 0, contractEnd: c.contract_end || '', lastContactDate: '' })
+                  : calcHealthScore({ serviceType: 'leasing', currentWorkers: curW, minWorkers: minW, paidThisMonth: c.paid_this_month || false, progCutoff: c.prog_cutoff || false, contractEnd: c.contract_end || '', lastContactDate: '', workerHistory: wHistory });
+                const churnLevel = c.service_type === 'recruitment' ? null : detectChurnRisk(wHistory);
+                const zone = (c.industrial_zones || [])[0];
+                const hasBranch = !!branchOf(c, branches);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => onSelectClient(c.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-3 text-left active:bg-[#F5F4EF] ${underMin ? 'bg-red-50/60' : ''}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {underMin && <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
+                        <span className="text-[14px] font-semibold text-[#111] truncate">{c.name}</span>
+                        <ServiceTypeBadge type={c.service_type} className="shrink-0" />
+                        <ChurnBadge level={churnLevel} />
+                      </div>
+                      <div className="text-[12px] text-[#777] truncate mt-0.5">
+                        {hasBranch ? branchNameOfClient(c) : <span className="text-amber-600 font-medium">⚠ Chưa gán CN</span>}
+                        {zone ? ` · ${zone}` : ''}
+                        {c.manager ? ` · ${c.manager}` : ''}
+                      </div>
+                      <div className="flex items-center flex-wrap gap-x-2.5 gap-y-1 mt-1 text-[12px]">
+                        <span className={`font-semibold ${underMin ? 'text-red-700' : 'text-[#111]'}`}>
+                          {curW.toLocaleString()}
+                          {minW > 0 && <span className="font-normal text-gray-400">/{minW.toLocaleString()}</span>}
+                          <span className="font-normal text-[#999]"> LĐ</span>
+                        </span>
+                        {delta !== null && delta !== 0 && (
+                          <span className="inline-flex items-center gap-0.5 font-medium" style={{ color: delta > 0 ? '#059669' : '#DC2626' }}>
+                            {delta > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                            {delta > 0 ? '+' : ''}{delta}
+                          </span>
+                        )}
+                        {c.contract_end && (
+                          <span className="whitespace-nowrap" style={{ color: d !== null && d <= 7 ? '#DC2626' : d !== null && d <= 30 ? '#D97706' : '#888' }}>
+                            HĐ {formatDate(c.contract_end)}
+                          </span>
+                        )}
+                        {c.cooperation_status === 'suspended' ? (
+                          <span className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">
+                            {formatSuspensionDate(c) ? `Ngưng ${formatSuspensionDate(c)}` : 'Ngưng'}
+                          </span>
+                        ) : (c.status === 'warn' || c.status === 'danger') && (
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium whitespace-nowrap ${pill.cls}`}>{pill.label}</span>
+                        )}
+                      </div>
+                    </div>
+                    <HealthScoreRing score={hs.total} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {viewMode === 'list' && (
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-[#E8E7E2]">
@@ -1435,7 +1527,7 @@ export default function Clients({
                         ) : '—'}
                       </td>
                       {col('cutoff') && (
-                        <td className="px-3 py-2 text-[12px]" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'cutoff_day')}>
+                        <td className="px-3 py-2 text-[12px] whitespace-nowrap" onClick={stopForEdit} onDoubleClick={e => startEdit(e, c, 'cutoff_day')}>
                           {editingCell?.id === c.id && editingCell.field === 'cutoff_day' ? (
                             <input
                               type="number" min={1} max={31} autoFocus value={editValue} disabled={savingCell}

@@ -1266,7 +1266,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               <button
                 key={c}
                 onClick={() => setFilter(c)}
-                className={`text-[10.5px] px-2.5 py-0.5 rounded-full border transition ${filter === c ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
+                className={`text-[11.5px] md:text-[10.5px] px-2.5 py-1 md:py-0.5 rounded-full border transition ${filter === c ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
               >
                 {c}
               </button>
@@ -1330,7 +1330,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
         {/* ⑤ Tìm nhanh + Tập trung */}
         <div className="flex gap-2 px-4 pb-2.5 items-center">
-          <div className="flex-1 flex items-center gap-1.5 border border-[#E8E7E2] rounded-[9px] px-2.5 py-1.5 bg-white focus-within:border-blue-400">
+          <div className="flex-1 min-w-0 flex items-center gap-1.5 border border-[#E8E7E2] rounded-[9px] px-2.5 py-1.5 bg-white focus-within:border-blue-400">
             <Search size={12} className="text-[#bbb] shrink-0" />
             <input
               value={search}

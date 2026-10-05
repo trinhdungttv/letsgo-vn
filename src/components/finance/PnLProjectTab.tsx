@@ -1728,7 +1728,7 @@ export default function PnLProjectTab({
                     <Settings size={12} />
                   </button>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div className="rounded-lg p-3 text-center bg-[#F5F4EF] border border-[#E8E7E2]">
                     <div className="text-[10px] uppercase text-[#999] mb-1">Lợi nhuận sau thuế</div>
                     <div className={`text-[20px] font-medium ${r.profitAfterTax >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtTrieu(r.profitAfterTax)}</div>
@@ -1767,7 +1767,7 @@ export default function PnLProjectTab({
       </div>
 
       {costSettingsOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setCostSettingsOpen(false); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setCostSettingsOpen(false); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[400px]">
             <div className="flex items-center justify-between mb-4">
               <div className="text-[13px] font-semibold text-[#111]">Quan ly hang muc chi phi</div>
@@ -1838,7 +1838,7 @@ export default function PnLProjectTab({
       )}
 
       {taxSettingsOpen && selected && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setTaxSettingsOpen(false); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setTaxSettingsOpen(false); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[340px]">
             <div className="flex items-center justify-between mb-4">
               <div className="text-[13px] font-semibold text-[#111]">Cai dat thue TNDN</div>
@@ -1877,7 +1877,7 @@ export default function PnLProjectTab({
       )}
 
       {invoiceSettingsOpen && selected && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setInvoiceSettingsOpen(false); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setInvoiceSettingsOpen(false); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[420px]">
             <div className="flex items-center justify-between mb-4">
               <div className="text-[13px] font-semibold text-[#111]">Cai dat hoa don nhieu ky</div>
@@ -1939,7 +1939,7 @@ export default function PnLProjectTab({
       )}
 
       {pendingDeleteCost && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCost(null); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCost(null); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[380px]">
             <div className="text-[13px] font-semibold text-[#111] mb-2">Xoá khoản chi phí này?</div>
             <div className="text-[12px] text-[#666] mb-2">
@@ -1977,7 +1977,7 @@ export default function PnLProjectTab({
       )}
 
       {pendingDeleteCat && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70]" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCat(null); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setPendingDeleteCat(null); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[400px]">
             <div className="text-[13px] font-semibold text-[#111] mb-2">Xoá hạng mục chi phí?</div>
             <div className="text-[12px] text-[#666] mb-2">
@@ -2008,7 +2008,7 @@ export default function PnLProjectTab({
       )}
 
       {confirmAction && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]" onClick={e => { if (e.target === e.currentTarget) { confirmAction.revert?.(); setConfirmAction(null); } }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) { confirmAction.revert?.(); setConfirmAction(null); } }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[360px]">
             <div className="text-[13px] font-semibold text-[#111] mb-2">Xác nhận thay đổi</div>
             <div className="text-[12px] text-[#666] mb-4">

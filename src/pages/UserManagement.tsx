@@ -122,7 +122,7 @@ export default function UserManagement({ toast }: UserManagementProps) {
         </button>
       } />
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         {/* Users table */}
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
           <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">
@@ -145,7 +145,7 @@ export default function UserManagement({ toast }: UserManagementProps) {
                     <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{u.username}</td>
                     <td className="px-3 py-2.5 font-medium">{u.full_name}</td>
                     <td className="px-3 py-2.5">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${ROLE_COLORS[u.role] || 'bg-gray-100 text-gray-600'}`}>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${ROLE_COLORS[u.role] || 'bg-gray-100 text-gray-600'}`}>
                         <Shield size={9} /> {ROLE_LABELS[u.role] || u.role}
                       </span>
                     </td>
@@ -179,7 +179,7 @@ export default function UserManagement({ toast }: UserManagementProps) {
                   <th className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] w-40">Tính năng</th>
                   {Object.keys(ROLE_PAGES).map(r => (
                     <th key={r} className="text-center px-3 py-2 text-[11.5px] font-medium bg-[#F9F9F7]">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] ${ROLE_COLORS[r] || 'bg-gray-100 text-gray-600'}`}>{ROLE_LABELS[r] || r}</span>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] whitespace-nowrap ${ROLE_COLORS[r] || 'bg-gray-100 text-gray-600'}`}>{ROLE_LABELS[r] || r}</span>
                     </th>
                   ))}
                 </tr>

@@ -277,7 +277,8 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
       </div>
 
       {/* Kanban board */}
-      <div className="flex-1 overflow-x-auto p-4">
+      {/* Điện thoại: vuốt ngang dừng đúng từng cột (snap), cột rộng gần hết màn hình */}
+      <div className="flex-1 overflow-x-auto p-3 md:p-4 snap-x snap-mandatory md:snap-none scroll-px-3">
         <div className="flex gap-4 min-w-max">
           {visibleStages.map(stage => {
             const stageDeals = dealsByStage[stage];
@@ -285,7 +286,7 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
             const label = settings.labels[stage] || DEFAULT_LABELS[stage];
 
             return (
-              <div key={stage} className={`w-[280px] shrink-0 rounded-xl ${stageConfig.colBg} p-3 border border-gray-200`}>
+              <div key={stage} className={`w-[85vw] max-w-[280px] md:w-[280px] shrink-0 snap-start rounded-xl ${stageConfig.colBg} p-3 border border-gray-200`}>
                 <div className="mb-4 pb-3 border-b border-gray-300/50">
                   <div className="flex items-center gap-2 mb-2">
                     <div className={`w-2.5 h-2.5 rounded-full ${stageConfig.color}`} />

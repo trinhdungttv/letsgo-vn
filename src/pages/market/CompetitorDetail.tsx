@@ -126,15 +126,18 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
   // nên "vừa với khung hình" đúng như hiển thị thực tế, không cần biết ảnh ngang hay dọc.
   const imgBoxRef = useRef<HTMLDivElement>(null);
   const [draggingImg, setDraggingImg] = useState(false);
-  const handleImgDragStart = (e: React.MouseEvent) => {
+  // Pointer events để kéo được cả bằng ngón tay trên điện thoại.
+  const handleImgDragStart = (e: React.PointerEvent) => {
     e.preventDefault();
     setDraggingImg(true);
     const box = imgBoxRef.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    const onMove = (ev: MouseEvent) => {
-      const dxPct = ((ev.movementX) / rect.width) * 100;
-      const dyPct = ((ev.movementY) / rect.height) * 100;
+    let lastX = e.clientX, lastY = e.clientY;
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - lastX) / rect.width) * 100;
+      const dyPct = ((ev.clientY - lastY) / rect.height) * 100;
+      lastX = ev.clientX; lastY = ev.clientY;
       // Kéo ảnh sang phải → lộ phần bên trái ảnh ra → object-position X giảm.
       setForm(f => ({
         ...f,
@@ -144,11 +147,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     };
     const onUp = () => {
       setDraggingImg(false);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   const kcnNameSet = useMemo(() => new Set(marketZones.map(z => z.name)), [marketZones]);
@@ -614,7 +619,8 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                         </div>
                         <div
                           ref={imgBoxRef}
-                          onMouseDown={form.image_fit === 'contain' ? undefined : handleImgDragStart}
+                          onPointerDown={form.image_fit === 'contain' ? undefined : handleImgDragStart}
+                          style={form.image_fit === 'contain' ? undefined : { touchAction: 'none' }}
                           className={`h-32 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${form.image_fit === 'contain' ? '' : draggingImg ? 'cursor-grabbing' : 'cursor-grab'}`}
                         >
                           <img

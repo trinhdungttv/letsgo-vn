@@ -157,7 +157,9 @@ export default function IndustryPositions({ industryId, toast }: Props) {
         </div>
       )}
 
-      <table className="w-full text-[12px] mt-2">
+      {/* Điện thoại: bảng nhiều cột cuộn ngang thay vì ép mỗi cột còn ~40px */}
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[620px] md:min-w-0 text-[12px] mt-2">
         <thead>
           <tr className="text-[10.5px] text-[#888] bg-[#FBFBF9]">
             <th className="text-left font-medium px-3 py-1.5 w-[20%]">Vị trí</th>
@@ -191,6 +193,7 @@ export default function IndustryPositions({ industryId, toast }: Props) {
           )}
         </tbody>
       </table>
+      </div>
 
       {confirmDel && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

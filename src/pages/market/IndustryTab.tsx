@@ -395,7 +395,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
           </button>
         </div>
 
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Users size={10} /> KH hợp tác</div><div className="text-[16px] font-medium text-emerald-700">{st?.clientCount ?? 0}</div></div>
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Building2 size={10} /> Dự án tìm hiểu</div><div className="text-[16px] font-medium text-blue-700">{st?.leadCount ?? 0}</div></div>
           <div className="bg-[#F9F9F7] rounded-lg px-3 py-2"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Users size={10} /> Tổng LĐ</div><div className="text-[16px] font-medium">{(st?.workers ?? 0).toLocaleString('vi-VN')}</div></div>
@@ -563,7 +563,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3.5 py-2.5"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Factory size={10} /> Ngành nghề</div><div className="text-[18px] font-semibold">{list.length}</div></div>
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3.5 py-2.5"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Users size={10} /> KH đang hợp tác</div><div className="text-[18px] font-semibold text-emerald-700">{totals.clientTotal}</div></div>
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] px-3.5 py-2.5"><div className="text-[10.5px] text-[#888] flex items-center gap-1"><Building2 size={10} /> Dự án tìm hiểu</div><div className="text-[18px] font-semibold text-blue-700">{totals.leadTotal}</div></div>
@@ -758,7 +758,7 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
         )
       )}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map(ind => {
           const st = statsByIndustry.get(ind.name);
           return (

@@ -439,7 +439,7 @@ export default function BranchZones({ branchId, branchClients, allClients, manag
                     <div className="p-4">
                       {isEditing ? renderEditForm(zone) : (
                         <div className="space-y-4">
-                          <div className="grid grid-cols-4 gap-3 text-[12px]">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px]">
                             <div><span className="text-[10px] text-[#999] uppercase">Dia danh</span><div className="text-[#333] mt-0.5">{zone.location || '—'}</div></div>
                             <div><span className="text-[10px] text-[#999] uppercase">Quan ly</span><div className="text-[#333] mt-0.5">{zone.manager_name || '—'}</div></div>
                             <div><span className="text-[10px] text-[#999] uppercase">Luong QL</span><div className="text-[#333] mt-0.5">{zone.manager_salary ? fmtVnd(zone.manager_salary) + ' d' : '—'}</div></div>
@@ -503,7 +503,7 @@ export default function BranchZones({ branchId, branchClients, allClients, manag
 
       {/* Settings modal for overhead categories */}
       {catSettingsOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setCatSettingsOpen(false); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0" onClick={e => { if (e.target === e.currentTarget) setCatSettingsOpen(false); }}>
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[360px]">
             <div className="flex items-center justify-between mb-4">
               <div className="text-[13px] font-semibold text-[#111]">Danh muc chi phi co dinh</div>

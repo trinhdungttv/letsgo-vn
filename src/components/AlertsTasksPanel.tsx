@@ -386,17 +386,19 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
           </span>
         ) : null}
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-[12px] truncate text-[#111]">{task.client_name}</div>
+          <div className="font-medium text-[12.5px] sm:text-[12px] truncate text-[#111]">{task.client_name}</div>
           <div className="text-[11px] text-gray-500 truncate">{task.description}</div>
+          {/* Chi nhánh nằm dưới tên: bảng chia 2 cột nên mỗi dòng hẹp — để chi nhánh thành cột
+              riêng bên phải thì tên bị ép còn "M..." (cả trên máy tính 1280px) */}
+          {task.client_id && clientToBranch?.[task.client_id] && (
+            <div className="text-[10.5px] text-gray-400 truncate">{clientToBranch[task.client_id]}</div>
+          )}
           {task.due_date && (
             <div className={`text-[10.5px] mt-0.5 ${new Date(task.due_date) < new Date() ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
               Hạn: {task.due_date}
             </div>
           )}
         </div>
-        {task.client_id && clientToBranch?.[task.client_id] && (
-          <span className="text-[10.5px] text-gray-400 shrink-0">{clientToBranch[task.client_id]}</span>
-        )}
         {/* Status badge (read-only, mirroring Workspace) */}
         <div className="shrink-0">
           {task.source_type === 'contract' && wt?.doc_status
@@ -413,7 +415,7 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
           <button
             onClick={e => markDone(task, e)}
             title="Đánh dấu hoàn thành"
-            className="p-1 rounded hover:bg-emerald-50 text-transparent group-hover:text-[#ccc] hover:!text-emerald-600 transition shrink-0"
+            className="p-1.5 sm:p-1 rounded hover:bg-emerald-50 text-transparent group-hover:text-[#ccc] [@media(hover:none)]:text-[#bbb] hover:!text-emerald-600 transition shrink-0"
           >
             <Check size={13} />
           </button>
@@ -423,7 +425,7 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
           <button
             onClick={e => { e.stopPropagation(); setDeleteConfirm(task); }}
             title="Gỡ khỏi Dashboard"
-            className="p-1 rounded hover:bg-red-50 text-transparent group-hover:text-[#ccc] hover:!text-red-500 transition shrink-0"
+            className="p-1.5 sm:p-1 rounded hover:bg-red-50 text-transparent group-hover:text-[#ccc] [@media(hover:none)]:text-[#bbb] hover:!text-red-500 transition shrink-0"
           >
             <Trash2 size={12} />
           </button>

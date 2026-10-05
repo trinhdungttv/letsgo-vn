@@ -96,7 +96,7 @@ export default function PaymentHistory({ client, embedded }: Props) {
           ) : (
             <>
               {stats && (
-                <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mb-4">
                   <div className="bg-gray-50 rounded-lg p-2.5 text-center">
                     <div className={`text-[16px] font-bold ${stats.avg <= 0 ? 'text-emerald-600' : stats.avg <= 5 ? 'text-amber-600' : 'text-red-600'}`}>
                       {stats.avg > 0 ? `+${stats.avg}` : stats.avg} ngay

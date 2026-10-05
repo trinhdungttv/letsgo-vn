@@ -154,7 +154,7 @@ export default function History({ toast, onReload }: Props) {
   return (
     <>
       <PageHeader title="Lịch sử & An toàn dữ liệu" subtitle="Theo dõi mọi thay đổi, khôi phục dữ liệu và sao lưu định kỳ" />
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         <div className="flex gap-2 flex-wrap">
           {TABS.map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setTab(key)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
@@ -257,12 +257,13 @@ export default function History({ toast, onReload }: Props) {
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{log.user_name || '—'}</td>
                     <td className="px-3 py-2"><span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${a.cls}`}>{a.label}</span></td>
                     <td className="px-3 py-2 whitespace-nowrap">{tableLabel(log.table_name)}</td>
-                    <td className="px-3 py-2">{log.description || '—'}</td>
+                    {/* min-w: trên điện thoại cột Mô tả bị ép còn ~150px → mỗi dòng cao 6–7 hàng chữ */}
+                    <td className="px-3 py-2 min-w-[260px] md:min-w-0">{log.description || '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {log.undone ? (
                         <span className="text-[11px] text-[#aaa]">Đã hoàn tác</span>
                       ) : user?.role === 'admin' ? (
-                        <button onClick={() => handleUndo(log)} disabled={undoingId === log.id} className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline disabled:opacity-50">
+                        <button onClick={() => handleUndo(log)} disabled={undoingId === log.id} className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline disabled:opacity-50 py-1.5 md:py-0">
                           <RotateCcw size={11} /> {undoingId === log.id ? 'Đang xử lý...' : 'Hoàn tác'}
                         </button>
                       ) : null}

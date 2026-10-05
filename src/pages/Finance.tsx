@@ -437,12 +437,13 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         title="Tài chính"
         subtitle="Timeline · Chi phí · Khoán · Trạng thái TT"
         actions={
-          <div className="flex items-center gap-2.5">
+          // Điện thoại: dải tab lên trên (cuộn ngang được), ô chọn tháng full-width bên dưới
+          <div className="flex flex-col-reverse md:flex-row md:items-center gap-2 md:gap-2.5 w-full md:w-auto">
             {activeTab === 'clients' ? (
               <select
                 value={month}
                 onChange={e => { setMonth(e.target.value); setEditClient(null); }}
-                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
+                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none bg-white"
               >
                 {timelineMonths.map(m => (
                   <option key={m} value={m}>
@@ -454,12 +455,12 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               <select
                 value={selectedMonth}
                 onChange={e => setSelectedMonth(e.target.value)}
-                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none"
+                className="text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none bg-white"
               >
                 {workspaceMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
               </select>
             )}
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full [&>button]:whitespace-nowrap [&>button]:shrink-0">
               <button
                 onClick={() => setActiveTab('clients')}
                 className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab === 'clients' ? 'bg-white shadow-sm text-[#111]' : 'text-[#999] hover:text-[#555]'}`}
@@ -489,10 +490,10 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
 
         {/* ── KPI cards — always visible at top ── */}
-        <div className="grid grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
           <div className="bg-white border border-[#E8E7E2] rounded-xl p-3.5">
             <div className="text-[11.5px] text-[#888] mb-1">Doanh thu</div>
             <div className="text-[20px] font-semibold text-[#1D4ED8]">{formatCurrency(totalRev)}</div>
@@ -545,9 +546,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
             {/* Gantt chart */}
             <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex items-center justify-between">
+              <div className="px-3 md:px-4 py-2.5 border-b border-[#E8E7E2] flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[12.5px] font-semibold text-[#111]">Timeline {monthTitle}</span>
-                <div className="flex items-center gap-1 text-[11px]">
+                <div className="flex flex-wrap items-center gap-1 text-[11px]">
                   {TIMELINE_PHASES.filter(p => isPhaseOn(p.key)).map(item => (
                     <button key={item.key} onClick={() => setTimelinePhase(timelinePhase === item.key ? null : item.key)}
                       title={`Bấm để sắp xếp khách hàng theo mốc "${phaseLabel(item, paymentView)}"`}
@@ -606,8 +607,9 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
               </div>
               <div className="overflow-x-auto">
                 <div className="flex border-b border-[#E8E7E2] bg-[#F9F9F7]" style={{ minWidth: 900 }}>
-                  <div className="w-[180px] shrink-0 px-3 py-1.5 text-[11px] text-[#888] font-medium border-r border-[#E8E7E2]">Công ty</div>
-                  <div className="flex-1 relative" style={{ height: 28 }}>
+                  {/* Cột Công ty dính trái khi cuộn ngang trên điện thoại */}
+                  <div className="w-[130px] md:w-[180px] shrink-0 px-3 py-1.5 text-[11px] text-[#888] font-medium border-r border-[#E8E7E2] sticky left-0 z-10 bg-[#F9F9F7]">Công ty</div>
+                  <div className="flex-1 relative isolate" style={{ height: 28 }}>
                     {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(d => (
                       <div key={d} className="absolute text-[10px] text-[#bbb] text-center"
                         style={{ left: `${((d - 1) / daysInMonth) * 100}%`, width: `${100 / daysInMonth}%`, top: 6 }}>
@@ -620,7 +622,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                       style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%`, top: -2, transform: 'translateX(-50%)' }}>{todayNum}</div>
                   </div>
                 </div>
-                <div className="overflow-y-auto" style={{ maxHeight: 640 }}>
+                {/* minWidth = hàng bên trong → khối này không tự cuộn ngang riêng (lệch cột với hàng tiêu đề) */}
+                <div className="overflow-y-auto" style={{ maxHeight: 640, minWidth: 900 }}>
                 {sortedTimelineClients.length === 0 ? (
                   <div className="text-center py-10 text-[#aaa] text-[13px]" style={{ minWidth: 900 }}>
                     Không có khách hàng
@@ -666,8 +669,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const salaryEndX = salaryEndOk != null ? (salaryEndOk / daysInMonth) * 100 : null;
 
                   return (
-                    <div key={c.id} className="flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
-                      <div className="w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2]">
+                    <div key={c.id} className="group/row flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
+                      <div className="w-[130px] md:w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2] sticky left-0 z-10 bg-white group-hover/row:bg-[#FAFAF8]">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <button onClick={() => startEdit(c)} className="text-[12px] font-semibold text-[#111] truncate hover:text-blue-600 hover:underline text-left">
                             {c.name}{c.status === 'danger' || c.status === 'warn' ? ' 🚩' : ''}
@@ -676,7 +679,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                         </div>
                         <div className="text-[10.5px] text-[#888]">{(c.current_workers || 0).toLocaleString()} LD</div>
                       </div>
-                      <div className="flex-1 relative">
+                      <div className="flex-1 relative isolate">
                         <div className="absolute top-0 bottom-0 w-px bg-red-300 opacity-40 z-0"
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
@@ -974,7 +977,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       {/* ── Date picker modal ── */}
       {payModal && (
         <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0"
           onClick={e => { if (e.target === e.currentTarget) setPayModal(null); }}
         >
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[320px]">
@@ -1035,7 +1038,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       {/* ── Timeline edit modal (Chốt công / Tính lương / Kỳ TT / Phát lương) ── */}
       {editClient && (
         <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3 md:p-0"
           onClick={e => { if (e.target === e.currentTarget) setEditClient(null); }}
         >
           <div className="bg-white rounded-xl shadow-2xl p-5 w-[420px]">

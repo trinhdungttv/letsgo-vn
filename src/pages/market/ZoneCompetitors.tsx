@@ -339,7 +339,7 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-2 p-3 bg-[#FBFBF9] border-b border-[#F0EEE9]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-[#FBFBF9] border-b border-[#F0EEE9]">
         <div className="px-3 py-2 bg-white rounded-lg border border-[#F0EEE9]">
           <div className="text-[10.5px] text-[#888]">Đối thủ tại đây</div>
           <div className="text-[16px] font-medium">{presences.length}</div>
@@ -385,7 +385,7 @@ export default function ZoneCompetitors({ zone, competitors, clients, marketLead
               return (
                 <Fragment key={p.c.id}>
                   <tr className="border-b border-[#F0EEE9] last:border-0 hover:bg-[#FBFBF9]">
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 min-w-[150px]">
                       <button onClick={() => onOpenCompetitor(p.c)} className="font-medium text-[#111] hover:text-blue-700 hover:underline text-left inline-flex items-center gap-1">
                         {p.c.company_name} <ExternalLink size={10} className="text-[#bbb]" />
                       </button>

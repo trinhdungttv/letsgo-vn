@@ -6,6 +6,7 @@ import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider, canAccess } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { usePersistedState } from './hooks/usePersistedState';
+import { useKeepPopoversOnScreen } from './hooks/useKeepPopoversOnScreen';
 import { sortLaborHistory } from './lib/format';
 import { shortId, expandId } from './hooks/useHashSubRoute';
 
@@ -36,11 +37,14 @@ const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'fin
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
-  return <div className="fixed bottom-6 right-6 bg-[#111] text-white px-4 py-2.5 rounded-lg text-[13px] z-50 shadow-lg">{message}</div>;
+  // Mobile: nằm giữa, phía trên thanh điều hướng dưới (không bị che/đè lên nút).
+  return <div className="fixed left-4 right-4 bottom-[calc(68px+env(safe-area-inset-bottom))] text-center md:text-left md:left-auto md:right-6 md:bottom-6 bg-[#111] text-white px-4 py-2.5 rounded-lg text-[13px] z-[90] shadow-lg">{message}</div>;
 }
 
 function AppInner() {
   const { user, loading: authLoading, logout, rolePermissions } = useAuth();
+  // Menu thả xuống bị lòi ra ngoài mép màn hình (điện thoại) → tự dịch vào trong
+  useKeepPopoversOnScreen();
 
   // Link chia sẻ "Phương án giá" (#/p/<mã>) — mở được KHÔNG cần đăng nhập, chỉ cần mã 4 số.
   // Khi đang ở link này thì không nạp dữ liệu toàn app (người ngoài không có quyền).
@@ -346,7 +350,7 @@ function AppInner() {
           />
         )}
         {page === 'branches' && (
-          <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex-1 overflow-y-auto p-3 md:p-5">
             <Branches clients={clients} toast={toast} focusRegion={branchFocusRegion} onFocusConsumed={() => setBranchFocusRegion(null)} />
           </div>
         )}
