@@ -15,6 +15,7 @@ import type { PlanData, PlanResult, QuoteSheet } from '../../../lib/costPlan/typ
 import { defaultReferralNotesVi, isReferral, normalizeReferral } from '../../../lib/costPlan/referral';
 import QuoteDocument, { A4_H, A4_W } from './QuoteDocument';
 import { MoneyInput, fmt } from './fields';
+import { QuoteMetaFields } from './QuoteMetaCard';
 import EntityManager from './EntityManager';
 import { lastEntityId, rememberEntity, useEntities } from './useEntities';
 import { useInk } from './useInk';
@@ -177,11 +178,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
 
       <Section title="Phiên bản & số báo giá" summary={`${DOC_LANGS.find(l => l.value === doc.lang)!.label} · ${doc.number}`} open={!!open.basic} onToggle={() => tg('basic')}>
         <div><span className={labelCls}>Phiên bản ngôn ngữ</span><Seg value={doc.lang} disabled={dis} onChange={v => setDoc({ lang: v })} options={DOC_LANGS} /></div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Số báo giá"><input disabled={dis} value={doc.number} onChange={e => setDoc({ number: e.target.value })} className={`${field} w-full`} /></F>
-          <F label="Ngày báo giá"><input type="date" disabled={dis} value={doc.date} onChange={e => setDoc({ date: e.target.value })} className={`${field} w-full`} /></F>
-          <F label="Hiệu lực đến"><input type="date" disabled={dis} value={doc.validUntil} onChange={e => setDoc({ validUntil: e.target.value })} className={`${field} w-full`} /></F>
-        </div>
+        <QuoteMetaFields doc={doc} onDoc={setDoc} readOnly={dis} />
         <F label="Tiêu đề (để trống = mặc định)"><input disabled={dis} value={doc.title ?? ''} placeholder={bi2(defView.title).split('\n')[0]} onChange={e => setDoc({ title: e.target.value.trim() ? e.target.value : null })} className={`${field} w-full`} /></F>
       </Section>
 

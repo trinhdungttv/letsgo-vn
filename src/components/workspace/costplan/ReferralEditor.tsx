@@ -10,6 +10,7 @@ import {
 import { DOC_LANGS, type DocDefaults } from '../../../lib/costPlan/quoteDoc';
 import type { PlanData, PlanResult, PlanSettings } from '../../../lib/costPlan/types';
 import ProfitSplit from './ProfitSplit';
+import QuoteMetaCard from './QuoteMetaCard';
 import QuoteDocDialog from './QuoteDocDialog';
 import { copyText } from '../../../lib/clipboard';
 import { MoneyInput, NumInput, fmt, fmtD, fmtShort } from './fields';
@@ -156,6 +157,8 @@ export default function ReferralEditor({
             <span className="text-[12.5px] text-[#6e6e73]">Tổng {period}: <b className="text-[#1d1d1f] tabular-nums">{fmtD(r.costTotal)}</b></span>
           </div>
         </div>
+
+        <QuoteMetaCard data={data} onChange={onChange} readOnly={readOnly} defaults={docDefaults} companyName={meta?.company} />
 
         {/* ── Điều khoản trên báo giá ── */}
         <div className={`${card} p-5 space-y-3`}>

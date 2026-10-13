@@ -8,6 +8,7 @@ import CostSections, { secOf, withSection, type LineSuggestion } from './CostSec
 import ProfitSplit from './ProfitSplit';
 import { InsuranceSplit, PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
 import ReferralEditor from './ReferralEditor';
+import QuoteMetaCard from './QuoteMetaCard';
 import { defaultReferral, type ServiceKind } from '../../../lib/costPlan/referral';
 import { CostTotalCard, LegalCard, NegotiateCard, ProfitCard, SettingsCard, Warnings } from './SummaryPanel';
 import { fmt } from './fields';
@@ -176,6 +177,7 @@ export default function PlanEditor({
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines} suggestions={[]} show={['service']} />
             <PriceBuild data={data} result={result} onGoCost={() => setStep('cost')} />
             <InsuranceSplit data={data} result={result} readOnly={readOnly} onPlan={onChange} />
+            <QuoteMetaCard data={data} onChange={onChange} readOnly={readOnly} defaults={docDefaults} companyName={fillMeta?.company} />
             <PriceTable data={data} result={result} readOnly={readOnly} fileName={fileName} meta={fillMeta} planId={planId} docDefaults={docDefaults} onQuote={setQuote} onPlan={onChange} onPushCrm={readOnly ? undefined : onPushCrm} />
             <QuoteNotes data={data} readOnly={readOnly} onQuote={setQuote} />
             {!readOnly && <div className="px-1"><button type="button" onClick={() => setStep('cost')} className={btnGhost}>← Quay lại chi phí lao động</button></div>}

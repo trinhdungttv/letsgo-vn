@@ -3,7 +3,7 @@ import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
   ClipboardList, Circle, Clock, CheckCircle2, StickyNote, Send,
-  ChevronDown, ChevronUp, GitCompare,
+  ChevronDown, ChevronUp, GitCompare, FileText,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/format';
 import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus, PipelineAppendix, ClientGift } from '../../lib/types';
@@ -147,9 +147,13 @@ export interface CompanyProfileModalProps {
    * Pipeline (nơi chỉnh giai đoạn, giá trị, sản phẩm của thương vụ).
    */
   dealSummary?: { title: string; value: number; onOpen?: () => void };
+  /** Mở "Phương án giá" của công ty này ngay tại chỗ (CRM Pipeline) */
+  onOpenCostPlan?: () => void;
+  /** Số phương án giá đã lập cho công ty này */
+  costPlanCount?: number;
 }
 
-export function CompanyProfileModal({ entry, contacts, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary }: CompanyProfileModalProps) {
+export function CompanyProfileModal({ entry, contacts, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary, onOpenCostPlan, costPlanCount }: CompanyProfileModalProps) {
   const { user } = useAuth();
   // Chi nhánh — nguồn duy nhất để hiển thị/gán, không đọc cột `region` (tên cũ).
   const { branches } = useBranchData();
@@ -1679,6 +1683,12 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           {!isLinkedToClient && ARCHIVED_STAGES[entry.stage] && (
             <button onClick={handleRestore} className="px-2.5 py-0.5 rounded-full border border-blue-200 text-[11px] font-medium text-blue-600 hover:bg-blue-50 transition">
               ↺ Khôi phục
+            </button>
+          )}
+          {onOpenCostPlan && (
+            <button onClick={onOpenCostPlan} title="Lập / xem phương án báo giá cho công ty này"
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-violet-200 bg-violet-50 text-[11px] font-semibold text-violet-700 hover:bg-violet-100 transition">
+              <FileText size={11} /> Phương án giá{costPlanCount ? ` (${costPlanCount})` : ''}
             </button>
           )}
         </div>

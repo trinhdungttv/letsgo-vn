@@ -401,6 +401,7 @@ function AppInner() {
         {page === 'crm-pipeline' && (
           <CRMPipeline
             pipeline={pipeline}
+            clients={clients}
             products={products}
             onRefresh={reloadPipeline}
             onDealCreate={handleDealCreate}

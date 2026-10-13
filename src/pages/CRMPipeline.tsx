@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Plus, X, Briefcase, Columns3, RotateCcw, Filter,
+  Plus, X, Briefcase, Columns3, RotateCcw, Filter, FileText,
 } from 'lucide-react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import PageHeader from '../components/PageHeader';
 import { formatCurrency } from '../lib/format';
-import type { CRMPipelineEntry, CRMDeal, CRMProduct, Contact } from '../lib/types';
+import type { CRMPipelineEntry, CRMDeal, CRMProduct, Contact, Client } from '../lib/types';
+import { CostPlanModal } from '../components/workspace/CostPlanModal';
+import { listPlans } from '../lib/costPlan/api';
+import { planCountsByPipeline } from '../lib/costPlan/listFilter';
+import type { CostPlanRow } from '../lib/costPlan/types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -19,6 +23,8 @@ import { EMPTY_SOURCE, cleanSource, matchesSourceFilter, sourceFilterGroups, sou
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
+  /** Khách hàng — cho ô chọn khách trong "Phương án giá" */
+  clients: Client[];
   products: CRMProduct[];
   onRefresh: () => Promise<void>;
   onDealCreate: (d: CRMDeal) => void;
@@ -44,8 +50,8 @@ interface AddDealForm {
 }
 
 // ── Main CRMPipeline ────────────────────────────────────────────────────────
-export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreate, toast, focusEntryId, onFocusHandled }: CRMPipelineProps) {
-  const { user } = useAuth();
+export default function CRMPipeline({ pipeline, clients, products, onRefresh, onDealCreate, toast, focusEntryId, onFocusHandled }: CRMPipelineProps) {
+  const { user, token } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const emptyModalForm = { name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '', source: EMPTY_SOURCE };
@@ -67,6 +73,29 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
   const { branches } = useBranchData();
   const { zones: refZones, competitors: refCompetitors } = useMarketRefs();
+
+  // "Phương án giá" mở ngay tại Pipeline (cùng màn hình, cùng dữ liệu với Workspace).
+  // 'all' = mọi phương án; 1 dòng pipeline = chỉ phương án của công ty đó, phương án mới tự chọn sẵn công ty.
+  const [costPlanFor, setCostPlanFor] = useState<'all' | CRMPipelineEntry | null>(null);
+  const [plans, setPlans] = useState<CostPlanRow[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    listPlans(token).then(p => { if (alive) setPlans(p); }).catch(() => { /* chưa có quyền / chưa có bảng: chỉ không hiện số */ });
+    return () => { alive = false; };
+  }, [token]);
+  const planCounts = useMemo(() => planCountsByPipeline(plans, pipeline), [plans, pipeline]);
+  const openCostPlan = (e: CRMPipelineEntry, ev?: React.MouseEvent) => { ev?.stopPropagation(); setCostPlanFor(e); };
+  // Số phương án giá trên thẻ. Thẻ điện thoại cả thẻ là 1 nút → chỉ hiển thị (không lồng nút), mở từ hồ sơ.
+  const planBadge = (entry: CRMPipelineEntry, clickable = true) => {
+    const n = planCounts[entry.id];
+    if (!n) return null;
+    const cls = 'shrink-0 inline-flex items-center gap-0.5 px-1 rounded border border-violet-200 bg-violet-50 text-[10px] font-semibold leading-[15px] text-violet-700';
+    return clickable ? (
+      <button type="button" onClick={ev => openCostPlan(entry, ev)} onMouseDown={ev => ev.stopPropagation()} draggable={false}
+        title={`${n} phương án giá — bấm để mở`} className={`${cls} hover:bg-violet-100`}><FileText size={9} />{n}</button>
+    ) : <span title={`${n} phương án giá`} className={cls}><FileText size={9} />{n}</span>;
+  };
 
   // Lọc theo nguồn (sale / đối tác giới thiệu / công ty / chi nhánh) — áp cho cả
   // kanban lẫn 2 mục lưu trữ, để xem một người giới thiệu đã mang về những dự án nào.
@@ -308,6 +337,13 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
               )}
             </div>
             <button
+              onClick={() => setCostPlanFor('all')}
+              title="Lập / xem phương án báo giá — giống ở Workspace"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-violet-300 text-violet-700 hover:bg-violet-50 transition"
+            >
+              <FileText size={13} /> <span className="hidden sm:inline">Phương án giá</span><span className="sm:hidden">PA giá</span>
+            </button>
+            <button
               onClick={() => setShowDealModal(true)}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-[#1D4ED8] text-[#1D4ED8] hover:bg-blue-50 transition"
             >
@@ -389,7 +425,10 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                         <div className="flex items-start gap-2">
                           <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-1 ${rc.dot}`} title={rc.label} />
                           <div className="min-w-0">
-                            <div className="text-[14px] font-semibold text-[#111] leading-snug line-clamp-2">{entry.company_name}</div>
+                            <div className="flex items-start gap-1.5">
+                              <div className="flex-1 min-w-0 text-[14px] font-semibold text-[#111] leading-snug line-clamp-2">{entry.company_name}</div>
+                              <span className="mt-0.5">{planBadge(entry, false)}</span>
+                            </div>
                             <div className="flex items-center gap-1.5 min-w-0 text-[12px] text-[#888] mt-0.5">
                               <span className="truncate">
                                 {branchOf(entry, branches)?.name ?? entry.region ?? '—'}
@@ -451,7 +490,10 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                       >
                         <div className="flex items-start justify-between gap-1 mb-0.5">
                           <div className="text-[12px] font-semibold text-[#111] leading-tight truncate">{entry.company_name}</div>
-                          <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${rc.dot}`} title={rc.label} />
+                          <span className="flex items-center gap-1 shrink-0">
+                            {planBadge(entry)}
+                            <span className={`w-2 h-2 rounded-full mt-0.5 ${rc.dot}`} title={rc.label} />
+                          </span>
                         </div>
                         <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-[#888]">
                           <span className="truncate">
@@ -644,6 +686,18 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
           onDelete={() => handleDelete(profileEntry.id)}
           toast={toast}
           isAdmin={user?.role === 'admin'}
+          onOpenCostPlan={() => setCostPlanFor(profileEntry)}
+          costPlanCount={planCounts[profileEntry.id] ?? 0}
+        />
+      )}
+
+      {/* Phương án giá — mở chồng lên hồ sơ công ty; đóng lại là quay về đúng chỗ đang xem */}
+      {costPlanFor && (
+        <CostPlanModal
+          clients={clients} pipeline={pipeline} branches={branches} toast={toast}
+          focus={costPlanFor === 'all' ? null : { pipelineId: costPlanFor.id, clientId: costPlanFor.client_id, companyName: costPlanFor.company_name }}
+          onPlansChanged={setPlans}
+          onClose={() => setCostPlanFor(null)}
         />
       )}
 

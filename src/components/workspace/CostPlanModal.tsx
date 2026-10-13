@@ -30,12 +30,13 @@ import IndustryTemplateBar from './costplan/IndustryTemplateBar';
 import SharePanel from './costplan/SharePanel';
 import HistoryPanel from './costplan/HistoryPanel';
 import { normalizeQuoteInfo as normQI } from '../../lib/quoteInfo';
+import { dateShort, daysLeft, defaultDoc } from '../../lib/costPlan/quoteDoc';
 import { emptyMeta, resolveClient, resolvePipelineEntry, type PlanMeta } from './costplan/context';
 import { fmt, fmtD, fmtShort } from './costplan/fields';
 import { FONT, Popover, MenuItem, Seg, Select, btnGhost, btnPrimary, card, field } from './costplan/ui';
 import type { LineSuggestion } from './costplan/CostSections';
 import { isReferral, isReferralPlan } from '../../lib/costPlan/referral';
-import { EMPTY_PLAN_FILTER, filterPlans, isFiltering, planFilterOptions, provinceOfPlan, zoneLabelOfPlan, type PlanListFilter } from '../../lib/costPlan/listFilter';
+import { EMPTY_PLAN_FILTER, filterPlans, isFiltering, planBelongsTo, planFilterOptions, provinceOfPlan, zoneLabelOfPlan, type PlanListFilter } from '../../lib/costPlan/listFilter';
 
 interface Props {
   clients: Client[];
@@ -43,6 +44,13 @@ interface Props {
   branches: Branch[];
   toast: (msg: string) => void;
   onClose: () => void;
+  /**
+   * Mở từ hồ sơ 1 công ty (CRM Pipeline): chỉ liệt kê phương án của công ty đó, "Phương án mới" tự chọn sẵn công ty;
+   * công ty chưa có phương án nào thì mở thẳng phương án mới.
+   */
+  focus?: { pipelineId: string; clientId?: string | null; companyName: string } | null;
+  /** Báo danh sách phương án mỗi khi thay đổi (thêm/sửa/xoá) — để nơi mở cập nhật số đếm */
+  onPlansChanged?: (plans: CostPlanRow[]) => void;
 }
 
 interface Zone { id: string; name: string; region_zone: string | null; location: string | null }
@@ -83,7 +91,7 @@ function draftOfRow(p: CostPlanRow): Draft {
   };
 }
 
-export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: Props) {
+export function CostPlanModal({ clients, pipeline, branches, toast, onClose, focus, onPlansChanged }: Props) {
   const { token } = useAuth();
 
   // ── Dữ liệu tham chiếu ─────────────────────────────────────────────────────────────────
@@ -121,6 +129,11 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
   const [picking, setPicking] = useState(false);
   const [crmLines, setCrmLines] = useState<QuoteInfoLine[]>([]);
   const [branchKhoan, setBranchKhoan] = useState<{ lgPct: number; cnPct: number; label: string } | null>(null);
+
+  // Đang xem phương án của 1 công ty (mở từ CRM Pipeline) — bấm "Xem tất cả" để bỏ
+  const [focusOn, setFocusOn] = useState(!!focus);
+  const fPid = focus?.pipelineId, fCid = focus?.clientId, fName = focus?.companyName;
+  useEffect(() => { if (!loading && !loadErr) onPlansChanged?.(plans); }, [plans, loading, loadErr, onPlansChanged]);
 
   // Bộ lọc danh sách: chữ, ngành, tỉnh/TP (suy từ KCN), KCN, chi nhánh, trạng thái
   const [filter, setFilter] = useState<PlanListFilter>(EMPTY_PLAN_FILTER);
@@ -197,6 +210,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
     const data: PlanData = { settings: { ...DEFAULT_SETTINGS }, lines: starterFor('', ''), notes: '' };
     setDraft({ id: null, meta, data, version: 0, share: null, baseline: snapshot(meta, data), linesTouched: false, updatedBy: null, updatedAt: null });
     setCrmLines([]); setRemote(null); setSaveNote('');
+    // Mở từ hồ sơ công ty → chọn sẵn công ty đó (tự điền ngành, KCN, chi nhánh, số LĐ từ CRM)
+    if (focusOn && focus && pipeline.some(p => p.id === focus.pipelineId)) void pickCompany(`crm:${focus.pipelineId}`);
   };
 
   const openPlan = (p: CostPlanRow) => { setDraft(draftOfRow(p)); setCrmLines([]); setRemote(null); setSaveNote(''); };
@@ -345,14 +360,24 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
   };
 
   // ── Lưu ────────────────────────────────────────────────────────────────────────────────
-  const doSave = async (force = false) => {
+  /**
+   * Lưu phương án. `metaPatch`: đổi trạng thái (Chốt / Lưu trữ…) rồi LƯU LUÔN — trước đây chỉ đổi trên màn hình,
+   * người dùng tưởng đã chốt, đóng lại thì mất.
+   */
+  const doSave = async (force = false, metaPatch?: Partial<PlanMeta>, okMsg = 'Đã lưu phương án') => {
     if (!draft || !token || !result) return;
+    // Ghi vào bản nháp trước: nếu vướng xung đột phiên bản thì lần "Ghi đè" sau vẫn giữ trạng thái mới
+    if (metaPatch) setDraft(d => (d ? { ...d, meta: { ...d.meta, ...metaPatch } } : d));
     setSaving(true);
     try {
-      const meta = { ...draft.meta };
+      const meta = { ...draft.meta, ...metaPatch };
       if (!meta.title.trim()) meta.title = `${meta.company_name || meta.industry || 'Phương án'} — ${new Date().toLocaleDateString('vi-VN')}`;
-      // Kèm ảnh chụp lương tối thiểu vùng để người xem qua link cũng thấy cảnh báo lương thấp
-      const data: PlanData = { ...draft.data, minWage: minWage ?? null };
+      // Kèm ảnh chụp lương tối thiểu vùng để người xem qua link cũng thấy cảnh báo lương thấp.
+      // Chưa từng mở phần báo giá → chốt số báo giá, ngày ban hành (hôm nay), hiệu lực mặc định ngay lần lưu đầu.
+      const data: PlanData = {
+        ...draft.data, minWage: minWage ?? null,
+        doc: draft.data.doc ?? defaultDoc(new Date(), { ...docDefaults, name: docDefaults.name || meta.company_name || '' }),
+      };
       const fields: PlanFields = {
         ...meta, industry: meta.industry || null, zone_name: meta.zone_name || null, company_name: meta.company_name || null,
         data, summary: summarizePlan(data, result),
@@ -364,7 +389,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
       setDraft(next);
       setPlans(prev => [{ ...row, share: draft.share }, ...prev.filter(x => x.id !== row.id)]);
       setSaveNote(''); setConflict(null); setRemote(null);
-      toast('Đã lưu phương án');
+      toast(okMsg);
     } catch (e) { toast(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
@@ -375,7 +400,16 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
     setRemote(null); setConflict(null);
   };
 
-  const toggleFinal = () => setDraft(d => (d ? { ...d, meta: { ...d.meta, status: d.meta.status === 'final' ? 'draft' : 'final' } } : d));
+  const toggleFinal = () => {
+    if (!draft) return;
+    const status = draft.meta.status === 'final' ? 'draft' : 'final';
+    void doSave(false, { status }, status === 'final' ? 'Đã chốt và lưu phương án' : 'Đã bỏ chốt — phương án về Nháp');
+  };
+  const toggleArchive = () => {
+    if (!draft) return;
+    const status = draft.meta.status === 'archived' ? 'draft' : 'archived';
+    void doSave(false, { status }, status === 'archived' ? 'Đã lưu trữ phương án' : 'Đã bỏ lưu trữ');
+  };
 
   // ── Đẩy kết quả sang "Thông tin báo giá" của hồ sơ CRM ─────────────────────────────────
   const pushToCrm = async () => {
@@ -407,7 +441,19 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
   };
 
   // ── Danh sách ──────────────────────────────────────────────────────────────────────────
-  const shown = useMemo(() => filterPlans(plans, filter, zones, branches), [plans, filter, zones, branches]);
+  const companyPlans = useMemo(
+    () => (fPid ? plans.filter(p => planBelongsTo(p, { pipelineId: fPid, clientId: fCid, companyName: fName })) : plans),
+    [plans, fPid, fCid, fName]);
+  const listBase = focusOn ? companyPlans : plans;
+  const shown = useMemo(() => filterPlans(listBase, filter, zones, branches), [listBase, filter, zones, branches]);
+  // Công ty chưa có phương án nào → vào thẳng phương án mới (chỉ 1 lần khi vừa mở)
+  const autoNewDone = useRef(false);
+  useEffect(() => {
+    if (loading || autoNewDone.current || !focus) return;
+    autoNewDone.current = true;
+    if (!loadErr && companyPlans.length === 0) openNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy 1 lần ngay khi danh sách vừa tải xong
+  }, [loading]);
   const filterOpts = useMemo(() => planFilterOptions(plans, filter, zones, branches), [plans, filter, zones, branches]);
   // Đổi tỉnh mà KCN đang chọn không thuộc tỉnh đó → bỏ chọn KCN để không ra danh sách rỗng khó hiểu
   const pickProvince = (province: string) => setFilter(f => {
@@ -478,7 +524,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                     {draft.id && <MenuItem onClick={() => { setShowHistory(true); close(); }}>Lịch sử chỉnh sửa</MenuItem>}
                     <MenuItem onClick={() => { duplicate(draft); close(); }}>Nhân bản</MenuItem>
                     {draft.meta.pipeline_id && draft.id && !isReferral(draft.data) && <MenuItem onClick={() => { pushToCrm(); close(); }}>Đưa vào hồ sơ CRM</MenuItem>}
-                    <MenuItem onClick={() => { setDraft(d => (d ? { ...d, meta: { ...d.meta, status: d.meta.status === 'archived' ? 'draft' : 'archived' } } : d)); close(); }}>{draft.meta.status === 'archived' ? 'Bỏ lưu trữ' : 'Lưu trữ'}</MenuItem>
+                    <MenuItem onClick={() => { toggleArchive(); close(); }}>{draft.meta.status === 'archived' ? 'Bỏ lưu trữ' : 'Lưu trữ'}</MenuItem>
                   </div>
                 )}
               </Popover>
@@ -492,6 +538,21 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
           {!draft ? (
             // ───────────── DANH SÁCH ─────────────
             <div className="p-5 sm:p-6 space-y-5 max-w-[1100px] mx-auto">
+              {focus && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[#eef5ff] px-4 py-2.5 text-[13px] text-[#0b5cc4]">
+                  {focusOn ? (
+                    <>
+                      <span>Phương án của <b>{focus.companyName}</b> · {companyPlans.length} phương án{companyPlans.length ? '' : ' — bấm “Phương án mới” để lập'}</span>
+                      <button onClick={() => setFocusOn(false)} className="ml-auto font-semibold hover:underline">Xem tất cả phương án</button>
+                    </>
+                  ) : (
+                    <>
+                      <span>Đang xem tất cả phương án</span>
+                      <button onClick={() => setFocusOn(true)} className="ml-auto font-semibold hover:underline">Chỉ xem của {focus.companyName}</button>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2.5">
                 <button onClick={openNew} className={`${btnPrimary} !h-9 !px-4`}><Plus size={15} />Phương án mới</button>
                 <div className="relative flex-1 min-w-[180px] max-w-xs">
@@ -589,6 +650,16 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                         </button>
                         <div className="mt-4 pt-3 border-t border-[#f2f2f4] flex items-center gap-2 text-[11.5px] text-[#86868b]">
                           <span className="truncate">{p.updated_by_name ?? '—'} · {formatDate(p.updated_at)}</span>
+                          {(() => {
+                            const d = p.data?.doc;
+                            const n = daysLeft(d?.validUntil);
+                            if (!d?.date) return null;
+                            return (
+                              <span className={`whitespace-nowrap ${n != null && n < 0 ? 'text-[#d70015] font-medium' : ''}`} title={`Ban hành ${dateShort(d.date)}${d.validUntil ? ` · hiệu lực đến ${dateShort(d.validUntil)}` : ''}`}>
+                                · {n == null ? `BH ${dateShort(d.date)}` : n < 0 ? 'Hết hiệu lực' : `HL đến ${dateShort(d.validUntil).slice(0, 5)}`}
+                              </span>
+                            );
+                          })()}
                           {sh && <span className="inline-flex items-center gap-1 text-[#1d8a3b] font-medium whitespace-nowrap"><Link2 size={11} />{sh.open_count} lượt mở</span>}
                           <span className="ml-auto flex items-center">
                             <button onClick={() => duplicate({ meta: metaOfRow(p), data: normalizePlanData(p.data) })} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-[#f5f5f7] hover:text-[#1d1d1f]" title="Nhân bản"><Copy size={13} /></button>

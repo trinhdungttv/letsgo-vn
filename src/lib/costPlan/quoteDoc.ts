@@ -20,10 +20,12 @@ export interface QuoteDoc {
   /** Pháp nhân gửi báo giá này (null = cái dùng gần nhất / cái đầu tiên) */
   entityId: string | null;
   number: string;
-  /** yyyy-mm-dd */
+  /** Ngày ban hành, yyyy-mm-dd */
   date: string;
   /** yyyy-mm-dd hoặc '' */
   validUntil: string;
+  /** Hiệu lực tính theo số tháng kể từ ngày ban hành (đổi ngày ban hành thì ngày hết hạn tự theo). null = tự chọn ngày cụ thể */
+  validMonths: number | null;
   customer: { name: string; attn: string; address: string; taxCode: string; phone: string; mobile: string; email: string };
   /** Người phụ trách bên mình (điền vào các ô "Người phụ trách / Chức vụ / Di động / Email" của file mẫu) */
   seller: { name: string; title: string; mobile: string; email: string };
@@ -59,7 +61,25 @@ export const normalizeProfile = (raw: unknown): CompanyProfileData => {
 
 export const pad2 = (n: number) => String(n).padStart(2, '0');
 export const isoDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+/** Cộng tháng theo lịch, giữ ngày trong tháng (31/01 + 1 tháng → 28 hoặc 29/02). */
+export function addMonthsIso(iso: string, months: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const total = (m - 1) + months;
+  const ty = y + Math.floor(total / 12), tm = ((total % 12) + 12) % 12;
+  const last = new Date(ty, tm + 1, 0).getDate();
+  return `${ty}-${pad2(tm + 1)}-${pad2(Math.min(d, last))}`;
+}
+/** Còn bao nhiêu ngày hiệu lực (âm = đã hết, 0 = hết hạn hôm nay). null khi chưa có ngày hết hạn. */
+export function daysLeft(validUntil: string | null | undefined, today = new Date()): number | null {
+  const [y, m, d] = (validUntil ?? '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const end = new Date(y, m - 1, d).getTime();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return Math.round((end - start) / 86_400_000);
+}
+/** Hiệu lực mặc định của báo giá: 1 tháng kể từ ngày ban hành */
+export const DEFAULT_VALID_MONTHS = 1;
 
 export interface DocDefaults {
   name?: string; attn?: string; address?: string; taxCode?: string; phone?: string; mobile?: string; email?: string;
@@ -73,7 +93,9 @@ export const suggestNumber = (d: Date, rand = Math.floor(Math.random() * 900) + 
 
 export function defaultDoc(today: Date, def: DocDefaults = {}, lang: DocLang = 'vi'): QuoteDoc {
   return {
-    lang, entityId: null, number: suggestNumber(today), date: isoDate(today), validUntil: def.validUntil || isoDate(addDays(today, 30)),
+    lang, entityId: null, number: suggestNumber(today), date: isoDate(today),
+    validUntil: def.validUntil || addMonthsIso(isoDate(today), DEFAULT_VALID_MONTHS),
+    validMonths: def.validUntil ? null : DEFAULT_VALID_MONTHS,
     customer: { name: def.name ?? '', attn: def.attn ?? '', address: def.address ?? '', taxCode: def.taxCode ?? '', phone: def.phone ?? '', mobile: def.mobile ?? '', email: def.email ?? '' },
     seller: { name: def.sellerName ?? '', title: def.sellerTitle ?? '', mobile: def.sellerMobile ?? '', email: def.sellerEmail ?? '' },
     title: null, intro: null, serviceLines: null, closing: null, payment: def.payment ?? '', edits: {},
@@ -104,6 +126,8 @@ export function normalizeDoc(raw: unknown): QuoteDoc | null {
   return {
     lang: r.lang === 'zh' || r.lang === 'en' ? r.lang : 'vi', entityId: nul(r.entityId),
     number: str(r.number, base.number), date: str(r.date, base.date), validUntil: str(r.validUntil, base.validUntil),
+    // Báo giá cũ chưa có trường này → giữ đúng ngày hết hạn đã ghi (không tự tính lại)
+    validMonths: typeof r.validMonths === 'number' && r.validMonths > 0 ? Math.min(24, Math.round(r.validMonths)) : null,
     customer: { name: str(c.name, ''), attn: str(c.attn, ''), address: str(c.address, ''), taxCode: str(c.taxCode, ''), phone: str(c.phone, ''), mobile: str(c.mobile, ''), email: str(c.email, '') },
     seller: { name: str(sl.name, ''), title: str(sl.title, ''), mobile: str(sl.mobile, ''), email: str(sl.email, '') },
     title: nul(r.title), intro: nul(r.intro), serviceLines: nul(r.serviceLines), closing: nul(r.closing),
@@ -121,7 +145,8 @@ const T = {
   tax: { vi: 'Mã số thuế', zh: '税号', en: 'Tax code' },
   phone: { vi: 'Điện thoại', zh: '电话', en: 'Phone' },
   number: { vi: 'Số', zh: '编号', en: 'No.' },
-  date: { vi: 'Ngày', zh: '日期', en: 'Date' },
+  date: { vi: 'Ngày ban hành', zh: '签发日期', en: 'Issue date' },
+  validShort: { vi: 'Hiệu lực đến', zh: '有效期至', en: 'Valid until' },
   s1: { vi: 'Nội dung dịch vụ', zh: '服务内容', en: 'Scope of service' },
   s2: { vi: 'Bảng giá dịch vụ', zh: '服务价格表', en: 'Service price list' },
   s3: { vi: 'Điều kiện tính phí', zh: '收费条件', en: 'Fee terms' },
@@ -230,6 +255,8 @@ export interface DocView {
   title: Bi;
   number: string;
   dateText: string;
+  /** dd/mm/yyyy hoặc '' */
+  validUntilText: string;
   customer: { name: string; rows: { label: Bi; value: string }[] };
   labels: Record<LabelKey, Bi>;
   intro: Bi;
@@ -307,6 +334,7 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
     title: doc.title?.trim() ? { a: doc.title.trim() } : labels.title,
     number: doc.number.trim(),
     dateText: dateShort(doc.date),
+    validUntilText: doc.validUntil ? dateShort(doc.validUntil) : '',
     customer: { name: cus.name.trim(), rows: cRows },
     labels,
     intro: doc.intro?.trim() ? { a: doc.intro.trim() } : defaultIntro(lang, companyName, referral),

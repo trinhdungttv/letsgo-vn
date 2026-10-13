@@ -97,6 +97,8 @@ export default function QuoteDocument({ view, images, layout = DEFAULT_LAYOUT, s
           {view.number ? <span>{L.number.a}: <b style={{ color: INK }}>{view.number}</b></span> : null}
           {view.number && view.dateText ? <span style={{ margin: '0 10px' }}>·</span> : null}
           {view.dateText ? <span>{L.date.a}: <b style={{ color: INK }}>{view.dateText}</b></span> : null}
+          {view.validUntilText ? <span style={{ margin: '0 10px' }}>·</span> : null}
+          {view.validUntilText ? <span>{L.validShort.a}: <b style={{ color: INK }}>{view.validUntilText}</b></span> : null}
         </div>
       </div>
 

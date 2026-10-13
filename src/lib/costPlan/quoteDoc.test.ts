@@ -21,7 +21,7 @@ const view = (doc: QuoteDoc, p = plan()) => resolveDoc(doc, p, computePlan(p), p
 describe('mặc định', () => {
   it('ngày hôm nay, hiệu lực +30 ngày, số báo giá đúng dạng', () => {
     const d = defaultDoc(TODAY);
-    expect(d.date).toBe('2026-10-03'); expect(d.validUntil).toBe('2026-11-02');
+    expect(d.date).toBe('2026-10-03'); expect(d.validUntil).toBe('2026-11-03'); expect(d.validMonths).toBe(1);
     expect(suggestNumber(TODAY, 7)).toBe('BG-20261003-7');
   });
   it('lấy sẵn thông tin khách từ hồ sơ CRM (kể cả ngày hiệu lực & điều khoản thanh toán)', () => {
@@ -164,4 +164,19 @@ describe('nhắc kiểm tra trước khi xuất', () => {
 describe('tên file', () => {
   it('bỏ dấu, gọn, có số báo giá', () => expect(docFileName(view(mk('vi', { customer: { name: 'CÔNG TY TNHH Đồ Gỗ Việt', attn: '', address: '', taxCode: '', phone: '', mobile: '', email: '' } })))).toBe('Bao-gia-CONG-TY-TNHH-Do-Go-Viet-BG-20261003-123.pdf'));
   it('chưa có tên khách vẫn ra tên hợp lệ', () => expect(docFileName(view(mk('vi', { customer: { name: '', attn: '', address: '', taxCode: '', phone: '', mobile: '', email: '' } })))).toBe('Bao-gia-BG-20261003-123.pdf'));
+});
+
+describe('ngày ban hành & hiệu lực', () => {
+  it('cộng tháng theo lịch, không tràn sang tháng sau', async () => {
+    const { addMonthsIso } = await import('./quoteDoc');
+    expect(addMonthsIso('2026-10-13', 1)).toBe('2026-11-13');
+    expect(addMonthsIso('2026-01-31', 1)).toBe('2026-02-28');
+    expect(addMonthsIso('2028-01-31', 1)).toBe('2028-02-29');
+    expect(addMonthsIso('2026-11-30', 3)).toBe('2027-02-28');
+    expect(addMonthsIso('', 1)).toBe('');
+  });
+  it('báo giá cũ (chưa có số tháng hiệu lực) giữ nguyên ngày hết hạn', async () => {
+    const { normalizeDoc } = await import('./quoteDoc');
+    expect(normalizeDoc({ date: '2026-10-03', validUntil: '2026-11-02' })).toMatchObject({ validUntil: '2026-11-02', validMonths: null });
+  });
 });

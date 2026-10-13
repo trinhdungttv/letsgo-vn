@@ -99,3 +99,31 @@ export function planFilterOptions(plans: CostPlanRow[], f: PlanListFilter, zones
 }
 
 export const isFiltering = (f: PlanListFilter) => !!(f.q.trim() || f.industry || f.province || f.zone || f.branch || f.service)
+
+/** Công ty để gom phương án: dòng CRM Pipeline (và Khách hàng nếu đã liên kết) + tên công ty. */
+export interface PlanCompanyRef { pipelineId?: string | null; clientId?: string | null; companyName?: string | null }
+
+/**
+ * Phương án này có thuộc công ty đó không — khớp dòng CRM, hoặc Khách hàng đã liên kết, hoặc cùng tên công ty
+ * (phương án lập từ Workspace bằng cách chọn Khách hàng hay gõ tên vẫn được tính).
+ */
+export function planBelongsTo(p: Pick<CostPlanRow, 'pipeline_id' | 'client_id' | 'company_name'>, c: PlanCompanyRef): boolean {
+  if (c.pipelineId && p.pipeline_id === c.pipelineId) return true
+  if (c.clientId && p.client_id === c.clientId) return true
+  const name = norm(c.companyName).replace(/\s+/g, ' ')
+  return !!name && norm(p.company_name).replace(/\s+/g, ' ') === name
+}
+
+/** Số phương án (không tính Lưu trữ) của từng dòng CRM Pipeline. */
+export function planCountsByPipeline(
+  plans: CostPlanRow[],
+  entries: { id: string; client_id?: string | null; company_name: string }[],
+): Record<string, number> {
+  const live = plans.filter(p => p.status !== 'archived')
+  const out: Record<string, number> = {}
+  for (const e of entries) {
+    const n = live.filter(p => planBelongsTo(p, { pipelineId: e.id, clientId: e.client_id, companyName: e.company_name })).length
+    if (n) out[e.id] = n
+  }
+  return out
+}
