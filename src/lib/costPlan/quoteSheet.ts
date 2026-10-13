@@ -101,13 +101,16 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
   const otBaseDaily = q.otBase === 'worker' ? result.workerDaily : result.baseWageDaily;
   const shr = otBaseDaily / HOURS_PER_DAY;
   const mk = 1 + q.otMarkupPct / 100;
+  // Giá ngày thật = giá người dùng ghi ở dòng ca 8h (nếu có), không thì giá tự tính từ bước 1 — ca đêm tính theo giá này
+  const dayRow = q.rows.find(r => r.kind === 'day8' && !r.hidden && r.override != null);
+  const dayPrice = dayRow ? Math.max(0, dayRow.override!) : result.quoteDaily;
   const mkTxt = q.otMarkupPct > 0 ? ` + ${q.otMarkupPct}%` : '';
 
   const auto = (kind: QuoteRowKind): { v: number | null; formula: string } => {
     const ot = (c: number, label: string) => ({ v: shr * c * mk, formula: `${f(shr)} đ/giờ × ${pct(c)}${mkTxt} — ${label}` });
     switch (kind) {
       case 'day8': return { v: result.quoteDaily, formula: 'Giá 1 công từ bước 1: chi phí + phí dịch vụ + thuế dự phòng' };
-      case 'night8': return { v: result.quoteDaily + otBaseDaily * (NORM_NIGHT - 1), formula: `Giá ngày + 30% × ${f(otBaseDaily)} đ — làm đêm tối thiểu +30% (Điều 98 BLLĐ)` };
+      case 'night8': return { v: dayPrice + otBaseDaily * (NORM_NIGHT - 1), formula: `Giá ngày${dayRow ? ` đang báo (${f(dayPrice)})` : ''} + 30% × ${f(otBaseDaily)} đ — làm đêm tối thiểu +30% (Điều 98 BLLĐ)` };
       case 'ot_day': return ot(OT_DAY_WEEKDAY, 'tăng ca ngày thường 150%');
       case 'ot_night': return q.nightOtAfterDay ? ot(OT_NIGHT_WEEKDAY_PRIOR, 'tăng ca đêm liền sau ca ngày 210%') : ot(OT_NIGHT_WEEKDAY_NOPRIOR, 'tăng ca đêm ngày thường 200%');
       case 'ot_sun': return ot(OT_DAY_SUNDAY, 'ngày nghỉ hằng tuần 200%');
@@ -130,6 +133,53 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     };
   });
   return { rows, otBaseDaily, shr };
+}
+
+export interface EffectiveResult extends PlanResult {
+  /** Giá ca 8h đang báo khách là số người dùng tự ghi ở Bảng giá (không phải giá tự tính) */
+  dayOverridden: boolean;
+  /** Giá 1 công tự tính từ bước 1 — để tham khảo */
+  autoQuoteDaily: number;
+}
+
+/**
+ * Kết quả theo GIÁ ĐANG BÁO KHÁCH. Bảng 1 (chi phí) chỉ là tham khảo: người dùng ghi giá ca 8h khác ở Bảng giá thì lợi nhuận,
+ * chia lợi nhuận, doanh thu, số lưu vào danh sách đều tính theo giá đó. Phần chênh so với giá tự tính chia vào thuế dự phòng
+ * đúng như cách tính giá (lãi 20%: 80% vào lợi nhuận; 20% tổng: 1/1,2; không thuế: toàn bộ). Ghi đúng bằng giá tự tính → y hệt.
+ */
+export function effectiveResult(input: PlanData, r: PlanResult): EffectiveResult {
+  const data = normalizePlanData(input);
+  const q = normalizeQuoteSheet(data.quote);
+  const row = q.rows.find(x => x.kind === 'day8' && !x.hidden && x.override != null);
+  if (!row) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
+  const s = data.settings;
+  const price = Math.max(0, Math.round(row.override!));
+  const delta = price - r.quoteDaily;
+  const k = s.taxOption === 'profit20' ? 0.8 : s.taxOption === 'total20' ? 1 / 1.2 : 1;
+  let profitDaily = r.profitDaily + delta * k;
+  let taxDaily = r.taxDaily + delta * (1 - k);
+  if (taxDaily < 0) { profitDaily += taxDaily; taxDaily = 0; }
+  const pct = Math.min(100, Math.max(0, s.companyPct));
+  const profitMonthly = profitDaily * r.totalManDays;
+  const companyProfit = Math.round((profitMonthly * pct) / 100);
+  const warnings = [...r.warnings.filter(w => !/Phí dịch vụ|Biên lợi nhuận/.test(w.text))];
+  if (profitDaily < 0) {
+    warnings.unshift({ level: 'error', text: `Giá ca 8h đang báo ${f(price)} đ thấp hơn chi phí — lỗ ${f(-profitDaily)} đ/công.` });
+  } else if (price > 0 && (profitDaily / (price + r.separatedDaily)) * 100 < 5) {
+    warnings.unshift({ level: 'warn', text: 'Theo giá đang báo, biên lợi nhuận dưới 5% — rất mỏng, dễ lỗ khi phát sinh.' });
+  }
+  return {
+    ...r,
+    dayOverridden: true, autoQuoteDaily: r.quoteDaily,
+    quoteDaily: price, quoteRawDaily: price, roundingGainDaily: 0,
+    quoteMonthly: price * s.baseDays, quoteWithVatDaily: price * (1 + s.vatRate),
+    taxDaily, profitDaily, profitMonthly,
+    revenueMonthly: price * r.totalManDays + r.separatedBilledMonthly,
+    companyProfit, branchProfit: Math.round(profitMonthly) - companyProfit,
+    companyPerDay: (profitDaily * pct) / 100, branchPerDay: profitDaily - (profitDaily * pct) / 100,
+    marginPct: price + r.separatedDaily > 0 ? (profitDaily / (price + r.separatedDaily)) * 100 : 0,
+    warnings,
+  };
 }
 
 /** "Bao gồm: …" tự lấy từ tên các khoản ở bước 1 (bỏ lương cơ bản, bỏ phần trong ngoặc). */

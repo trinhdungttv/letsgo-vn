@@ -4,12 +4,14 @@ import { newLineId } from '../../../lib/costPlan/engine';
 import { legalChecklist } from '../../../lib/costPlan/legal';
 import { normalizeText, optionalFor } from '../../../lib/costPlan/presets';
 import type { CostLine, PlanData, PlanResult, PlanSettings, QuoteSheet } from '../../../lib/costPlan/types';
+import { effectiveResult, normalizeQuoteSheet } from '../../../lib/costPlan/quoteSheet';
 import CostSections, { secOf, withSection, type LineSuggestion } from './CostSections';
 import ProfitSplit from './ProfitSplit';
 import { InsuranceSplit, PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
 import ReferralEditor from './ReferralEditor';
 import QuoteMetaCard from './QuoteMetaCard';
 import { defaultReferral, type ServiceKind } from '../../../lib/costPlan/referral';
+import type { Scale, ScaleDefaults } from '../../../lib/costPlan/scaleDefaults';
 import { CostTotalCard, LegalCard, NegotiateCard, ProfitCard, SettingsCard, Warnings } from './SummaryPanel';
 import { fmt } from './fields';
 import { Seg, card, field, labelCls, btnGhost } from './ui';
@@ -20,12 +22,14 @@ const SERVICE_OPTS: { value: ServiceKind; label: string }[] = [
 ];
 
 /** Chọn loại dịch vụ của phương án. Đổi qua lại không mất dữ liệu bên kia (bảng chi phí / cấu hình phí vẫn giữ). */
-function ServiceSwitch({ data, readOnly, onChange }: { data: PlanData; readOnly?: boolean; onChange: (d: PlanData) => void }) {
+function ServiceSwitch({ data, readOnly, onChange, defaults }: { data: PlanData; readOnly?: boolean; onChange: (d: PlanData) => void; defaults?: ScaleDefaults }) {
   const cur: ServiceKind = data.service === 'referral' ? 'referral' : 'supply';
   const pick = (v: ServiceKind) => {
     if (v === cur) return;
-    if (v === 'referral') onChange({ ...data, service: 'referral', referral: data.referral ?? defaultReferral() });
-    else { const next = { ...data }; delete next.service; onChange(next); }   // cung ứng = không có khoá service, như phương án cũ
+    // Đổi loại dịch vụ → dùng quy mô chuẩn của loại đó
+    const settings = defaults ? { ...data.settings, workers: defaults[v].workers, simDays: defaults[v].simDays } : data.settings;
+    if (v === 'referral') onChange({ ...data, settings, service: 'referral', referral: data.referral ?? defaultReferral() });
+    else { const next = { ...data, settings }; delete next.service; onChange(next); }   // cung ứng = không có khoá service, như phương án cũ
   };
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -69,7 +73,7 @@ function StepTabs({ step, onStep, cost, price, canQuote }: { step: Step; onStep:
  */
 export default function PlanEditor({
   data, result, readOnly, industry, onChange, aboveList, historySuggestions, branchLabel, branchKhoan,
-  minWage, templateLines, fileName = 'phuong-an-gia', fillMeta, planId, docDefaults, onPushCrm, initialStep,
+  minWage, templateLines, fileName = 'phuong-an-gia', fillMeta, planId, docDefaults, onPushCrm, initialStep, scale,
 }: {
   data: PlanData;
   result: PlanResult;
@@ -92,15 +96,25 @@ export default function PlanEditor({
   docDefaults?: import('../../../lib/costPlan/quoteDoc').DocDefaults;
   onPushCrm?: () => void;
   initialStep?: Step;
+  /** Quy mô chuẩn dùng chung (số người × số công) — nhập số mới ở đây thì ghi thành chuẩn mới */
+  scale?: { defaults: ScaleDefaults; remember: (service: ServiceKind, p: Partial<Scale>) => void };
 }) {
   const baseWageDaily = result.baseWageDaily;
   const canQuote = baseWageDaily > 0;
   const [step, setStep] = useState<Step>(initialStep ?? 'cost');
   const cur: Step = step === 'quote' && !canQuote ? 'cost' : step;
 
-  const setSettings = (p: Partial<PlanSettings>) => onChange({ ...data, settings: { ...data.settings, ...p } });
+  const setSettings = (p: Partial<PlanSettings>) => {
+    if (p.workers !== undefined || p.simDays !== undefined) {
+      scale?.remember('supply', { ...(p.workers !== undefined ? { workers: p.workers } : {}), ...(p.simDays !== undefined ? { simDays: p.simDays } : {}) });
+    }
+    onChange({ ...data, settings: { ...data.settings, ...p } });
+  };
   const setLines = (lines: CostLine[]) => onChange({ ...data, lines });
   const setQuote = (q: QuoteSheet) => onChange({ ...data, quote: q });
+  // Bước 2 tính theo GIÁ ĐANG BÁO KHÁCH (người dùng có thể ghi giá ca 8h khác giá tự tính)
+  const eff = useMemo(() => effectiveResult(data, result), [data, result]);
+  const resetDayPrice = () => { const q = normalizeQuoteSheet(data.quote); setQuote({ ...q, rows: q.rows.map(r => (r.kind === 'day8' ? { ...r, override: null } : r)) }); };
 
   const addFix = (fix: CostLine) => {
     const l = withSection({ ...fix, id: newLineId() }, secOf(fix));
@@ -139,17 +153,18 @@ export default function PlanEditor({
   if (data.service === 'referral') {
     return (
       <div className="space-y-4">
-        <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} />
+        <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} defaults={scale?.defaults} />
         <ReferralEditor data={data} result={result} readOnly={readOnly} onChange={onChange} aboveList={aboveList}
-          branchLabel={branchLabel} branchKhoan={branchKhoan} planId={planId} docDefaults={docDefaults} meta={fillMeta} />
+          branchLabel={branchLabel} branchKhoan={branchKhoan} planId={planId} docDefaults={docDefaults} meta={fillMeta}
+          standardScale={scale?.defaults.referral} onScaleChange={scale ? p => scale.remember('referral', p) : undefined} />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} />
-      <StepTabs step={cur} onStep={setStep} cost={result.costDaily} price={result.quoteDaily} canQuote={canQuote} />
+      <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} defaults={scale?.defaults} />
+      <StepTabs step={cur} onStep={setStep} cost={result.costDaily} price={eff.quoteDaily} canQuote={canQuote} />
 
       {cur === 'cost' ? (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
@@ -175,17 +190,17 @@ export default function PlanEditor({
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
           <div className="space-y-4 min-w-0">
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines} suggestions={[]} show={['service']} />
-            <PriceBuild data={data} result={result} onGoCost={() => setStep('cost')} />
-            <InsuranceSplit data={data} result={result} readOnly={readOnly} onPlan={onChange} />
+            <PriceBuild data={data} result={result} eff={eff} onGoCost={() => setStep('cost')} onResetDay={readOnly ? undefined : resetDayPrice} />
+            <InsuranceSplit data={data} result={eff} readOnly={readOnly} onPlan={onChange} />
             <QuoteMetaCard data={data} onChange={onChange} readOnly={readOnly} defaults={docDefaults} companyName={fillMeta?.company} />
             <PriceTable data={data} result={result} readOnly={readOnly} fileName={fileName} meta={fillMeta} planId={planId} docDefaults={docDefaults} onQuote={setQuote} onPlan={onChange} onPushCrm={readOnly ? undefined : onPushCrm} />
             <QuoteNotes data={data} readOnly={readOnly} onQuote={setQuote} />
             {!readOnly && <div className="px-1"><button type="button" onClick={() => setStep('cost')} className={btnGhost}>← Quay lại chi phí lao động</button></div>}
           </div>
           <div className="space-y-4 min-w-0 order-first xl:order-none xl:sticky xl:top-0">
-            <Warnings result={result} />
-            <ProfitCard data={data} result={result} readOnly={readOnly} onChange={setSettings} />
-            <ProfitSplit settings={data.settings} result={result} readOnly={readOnly} onChange={setSettings} branchLabel={branchLabel} branchKhoan={branchKhoan} />
+            <Warnings result={eff} />
+            <ProfitCard data={data} result={eff} readOnly={readOnly} onChange={setSettings} standard={scale?.defaults.supply} />
+            <ProfitSplit settings={data.settings} result={eff} readOnly={readOnly} onChange={setSettings} branchLabel={branchLabel} branchKhoan={branchKhoan} />
             {!readOnly && <NegotiateCard data={data} result={result} onApplyLine={fee => setLines(data.lines.map(l => (l.id === fee.id ? fee : l)))} />}
             <SettingsCard settings={data.settings} readOnly={readOnly} onChange={setSettings} />
           </div>

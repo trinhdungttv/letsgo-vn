@@ -62,8 +62,8 @@ export async function resolvePipelineEntry(entry: CRMPipelineEntry, branches: Br
 
   const branch = branchOf(entry, branches);
   if (branch) found.push(`chi nhánh ${branch.name}`);
+  // Số LĐ dự kiến chỉ trả về để tham khảo — phương án dùng quy mô chuẩn chung, không điền số này nữa
   const workers = entry.worker_estimate ?? null;
-  if (workers) found.push(`${workers} LĐ dự kiến`);
 
   const quoteLines = qi.lines.filter(l => (l.wage ?? 0) > 0 || (l.fee ?? 0) > 0);
   if (quoteLines.length) found.push(`${quoteLines.length} dòng đơn giá trong "Thông tin báo giá"`);
@@ -86,7 +86,6 @@ export function resolveClient(c: Client, branches: Branch[]): ResolvedCompany {
   const branch = branchOf(c, branches);
   if (branch) found.push(`chi nhánh ${branch.name}`);
   const workers = c.current_workers ?? null;
-  if (workers) found.push(`${workers} LĐ hiện có`);
   return {
     meta: { company_name: c.name, client_id: c.id, pipeline_id: null, industry, zone_name: zone, branch_id: branch?.id ?? null },
     workers, quoteLines: [], found,

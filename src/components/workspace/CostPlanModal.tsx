@@ -24,6 +24,7 @@ import type { CostLine, CostPlanRow, PlanData, PlanRevision, SharedInfo } from '
 import type { Branch, BranchTypeHistory, Client, CRMPipelineEntry } from '../../lib/types';
 import { formatDate } from '../../lib/format';
 import PlanEditor from './costplan/PlanEditor';
+import { useScaleDefaults } from './costplan/useScaleDefaults';
 import PlanContextBar from './costplan/PlanContextBar';
 import SuggestionsPanel from './costplan/SuggestionsPanel';
 import IndustryTemplateBar from './costplan/IndustryTemplateBar';
@@ -31,6 +32,7 @@ import SharePanel from './costplan/SharePanel';
 import HistoryPanel from './costplan/HistoryPanel';
 import { normalizeQuoteInfo as normQI } from '../../lib/quoteInfo';
 import { dateShort, daysLeft, defaultDoc } from '../../lib/costPlan/quoteDoc';
+import { effectiveResult } from '../../lib/costPlan/quoteSheet';
 import { emptyMeta, resolveClient, resolvePipelineEntry, type PlanMeta } from './costplan/context';
 import { fmt, fmtD, fmtShort } from './costplan/fields';
 import { FONT, Popover, MenuItem, Seg, Select, btnGhost, btnPrimary, card, field } from './costplan/ui';
@@ -139,6 +141,9 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
   const [filter, setFilter] = useState<PlanListFilter>(EMPTY_PLAN_FILTER);
   const setF = (p: Partial<PlanListFilter>) => setFilter(f => ({ ...f, ...p }));
 
+  // Quy mô chuẩn dùng chung (số người × số công) — phương án mới bắt đầu bằng số này
+  const scaleDefaults = useScaleDefaults();
+
   const dirty = !!draft && snapshot(draft.meta, draft.data) !== draft.baseline;
   useBeforeUnloadWarning(dirty);
 
@@ -207,7 +212,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
 
   const openNew = () => {
     const meta = emptyMeta();
-    const data: PlanData = { settings: { ...DEFAULT_SETTINGS }, lines: starterFor('', ''), notes: '' };
+    const sc = scaleDefaults.defaults.supply;
+    const data: PlanData = { settings: { ...DEFAULT_SETTINGS, workers: sc.workers, simDays: sc.simDays }, lines: starterFor('', ''), notes: '' };
     setDraft({ id: null, meta, data, version: 0, share: null, baseline: snapshot(meta, data), linesTouched: false, updatedBy: null, updatedAt: null });
     setCrmLines([]); setRemote(null); setSaveNote('');
     // Mở từ hồ sơ công ty → chọn sẵn công ty đó (tự điền ngành, KCN, chi nhánh, số LĐ từ CRM)
@@ -269,14 +275,15 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
         const entry = pipeline.find(p => p.id === id);
         if (!entry) return;
         const r = await resolvePipelineEntry(entry, branches);
-        patchMeta({ ...r.meta, title: draft?.meta.title || `${entry.company_name}${r.meta.industry ? ` — ${r.meta.industry}` : ''}` }, r.workers);
+        // Không lấy số LĐ dự kiến của khách làm quy mô — mọi phương án dùng chung quy mô chuẩn để so được với nhau
+        patchMeta({ ...r.meta, title: draft?.meta.title || `${entry.company_name}${r.meta.industry ? ` — ${r.meta.industry}` : ''}` });
         setCrmLines(r.quoteLines);
         toast(r.found.length ? `Đã lấy từ hồ sơ CRM: ${r.found.join(', ')}` : 'Hồ sơ CRM chưa có ngành / KCN — chọn tay bên cạnh');
       } else {
         const c = clients.find(x => x.id === id);
         if (!c) return;
         const r = resolveClient(c, branches);
-        patchMeta({ ...r.meta, title: draft?.meta.title || `${c.name}${r.meta.industry ? ` — ${r.meta.industry}` : ''}` }, r.workers);
+        patchMeta({ ...r.meta, title: draft?.meta.title || `${c.name}${r.meta.industry ? ` — ${r.meta.industry}` : ''}` });
         setCrmLines([]);
         toast(r.found.length ? `Đã lấy từ hồ sơ khách hàng: ${r.found.join(', ')}` : 'Khách hàng này chưa có ngành / KCN — chọn tay bên cạnh');
       }
@@ -380,7 +387,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
       };
       const fields: PlanFields = {
         ...meta, industry: meta.industry || null, zone_name: meta.zone_name || null, company_name: meta.company_name || null,
-        data, summary: summarizePlan(data, result),
+        // Lưu theo giá đang báo khách (giá ca 8h ghi tay ở Bảng giá, nếu có) — danh sách hiện đúng giá đã gửi
+        data, summary: summarizePlan(data, effectiveResult(data, result)),
       };
       const r = await savePlan(token, draft.id, fields, { expectedVersion: draft.id ? draft.version : null, force, note: saveNote.trim() || undefined });
       if (!r.ok) { setConflict(r.plan); return; }
@@ -424,13 +432,14 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
       id: existing?.id ?? newQuoteLineId(),
       label: draft.meta.title || 'Phương án giá',
       workers: String(draft.data.settings.workers),
-      wage: Math.round(result.costDaily),
-      fee: Math.round(result.serviceFeeDaily + result.taxDaily + result.roundingGainDaily),
+      // Chi phí trong giá ngày (bảo hiểm thu riêng theo tháng nằm ngoài) + phần còn lại của giá đang báo → cộng lại đúng bằng giá báo
+      wage: Math.round(result.costDaily - result.separatedDaily),
+      fee: Math.round(effectiveResult(draft.data, result).quoteDaily - (result.costDaily - result.separatedDaily)),
       unit: 'ngày công',
       note: `${marker} Phương án giá v${draft.version}`,
     };
     const msg = `${existing ? 'Cập nhật' : 'Thêm'} dòng vào "Thông tin báo giá" của ${draft.meta.company_name || 'khách'}:\n` +
-      `• Chi phí lao động: ${fmtD(line.wage ?? 0)}/công\n• Phí DV (+thuế dự phòng): ${fmtD(line.fee ?? 0)}/công\n• Giá báo: ${fmtD(result.quoteDaily)}/công · ${line.workers} LĐ`;
+      `• Chi phí lao động: ${fmtD(line.wage ?? 0)}/công\n• Phí DV (+thuế dự phòng): ${fmtD(line.fee ?? 0)}/công\n• Giá báo: ${fmtD(effectiveResult(draft.data, result).quoteDaily)}/công · ${line.workers} LĐ`;
     if (!window.confirm(msg)) return;
     const lines = existing ? qi.lines.map(l => (l.id === existing.id ? line : l)) : [...qi.lines, line];
     const payload: QuoteInfo = {
@@ -689,7 +698,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                   data={draft.data} result={result} industry={draft.meta.industry} onChange={setData}
                   branchLabel={branch ? branchLabel(branch) : null} branchKhoan={branchKhoan}
                   historySuggestions={historySuggestions} minWage={minWage} templateLines={draftTemplate?.lines ?? null} fileName={draft.meta.title || 'phuong-an-gia'} fillMeta={{ company: draft.meta.company_name, industry: draft.meta.industry, zone: draft.meta.zone_name }}
-                  planId={draft.id} docDefaults={docDefaults}
+                  planId={draft.id} docDefaults={docDefaults} scale={scaleDefaults}
                   onPushCrm={draft.meta.pipeline_id && draft.id ? pushToCrm : undefined}
                   aboveList={isReferral(draft.data) ? (
                     // Giới thiệu lao động: không có bảng chi phí lương → bỏ lương tối thiểu, đơn giá CRM, mẫu ngành, tham khảo bảng chi phí

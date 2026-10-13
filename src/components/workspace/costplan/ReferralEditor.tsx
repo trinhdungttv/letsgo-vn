@@ -10,6 +10,7 @@ import {
 import { DOC_LANGS, type DocDefaults } from '../../../lib/costPlan/quoteDoc';
 import type { PlanData, PlanResult, PlanSettings } from '../../../lib/costPlan/types';
 import ProfitSplit from './ProfitSplit';
+import { StandardScaleHint } from './SummaryPanel';
 import QuoteMetaCard from './QuoteMetaCard';
 import QuoteDocDialog from './QuoteDocDialog';
 import { copyText } from '../../../lib/clipboard';
@@ -29,7 +30,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export default function ReferralEditor({
-  data, result, readOnly, onChange, aboveList, branchLabel, branchKhoan, planId, docDefaults, meta,
+  data, result, readOnly, onChange, aboveList, branchLabel, branchKhoan, planId, docDefaults, meta, standardScale, onScaleChange,
 }: {
   data: PlanData;
   /** Kết quả engine cung ứng — chỉ để truyền cho hộp xuất PDF (dùng chung với cung ứng) */
@@ -42,12 +43,21 @@ export default function ReferralEditor({
   planId?: string | null;
   docDefaults?: DocDefaults;
   meta?: { company?: string | null; industry?: string | null; zone?: string | null };
+  /** Quy mô chuẩn dùng chung của dịch vụ Giới thiệu */
+  standardScale?: { workers: number; simDays: number };
+  /** Người dùng nhập số người / số công → ghi thành quy mô chuẩn */
+  onScaleChange?: (p: { workers?: number; simDays?: number }) => void;
 }) {
   const cfg = useMemo(() => normalizeReferral(data.referral), [data.referral]);
   const r = useMemo(() => computeReferral(cfg, data.settings), [cfg, data.settings]);
   const s = data.settings;
   const set = (p: Partial<ReferralConfig>) => onChange({ ...data, referral: { ...cfg, ...p } });
-  const setSettings = (p: Partial<PlanSettings>) => onChange({ ...data, settings: { ...s, ...p } });
+  const setSettings = (p: Partial<PlanSettings>) => {
+    if (p.workers !== undefined || p.simDays !== undefined) {
+      onScaleChange?.({ ...(p.workers !== undefined ? { workers: p.workers } : {}), ...(p.simDays !== undefined ? { simDays: p.simDays } : {}) });
+    }
+    onChange({ ...data, settings: { ...s, ...p } });
+  };
   const dis = !!readOnly;
   const time = cfg.mode === 'time';
 
@@ -227,6 +237,8 @@ export default function ReferralEditor({
                 <span>công / tháng mỗi người</span>
               </div>
             )}
+            <StandardScaleHint workers={s.workers} simDays={s.simDays} standard={standardScale} readOnly={dis}
+              onApply={() => standardScale && setSettings({ workers: standardScale.workers, simDays: standardScale.simDays })} />
             <div className="flex items-baseline justify-between pt-1">
               <span className="font-medium">= Số người được tính phí</span>
               <span className="text-[20px] leading-none font-semibold tabular-nums text-[#5e5ce6]">{fmt(Math.round(r.billedWorkers * 10) / 10)}<span className="ml-1 text-[12px] font-medium text-[#5e5ce6]/70">người</span></span>

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { newLineId } from '../../../lib/costPlan/engine';
 import {
-  computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type PriceRow,
+  computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { normalizeText } from '../../../lib/costPlan/presets';
@@ -14,29 +14,57 @@ import type { DocDefaults } from '../../../lib/costPlan/quoteDoc';
 import { copyText } from '../../../lib/clipboard';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
-/** Hình thành giá 1 công: giá vốn + phí dịch vụ + thuế dự phòng (+ làm tròn). */
-export function PriceBuild({ data, result, onGoCost }: { data: PlanData; result: PlanResult; onGoCost: () => void }) {
+/**
+ * Hình thành giá 1 công: giá vốn + phí dịch vụ + thuế dự phòng (+ làm tròn).
+ * Người dùng đã ghi giá ca 8h khác ở Bảng giá → phần tự tính chỉ còn để tham khảo, giá to là giá đang báo.
+ */
+export function PriceBuild({ data, result, eff, onGoCost, onResetDay }: {
+  data: PlanData; result: PlanResult;
+  /** Kết quả theo giá đang báo khách (có thể là giá ghi tay) */
+  eff?: EffectiveResult;
+  onGoCost: () => void;
+  /** Bỏ giá ghi tay, dùng lại giá tự tính */
+  onResetDay?: () => void;
+}) {
   const s = data.settings;
+  const manual = !!eff?.dayOverridden;
+  const shown = manual ? eff! : result;
   return (
     <div className={`${card} p-5`}>
       <div className="flex items-baseline justify-between">
         <div className="text-[14px] font-semibold text-[#1d1d1f]">Giá 1 ngày công 8 giờ</div>
         <button type="button" onClick={onGoCost} className={btnLink + ' !text-[12px]'}>Sửa chi phí ở bước 1</button>
       </div>
-      <dl className="mt-3 space-y-2 text-[13px]">
+      {manual && <div className="mt-1 text-[11.5px] text-[#86868b]">Bảng chi phí ở bước 1 chỉ để tham khảo — giá đang báo là số bạn ghi ở Bảng giá dịch vụ.</div>}
+      <dl className={`mt-3 space-y-2 text-[13px] ${manual ? 'opacity-70' : ''}`}>
         <div className="flex justify-between"><dt className="text-[#6e6e73]">Chi phí lao động (giá vốn)</dt><dd className="font-medium tabular-nums">{fmt(result.costDaily)}</dd></div>
         <div className="flex justify-between"><dt className="text-[#6e6e73]">Phí dịch vụ</dt><dd className="font-semibold tabular-nums text-[#5e5ce6]">+{fmt(result.serviceFeeDaily)}</dd></div>
         {result.taxDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Thuế TNDN dự phòng</dt><dd className="font-semibold tabular-nums text-[#c4620a]">+{fmt(result.taxDaily)}</dd></div>}
         {result.roundingGainDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Làm tròn lên</dt><dd className="font-semibold tabular-nums text-[#c4620a]">+{fmt(result.roundingGainDaily)}</dd></div>}
         {result.separatedDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Bảo hiểm thu riêng theo tháng</dt><dd className="font-semibold tabular-nums text-[#0a7d6e]">−{fmt(result.separatedDaily)}</dd></div>}
       </dl>
+      {manual && (
+        <div className="mt-2 flex justify-between text-[13px]"><span className="text-[#6e6e73]">= Giá tự tính (tham khảo)</span><span className="font-medium tabular-nums text-[#6e6e73]">{fmt(eff!.autoQuoteDaily)}</span></div>
+      )}
       <div className="mt-3 pt-3 border-t border-[#f0f0f2] flex items-baseline justify-between gap-3">
-        <div className="text-[12px] text-[#6e6e73]">Giá báo khách{s.vatRate > 0 ? ` · đã VAT ${s.vatRate * 100}%: ${fmt(result.quoteWithVatDaily)} đ` : ' · chưa VAT'}</div>
+        <div className="text-[12px] text-[#6e6e73]">
+          {manual ? <b className="text-[#b25e00]">Giá đang báo khách (ghi tay)</b> : 'Giá báo khách'}
+          {s.vatRate > 0 ? ` · đã VAT ${s.vatRate * 100}%: ${fmt(shown.quoteWithVatDaily)} đ` : ' · chưa VAT'}
+        </div>
         <div className="flex items-baseline gap-1.5 shrink-0">
-          <span className="text-[34px] leading-none font-semibold tracking-tight tabular-nums text-[#0071e3]">{fmt(result.quoteDaily)}</span>
-          <span className="text-[16px] font-medium text-[#0071e3]/60">đ / ngày</span>
+          <span className={`text-[34px] leading-none font-semibold tracking-tight tabular-nums ${manual ? 'text-[#b25e00]' : 'text-[#0071e3]'}`}>{fmt(shown.quoteDaily)}</span>
+          <span className={`text-[16px] font-medium ${manual ? 'text-[#b25e00]/60' : 'text-[#0071e3]/60'}`}>đ / ngày</span>
         </div>
       </div>
+      {manual && (
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[12.5px]">
+          <span className={eff!.profitDaily < 0 ? 'text-[#d70015] font-semibold' : 'text-[#1d8a3b]'}>
+            {eff!.profitDaily < 0 ? 'Lỗ' : 'Lợi nhuận'} {fmt(Math.abs(eff!.profitDaily))} đ/công theo giá này
+            <span className="text-[#86868b] font-normal"> ({eff!.quoteDaily >= eff!.autoQuoteDaily ? '+' : '−'}{fmt(Math.abs(eff!.quoteDaily - eff!.autoQuoteDaily))} so với giá tự tính)</span>
+          </span>
+          {onResetDay && <button type="button" onClick={onResetDay} className={btnLink + ' !text-[12px]'}>Dùng lại giá tự tính</button>}
+        </div>
+      )}
       {result.separatedMonthly > 0 && (
         <div className="mt-2 text-right text-[12.5px] text-[#0a7d6e]">
           + Bảo hiểm thu riêng <b className="tabular-nums">{fmt(result.separatedMonthly)} đ/người/tháng</b> · NLĐ làm từ {result.separateMinDays} công/tháng
@@ -147,11 +175,13 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
     XLSX.writeFile(wb, `Bang-gia-${fileName.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'dich-vu'}.xlsx`);
   };
 
-  const PriceRowView = ({ r, i }: { r: PriceRow; i: number }) => {
+  // Hàm trả JSX, KHÔNG phải component con: component khai báo trong render bị dựng lại sau mỗi phím gõ → ô giá mất con trỏ,
+  // mỗi lần chỉ gõ được 1 chữ.
+  const priceRow = (r: PriceRow, i: number) => {
     const custom = r.kind === 'custom';
     const exp = openId === r.id && !readOnly;
     return (
-      <div className={exp ? 'bg-[#fafafc]' : ''}>
+      <div key={r.id} className={exp ? 'bg-[#fafafc]' : ''}>
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5 px-5 py-3">
           <span className="w-5 text-[12px] font-medium text-[#a1a1a6] tabular-nums">{i + 1}</span>
           <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0">
@@ -205,7 +235,7 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
 
       <div className="hidden sm:grid grid-cols-[1fr_auto] px-5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]"><span className="pl-8">Nội dung đơn giá · đơn vị tính</span><span className="pr-10">Đơn giá (VNĐ)</span></div>
       <div className="divide-y divide-[#f2f2f4] border-t border-[#f2f2f4]">
-        {visible.map((r, i) => <PriceRowView key={r.id} r={r} i={i} />)}
+        {visible.map((r, i) => priceRow(r, i))}
         {visible.length === 0 && <div className="px-5 py-6 text-[13px] text-[#86868b]">Chưa có dòng nào hiển thị.</div>}
       </div>
 

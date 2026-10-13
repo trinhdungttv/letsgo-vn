@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Lock, RefreshCw, User } from 'lucide-react';
 import { lockMessage, shareOpen, sharePeek, shareSave, type SharedPlan } from '../lib/costPlan/api';
 import { computePlan, normalizePlanData, summarizePlan } from '../lib/costPlan/engine';
+import { effectiveResult } from '../lib/costPlan/quoteSheet';
 import type { PlanData } from '../lib/costPlan/types';
 import PlanEditor from '../components/workspace/costplan/PlanEditor';
 import PinPad from '../components/workspace/costplan/PinPad';
@@ -136,7 +137,7 @@ export default function SharedCostPlan({ code }: { code: string }) {
     writeStore(localStorage, NAME_KEY, name.trim());
     setSaving(true); setSaveErr(null);
     try {
-      const r = await shareSave(code, pin, name.trim(), plan.version, data, summarizePlan(data, result), note.trim() || null, force);
+      const r = await shareSave(code, pin, name.trim(), plan.version, data, summarizePlan(data, effectiveResult(data, result)), note.trim() || null, force);
       if (r.ok) {
         setPlan({ ...plan, version: r.version, updated_at: r.updated_at, updated_by_name: `${name.trim()} (qua link)` });
         setBaseline(JSON.stringify(data)); setNote(''); setRemote(null); setConflict(null);
