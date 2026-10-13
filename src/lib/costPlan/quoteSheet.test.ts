@@ -169,3 +169,23 @@ describe('Kiểm tra luật — không dò ghi chú của dòng khác', () => {
     expect(it.fix?.name).toMatch(/BHXH/);
   });
 });
+
+describe('sắp thứ tự dòng (kéo thả)', () => {
+  it('kéo xuống nằm sau, kéo lên nằm trước; đã sắp thì không bị sắp lại', async () => {
+    const { moveQuoteRow } = await import('./quoteSheet');
+    const q0 = normalizeQuoteSheet({ ...defaultQuoteSheet(), rows: [...defaultQuoteSheet().rows, { id: 'c', kind: 'custom', name: 'Cơm', unit: 'VNĐ/suất', override: 1 }] });
+    const day = q0.rows[0].id;
+    const down = moveQuoteRow(q0, day, q0.rows[2].id);
+    expect(down.rows[2].id).toBe(day);
+    const up = moveQuoteRow(down, 'c', down.rows[0].id);
+    expect(up.rows[0].id).toBe('c');
+    expect(normalizeQuoteSheet(up).rows.map(r => r.id)).toEqual(up.rows.map(r => r.id));
+    expect(moveQuoteRow(q0, 'x', day)).toBe(q0);
+  });
+});
+
+describe('mã dòng chuẩn cố định', () => {
+  it('bảng giá chưa lưu: mỗi lần chuẩn hoá ra cùng mã dòng', () => {
+    expect(normalizeQuoteSheet(null).rows.map(r => r.id)).toEqual(normalizeQuoteSheet(null).rows.map(r => r.id));
+  });
+});

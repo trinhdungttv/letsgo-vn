@@ -40,7 +40,9 @@ export const DEFAULT_GENERAL_NOTES = [
 
 export function defaultQuoteSheet(): QuoteSheet {
   return {
-    rows: STD.map(r => ({ id: newLineId(), kind: r.kind, name: r.name, unit: r.unit, override: null, hidden: !!r.hidden })),
+    // Mã CỐ ĐỊNH theo loại dòng: phương án chưa lưu bảng giá vẫn ra cùng mã mỗi lần vẽ (mã ngẫu nhiên làm nút ⋯ không mở được,
+    // kéo thả / hoàn tác không tìm được dòng). Dòng chuẩn mỗi loại chỉ có 1 nên không trùng; dòng tuỳ chỉnh vẫn mã ngẫu nhiên.
+    rows: STD.map(r => ({ id: `std-${r.kind}`, kind: r.kind, name: r.name, unit: r.unit, override: null, hidden: !!r.hidden })),
     includedNote: null, generalNotes: DEFAULT_GENERAL_NOTES, otBase: 'base', otMarkupPct: 0, nightOtAfterDay: false,
   };
 }
@@ -56,8 +58,11 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
   for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' });
-  const order = new Map(STD.map((s, i) => [s.kind, i]));
-  rows.sort((a, b) => (order.get(a.kind) ?? 99) - (order.get(b.kind) ?? 99));   // dòng tuỳ chỉnh luôn nằm cuối, giữ thứ tự thêm
+  // Chưa tự sắp thì xếp theo thứ tự chuẩn (dòng tuỳ chỉnh cuối, giữ thứ tự thêm); đã kéo thả thì giữ đúng thứ tự người dùng
+  if (!raw.ordered) {
+    const order = new Map(STD.map((s, i) => [s.kind, i]));
+    rows.sort((a, b) => (order.get(a.kind) ?? 99) - (order.get(b.kind) ?? 99));
+  }
   return {
     rows,
     includedNote: typeof raw.includedNote === 'string' ? raw.includedNote : null,
@@ -66,7 +71,21 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     otMarkupPct: Number.isFinite(Number(raw.otMarkupPct)) ? Math.max(0, Number(raw.otMarkupPct)) : 0,
     nightOtAfterDay: !!raw.nightOtAfterDay,
     skilled: normalizeSkilled(raw.skilled),
+    ...(raw.ordered ? { ordered: true } : {}),
   };
+}
+
+/**
+ * Chuyển dòng `fromId` tới vị trí dòng `toId` (kéo xuống → nằm sau, kéo lên → nằm trước), đánh dấu đã tự sắp.
+ * Trả về nguyên bảng nếu id không hợp lệ.
+ */
+export function moveQuoteRow(q: QuoteSheet, fromId: string, toId: string): QuoteSheet {
+  const fi = q.rows.findIndex(r => r.id === fromId), ti = q.rows.findIndex(r => r.id === toId);
+  if (fi < 0 || ti < 0 || fi === ti) return q;
+  const rows = [...q.rows];
+  const [m] = rows.splice(fi, 1);
+  rows.splice(ti, 0, m);
+  return { ...q, rows, ordered: true };
 }
 
 export const DEFAULT_SKILLED_LABEL = 'Thợ tay nghề';

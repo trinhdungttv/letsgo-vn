@@ -109,6 +109,8 @@ export interface QuoteSheet {
   nightOtAfterDay: boolean;
   /** Cột giá thợ tay nghề (thiếu / on=false = không có) */
   skilled?: SkilledTier | null;
+  /** Người dùng đã tự sắp thứ tự dòng (kéo thả) → giữ nguyên thứ tự, không sắp lại theo thứ tự chuẩn */
+  ordered?: boolean;
 }
 
 export interface PlanData {

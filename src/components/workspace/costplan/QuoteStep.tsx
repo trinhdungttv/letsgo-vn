@@ -1,9 +1,9 @@
 // BƯỚC 2 — Báo giá khách: từ chi phí ở bước 1 → giá 1 công → "Bảng giá dịch vụ" theo đúng luật (ngày, ca đêm, tăng ca…).
-import { useState } from 'react';
-import { Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, MoreHorizontal, Plus, Upload } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, GripVertical, MoreHorizontal, Plus, Undo2, Upload } from 'lucide-react';
 import { newLineId } from '../../../lib/costPlan/engine';
 import {
-  DEFAULT_SKILLED_LABEL, computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
+  DEFAULT_SKILLED_LABEL, computePriceList, moveQuoteRow, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { normalizeText } from '../../../lib/costPlan/presets';
@@ -158,6 +158,35 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   const setRow = (id: string, p: Partial<QuoteRowCfg>) => onQuote({ ...q, rows: q.rows.map(r => (r.id === id ? { ...r, ...p } : r)) });
   const patch = (p: Partial<QuoteSheet>) => onQuote({ ...q, ...p });
 
+  // ── Hoàn tác: các thao tác dễ bấm nhầm (xoá / ẩn / thêm / đổi thứ tự / bỏ cột thợ / khôi phục giá) lưu lại bảng trước đó ──
+  const [history, setHistory] = useState<{ q: QuoteSheet; label: string }[]>([]);
+  const commit = (next: QuoteSheet, label: string) => { setHistory(h => [...h.slice(-29), { q, label }]); onQuote(next); };
+  const undo = () => {
+    const last = history[history.length - 1];
+    if (!last) return;
+    setHistory(h => h.slice(0, -1));
+    onQuote(last.q);
+  };
+  const undoRef = useRef(undo);
+  undoRef.current = undo;
+  useEffect(() => {
+    if (readOnly) return;
+    // Ctrl/⌘ + Z ngoài ô nhập = hoàn tác (trong ô nhập để trình duyệt tự hoàn tác chữ đang gõ)
+    const h = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== 'z') return;
+      if ((e.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      e.preventDefault();
+      undoRef.current();
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [readOnly]);
+
+  // ── Kéo thả để đổi thứ tự dòng ──
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const moveTo = (fromId: string, toId: string) => commit(moveQuoteRow(q, fromId, toId), 'Đổi thứ tự dòng');
+
   // ── Cột giá thợ tay nghề (ít dùng — bật mới hiện) ──
   const sk = q.skilled;
   const skOn = !!sk?.on && !!list.skilled;
@@ -198,9 +227,28 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
     const custom = r.kind === 'custom';
     const exp = openId === r.id && !readOnly;
     return (
-      <div key={r.id} className={exp ? 'bg-[#fafafc]' : ''}>
+      <div key={r.id} data-qrow
+        className={`group transition ${exp ? 'bg-[#fafafc]' : 'bg-white'} ${dragId === r.id ? 'opacity-40' : ''} ${overId === r.id && dragId && dragId !== r.id ? 'shadow-[inset_0_2px_0_#0071e3]' : ''}`}
+        onDragOver={e => { if (!dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overId !== r.id) setOverId(r.id); }}
+        onDrop={e => { e.preventDefault(); if (dragId && dragId !== r.id) moveTo(dragId, r.id); setDragId(null); setOverId(null); }}>
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5 px-5 py-3">
-          <span className="w-5 text-[12px] font-medium text-[#a1a1a6] tabular-nums">{i + 1}</span>
+          {readOnly ? (
+            <span className="w-5 text-[12px] font-medium text-[#a1a1a6] tabular-nums">{i + 1}</span>
+          ) : (
+            <span draggable title="Kéo để đổi thứ tự"
+              onDragStart={e => {
+                setDragId(r.id); setOpenId(null);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', r.id);
+                const row = (e.currentTarget as HTMLElement).closest('[data-qrow]');
+                if (row) e.dataTransfer.setDragImage(row, 24, 20);
+              }}
+              onDragEnd={() => { setDragId(null); setOverId(null); }}
+              className="w-5 h-7 -ml-1 flex items-center justify-center rounded cursor-grab active:cursor-grabbing text-[12px] font-medium text-[#a1a1a6] tabular-nums hover:bg-[#f0f0f2]">
+              <span className="group-hover:hidden">{i + 1}</span>
+              <GripVertical size={14} className="hidden group-hover:block text-[#86868b]" />
+            </span>
+          )}
           <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0">
             <input value={r.name} disabled={readOnly} onChange={e => setRow(r.id, { name: e.target.value })} placeholder="Nội dung đơn giá"
               className="w-full bg-transparent text-[14px] font-medium text-[#1d1d1f] outline-none placeholder:text-[#a1a1a6] truncate" />
@@ -231,13 +279,21 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
               <div className="w-36"><span className={labelCls}>Đơn vị tính</span>
                 <Select value={r.unit} onChange={v => setRow(r.id, { unit: v })}>{[...new Set([r.unit, ...UNITS])].map(u => <option key={u}>{u}</option>)}</Select></div>
             )}
-            {r.overridden && <button type="button" onClick={() => setRow(r.id, { override: null })} className={btnLink}>Khôi phục giá tự tính ({fmt(r.auto ?? 0)})</button>}
+            <div className="flex items-center gap-1" title="Đổi thứ tự (trên máy tính có thể kéo số thứ tự)">
+              <button type="button" disabled={i === 0} onClick={() => moveTo(r.id, visible[i - 1].id)} className="w-8 h-8 rounded-full flex items-center justify-center text-[#6e6e73] hover:bg-[#e8e8ed] disabled:opacity-30" aria-label="Lên"><ArrowUp size={15} /></button>
+              <button type="button" disabled={i === visible.length - 1} onClick={() => moveTo(r.id, visible[i + 1].id)} className="w-8 h-8 rounded-full flex items-center justify-center text-[#6e6e73] hover:bg-[#e8e8ed] disabled:opacity-30" aria-label="Xuống"><ArrowDown size={15} /></button>
+            </div>
+            {r.overridden && <button type="button" onClick={() => commit({ ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, override: null } : x)) }, `Khôi phục giá “${r.name}”`)} className={btnLink}>Khôi phục giá tự tính ({fmt(r.auto ?? 0)})</button>}
             {skOn && r.skilled?.overridden && (
-              <button type="button" onClick={() => setRow(r.id, { overrideSkilled: null })} className={btnLink}>
+              <button type="button" onClick={() => commit({ ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, overrideSkilled: null } : x)) }, `Khôi phục giá thợ “${r.name}”`)} className={btnLink}>
                 Khôi phục giá thợ {custom ? '(như phổ thông)' : `tự tính (${fmt(r.skilled.auto ?? 0)})`}
               </button>
             )}
-            <button type="button" onClick={() => (custom ? onQuote({ ...q, rows: q.rows.filter(x => x.id !== r.id) }) : setRow(r.id, { hidden: true }))}
+            <button type="button" onClick={() => {
+              setOpenId(null);
+              commit(custom ? { ...q, rows: q.rows.filter(x => x.id !== r.id) } : { ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, hidden: true } : x)) },
+                `${custom ? 'Xoá' : 'Ẩn'} dòng “${r.name || 'chưa đặt tên'}”`);
+            }}
               className="text-[13px] font-medium text-[#d70015] hover:underline">{custom ? 'Xoá dòng' : 'Ẩn khỏi bảng giá'}</button>
           </div>
         )}
@@ -281,11 +337,17 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
           )}>
             {close => (
               <div className="py-1">
-                {hiddenRows.map(r => <MenuItem key={r.id} onClick={() => { setRow(r.id, { hidden: false }); close(); }}>Hiện lại: {r.name}</MenuItem>)}
-                <MenuItem onClick={() => { const id = newLineId(); onQuote({ ...q, rows: [...q.rows, { id, kind: 'custom', name: 'Phụ cấp cơm trưa', unit: 'VNĐ/ngày', override: 0, hidden: false }] }); setOpenId(id); close(); }}>Dòng tuỳ chỉnh (vd: phụ cấp cơm)</MenuItem>
+                {hiddenRows.map(r => <MenuItem key={r.id} onClick={() => { commit({ ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, hidden: false } : x)) }, `Hiện lại “${r.name}”`); close(); }}>Hiện lại: {r.name}</MenuItem>)}
+                <MenuItem onClick={() => { const id = newLineId(); commit({ ...q, rows: [...q.rows, { id, kind: 'custom', name: 'Phụ cấp cơm trưa', unit: 'VNĐ/ngày', override: 0, hidden: false }] }, 'Thêm dòng'); setOpenId(id); close(); }}>Dòng tuỳ chỉnh (vd: phụ cấp cơm)</MenuItem>
               </div>
             )}
           </Popover>
+          {history.length > 0 && (
+            <button type="button" onClick={undo} title="Hoàn tác (Ctrl/⌘ + Z)"
+              className="inline-flex items-center gap-1 min-w-0 text-[13px] font-medium text-[#b25e00] hover:underline">
+              <Undo2 size={14} className="shrink-0" /><span className="truncate max-w-[260px]">Hoàn tác: {history[history.length - 1].label}</span>
+            </button>
+          )}
           {!skOn && (
             <button type="button" onClick={turnOnSkilled} className="ml-auto inline-flex items-center gap-1 text-[13px] font-medium text-[#7a4cc2] hover:underline">
               <Plus size={14} />Thêm cột giá thợ tay nghề
@@ -299,7 +361,7 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
         <div className="border-t border-[#f2f2f4] bg-[#fbf8ff] px-5 py-3.5 space-y-3">
           <div className="flex items-center gap-2">
             <div className="text-[13px] font-semibold text-[#5b2d9e] flex-1">Cột giá {list.skilled!.label}</div>
-            {!readOnly && <button type="button" onClick={() => setSkilled({ on: false })} className="text-[12.5px] font-medium text-[#d70015] hover:underline">Bỏ cột thợ</button>}
+            {!readOnly && <button type="button" onClick={() => commit({ ...q, skilled: { ...sk, on: false } }, 'Bỏ cột thợ')} className="text-[12.5px] font-medium text-[#d70015] hover:underline">Bỏ cột thợ</button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block"><span className={labelCls}>Tên cột trên báo giá</span>
