@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, GripVertical, MoreHorizontal, Plus, Undo2, Upload } from 'lucide-react';
 import { newLineId } from '../../../lib/costPlan/engine';
 import {
-  DEFAULT_SKILLED_LABEL, computePriceList, moveQuoteRow, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
+  DEFAULT_SKILLED_LABEL, computePriceList, itemizedParts, moveQuoteRow, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { normalizeText } from '../../../lib/costPlan/presets';
@@ -19,16 +19,25 @@ import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrim
  * Hình thành giá 1 công: giá vốn + phí dịch vụ + thuế dự phòng (+ làm tròn).
  * Người dùng đã ghi giá ca 8h khác ở Bảng giá → phần tự tính chỉ còn để tham khảo, giá to là giá đang báo.
  */
-export function PriceBuild({ data, result, eff, onGoCost, onResetDay }: {
+export function PriceBuild({ data, result, eff, onGoCost, onResetDay, onItemize }: {
   data: PlanData; result: PlanResult;
   /** Kết quả theo giá đang báo khách (có thể là giá ghi tay) */
   eff?: EffectiveResult;
   onGoCost: () => void;
   /** Bỏ giá ghi tay, dùng lại giá tự tính */
   onResetDay?: () => void;
+  /** Chuyển sang báo tách khoản (lương + phí dịch vụ riêng) */
+  onItemize?: () => void;
 }) {
   const s = data.settings;
   const manual = !!eff?.dayOverridden;
+  const qs = normalizeQuoteSheet(data.quote);
+  const itemized = !!qs.itemized;
+  const parts = itemizedParts(result);
+  const ovOf = (k: 'day8' | 'service_fee') => qs.rows.find(r => r.kind === k && !r.hidden)?.override;
+  const shownWage = ovOf('day8') ?? parts.wage, shownFee = ovOf('service_fee') ?? parts.fee;
+  // Đang báo GỘP mà ghi giá ngày đúng bằng tiền lương → gần như chắc là muốn báo tách khoản (phí DV thu riêng)
+  const looksLikeWage = manual && !itemized && Math.abs((eff?.quoteDaily ?? 0) - parts.wage) < 1 && result.serviceFeeDaily > 0;
   const shown = manual ? eff! : result;
   return (
     <div className={`${card} p-5`}>
@@ -57,6 +66,18 @@ export function PriceBuild({ data, result, eff, onGoCost, onResetDay }: {
           <span className={`text-[16px] font-medium ${manual ? 'text-[#b25e00]/60' : 'text-[#0071e3]/60'}`}>đ / ngày</span>
         </div>
       </div>
+      {itemized && (
+        <div className="mt-2 text-right text-[12.5px] text-[#6e6e73]">
+          Báo tách khoản: lương <b className="tabular-nums text-[#1d1d1f]">{fmt(shownWage)}</b> + phí dịch vụ <b className="tabular-nums text-[#5e5ce6]">{fmt(shownFee)}</b> / công
+        </div>
+      )}
+      {looksLikeWage && (
+        <div className="mt-3 rounded-xl bg-[#eef5ff] px-3.5 py-2.5 text-[12.5px] text-[#0b5cc4] leading-snug">
+          Giá ngày đang ghi đúng bằng tiền lương ({fmt(parts.wage)}) nên phí dịch vụ không còn nằm trong giá → lãi 0.
+          Nếu phí dịch vụ thu riêng 1 dòng (như mẫu báo giá Let's Go), hãy báo <b>tách khoản</b>.
+          {onItemize && <button type="button" onClick={onItemize} className="block mt-1.5 h-7 px-3 rounded-full bg-[#0071e3] text-white text-[12px] font-semibold hover:bg-[#0077ed]">Báo tách khoản: lương + phí dịch vụ {fmt(parts.fee)} riêng</button>}
+        </div>
+      )}
       {manual && (
         <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[12.5px]">
           <span className={eff!.profitDaily < 0 ? 'text-[#d70015] font-semibold' : 'text-[#1d8a3b]'}>
@@ -322,6 +343,22 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
           <button type="button" onClick={() => setDocOpen(true)} className={btnGhost} title="Báo giá do app tự dàn trang (không theo file mẫu của công ty)"><FileSpreadsheet size={14} />Mẫu tự dựng</button>
           {onPushCrm && <button type="button" onClick={onPushCrm} className={btnGhost}><Upload size={14} />Đưa vào hồ sơ CRM</button>}
         </div>
+      </div>
+
+      {/* Cách báo giá: gộp 1 giá/công hay tách lương + phí dịch vụ riêng */}
+      <div className="px-5 pb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="text-[12px] font-medium text-[#6e6e73]">Cách báo giá</span>
+        <div className="w-full sm:w-[380px]">
+          <Seg value={q.itemized ? 'item' : 'gop'} disabled={readOnly}
+            onChange={v => {
+              if ((v === 'item') === !!q.itemized) return;
+              // Đổi cách báo: giá ngày ghi tay mang nghĩa khác (gộp = tổng, tách = phần lương) → bỏ ghi tay dòng ngày & phí (hoàn tác được)
+              commit({ ...q, itemized: v === 'item', rows: q.rows.map(r => (r.kind === 'day8' || r.kind === 'service_fee' ? { ...r, override: null, overrideSkilled: null } : r)) },
+                v === 'item' ? 'Chuyển sang báo tách khoản' : 'Chuyển sang báo gộp');
+            }}
+            options={[{ value: 'gop', label: 'Gộp 1 giá / công' }, { value: 'item', label: 'Tách: lương + phí dịch vụ' }]} />
+        </div>
+        <span className="text-[11.5px] text-[#86868b]">{q.itemized ? 'Dòng lương = chi phí lao động; Phí dịch vụ là 1 dòng riêng — khách trả tổng các dòng' : 'Dòng "Lương ngày 8 tiếng" đã gồm chi phí + phí dịch vụ + thuế'}</span>
       </div>
 
       {skOn ? (

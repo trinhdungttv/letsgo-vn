@@ -115,7 +115,9 @@ export default function PlanEditor({
   const setQuote = (q: QuoteSheet) => onChange({ ...data, quote: q });
   // Bước 2 tính theo GIÁ ĐANG BÁO KHÁCH (người dùng có thể ghi giá ca 8h khác giá tự tính)
   const eff = useMemo(() => effectiveResult(data, result), [data, result]);
-  const resetDayPrice = () => { const q = normalizeQuoteSheet(data.quote); setQuote({ ...q, rows: q.rows.map(r => (r.kind === 'day8' ? { ...r, override: null } : r)) }); };
+  const resetDayPrice = () => { const q = normalizeQuoteSheet(data.quote); setQuote({ ...q, rows: q.rows.map(r => (r.kind === 'day8' || r.kind === 'service_fee' ? { ...r, override: null } : r)) }); };
+  // Chuyển sang báo tách khoản: lương = chi phí lao động, phí dịch vụ 1 dòng riêng (bỏ giá ngày ghi tay — giờ dòng đó là phần lương)
+  const itemize = () => { const q = normalizeQuoteSheet(data.quote); setQuote({ ...q, itemized: true, rows: q.rows.map(r => (r.kind === 'day8' || r.kind === 'service_fee' ? { ...r, override: null } : r)) }); };
 
   const addFix = (fix: CostLine) => {
     const l = withSection({ ...fix, id: newLineId() }, secOf(fix));
@@ -192,7 +194,7 @@ export default function PlanEditor({
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
           <div className="space-y-4 min-w-0">
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines} suggestions={[]} show={['service']} />
-            <PriceBuild data={data} result={result} eff={eff} onGoCost={() => setStep('cost')} onResetDay={readOnly ? undefined : resetDayPrice} />
+            <PriceBuild data={data} result={result} eff={eff} onGoCost={() => setStep('cost')} onResetDay={readOnly ? undefined : resetDayPrice} onItemize={readOnly ? undefined : itemize} />
             <InsuranceSplit data={data} result={eff} readOnly={readOnly} onPlan={onChange} minWage={minWage} onSettings={setSettings} />
             <QuoteMetaCard data={data} onChange={onChange} readOnly={readOnly} defaults={docDefaults} companyName={fillMeta?.company} />
             <PriceTable data={data} result={result} readOnly={readOnly} fileName={fileName} meta={fillMeta} planId={planId} docDefaults={docDefaults} onQuote={setQuote} onPlan={onChange} onPushCrm={readOnly ? undefined : onPushCrm} />

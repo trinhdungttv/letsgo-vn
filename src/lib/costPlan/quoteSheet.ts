@@ -30,6 +30,8 @@ const STD: { kind: QuoteRowKind; name: string; unit: string; hidden?: boolean }[
   { kind: 'ot_hol_night', name: 'Lương tăng ca ngày lễ, Tết 1 tiếng ca đêm', unit: 'VNĐ/giờ (ca đêm)', hidden: true },
   // Chỉ xuất hiện khi có khoản "thu riêng theo tháng" (computePriceList tự bỏ khi không có)
   { kind: 'insurance', name: 'Bảo hiểm xã hội, y tế, thất nghiệp', unit: 'VNĐ/người/tháng' },
+  // Chỉ xuất hiện khi báo giá TÁCH KHOẢN (computePriceList tự bỏ khi gộp)
+  { kind: 'service_fee', name: 'Phí dịch vụ', unit: 'VNĐ/ngày công' },
 ];
 
 export const DEFAULT_GENERAL_NOTES = [
@@ -57,7 +59,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     overrideSkilled: r.overrideSkilled != null && Number.isFinite(Number(r.overrideSkilled)) ? Number(r.overrideSkilled) : null,
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
-  for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' });
+  for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' && d.kind !== 'service_fee' });
   // Chưa tự sắp thì xếp theo thứ tự chuẩn (dòng tuỳ chỉnh cuối, giữ thứ tự thêm); đã kéo thả thì giữ đúng thứ tự người dùng
   if (!raw.ordered) {
     const order = new Map(STD.map((s, i) => [s.kind, i]));
@@ -72,7 +74,17 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     nightOtAfterDay: !!raw.nightOtAfterDay,
     skilled: normalizeSkilled(raw.skilled),
     ...(raw.ordered ? { ordered: true } : {}),
+    ...(raw.itemized ? { itemized: true } : {}),
   };
+}
+
+/**
+ * Báo giá TÁCH KHOẢN: tiền 1 công tách thành phần lương (chi phí lao động trong giá ngày, không gồm bảo hiểm thu riêng)
+ * và phần phí dịch vụ (phí DV + thuế dự phòng + làm tròn). Cộng lại đúng bằng giá 1 công khi gộp.
+ */
+export function itemizedParts(r: PlanResult): { wage: number; fee: number } {
+  const wage = r.costDaily - r.separatedDaily;
+  return { wage, fee: r.quoteDaily - wage };
 }
 
 /**
@@ -172,14 +184,20 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
   const shr = otBaseDaily / HOURS_PER_DAY;
   const mk = 1 + q.otMarkupPct / 100;
   // Giá ngày thật = giá người dùng ghi ở dòng ca 8h (nếu có), không thì giá tự tính từ bước 1 — ca đêm tính theo giá này
+  const itemized = !!q.itemized;
+  const parts = itemizedParts(result);
   const dayRow = q.rows.find(r => r.kind === 'day8' && !r.hidden && r.override != null);
-  const dayPrice = dayRow ? Math.max(0, dayRow.override!) : result.quoteDaily;
+  // Giá ngày dùng để tính ca đêm: gộp = giá 1 công; tách khoản = phần lương
+  const dayPrice = dayRow ? Math.max(0, dayRow.override!) : itemized ? parts.wage : result.quoteDaily;
   const mkTxt = q.otMarkupPct > 0 ? ` + ${q.otMarkupPct}%` : '';
 
   const auto = (kind: QuoteRowKind): { v: number | null; formula: string } => {
     const ot = (c: number, label: string) => ({ v: shr * c * mk, formula: `${f(shr)} đ/giờ × ${pct(c)}${mkTxt} — ${label}` });
     switch (kind) {
-      case 'day8': return { v: result.quoteDaily, formula: 'Giá 1 công từ bước 1: chi phí + phí dịch vụ + thuế dự phòng' };
+      case 'day8': return itemized
+        ? { v: parts.wage, formula: `Chi phí lao động / công ở bước 1${result.separatedDaily > 0 ? ' (không gồm bảo hiểm thu riêng)' : ''} — phí dịch vụ là dòng riêng` }
+        : { v: result.quoteDaily, formula: 'Giá 1 công từ bước 1: chi phí + phí dịch vụ + thuế dự phòng' };
+      case 'service_fee': return { v: parts.fee, formula: `Phí dịch vụ ${f(result.serviceFeeDaily)} đ${result.taxDaily > 0.5 ? ` + thuế dự phòng ${f(result.taxDaily)} đ` : ''}${result.roundingGainDaily > 0.5 ? ' + làm tròn' : ''} / ngày công` };
       case 'night8': return { v: dayPrice + otBaseDaily * (NORM_NIGHT - 1), formula: `Giá ngày${dayRow ? ` đang báo (${f(dayPrice)})` : ''} + 30% × ${f(otBaseDaily)} đ — làm đêm tối thiểu +30% (Điều 98 BLLĐ)` };
       case 'ot_day': return ot(OT_DAY_WEEKDAY, 'tăng ca ngày thường 150%');
       case 'ot_night': return q.nightOtAfterDay ? ot(OT_NIGHT_WEEKDAY_PRIOR, 'tăng ca đêm liền sau ca ngày 210%') : ot(OT_NIGHT_WEEKDAY_NOPRIOR, 'tăng ca đêm ngày thường 200%');
@@ -192,7 +210,9 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     }
   };
 
-  const rows: PriceRow[] = q.rows.filter(r => r.kind !== 'insurance' || result.separatedMonthly > 0).map(r => {
+  const rows: PriceRow[] = q.rows
+    .filter(r => (r.kind !== 'insurance' || result.separatedMonthly > 0) && (r.kind !== 'service_fee' || itemized))
+    .map(r => {
     const a = auto(r.kind);
     const overridden = r.kind !== 'custom' && r.override != null;
     const price = r.kind === 'custom' ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
@@ -238,9 +258,18 @@ export function effectiveResult(input: PlanData, r: PlanResult): EffectiveResult
   const data = normalizePlanData(input);
   const q = normalizeQuoteSheet(data.quote);
   const row = q.rows.find(x => x.kind === 'day8' && !x.hidden && x.override != null);
-  if (!row) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
+  // Tách khoản: khách trả = dòng lương + dòng phí dịch vụ (mỗi dòng có thể ghi tay). Gộp: chỉ dòng giá ngày.
+  let price: number;
+  if (q.itemized) {
+    const parts = itemizedParts(r);
+    const feeRow = q.rows.find(x => x.kind === 'service_fee' && !x.hidden && x.override != null);
+    if (!row && !feeRow) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
+    price = Math.max(0, Math.round((row ? row.override! : parts.wage) + (feeRow ? feeRow.override! : parts.fee)));
+  } else {
+    if (!row) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
+    price = Math.max(0, Math.round(row.override!));
+  }
   const s = data.settings;
-  const price = Math.max(0, Math.round(row.override!));
   const delta = price - r.quoteDaily;
   const k = s.taxOption === 'profit20' ? 0.8 : s.taxOption === 'total20' ? 1 / 1.2 : 1;
   let profitDaily = r.profitDaily + delta * k;
@@ -272,10 +301,12 @@ export function effectiveResult(input: PlanData, r: PlanResult): EffectiveResult
 /** "Bao gồm: …" tự lấy từ tên các khoản ở bước 1 (bỏ lương cơ bản, bỏ phần trong ngoặc). */
 export function includedNoteAuto(input: PlanData): string {
   const data = normalizePlanData(input);
+  const itemizedSheet = !!normalizeQuoteSheet(data.quote).itemized;
   const names: string[] = [];
   const seen = new Set<string>();
   for (const l of data.lines) {
     if (l.isBaseWage || l.billSeparately) continue;   // khoản thu riêng theo tháng không nằm trong giá ngày
+    if (itemizedSheet && l.isServiceFee) continue;    // báo tách khoản: phí dịch vụ là dòng riêng
     let n = l.name.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
     if (/bhxh/i.test(n)) n = 'BHXH';
     const k = lineKey(n);

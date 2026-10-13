@@ -76,6 +76,8 @@ export type QuoteRowKind =
   | 'day8' | 'night8' | 'ot_day' | 'ot_night' | 'ot_sun' | 'ot_sun_night' | 'ot_hol' | 'ot_hol_night'
   /** Khoản thu riêng theo tháng (bảo hiểm) — chỉ hiện khi có khoản đánh dấu billSeparately */
   | 'insurance'
+  /** Phí dịch vụ thành dòng riêng — chỉ hiện khi báo giá TÁCH KHOẢN (QuoteSheet.itemized) */
+  | 'service_fee'
   | 'custom';
 
 export interface QuoteRowCfg {
@@ -122,6 +124,11 @@ export interface QuoteSheet {
   skilled?: SkilledTier | null;
   /** Người dùng đã tự sắp thứ tự dòng (kéo thả) → giữ nguyên thứ tự, không sắp lại theo thứ tự chuẩn */
   ordered?: boolean;
+  /**
+   * Cách báo giá. false (mặc định) = GỘP: dòng "Lương ngày 8 tiếng" là toàn bộ tiền khách trả 1 công (chi phí + phí DV + thuế).
+   * true = TÁCH KHOẢN (như mẫu Let's Go): dòng lương = chi phí lao động / công, "Phí dịch vụ" là 1 dòng riêng — khách trả tổng các dòng.
+   */
+  itemized?: boolean;
 }
 
 export interface PlanData {
@@ -136,7 +143,7 @@ export interface PlanData {
   /** Các trường người dùng đã điền/sửa trên tài liệu báo giá (bản PDF) — lưu cùng phương án */
   doc?: import('./quoteDoc').QuoteDoc | null;
   /** Ảnh chụp lương tối thiểu vùng lúc chủ phương án lưu — để người xem qua link cũng thấy cảnh báo lương thấp hơn mức tối thiểu. */
-  minWage?: { monthly: number; label: string } | null;
+  minWage?: { monthly: number; label: string; effectiveFrom?: string; decree?: string } | null;
 }
 
 export interface LineResult {

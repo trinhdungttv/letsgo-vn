@@ -123,7 +123,8 @@ export function buildFillValues(
   if (bh.length) prices.bhxh = Math.round(bh.reduce((a, l) => a + (result.lines[l.id]?.monthly ?? 0), 0));
   // Đã tách bảo hiểm thu riêng theo tháng → dòng BHXH của mẫu = đúng tổng khoản thu riêng
   if (result.separatedMonthly > 0) prices.bhxh = Math.round(result.separatedMonthly);
-  if (result.serviceFeeDaily > 0) prices.service_fee = Math.round(result.serviceFeeDaily);
+  // Báo tách khoản đã có dòng "Phí dịch vụ" (gồm thuế dự phòng, có thể ghi tay) → dùng đúng số đó
+  if (prices.service_fee == null && result.serviceFeeDaily > 0) prices.service_fee = Math.round(result.serviceFeeDaily);
   // Cột thợ tay nghề (nếu bật): cùng các loại dòng, giá theo lương thợ (dòng phương án giữ nguyên id nên tra được kết quả)
   let pricesSkilled: FillValues['pricesSkilled'] = null;
   if (list.skilled) {
@@ -134,7 +135,7 @@ export function buildFillValues(
     pricesSkilled.night_allow = Math.round((q.otBase === 'worker' ? sr.workerDaily : sr.baseWageDaily) * (NORM_NIGHT - 1));
     if (bh.length) pricesSkilled.bhxh = Math.round(bh.reduce((a, l) => a + (sr.lines[l.id]?.monthly ?? 0), 0));
     if (sr.separatedMonthly > 0) pricesSkilled.bhxh = Math.round(sr.separatedMonthly);
-    if (sr.serviceFeeDaily > 0) pricesSkilled.service_fee = Math.round(sr.serviceFeeDaily);
+    if (pricesSkilled.service_fee == null && sr.serviceFeeDaily > 0) pricesSkilled.service_fee = Math.round(sr.serviceFeeDaily);
   }
   const d = meta.today ?? new Date();
   const pad = (n: number) => String(n).padStart(2, '0');

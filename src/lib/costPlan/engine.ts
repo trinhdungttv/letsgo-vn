@@ -86,7 +86,13 @@ export function normalizePlanData(raw: unknown): PlanData {
     const cand = lines.filter(l => /phi dich vu/.test(l.name.toLowerCase().replace(/đ/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
     if (cand.length === 1) { cand[0].isServiceFee = true; cand[0].paidToWorker = false; cand[0].isBaseWage = false; cand[0].group = 'service'; }
   }
-  const mw = r.minWage && num(r.minWage.monthly) > 0 ? { monthly: num(r.minWage.monthly), label: String(r.minWage.label ?? 'vùng') } : null;
+  const mw = r.minWage && num(r.minWage.monthly) > 0
+    ? {
+        monthly: num(r.minWage.monthly), label: String(r.minWage.label ?? 'vùng'),
+        ...(typeof r.minWage.effectiveFrom === 'string' ? { effectiveFrom: r.minWage.effectiveFrom } : {}),
+        ...(typeof r.minWage.decree === 'string' ? { decree: r.minWage.decree } : {}),
+      }
+    : null;
   const quote = (r.quote && typeof r.quote === 'object' ? r.quote : null) as QuoteSheet | null;
   const doc = (r.doc && typeof r.doc === 'object' ? r.doc : null) as PlanData['doc'];
   return {

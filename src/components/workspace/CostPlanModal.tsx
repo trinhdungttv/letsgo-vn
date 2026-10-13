@@ -11,7 +11,9 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 import { fetchIndustries } from '../../pages/market/industries';
-import { fetchRegionWages, type RegionZone } from '../../pages/market/regionWage';
+import { fetchMinWageBatches, fetchRegionWageRows, fetchRegionWages, type RegionZone } from '../../pages/market/regionWage';
+import type { MinWageBatch } from '../../lib/minWage';
+import { minWageTimelineNotes, planMinWage, todayIso as isoToday, withCurrentRows } from '../../lib/costPlan/minWageAt';
 import { getBranchTypeForMonth } from '../../lib/format';
 import { branchLabel } from '../../lib/branchRef';
 import { newLineId as newQuoteLineId, normalizeQuoteInfo, type QuoteInfo, type QuoteInfoLine } from '../../lib/quoteInfo';
@@ -104,6 +106,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
   const [industries, setIndustries] = useState<string[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [regionWages, setRegionWages] = useState<Record<RegionZone, number> | null>(null);
+  // Các lần tăng lương tối thiểu vùng (Thị trường → Lương TT) — tra mức theo NGÀY BAN HÀNH báo giá
+  const [wageBatches, setWageBatches] = useState<MinWageBatch[] | null>(null);
 
   const reload = useCallback(async () => {
     if (!token) { setLoadErr('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại.'); setLoading(false); return; }
@@ -117,6 +121,9 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
     reload();
     fetchIndustries().then(setIndustries);
     fetchRegionWages().then(setRegionWages);
+    Promise.all([fetchMinWageBatches(), fetchRegionWageRows()])
+      .then(([b, rows]) => setWageBatches(withCurrentRows(b, rows)))
+      .catch(() => setWageBatches([]));
     supabase.from('market_zones').select('id, name, region_zone, location').order('name').then(({ data }) => { if (data) setZones(data as Zone[]); });
   }, [reload]);
 
@@ -149,17 +156,27 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
 
   // ── Tính toán ──────────────────────────────────────────────────────────────────────────
   const zoneOf = useCallback((name: string) => zones.find(z => z.name === name) ?? null, [zones]);
-  const minWageOf = useCallback((zoneName: string): { monthly: number; label: string } | null => {
+  /** Lương tối thiểu vùng của KCN tại 1 ngày (mặc định hôm nay). Chưa tải xong các mốc thì tạm dùng mức hiện hành. */
+  const minWageOf = useCallback((zoneName: string, atDate: string = isoToday()): { monthly: number; label: string; effectiveFrom?: string; decree?: string } | null => {
     const r = zoneOf(zoneName)?.region_zone as RegionZone | undefined;
-    if (!r || !regionWages || !regionWages[r]) return null;
+    if (!r) return null;
+    if (wageBatches) return planMinWage(r, atDate, wageBatches);
+    if (!regionWages || !regionWages[r]) return null;
     return { monthly: regionWages[r], label: `Vùng ${r}` };
-  }, [zoneOf, regionWages]);
+  }, [zoneOf, regionWages, wageBatches]);
 
-  const minWage = draft ? minWageOf(draft.meta.zone_name) : null;
-  const result = useMemo(
-    () => (draft ? computePlan(draft.data, { minWageMonthly: minWage?.monthly, minWageLabel: minWage?.label }) : null),
-    [draft, minWage],
-  );
+  // Báo giá ban hành ngày nào → lương tối thiểu (lương CB tối thiểu, BHXH theo vùng…) lấy đúng mức hiệu lực ngày đó
+  const issueDate = draft?.data.doc?.date || isoToday();
+  const validUntil = draft?.data.doc?.validUntil ?? '';
+  const zoneName = draft?.meta.zone_name ?? '';
+  const minWage = useMemo(() => (draft ? minWageOf(zoneName, issueDate) : null), [draft, minWageOf, zoneName, issueDate]);
+  const result = useMemo(() => {
+    if (!draft) return null;
+    const r = computePlan(draft.data, { minWageMonthly: minWage?.monthly, minWageLabel: minWage?.label });
+    const region = zoneOf(zoneName)?.region_zone;
+    const notes = wageBatches && !draft.data.service ? minWageTimelineNotes(region, issueDate, validUntil, wageBatches) : [];
+    return notes.length ? { ...r, warnings: [...notes, ...r.warnings] } : r;
+  }, [draft, minWage, zoneOf, zoneName, wageBatches, issueDate, validUntil]);
 
   const baseWageMonthly = useMemo(() => {
     if (!draft || !result) return 0;

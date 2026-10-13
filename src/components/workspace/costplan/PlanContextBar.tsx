@@ -7,7 +7,7 @@ import { companyValue, type PlanMeta } from './context';
 import { fmt, fmtD } from './fields';
 import { Combo, Select, btnLink, card, labelCls } from './ui';
 
-export interface MinWageInfo { monthly: number; label: string }
+export interface MinWageInfo { monthly: number; label: string; effectiveFrom?: string; decree?: string }
 
 /**
  * Thông tin phương án: khách → ngành → KCN → chi nhánh. Thu gọn thành 1 dòng khi đã đủ thông tin,
@@ -88,6 +88,7 @@ export default function PlanContextBar({
               {minWage && (
                 <div>
                   Lương tối thiểu {minWage.label}: <b className="text-[#1d1d1f]">{fmtD(minWage.monthly)}</b>
+                  {minWage.effectiveFrom && <span className="text-[#86868b]"> (áp dụng từ {minWage.effectiveFrom.split('-').reverse().join('/')}{minWage.decree && !/^(Lần nhập|Mức hiện hành)/.test(minWage.decree) ? ` · ${minWage.decree}` : ''} — theo ngày ban hành báo giá; khai các lần tăng ở Thị trường → Lương TT)</span>}
                   {baseWageMonthly !== minWage.monthly && <> · <button type="button" onClick={onSetBaseToMinWage} className={btnLink}>Đặt lương cơ bản bằng mức này</button></>}
                 </div>
               )}

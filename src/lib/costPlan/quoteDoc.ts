@@ -183,6 +183,7 @@ const ROW_NAME: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   ot_hol: { vi: 'Lương tăng ca ngày lễ, Tết 1 tiếng', zh: '节假日加班1小时', en: 'Overtime pay per hour - public holiday' },
   ot_hol_night: { vi: 'Lương tăng ca ngày lễ, Tết 1 tiếng ca đêm', zh: '节假日夜班加班费1小时', en: 'Overtime pay per hour - public holiday night' },
   insurance: { vi: 'Bảo hiểm xã hội, y tế, thất nghiệp', zh: '社会保险、医疗保险、失业保险', en: 'Social, health & unemployment insurance' },
+  service_fee: { vi: 'Phí dịch vụ', zh: '服务费', en: 'Service fee' },
 };
 const ROW_UNIT: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   day8: { vi: 'VNĐ/ngày', zh: '越南盾/天', en: 'VND/day' },
@@ -194,6 +195,7 @@ const ROW_UNIT: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   ot_hol: { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
   ot_hol_night: { vi: 'VNĐ/giờ (ca đêm)', zh: '越南盾/小时（夜班）', en: 'VND/hour (night shift)' },
   insurance: { vi: 'VNĐ/người/tháng', zh: '越南盾/人/月', en: 'VND/worker/month' },
+  service_fee: { vi: 'VNĐ/ngày công', zh: '越南盾/工日', en: 'VND/working day' },
 };
 
 const trimLines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
