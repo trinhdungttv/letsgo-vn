@@ -12,6 +12,9 @@ import QuoteTemplateDialog from './QuoteTemplateDialog';
 import QuoteDocDialog from './QuoteDocDialog';
 import type { DocDefaults } from '../../../lib/costPlan/quoteDoc';
 import { copyText } from '../../../lib/clipboard';
+import { useAuth } from '../../../lib/auth';
+import { sheetFromTemplate, templateCustomRowsMissing } from '../../../lib/costPlan/sheetTemplate';
+import { useSheetTemplate } from './useSheetTemplate';
 import InsuranceBase from './InsuranceBase';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
@@ -214,6 +217,19 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
     return () => window.removeEventListener('keydown', h);
   }, [readOnly]);
 
+  // ── Mẫu bảng giá chung (tên dòng, đơn vị, thứ tự, bản dịch… dùng cho mọi phương án) ──
+  const { user } = useAuth();
+  const { tpl, save: saveTpl } = useSheetTemplate();
+  const [tplMsg, setTplMsg] = useState<string | null>(null);
+  const tplMissing = templateCustomRowsMissing(tpl?.sheet, q);
+  const saveAsTemplate = async () => {
+    if (!window.confirm(`Lưu bảng giá này làm MẪU CHUNG cho mọi phương án?\n\nLưu: tên dòng, đơn vị, thứ tự, dòng ẩn/hiện, bản dịch, ghi chú, cách báo giá & đơn vị giá, giá các dòng nhập tay (vd phụ cấp cơm).\nKhông lưu: giá các dòng tự tính (theo từng phương án).${tpl ? '\n\nMẫu chung hiện có sẽ bị thay.' : ''}`)) return;
+    try { await saveTpl(q, user?.full_name ?? null); setTplMsg('Đã lưu mẫu bảng giá chung — phương án mới sẽ dùng mẫu này'); }
+    catch (e) { setTplMsg(`Không lưu được mẫu: ${e instanceof Error ? e.message : String(e)}`); }
+    setTimeout(() => setTplMsg(null), 4000);
+  };
+  const applyTemplate = () => { if (tpl) commit(sheetFromTemplate(tpl.sheet, q), 'Áp mẫu bảng giá chung'); };
+
   // ── Kéo thả để đổi thứ tự dòng ──
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -311,6 +327,11 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
               <div className="w-36"><span className={labelCls}>Đơn vị tính</span>
                 <Select value={r.unit} onChange={v => setRow(r.id, { unit: v })}>{[...new Set([r.unit, ...UNITS])].map(u => <option key={u}>{u}</option>)}</Select></div>
             )}
+            {/* Bản dịch tên dòng cho báo giá song ngữ — lưu theo dòng, đi cùng mẫu bảng giá chung */}
+            <label className="block w-44"><span className={labelCls}>Tên tiếng Trung</span>
+              <input value={r.i18n?.zh ?? ''} onChange={e => setRow(r.id, { i18n: { ...r.i18n, zh: e.target.value || undefined } })} placeholder="để trống = dịch sẵn (nếu là tên chuẩn)" className={`${field} !h-8 w-full`} /></label>
+            <label className="block w-44"><span className={labelCls}>Tên tiếng Anh</span>
+              <input value={r.i18n?.en ?? ''} onChange={e => setRow(r.id, { i18n: { ...r.i18n, en: e.target.value || undefined } })} placeholder="để trống = dịch sẵn (nếu là tên chuẩn)" className={`${field} !h-8 w-full`} /></label>
             <div className="flex items-center gap-1" title="Đổi thứ tự (trên máy tính có thể kéo số thứ tự)">
               <button type="button" disabled={i === 0} onClick={() => moveTo(r.id, visible[i - 1].id)} className="w-8 h-8 rounded-full flex items-center justify-center text-[#6e6e73] hover:bg-[#e8e8ed] disabled:opacity-30" aria-label="Lên"><ArrowUp size={15} /></button>
               <button type="button" disabled={i === visible.length - 1} onClick={() => moveTo(r.id, visible[i + 1].id)} className="w-8 h-8 rounded-full flex items-center justify-center text-[#6e6e73] hover:bg-[#e8e8ed] disabled:opacity-30" aria-label="Xuống"><ArrowDown size={15} /></button>
@@ -395,10 +416,27 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
             {close => (
               <div className="py-1">
                 {hiddenRows.map(r => <MenuItem key={r.id} onClick={() => { commit({ ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, hidden: false } : x)) }, `Hiện lại “${r.name}”`); close(); }}>Hiện lại: {r.name}</MenuItem>)}
+                {tplMissing.map(r => (
+                  <MenuItem key={r.id} hint={r.unit} onClick={() => { commit({ ...q, rows: [...q.rows, { ...r, id: newLineId(), hidden: false }] }, `Thêm dòng “${r.name}”`); close(); }}>Từ mẫu chung: {r.name}</MenuItem>
+                ))}
                 <MenuItem onClick={() => { const id = newLineId(); commit({ ...q, rows: [...q.rows, { id, kind: 'custom', name: 'Phụ cấp cơm trưa', unit: 'VNĐ/ngày', override: 0, hidden: false }] }, 'Thêm dòng'); setOpenId(id); close(); }}>Dòng tuỳ chỉnh (vd: phụ cấp cơm)</MenuItem>
               </div>
             )}
           </Popover>
+          <Popover align="left" width="w-80" button={({ toggle }) => (
+            <button type="button" onClick={toggle} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0a7d6e] hover:underline">Mẫu bảng giá chung</button>
+          )}>
+            {close => (
+              <div className="py-1">
+                <div className="px-3 py-1.5 text-[11.5px] text-[#86868b] leading-snug">
+                  {tpl ? `Cập nhật ${new Date(tpl.savedAt).toLocaleDateString('vi-VN')}${tpl.savedBy ? ` · ${tpl.savedBy}` : ''} — phương án mới tự dùng mẫu này.` : 'Chưa có mẫu chung. Chỉnh tên các dòng cho đúng rồi lưu làm mẫu để lần sau không phải gõ lại.'}
+                </div>
+                {tpl && <MenuItem hint="Giữ giá đã ghi tay của phương án này" onClick={() => { applyTemplate(); close(); }}>Áp mẫu chung vào bảng này</MenuItem>}
+                <MenuItem hint="Tên dòng, đơn vị, thứ tự, bản dịch, ghi chú…" onClick={() => { close(); void saveAsTemplate(); }}>{tpl ? 'Cập nhật mẫu chung từ bảng này' : 'Lưu bảng này làm mẫu chung'}</MenuItem>
+              </div>
+            )}
+          </Popover>
+          {tplMsg && <span className="text-[12px] text-[#0a7d6e]">{tplMsg}</span>}
           {history.length > 0 && (
             <button type="button" onClick={undo} title="Hoàn tác (Ctrl/⌘ + Z)"
               className="inline-flex items-center gap-1 min-w-0 text-[13px] font-medium text-[#b25e00] hover:underline">

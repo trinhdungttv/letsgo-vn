@@ -27,6 +27,8 @@ import type { Branch, BranchTypeHistory, Client, CRMPipelineEntry } from '../../
 import { formatDate } from '../../lib/format';
 import PlanEditor from './costplan/PlanEditor';
 import { useScaleDefaults } from './costplan/useScaleDefaults';
+import { useSheetTemplate } from './costplan/useSheetTemplate';
+import { sheetFromTemplate } from '../../lib/costPlan/sheetTemplate';
 import PlanContextBar from './costplan/PlanContextBar';
 import SuggestionsPanel from './costplan/SuggestionsPanel';
 import IndustryTemplateBar from './costplan/IndustryTemplateBar';
@@ -150,6 +152,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
 
   // Quy mô chuẩn dùng chung (số người × số công) — phương án mới bắt đầu bằng số này
   const scaleDefaults = useScaleDefaults();
+  // Mẫu bảng giá chung — phương án mới dùng sẵn tên dòng, thứ tự, bản dịch… không phải gõ lại
+  const { tpl: sheetTpl } = useSheetTemplate();
 
   const dirty = !!draft && snapshot(draft.meta, draft.data) !== draft.baseline;
   useBeforeUnloadWarning(dirty);
@@ -231,7 +235,10 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
     const meta = emptyMeta();
     const sc = scaleDefaults.defaults.supply;
     // Phương án mới: BHXH đóng theo lương tối thiểu vùng của KCN (đa số dự án) — dự án cho phép thì đổi sang mức cao hơn
-    const data: PlanData = { settings: { ...DEFAULT_SETTINGS, workers: sc.workers, simDays: sc.simDays, insuranceBase: 'region' }, lines: starterFor('', ''), notes: '' };
+    const data: PlanData = {
+      settings: { ...DEFAULT_SETTINGS, workers: sc.workers, simDays: sc.simDays, insuranceBase: 'region' }, lines: starterFor('', ''), notes: '',
+      ...(sheetTpl ? { quote: sheetFromTemplate(sheetTpl.sheet) } : {}),
+    };
     setDraft({ id: null, meta, data, version: 0, share: null, baseline: snapshot(meta, data), linesTouched: false, updatedBy: null, updatedAt: null });
     setCrmLines([]); setRemote(null); setSaveNote('');
     // Mở từ hồ sơ công ty → chọn sẵn công ty đó (tự điền ngành, KCN, chi nhánh, số LĐ từ CRM)

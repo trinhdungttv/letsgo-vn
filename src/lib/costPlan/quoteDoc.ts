@@ -209,6 +209,18 @@ const UNIT_HOURLY: Partial<Record<QuoteRowKind, Tri>> = {
   service_fee: { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
 };
 
+/** Đơn vị hay gặp ở dòng tự đặt tên (danh mục chung) — dịch được dù không phải dòng chuẩn */
+const COMMON_UNIT: Record<string, Tri> = {
+  'VNĐ/ngày': { vi: 'VNĐ/ngày', zh: '越南盾/天', en: 'VND/day' },
+  'VNĐ/ngày công': { vi: 'VNĐ/ngày công', zh: '越南盾/工日', en: 'VND/working day' },
+  'VNĐ/giờ': { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
+  'VNĐ/ giờ': { vi: 'VNĐ/ giờ', zh: '越南盾/小时', en: 'VND/hour' },
+  'VNĐ/tháng': { vi: 'VNĐ/tháng', zh: '越南盾/月', en: 'VND/month' },
+  'VNĐ/người/tháng': { vi: 'VNĐ/người/tháng', zh: '越南盾/人/月', en: 'VND/worker/month' },
+  'VNĐ/suất': { vi: 'VNĐ/suất', zh: '越南盾/份', en: 'VND/meal' },
+  'VNĐ/người': { vi: 'VNĐ/người', zh: '越南盾/人', en: 'VND/worker' },
+};
+
 const trimLines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
 const biLines = (vi: string[], zh: string[], en: string[], lang: DocLang): Bi[] =>
   vi.map((v, i) => (lang === 'zh' ? { a: v, b: zh[i] } : lang === 'en' ? { a: en[i], b: v } : { a: v }));
@@ -320,8 +332,11 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
     ? [{ no: 1, ...referralPriceRow(refCfg, lang) }]
     : list.map((r, i) => ({
         no: i + 1,
-        name: defTri(r.kind, r.name, ROW_NAME, 'vi'),
-        unit: defTri(r.kind, r.unit, ROW_UNIT, 'vi'),
+        // Bản dịch người dùng tự điền cho dòng (danh mục bảng giá chung) thắng bản dịch mặc định
+        name: r.i18n && (r.i18n.zh || r.i18n.en)
+          ? bi({ vi: r.name, zh: r.i18n.zh || r.name, en: r.i18n.en || r.name }, lang)
+          : defTri(r.kind, r.name, ROW_NAME, 'vi'),
+        unit: (() => { const u = defTri(r.kind, r.unit, ROW_UNIT, 'vi'); return u.b || lang === 'vi' ? u : COMMON_UNIT[r.unit.trim()] ? bi(COMMON_UNIT[r.unit.trim()], lang) : u; })(),
         price: r.price,
         ...(skLabel && r.skilled ? { priceSkilled: r.skilled.price } : {}),
       }));

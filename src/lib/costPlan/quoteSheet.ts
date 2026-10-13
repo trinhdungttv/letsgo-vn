@@ -75,6 +75,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     id: r.id || newLineId(), kind: r.kind ?? 'custom', name: String(r.name ?? ''), unit: String(r.unit ?? 'VNĐ/ngày'),
     override: r.override != null && Number.isFinite(Number(r.override)) ? Number(r.override) : null, hidden: !!r.hidden,
     overrideSkilled: r.overrideSkilled != null && Number.isFinite(Number(r.overrideSkilled)) ? Number(r.overrideSkilled) : null,
+    ...(r.i18n && (r.i18n.zh || r.i18n.en) ? { i18n: { ...(r.i18n.zh ? { zh: String(r.i18n.zh) } : {}), ...(r.i18n.en ? { en: String(r.i18n.en) } : {}) } } : {}),
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
   for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' && d.kind !== 'service_fee' });
@@ -181,6 +182,8 @@ export interface PriceRow {
   note?: string;
   /** Giá cột Thợ tay nghề (chỉ khi bật cột thợ) */
   skilled?: { price: number; auto: number | null; overridden: boolean; formula: string };
+  /** Bản dịch tên dòng (người dùng tự điền) */
+  i18n?: { zh?: string; en?: string };
 }
 
 export interface PriceList {
@@ -248,6 +251,7 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       id: r.id, kind: r.kind, name, unit, price,
       auto: a.v == null ? null : Math.round(a.v), overridden, hidden: !!r.hidden, formula: overridden ? `Đã sửa tay (tự tính: ${f(a.v ?? 0)} đ)` : a.formula,
       ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
+      ...(r.i18n ? { i18n: r.i18n } : {}),
     };
   });
   // Cột thợ tay nghề: tính lại cả bảng với lương thợ (phiên bản thợ không bật cột thợ nên không gọi đệ quy mãi)

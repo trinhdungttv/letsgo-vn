@@ -90,6 +90,8 @@ export interface QuoteRowCfg {
   override?: number | null;
   /** Giá gõ tay ở cột Thợ tay nghề (null = tự tính theo lương thợ; dòng "custom" thiếu thì lấy như phổ thông) */
   overrideSkilled?: number | null;
+  /** Bản dịch tên dòng cho báo giá song ngữ (thiếu = dùng bản dịch mặc định nếu tên là tên chuẩn) */
+  i18n?: { zh?: string; en?: string };
   hidden?: boolean;
 }
 
