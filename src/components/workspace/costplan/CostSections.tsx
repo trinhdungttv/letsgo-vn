@@ -197,7 +197,7 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
                         {!l.isServiceFee && (
                           <div className="sm:col-span-2 rounded-xl bg-white ring-1 ring-black/5 px-3.5 divide-y divide-[#f2f2f4]">
                             {l.paidToWorker && <Row label="Là lương cơ bản" hint="Gốc để tính BHXH, công đoàn, phép năm"><Switch on={!!l.isBaseWage} onChange={v => setBaseWage(l, v)} /></Row>}
-                            {!l.isBaseWage && l.mode === 'fixed' && <Row label="Tính vào lương đóng BHXH" hint="BHXH và công đoàn sẽ tăng theo khoản này"><Switch on={!!l.insurable} onChange={v => patch(l.id, { insurable: v })} /></Row>}
+                            {!l.isBaseWage && l.mode === 'fixed' && <Row label="Tính vào lương đóng BHXH" hint="Chỉ có tác dụng khi Mức lương đóng BHXH = “Theo lương trả NLĐ”"><Switch on={!!l.insurable} onChange={v => patch(l.id, { insurable: v })} /></Row>}
                           </div>
                         )}
 

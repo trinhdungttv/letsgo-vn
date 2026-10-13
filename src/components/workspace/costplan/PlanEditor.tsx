@@ -10,6 +10,7 @@ import ProfitSplit from './ProfitSplit';
 import { InsuranceSplit, PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
 import ReferralEditor from './ReferralEditor';
 import QuoteMetaCard from './QuoteMetaCard';
+import InsuranceBase from './InsuranceBase';
 import { defaultReferral, type ServiceKind } from '../../../lib/costPlan/referral';
 import type { Scale, ScaleDefaults } from '../../../lib/costPlan/scaleDefaults';
 import { CostTotalCard, LegalCard, NegotiateCard, ProfitCard, SettingsCard, Warnings } from './SummaryPanel';
@@ -170,6 +171,7 @@ export default function PlanEditor({
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
           <div className="space-y-4 min-w-0">
             {aboveList}
+            <InsuranceBase data={data} result={result} minWage={minWage} readOnly={readOnly} onSettings={setSettings} />
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines}
               suggestions={suggestions} show={['worker', 'compliance', 'other']} />
             {notesCard}
@@ -191,7 +193,7 @@ export default function PlanEditor({
           <div className="space-y-4 min-w-0">
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines} suggestions={[]} show={['service']} />
             <PriceBuild data={data} result={result} eff={eff} onGoCost={() => setStep('cost')} onResetDay={readOnly ? undefined : resetDayPrice} />
-            <InsuranceSplit data={data} result={eff} readOnly={readOnly} onPlan={onChange} />
+            <InsuranceSplit data={data} result={eff} readOnly={readOnly} onPlan={onChange} minWage={minWage} onSettings={setSettings} />
             <QuoteMetaCard data={data} onChange={onChange} readOnly={readOnly} defaults={docDefaults} companyName={fillMeta?.company} />
             <PriceTable data={data} result={result} readOnly={readOnly} fileName={fileName} meta={fillMeta} planId={planId} docDefaults={docDefaults} onQuote={setQuote} onPlan={onChange} onPushCrm={readOnly ? undefined : onPushCrm} />
             <QuoteNotes data={data} readOnly={readOnly} onQuote={setQuote} />

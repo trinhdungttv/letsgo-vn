@@ -66,6 +66,8 @@ export function normalizePlanData(raw: unknown): PlanData {
   s.workers = Math.max(1, Math.round(num(s.workers)) || DEFAULT_SETTINGS.workers);
   s.simDays = Math.min(31, Math.max(1, Math.round(num(s.simDays)) || DEFAULT_SETTINGS.simDays));
   s.companyPct = Math.min(100, Math.max(0, num(s.companyPct)));
+  if (s.insuranceBase !== undefined && !['region', 'custom', 'wage'].includes(s.insuranceBase)) delete s.insuranceBase;
+  if (s.insuranceSalary !== undefined) s.insuranceSalary = Math.max(0, num(s.insuranceSalary));
   if (s.insuranceMinDays !== undefined) s.insuranceMinDays = Math.min(31, Math.max(1, Math.round(num(s.insuranceMinDays)) || 14));
   const lines = (Array.isArray(r.lines) ? r.lines : []).map((l): CostLine => ({
     ...l,
@@ -102,7 +104,7 @@ export interface ComputeOptions {
 }
 
 export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanResult {
-  const { settings, lines } = normalizePlanData(input);
+  const { settings, lines, minWage } = normalizePlanData(input);
   const baseDays = settings.baseDays;
   const warnings: PlanWarning[] = [];
   const out: PlanResult['lines'] = {};
@@ -117,7 +119,28 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   // ── Tầng A ───────────────────────────────────────────────────────────────────────────
   for (const l of tierA) out[l.id] = { daily: fixedDaily(l), monthly: fixedMonthly(l), derived: false };
   const baseWageDaily = sum(tierA.filter(l => l.isBaseWage).map(l => out[l.id].daily));
-  const insurableDaily = baseWageDaily + sum(tierA.filter(l => l.insurable && !l.isBaseWage).map(l => out[l.id].daily));
+  // Lương đóng BHXH: mặc định (phương án mới) = lương tối thiểu vùng của KCN; dự án cho phép thì đóng mức cao hơn;
+  // 'wage' = lương cơ bản + các khoản đánh dấu "tính vào lương đóng BHXH" (cách cũ, phương án đã lưu trước đây).
+  const wageInsurableDaily = baseWageDaily + sum(tierA.filter(l => l.insurable && !l.isBaseWage).map(l => out[l.id].daily));
+  const regionMin = num(opts.minWageMonthly ?? minWage?.monthly ?? 0);
+  const regionLabel = opts.minWageLabel ?? minWage?.label ?? 'vùng';
+  const wantBase = settings.insuranceBase ?? 'wage';
+  let insurableDaily = wageInsurableDaily;
+  let insuranceBaseUsed: PlanResult['insuranceBaseUsed'] = 'wage';
+  const customSalary = num(settings.insuranceSalary);
+  if (wantBase === 'custom' && customSalary > 0) {
+    insurableDaily = customSalary / baseDays; insuranceBaseUsed = 'custom';
+    if (regionMin > 0 && customSalary < regionMin) {
+      warnings.push({ level: 'error', text: `Mức đóng BHXH ${Math.round(customSalary).toLocaleString('vi-VN')} đ/tháng thấp hơn lương tối thiểu ${regionLabel} (${Math.round(regionMin).toLocaleString('vi-VN')} đ) — không được đóng thấp hơn mức này.` });
+    }
+  } else if (wantBase === 'region' || wantBase === 'custom') {
+    if (regionMin > 0) {
+      insurableDaily = regionMin / baseDays; insuranceBaseUsed = 'region';
+      if (wantBase === 'custom') warnings.push({ level: 'info', text: 'Chưa nhập mức đóng BHXH cao hơn — đang tính theo lương tối thiểu vùng.' });
+    } else {
+      warnings.push({ level: 'warn', text: 'Chưa chọn KCN nên chưa biết lương tối thiểu vùng — BHXH đang tạm tính theo lương trả người lao động.' });
+    }
+  }
   const workerFixedDaily = sum(tierA.filter(l => l.paidToWorker).map(l => out[l.id].daily));
 
   // ── Công thức tính một dòng theo % / phép năm ────────────────────────────────────────
@@ -239,6 +262,7 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   return {
     lines: out,
     baseWageDaily, insurableDaily,
+    insuranceSalaryMonthly: insurableDaily * baseDays, insuranceBaseUsed,
     workerDaily, workerMonthly,
     directDaily, costDaily, serviceFeeDaily, taxDaily,
     separatedDaily, separatedMonthly, separatedBilledMonthly, separateMinDays,

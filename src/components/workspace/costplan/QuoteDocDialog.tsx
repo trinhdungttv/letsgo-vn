@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { createPortal } from 'react-dom';
 import { AlertTriangle, ChevronRight, Download, Loader2, Printer, X } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
+import { STALE_BUILD_MSG, errorText, reloadApp } from '../../../lib/appVersion';
 import { logActivity } from '../../../lib/audit';
 import { computePriceList, includedNoteAuto, normalizeQuoteSheet } from '../../../lib/costPlan/quoteSheet';
 import {
@@ -153,7 +154,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
     if (!hostRef.current || !guard()) return;
     setBusy('pdf'); setErr(null);
     try { downloadBlob(await renderElementToPdf(hostRef.current), docFileName(view)); afterExport('Xuất PDF'); }
-    catch (e) { setErr(`Không tạo được PDF: ${e instanceof Error ? e.message : String(e)}`); }
+    catch (e) { setErr(errorText(e, 'Không tạo được PDF: ')); }
     setBusy(null);
   };
   const print = () => {
@@ -297,6 +298,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
             </div>
             <div className="ml-auto flex items-center gap-2">
               {err && <span className="text-[12px] text-[#b3140a] max-w-[260px] truncate" title={err}>{err}</span>}
+              {err === STALE_BUILD_MSG && <button type="button" onClick={reloadApp} className={`${btnGhost} !h-9`}>Tải lại trang</button>}
               <button type="button" onClick={print} disabled={!!busy} className={`${btnGhost} !h-9`}>{busy === 'print' ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}In</button>
               <button type="button" onClick={exportPdf} disabled={!!busy} className={`${btnPrimary} !h-9 !px-5`}>{busy === 'pdf' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}Tải PDF{showSig || showSeal ? ' (đã ký/đóng dấu)' : ''}</button>
             </div>

@@ -58,7 +58,18 @@ export interface PlanSettings {
   companyPct: number;
   /** Khoản thu riêng theo tháng (billSeparately) chỉ áp dụng cho NLĐ làm từ ngần này công/tháng. Thiếu = 14. */
   insuranceMinDays?: number;
+  /**
+   * Lương làm CĂN CỨ đóng BHXH, công đoàn (các dòng tính % trên "Lương đóng BHXH"):
+   *  region = mức lương tối thiểu vùng của KCN (mặc định phương án mới — đa số dự án) ·
+   *  custom = mức dự án cho phép đóng cao hơn (insuranceSalary) · wage = theo lương trả NLĐ (cách tính cũ).
+   * Thiếu = 'wage' để phương án đã lưu giữ nguyên số.
+   */
+  insuranceBase?: InsuranceBaseMode;
+  /** Mức lương đóng BHXH tự nhập, đ/tháng (khi insuranceBase = 'custom') */
+  insuranceSalary?: number;
 }
+
+export type InsuranceBaseMode = 'region' | 'custom' | 'wage';
 
 /** Các dòng chuẩn của bảng giá dịch vụ gửi khách (theo luật: Điều 98 BLLĐ 2019, Điều 57 NĐ 145/2020). */
 export type QuoteRowKind =
@@ -145,6 +156,9 @@ export interface PlanResult {
   lines: Record<string, LineResult>;
   baseWageDaily: number;
   insurableDaily: number;
+  /** Lương đóng BHXH đang dùng, đ/tháng, và cách lấy thực tế (region khi chưa có KCN sẽ lùi về wage) */
+  insuranceSalaryMonthly: number;
+  insuranceBaseUsed: InsuranceBaseMode;
   workerDaily: number;
   workerMonthly: number;
   /** Tổng chi phí trực tiếp / công, gồm cả Phí DV, trước thuế */

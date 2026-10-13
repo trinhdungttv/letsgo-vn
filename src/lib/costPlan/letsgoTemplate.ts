@@ -80,7 +80,14 @@ const SIGNER2: Record<L, string> = { vi: '', en: '', zh: '阮文俊' };
 // ── Dựng ──────────────────────────────────────────────────────────────────────────────────────
 /** Cỡ chữ (pt) từng phần của 1 phiên bản. Tiêu đề, đầu mục và giá tiền to hơn chữ thường để dễ đọc, cân đối với bảng. */
 interface Sizes { body: number; name: number; contact: number; title: number; title2: number; heading: number; thead: number; price: number; info: number }
-interface Spec { lang: L; ratio: boolean; font: string; z: Sizes }
+interface Spec { lang: L; ratio: boolean; font: string; z: Sizes; skilled?: boolean }
+
+/** Tiêu đề 2 khối giá khi có cột thợ, và hậu tố gắn vào tên dòng của khối thợ (bộ điền nhận ra "tay nghề / skilled / 技工"). */
+const BLOCKS = {
+  general: ['Lao động phổ thông', 'General worker', '普工'],
+  skilled: ['Lao động tay nghề', 'Skilled worker', '技工'],
+  suffix: [' (tay nghề)', ' (skilled)', '（技工）'],
+} as const;
 
 const SIZES: Record<'vi' | 'bi' | 'ratio', Sizes> = {
   vi: { body: 12, name: 17, contact: 12, title: 21, title2: 0, heading: 14, thead: 12.5, price: 14, info: 12 },
@@ -88,15 +95,20 @@ const SIZES: Record<'vi' | 'bi' | 'ratio', Sizes> = {
   ratio: { body: 11, name: 15, contact: 11, title: 18, title2: 0, heading: 13, thead: 11.5, price: 13, info: 11 },
 };
 
-export async function buildLetsgoTemplate(): Promise<ArrayBuffer> {
+/**
+ * `skilled`: phương án đang bật cột giá THỢ TAY NGHỀ → bảng giá có 2 khối "Lao động phổ thông" và "Lao động tay nghề"
+ * (cùng các dòng, đánh số liên tục như mẫu Excel công ty đang dùng). Không truyền = mẫu gốc 1 khối như cũ.
+ */
+export async function buildLetsgoTemplate(opts: { skilled?: boolean } = {}): Promise<ArrayBuffer> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "Let's Go VN";
   const logo = wb.addImage({ base64: `data:image/png;base64,${LETSGO_LOGO_B64}`, extension: 'png' });
-  sheet(wb, logo, 'Tiếng Việt', { lang: 'vi', ratio: false, font: 'Times New Roman', z: SIZES.vi });
-  sheet(wb, logo, 'Anh - Việt', { lang: 'en', ratio: false, font: 'Times New Roman', z: SIZES.bi });
-  sheet(wb, logo, 'Trung - Việt', { lang: 'zh', ratio: false, font: 'Times New Roman', z: SIZES.bi });
-  sheet(wb, logo, 'Có tỉ lệ (%)', { lang: 'vi', ratio: true, font: 'Arial', z: SIZES.ratio });
+  const skilled = !!opts.skilled;
+  sheet(wb, logo, 'Tiếng Việt', { lang: 'vi', ratio: false, font: 'Times New Roman', z: SIZES.vi, skilled });
+  sheet(wb, logo, 'Anh - Việt', { lang: 'en', ratio: false, font: 'Times New Roman', z: SIZES.bi, skilled });
+  sheet(wb, logo, 'Trung - Việt', { lang: 'zh', ratio: false, font: 'Times New Roman', z: SIZES.bi, skilled });
+  sheet(wb, logo, 'Có tỉ lệ (%)', { lang: 'vi', ratio: true, font: 'Arial', z: SIZES.ratio, skilled });
   return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
 }
 
@@ -219,17 +231,31 @@ function sheet(wb: Workbook, logo: number, name: string, sp: Spec) {
   if (ratio) put(ws.getCell(hr, 4), [{ t: 'Tỉ lệ (%)', b: true }], { horizontal: 'center', wrapText: true }, z.thead);
   for (let cc = 1; cc <= lastCol; cc++) ws.getCell(hr, cc).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEAD } };
   const t0 = hr;
-  ROWS.forEach((rw, i) => {
+  const li = lang === 'en' ? 1 : lang === 'zh' ? 2 : 0;
+  // Dòng tiêu đề khối (chỉ khi có cột thợ): gộp phần nhãn, CHỪA ô giá — bộ điền dừng đọc bảng khi gặp dòng gộp che cột giá
+  const blockHead = (b: readonly [string, string, string]) => {
+    const rr = row(hp(z.body) + 3);
+    merge(rr, 1, rr, hcols[3] - 1);
+    put(ws.getCell(rr, 1), bi ? [{ t: b[0], b: true }, { t: ` / ${b[li]}`, b: true, i: true }] : [{ t: b[0], b: true }], { horizontal: 'left', indent: 1 });
+    for (let cc = 1; cc <= lastCol; cc++) ws.getCell(rr, cc).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F4FA' } };
+  };
+  const blocks = sp.skilled ? [{ head: BLOCKS.general, suffix: null }, { head: BLOCKS.skilled, suffix: BLOCKS.suffix }] : [{ head: null, suffix: null }];
+  let no = 0;
+  for (const blk of blocks) {
+  if (blk.head) blockHead(blk.head);
+  ROWS.forEach(rw0 => {
+    const rw = blk.suffix ? [rw0[0] + blk.suffix[0], rw0[1] + blk.suffix[1], rw0[2] + blk.suffix[2], rw0[3], rw0[4], rw0[5], rw0[6]] as typeof rw0 : rw0;
     const sec = lang === 'en' ? rw[1] : lang === 'zh' ? rw[2] : '';
     const lines = bi ? nLines(rw[0], z.body, colPxOf(widths[1])) + nLines(sec, z.body, colPxOf(widths[1])) : nLines(rw[0], z.body, colPxOf(widths[1]));
     const rr = row(Math.max(hp(z.price), hp(z.body, lines)));
-    put(ws.getCell(rr, 1), [{ t: String(i + 1) }], { horizontal: 'center' });
+    put(ws.getCell(rr, 1), [{ t: String(++no) }], { horizontal: 'center' });
     put(ws.getCell(rr, 2), bi ? [{ t: rw[0] }, { t: `\n${sec}`, i: true, b: lang === 'zh' }] : [{ t: rw[0] }], { horizontal: 'left', wrapText: true });
     put(ws.getCell(rr, 3), bi ? [{ t: rw[3] }, { t: `\n${lang === 'en' ? rw[4] : rw[5]}`, i: true, b: lang === 'zh' }] : [{ t: rw[3] }], { horizontal: 'center', wrapText: true });
     if (ratio) put(ws.getCell(rr, 4), [{ t: rw[6] }], { horizontal: 'center' });
     const price = ws.getCell(rr, hcols[3]);
     price.numFmt = '#,##0'; price.font = font({ b: true, size: z.price }); price.alignment = { horizontal: 'right', vertical: 'middle' };   // giá tiền to, đậm
   });
+  }
   grid(t0, 1, r - 1, lastCol);
 
   // ── Ghi chú ──

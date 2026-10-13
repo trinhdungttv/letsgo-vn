@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Check, Download, FileSpreadsheet, Loader2, Pencil, Printer, Trash2, Upload, X } from 'lucide-react';
+import { STALE_BUILD_MSG, errorText, reloadApp } from '../../../lib/appVersion';
 import { useAuth } from '../../../lib/auth';
 import { logActivity } from '../../../lib/audit';
 import {
@@ -18,6 +19,7 @@ import { defaultDoc, normalizeDoc, type DocDefaults, type QuoteDoc } from '../..
 import { downloadBlob, printCss, renderElementToPdf } from '../../../lib/costPlan/pdf';
 import { buildSheetModel, type SheetCell, type SheetModel } from '../../../lib/costPlan/sheetModel';
 import type { PlanData, PlanResult } from '../../../lib/costPlan/types';
+import { normalizeQuoteSheet } from '../../../lib/costPlan/quoteSheet';
 import { formatDate } from '../../../lib/format';
 import { fmt } from './fields';
 import EntityManager, { Slider } from './EntityManager';
@@ -65,7 +67,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
   const load = async () => {
     if (!token) return;
     try { const list = await listQuoteTemplates(token); setTpls(list); setLibErr(null); }
-    catch (e) { setTpls([]); setLibErr(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setTpls([]); setLibErr(errorText(e)); }
   };
   useEffect(() => { load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -161,7 +163,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       if (my !== seq.current) return null;                               // đã có lần tính mới hơn
       out.current = res; setReport(res.report); setModel(m);
       return res;
-    } catch (e) { if (my === seq.current) { setPvErr(e instanceof Error ? e.message : String(e)); setModel(null); out.current = null; } return null; }
+    } catch (e) { if (my === seq.current) { setPvErr(errorText(e)); setModel(null); out.current = null; } return null; }
     finally { if (my === seq.current) setPvBusy(false); }
   }, [chosen, sourceBuf, data, result, meta, entity, doc, signOn, sealOn, logoOn, sigAvail, sealAvail, logoAvail, layout, sheetEdits]);
 
@@ -219,7 +221,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     try {
       const r = await fresh();
       if (r) { downloadBlob(new Blob([r.output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${fileBase()}.xlsx`); afterExport('Xuất Excel'); }
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
   const waitPaint = async () => {
@@ -236,13 +238,13 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
         downloadBlob(await renderElementToPdf(hostRef.current, { landscape: !!model?.landscape }), `${fileBase()}.pdf`);
         afterExport('Xuất PDF');
       }
-    } catch (e) { setError(`Không tạo được PDF: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) { setError(errorText(e, 'Không tạo được PDF: ')); }
     setBusy(null);
   };
   const doPrint = async () => {
     setBusy('print'); setError(null);
     try { const r = await fresh(); if (r) { await waitPaint(); afterExport('In'); setTimeout(() => { window.print(); setBusy(null); }, 80); return; } }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -283,7 +285,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       const next: Record<string, string[]> = {};
       for (const [k, v] of Object.entries(allEdits)) if (!gone.has(k)) next[k] = v;
       setAllEdits(next);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -293,11 +295,13 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     setError(null); setBusy('Đang dựng mẫu…');
     try {
       const { buildLetsgoTemplate, LETSGO_TEMPLATE_NAME, LETSGO_VERSIONS } = await import('../../../lib/costPlan/letsgoTemplate');
-      const buf = await buildLetsgoTemplate();
+      // Phương án đang bật cột thợ tay nghề → mẫu có thêm khối "Lao động tay nghề" (giá điền từ cột thợ)
+      const skilled = !data.service && !!normalizeQuoteSheet(data.quote).skilled?.on;
+      const buf = await buildLetsgoTemplate({ skilled });
       const v = (await inspectTemplate(buf)).map(x => ({ ...x, label: LETSGO_VERSIONS.find(b => b.sheet === x.sheet)?.label ?? x.label }));
-      setOneOff({ name: LETSGO_TEMPLATE_NAME, fileName: 'Mau-bao-gia-LetsGo.xlsx', buf, versions: v });
+      setOneOff({ name: skilled ? `${LETSGO_TEMPLATE_NAME} (có thợ tay nghề)` : LETSGO_TEMPLATE_NAME, fileName: skilled ? 'Mau-bao-gia-LetsGo-tay-nghe.xlsx' : 'Mau-bao-gia-LetsGo.xlsx', buf, versions: v });
       setTplId(null); setSheet(null);
-    } catch (e) { setError(`Không dựng được mẫu: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) { setError(errorText(e, 'Không dựng được mẫu: ')); }
     setBusy(null);
   };
 
@@ -318,7 +322,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       const v = await inspectTemplate(buf);
       if (!v.length) throw new Error('File không có sheet nào hiển thị.');
       setPending({ name: file.name.replace(/\.xlsx$/i, ''), fileName: file.name, buf, versions: v, replaceId });
-    } catch (e) { setError(`Không đọc được file: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) { setError(errorText(e, 'Không đọc được file: ')); }
     setBusy(null);
   };
 
@@ -329,7 +333,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       const row = await saveQuoteTemplate(token, { id: pending.replaceId, name: pending.name, versions: pending.versions, fileName: pending.fileName, file: pending.buf });
       srcBuf.current = null;
       await load(); setOneOff(null); setTplId(row.id); setSheet(null); setPending(null);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -337,7 +341,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     if (!editing || !token) return;
     setBusy('Đang lưu…'); setError(null);
     try { await saveQuoteTemplate(token, { id: editing.id, name: editing.name, versions: editing.versions }); await load(); setEditing(null); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -346,7 +350,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     if (!window.confirm(`Xoá bộ mẫu “${current.name}” (${current.versions.length} phiên bản) khỏi thư viện? Không khôi phục được.`)) return;
     setBusy('Đang xoá…');
     try { await deleteQuoteTemplate(token, current.id); setTplId(null); setSheet(null); setModel(null); await load(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -354,7 +358,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     if (!token || !entity || !layoutEdit) return;
     setBusy('Đang lưu…'); setError(null);
     try { await saveEntity(token, { id: entity.id, label: entity.label, data: entity.data, layout: layoutEdit }); await reloadEntities(); setLayoutEdit(null); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
 
@@ -592,7 +596,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       ) : !chosen ? (
         <div className="text-center text-[13px] text-[#86868b] py-24">{tpls === null ? 'Đang tải…' : 'Chọn hoặc tải lên file Excel mẫu để xem báo giá.'}</div>
       ) : pvErr ? (
-        <div className="max-w-md mx-auto mt-16 flex gap-2 text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-xl px-4 py-3"><AlertTriangle size={14} className="shrink-0 mt-0.5" /><span>{pvErr}</span></div>
+        <div className="max-w-md mx-auto mt-16 flex gap-2 text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-xl px-4 py-3"><AlertTriangle size={14} className="shrink-0 mt-0.5" /><div className="min-w-0"><span>{pvErr}</span>{pvErr === STALE_BUILD_MSG && <button type="button" onClick={reloadApp} className="block mt-1.5 h-7 px-3 rounded-full bg-[#0071e3] text-white text-[12px] font-semibold hover:bg-[#0077ed]">Tải lại trang</button>}</div></div>
       ) : !model ? (
         <div className="flex justify-center py-24"><Loader2 className="animate-spin text-[#86868b]" /></div>
       ) : (
@@ -652,7 +656,15 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
 
           <div className="flex-1 min-h-0 flex">
             <div className={`${tab === 'form' ? 'block' : 'hidden'} lg:block w-full lg:w-[400px] lg:shrink-0 overflow-y-auto border-r border-[#f0f0f2]`}>
-              {error && <div className="m-5 mb-0 flex gap-2 text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-xl px-3.5 py-2.5"><AlertTriangle size={14} className="shrink-0 mt-0.5" /><span>{error}</span></div>}
+              {error && (
+                <div className="m-5 mb-0 flex gap-2 text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-xl px-3.5 py-2.5">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span>{error}</span>
+                    {error === STALE_BUILD_MSG && <button type="button" onClick={reloadApp} className="block mt-1.5 h-7 px-3 rounded-full bg-[#0071e3] text-white text-[12px] font-semibold hover:bg-[#0077ed]">Tải lại trang</button>}
+                  </div>
+                </div>
+              )}
               {form}
             </div>
             <div className={`${tab === 'preview' ? 'block' : 'hidden'} lg:block flex-1 min-w-0 overflow-y-auto bg-[#e8e8ed]`}>{preview}</div>

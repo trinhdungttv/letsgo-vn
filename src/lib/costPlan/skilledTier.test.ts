@@ -80,3 +80,32 @@ describe('Điền file Excel mẫu: khối thợ tay nghề', () => {
     expect(buildFillValues(off, computePlan(off), {}).pricesSkilled).toBeNull();
   });
 });
+
+describe('Mẫu Let\'s Go có sẵn + cột thợ', () => {
+  it('bật cột thợ → mẫu có khối "Lao động tay nghề", điền đúng giá thợ vào dòng thợ, giá phổ thông vào dòng phổ thông', async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const { buildLetsgoTemplate } = await import('./letsgoTemplate');
+    const { buildFillValues, fillExcelTemplate } = await import('./excelFill');
+    const d = plan({});
+    const { output, report } = await fillExcelTemplate(await buildLetsgoTemplate({ skilled: true }), buildFillValues(d, computePlan(d), { company: 'X' }), { sheet: 'Tiếng Việt' });
+    // nhãn trong báo cáo = tên dòng + đơn vị tính
+    const val = (start: string) => report.rows.find(x => x.label.startsWith(`${start} VNĐ`))?.value;
+    expect(val('Lương làm thêm giờ vào ngày thường')).toBe(45_000);
+    expect(val('Lương làm thêm giờ vào ngày thường (tay nghề)')).toBe(48_000);
+    expect(val('Đơn giá lương cơ bản 8h/ngày (tay nghề)')).toBe(256_000);
+    expect(report.rows.find(x => x.label.startsWith('Lương làm thêm giờ ban đêm vào ngày nghỉ lễ, tết (tay nghề)'))?.value).toBe(124_800);
+    expect(report.rows.length).toBe(20);
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(output);
+    const texts: string[] = [];
+    wb.worksheets[0].eachRow(r => r.eachCell(c => { const v = c.value as { richText?: { text: string }[] } | string; texts.push(typeof v === 'string' ? v : v?.richText?.map(t => t.text).join('') ?? ''); }));
+    expect(texts).toContain('Lao động phổ thông');
+    expect(texts).toContain('Lao động tay nghề');
+  });
+  it('không bật cột thợ → mẫu y như cũ (1 khối)', async () => {
+    const { buildLetsgoTemplate } = await import('./letsgoTemplate');
+    const { inspectTemplate } = await import('./excelFill');
+    const one = await inspectTemplate(await buildLetsgoTemplate());
+    const two = await inspectTemplate(await buildLetsgoTemplate({ skilled: true }));
+    expect(two[0].rows).toBe(one[0].rows * 2);
+  });
+});

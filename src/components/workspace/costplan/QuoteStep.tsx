@@ -12,6 +12,7 @@ import QuoteTemplateDialog from './QuoteTemplateDialog';
 import QuoteDocDialog from './QuoteDocDialog';
 import type { DocDefaults } from '../../../lib/costPlan/quoteDoc';
 import { copyText } from '../../../lib/clipboard';
+import InsuranceBase from './InsuranceBase';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
 /**
@@ -80,7 +81,12 @@ const isInsuranceName = (name: string) => /bhxh|bhyt|bhtn|bao hiem/.test(normali
  * Tách bảo hiểm khỏi giá ca 8h: khoản đánh dấu "thu riêng" vẫn là giá vốn nhưng không cộng vào giá ngày,
  * mà thành 1 dòng "/người/tháng" trên bảng giá — khách chỉ trả cho NLĐ làm đủ số công trong tháng (mặc định 14).
  */
-export function InsuranceSplit({ data, result, readOnly, onPlan }: { data: PlanData; result: PlanResult; readOnly?: boolean; onPlan: (d: PlanData) => void }) {
+export function InsuranceSplit({ data, result, readOnly, onPlan, minWage, onSettings }: {
+  data: PlanData; result: PlanResult; readOnly?: boolean; onPlan: (d: PlanData) => void;
+  /** Lương tối thiểu vùng của KCN — mặc định làm mức đóng BHXH */
+  minWage?: { monthly: number; label: string } | null;
+  onSettings?: (p: Partial<PlanData['settings']>) => void;
+}) {
   const cands = data.lines.filter(l => !l.isBaseWage && !l.isServiceFee && !l.paidToWorker);
   const insLines = cands.filter(l => isInsuranceName(l.name));
   const on = data.lines.some(l => l.billSeparately);
@@ -126,6 +132,7 @@ export function InsuranceSplit({ data, result, readOnly, onPlan }: { data: PlanD
           </div>
         </div>
       )}
+      {onSettings && <InsuranceBase compact data={data} result={result} minWage={minWage} readOnly={readOnly} onSettings={onSettings} />}
     </div>
   );
 }

@@ -213,7 +213,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
   const openNew = () => {
     const meta = emptyMeta();
     const sc = scaleDefaults.defaults.supply;
-    const data: PlanData = { settings: { ...DEFAULT_SETTINGS, workers: sc.workers, simDays: sc.simDays }, lines: starterFor('', ''), notes: '' };
+    // Phương án mới: BHXH đóng theo lương tối thiểu vùng của KCN (đa số dự án) — dự án cho phép thì đổi sang mức cao hơn
+    const data: PlanData = { settings: { ...DEFAULT_SETTINGS, workers: sc.workers, simDays: sc.simDays, insuranceBase: 'region' }, lines: starterFor('', ''), notes: '' };
     setDraft({ id: null, meta, data, version: 0, share: null, baseline: snapshot(meta, data), linesTouched: false, updatedBy: null, updatedAt: null });
     setCrmLines([]); setRemote(null); setSaveNote('');
     // Mở từ hồ sơ công ty → chọn sẵn công ty đó (tự điền ngành, KCN, chi nhánh, số LĐ từ CRM)
