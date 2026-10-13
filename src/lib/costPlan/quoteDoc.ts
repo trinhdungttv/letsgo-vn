@@ -2,7 +2,7 @@
 //   vi = tiếng Việt · zh = song ngữ Việt–Trung (Việt trên, Trung dưới) · en = song ngữ Anh–Việt (Anh trên, Việt dưới)
 // File này THUẦN (không React, không DOM) để test được: gom dữ liệu phương án + thông tin người dùng đã điền thành 1 "DocView"
 // đã dịch & định dạng sẵn; component chỉ việc vẽ. Chỗ nào người dùng chưa sửa (null) thì dùng câu mặc định của đúng ngôn ngữ.
-import { computePriceList, DEFAULT_GENERAL_NOTES, includedNoteAuto, normalizeQuoteSheet } from './quoteSheet';
+import { computePriceList, DEFAULT_GENERAL_NOTES, DEFAULT_SKILLED_LABEL, includedNoteAuto, normalizeQuoteSheet } from './quoteSheet';
 import { normalizePlanData } from './engine';
 import { normalizeReferral, referralNotes, referralPriceRow, referralTerms } from './referral';
 import type { PlanData, PlanResult, QuoteRowKind } from './types';
@@ -154,6 +154,8 @@ const T = {
   thDesc: { vi: 'Nội dung đơn giá', zh: '单价内容', en: 'Description' },
   thUnit: { vi: 'Đơn vị tính', zh: '计量单位', en: 'Unit' },
   thPrice: { vi: 'Đơn giá (VNĐ)', zh: '单价（越南盾）', en: 'Unit price (VND)' },
+  thPriceGeneral: { vi: 'LĐ phổ thông (VNĐ)', zh: '普工（越南盾）', en: 'General worker (VND)' },
+  thPriceSkilled: { vi: 'Thợ tay nghề (VNĐ)', zh: '技工（越南盾）', en: 'Skilled worker (VND)' },
   thNote: { vi: 'Ghi chú', zh: '备注', en: 'Remarks' },
   notes: { vi: 'Ghi chú', zh: '备注', en: 'Notes' },
   valid: { vi: 'Báo giá có hiệu lực đến', zh: '报价有效期至', en: 'This quotation is valid until' },
@@ -247,7 +249,7 @@ export function dateLong(lang: DocLang, iso: string): Bi {
 }
 export const dateShort = (iso: string) => { const [y, m, d] = iso.split('-'); return y && m && d ? `${d}/${m}/${y}` : ''; };
 
-export interface DocRow { no: number; name: Bi; unit: Bi; price: number }
+export interface DocRow { no: number; name: Bi; unit: Bi; price: number; /** Giá cột thợ tay nghề (khi bật) */ priceSkilled?: number }
 
 export interface DocView {
   lang: DocLang;
@@ -262,6 +264,8 @@ export interface DocView {
   intro: Bi;
   serviceLines: Bi[];
   rows: DocRow[];
+  /** Có cột giá thợ tay nghề: tiêu đề 2 cột giá */
+  skilled: { general: Bi; skilled: Bi } | null;
   /** Câu "Bao gồm: …" đặt ngay dưới bảng giá ('' = không có) */
   includedNote: string;
   /** Điều kiện tính phí (chỉ dịch vụ Giới thiệu lao động; cung ứng = []) */
@@ -283,7 +287,9 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
   const labels = Object.fromEntries((Object.keys(T) as LabelKey[]).map(k => [k, label(k, lang)])) as Record<LabelKey, Bi>;
 
   // Bảng giá: các dòng đang hiện; tên/đơn vị mặc định được dịch, tên người dùng đã sửa thì giữ nguyên
-  const list = computePriceList(plan, result).rows.filter(r => !r.hidden);
+  const priceList = computePriceList(plan, result);
+  const list = priceList.rows.filter(r => !r.hidden);
+  const skLabel = !plan.service && priceList.skilled ? priceList.skilled.label : null;
   const defTri = (kind: QuoteRowKind, name: string, tbl: Record<string, Tri>, field: 'vi'): Bi => {
     const t = kind !== 'custom' ? tbl[kind] : undefined;
     return t && t[field] === name ? bi(t, lang) : { a: name };
@@ -300,6 +306,7 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
         name: defTri(r.kind, r.name, ROW_NAME, 'vi'),
         unit: defTri(r.kind, r.unit, ROW_UNIT, 'vi'),
         price: r.price,
+        ...(skLabel && r.skilled ? { priceSkilled: r.skilled.price } : {}),
       }));
 
   const customNotes = q.generalNotes.trim() !== DEFAULT_GENERAL_NOTES.trim();
@@ -339,7 +346,9 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
     labels,
     intro: doc.intro?.trim() ? { a: doc.intro.trim() } : defaultIntro(lang, companyName, referral),
     serviceLines: doc.serviceLines != null && doc.serviceLines.trim() ? trimLines(doc.serviceLines).map(a => ({ a })) : defaultServiceLines(lang, ctx.industry, referral),
-    rows, includedNote: refCfg ? '' : includedText.trim(), terms: refCfg ? referralTerms(refCfg, lang, 'quote') : [], notes,
+    rows,
+    skilled: skLabel ? { general: labels.thPriceGeneral, skilled: skLabel.trim() === DEFAULT_SKILLED_LABEL ? labels.thPriceSkilled : { a: `${skLabel.trim()} (VNĐ)` } } : null,
+    includedNote: refCfg ? '' : includedText.trim(), terms: refCfg ? referralTerms(refCfg, lang, 'quote') : [], notes,
     closing: doc.closing?.trim() ? { a: doc.closing.trim() } : defaultClosing(lang),
     validText: doc.validUntil ? { a: `${labels.valid.a}: ${dateShort(doc.validUntil)}`, b: labels.valid.b ? `${labels.valid.b}: ${dateShort(doc.validUntil)}` : undefined } : null,
     placeDate: { a: withPlace(dl.a) ?? '', b: withPlace(dl.b) },

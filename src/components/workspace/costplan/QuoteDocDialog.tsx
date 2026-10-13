@@ -219,7 +219,8 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
               <div className="flex items-center gap-2">
                 <Switch on={!r.hidden} disabled={dis} onChange={v => patchRow(r.id, { hidden: !v })} />
                 <input disabled={dis} value={r.name} onChange={e => patchRow(r.id, { name: e.target.value })} className={`${field} !h-8 !bg-white flex-1 min-w-0`} />
-                <MoneyInput value={r.price} disabled={dis} onChange={n => patchRow(r.id, { override: n })} className={`${field} !h-8 !bg-white w-[104px] text-right font-semibold ${r.overridden ? '!text-[#b25e00]' : ''}`} />
+                <MoneyInput value={r.price} disabled={dis} onChange={n => patchRow(r.id, { override: n })} title="Lao động phổ thông" className={`${field} !h-8 !bg-white w-[104px] text-right font-semibold ${r.overridden ? '!text-[#b25e00]' : ''}`} />
+                {r.skilled && <MoneyInput value={r.skilled.price} disabled={dis} onChange={n => patchRow(r.id, { overrideSkilled: n })} title="Thợ tay nghề" className={`${field} !h-8 !bg-[#f6f1fd] w-[96px] text-right font-semibold text-[#7a4cc2] ${r.skilled.overridden ? '!text-[#b25e00]' : ''}`} />}
               </div>
               {r.overridden && !dis && <button type="button" onClick={() => patchRow(r.id, { override: null })} className={btnLink + ' !text-[11.5px] mt-1 ml-12'}>Khôi phục giá tự tính ({fmt(r.auto ?? 0)})</button>}
             </div>

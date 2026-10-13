@@ -135,10 +135,12 @@ export default function QuoteDocument({ view, images, layout = DEFAULT_LAYOUT, s
       {/* 2. Bảng giá */}
       <Heading n={2} t={L.s2} />
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, tableLayout: 'fixed' }}>
-        <colgroup><col style={{ width: 44 }} /><col /><col style={{ width: 138 }} /><col style={{ width: 118 }} /></colgroup>
+        {view.skilled
+          ? <colgroup><col style={{ width: 40 }} /><col /><col style={{ width: 118 }} /><col style={{ width: 104 }} /><col style={{ width: 104 }} /></colgroup>
+          : <colgroup><col style={{ width: 44 }} /><col /><col style={{ width: 138 }} /><col style={{ width: 118 }} /></colgroup>}
         <thead>
           <tr>
-            {([L.thNo, L.thDesc, L.thUnit, L.thPrice] as Bi[]).map((h, i) => (
+            {(view.skilled ? [L.thNo, L.thDesc, L.thUnit, view.skilled.general, view.skilled.skilled] : [L.thNo, L.thDesc, L.thUnit, L.thPrice] as Bi[]).map((h, i) => (
               <th key={i} style={th}><div style={{ fontSize: 11.5 }}>{h.a}</div>{h.b ? <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>{h.b}</div> : null}</th>
             ))}
           </tr>
@@ -150,6 +152,7 @@ export default function QuoteDocument({ view, images, layout = DEFAULT_LAYOUT, s
               <td style={td}><B t={r.name} size={12.5} sub={0.86} /></td>
               <td style={{ ...td, textAlign: 'center' }}><B t={r.unit} size={11.5} sub={0.9} style={{ textAlign: 'center' }} /></td>
               <td style={{ ...td, textAlign: 'right', fontSize: 14, fontWeight: 700, color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{money(r.price)}</td>
+              {view.skilled ? <td style={{ ...td, textAlign: 'right', fontSize: 14, fontWeight: 700, color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{r.priceSkilled != null ? money(r.priceSkilled) : ''}</td> : null}
             </tr>
           ))}
         </tbody>

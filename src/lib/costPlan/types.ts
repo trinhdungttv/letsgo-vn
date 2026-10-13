@@ -75,7 +75,24 @@ export interface QuoteRowCfg {
   unit: string;
   /** Giá gõ tay — có thì thay cho giá tự tính. Dòng "custom" luôn dùng số này. */
   override?: number | null;
+  /** Giá gõ tay ở cột Thợ tay nghề (null = tự tính theo lương thợ; dòng "custom" thiếu thì lấy như phổ thông) */
+  overrideSkilled?: number | null;
   hidden?: boolean;
+}
+
+/**
+ * Cột giá thứ 2 cho THỢ TAY NGHỀ — cùng các dòng như lao động phổ thông nhưng giá khác (ít dùng, bật khi cần).
+ * Giá tự tính bằng cách tính lại cả phương án với lương cơ bản của thợ (và phí DV riêng nếu có).
+ */
+export interface SkilledTier {
+  on: boolean;
+  /** Tên cột in trên báo giá */
+  label: string;
+  /** Lương cơ bản của thợ — thay dòng Lương cơ bản ở bước 1 khi tính cột thợ (0 = như phổ thông) */
+  wage: number;
+  wageUnit: 'day' | 'month';
+  /** Phí dịch vụ riêng cho thợ, đ/công. null = như lao động phổ thông */
+  serviceFee: number | null;
 }
 
 /** Cấu hình "Bảng giá dịch vụ" (bước 2 — Báo giá khách). */
@@ -90,6 +107,8 @@ export interface QuoteSheet {
   otMarkupPct: number;
   /** Tăng ca đêm ngày thường nối liền sau ca ngày (hệ số 210% thay vì 200%) */
   nightOtAfterDay: boolean;
+  /** Cột giá thợ tay nghề (thiếu / on=false = không có) */
+  skilled?: SkilledTier | null;
 }
 
 export interface PlanData {

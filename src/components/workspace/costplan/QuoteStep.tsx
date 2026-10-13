@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { newLineId } from '../../../lib/costPlan/engine';
 import {
-  computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
+  DEFAULT_SKILLED_LABEL, computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { normalizeText } from '../../../lib/costPlan/presets';
@@ -158,18 +158,35 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   const setRow = (id: string, p: Partial<QuoteRowCfg>) => onQuote({ ...q, rows: q.rows.map(r => (r.id === id ? { ...r, ...p } : r)) });
   const patch = (p: Partial<QuoteSheet>) => onQuote({ ...q, ...p });
 
+  // ── Cột giá thợ tay nghề (ít dùng — bật mới hiện) ──
+  const sk = q.skilled;
+  const skOn = !!sk?.on && !!list.skilled;
+  const baseLine = data.lines.find(l => l.isBaseWage);
+  const feeLine = data.lines.find(l => l.isServiceFee);
+  const setSkilled = (p: Partial<NonNullable<QuoteSheet['skilled']>>) => patch({ skilled: { on: true, label: DEFAULT_SKILLED_LABEL, wage: 0, wageUnit: 'month', serviceFee: null, ...sk, ...p } });
+  const turnOnSkilled = () => setSkilled({
+    on: true,
+    // Lần đầu: lấy lương cơ bản phổ thông làm điểm bắt đầu để sửa
+    ...(sk?.wage ? {} : { wage: baseLine?.value ?? 0, wageUnit: baseLine?.unit === 'day' ? 'day' : 'month' }),
+  });
+
   const copy = async () => {
     setCopied((await copyText(priceListToTsv(list, included, q.generalNotes))) ? 'ok' : 'fail');
     setTimeout(() => setCopied(null), 1800);
   };
   const excel = async () => {
     const XLSX = await import('xlsx');
-    const aoa: (string | number)[][] = [['STT', 'Nội dung đơn giá', 'Đơn vị tính', 'Đơn giá (VNĐ)', 'Ghi chú']];
-    visible.forEach((r, i) => aoa.push([i + 1, r.name, r.unit, r.price, i === 0 ? included : r.note ?? '']));
+    const skLabel = list.skilled?.label;
+    const aoa: (string | number)[][] = [skLabel
+      ? ['STT', 'Nội dung đơn giá', 'Đơn vị tính', 'LĐ phổ thông (VNĐ)', `${skLabel} (VNĐ)`, 'Ghi chú']
+      : ['STT', 'Nội dung đơn giá', 'Đơn vị tính', 'Đơn giá (VNĐ)', 'Ghi chú']];
+    visible.forEach((r, i) => aoa.push(skLabel
+      ? [i + 1, r.name, r.unit, r.price, r.skilled?.price ?? '', i === 0 ? included : r.note ?? '']
+      : [i + 1, r.name, r.unit, r.price, i === 0 ? included : r.note ?? '']));
     const notes = q.generalNotes.split('\n').filter(Boolean);
     if (notes.length) aoa.push([], ['Ghi chú:'], ...notes.map(n => [`- ${n}`]));
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 6 }, { wch: 52 }, { wch: 22 }, { wch: 16 }, { wch: 60 }];
+    ws['!cols'] = skLabel ? [{ wch: 6 }, { wch: 52 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 60 }] : [{ wch: 6 }, { wch: 52 }, { wch: 22 }, { wch: 16 }, { wch: 60 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Bảng giá dịch vụ');
     XLSX.writeFile(wb, `Bang-gia-${fileName.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'dich-vu'}.xlsx`);
@@ -193,9 +210,15 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
           {readOnly ? (
             <span className="w-[110px] text-right text-[15px] font-semibold tabular-nums text-[#0071e3]">{fmt(r.price)}</span>
           ) : (
-            <MoneyInput value={r.price} onChange={n => setRow(r.id, { override: n })}
-              className={`w-[110px] h-8 px-2 rounded-lg bg-transparent hover:bg-[#f5f5f7] focus:bg-white focus:ring-2 focus:ring-[#0071e3]/40 text-right text-[15px] font-semibold tabular-nums outline-none transition ${r.overridden ? 'text-[#b25e00]' : 'text-[#0071e3]'}`} />
+            <MoneyInput value={r.price} onChange={n => setRow(r.id, { override: n })} title={skOn ? 'Lao động phổ thông' : undefined}
+              className={`${skOn ? 'w-[100px]' : 'w-[110px]'} h-8 px-2 rounded-lg bg-transparent hover:bg-[#f5f5f7] focus:bg-white focus:ring-2 focus:ring-[#0071e3]/40 text-right text-[15px] font-semibold tabular-nums outline-none transition ${r.overridden ? 'text-[#b25e00]' : 'text-[#0071e3]'}`} />
           )}
+          {skOn && r.skilled && (readOnly ? (
+            <span className="w-[100px] text-right text-[15px] font-semibold tabular-nums text-[#7a4cc2]">{fmt(r.skilled.price)}</span>
+          ) : (
+            <MoneyInput value={r.skilled.price} onChange={n => setRow(r.id, { overrideSkilled: n })} title={`${list.skilled!.label} — ${r.skilled.formula}`}
+              className={`w-[100px] h-8 px-2 rounded-lg bg-[#f6f1fd] hover:bg-[#efe6fb] focus:bg-white focus:ring-2 focus:ring-[#7a4cc2]/40 text-right text-[15px] font-semibold tabular-nums outline-none transition ${r.skilled.overridden ? 'text-[#b25e00]' : 'text-[#7a4cc2]'}`} />
+          ))}
           {!readOnly && (
             <button type="button" onClick={() => setOpenId(exp ? null : r.id)} aria-label="Tuỳ chọn dòng"
               className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition ${exp ? 'bg-[#e8e8ed] text-[#1d1d1f]' : 'text-[#86868b] hover:bg-[#f0f0f2]'}`}><MoreHorizontal size={15} /></button>
@@ -209,6 +232,11 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
                 <Select value={r.unit} onChange={v => setRow(r.id, { unit: v })}>{[...new Set([r.unit, ...UNITS])].map(u => <option key={u}>{u}</option>)}</Select></div>
             )}
             {r.overridden && <button type="button" onClick={() => setRow(r.id, { override: null })} className={btnLink}>Khôi phục giá tự tính ({fmt(r.auto ?? 0)})</button>}
+            {skOn && r.skilled?.overridden && (
+              <button type="button" onClick={() => setRow(r.id, { overrideSkilled: null })} className={btnLink}>
+                Khôi phục giá thợ {custom ? '(như phổ thông)' : `tự tính (${fmt(r.skilled.auto ?? 0)})`}
+              </button>
+            )}
             <button type="button" onClick={() => (custom ? onQuote({ ...q, rows: q.rows.filter(x => x.id !== r.id) }) : setRow(r.id, { hidden: true }))}
               className="text-[13px] font-medium text-[#d70015] hover:underline">{custom ? 'Xoá dòng' : 'Ẩn khỏi bảng giá'}</button>
           </div>
@@ -233,7 +261,14 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
         </div>
       </div>
 
-      <div className="hidden sm:grid grid-cols-[1fr_auto] px-5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]"><span className="pl-8">Nội dung đơn giá · đơn vị tính</span><span className="pr-10">Đơn giá (VNĐ)</span></div>
+      {skOn ? (
+        <div className="flex px-5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]">
+          <span className="pl-8 flex-1 hidden sm:block">Nội dung đơn giá · đơn vị tính</span>
+          <span className="ml-auto flex gap-2 pr-9 sm:pr-[38px]"><span className="w-[100px] text-right">Phổ thông</span><span className="w-[100px] text-right text-[#7a4cc2] truncate">{list.skilled!.label}</span></span>
+        </div>
+      ) : (
+        <div className="hidden sm:grid grid-cols-[1fr_auto] px-5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]"><span className="pl-8">Nội dung đơn giá · đơn vị tính</span><span className="pr-10">Đơn giá (VNĐ)</span></div>
+      )}
       <div className="divide-y divide-[#f2f2f4] border-t border-[#f2f2f4]">
         {visible.map((r, i) => priceRow(r, i))}
         {visible.length === 0 && <div className="px-5 py-6 text-[13px] text-[#86868b]">Chưa có dòng nào hiển thị.</div>}
@@ -251,6 +286,42 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
               </div>
             )}
           </Popover>
+          {!skOn && (
+            <button type="button" onClick={turnOnSkilled} className="ml-auto inline-flex items-center gap-1 text-[13px] font-medium text-[#7a4cc2] hover:underline">
+              <Plus size={14} />Thêm cột giá thợ tay nghề
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Cột thợ tay nghề: lương thợ (và phí DV riêng) → tự tính lại cả cột; ô nào cần thì ghi tay */}
+      {skOn && sk && (
+        <div className="border-t border-[#f2f2f4] bg-[#fbf8ff] px-5 py-3.5 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="text-[13px] font-semibold text-[#5b2d9e] flex-1">Cột giá {list.skilled!.label}</div>
+            {!readOnly && <button type="button" onClick={() => setSkilled({ on: false })} className="text-[12.5px] font-medium text-[#d70015] hover:underline">Bỏ cột thợ</button>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="block"><span className={labelCls}>Tên cột trên báo giá</span>
+              <input disabled={readOnly} value={sk.label} onChange={e => setSkilled({ label: e.target.value })} className={`${field} !bg-white w-full`} /></label>
+            <div><span className={labelCls}>Lương cơ bản của thợ</span>
+              <div className="flex items-center gap-1.5">
+                <MoneyInput value={sk.wage} disabled={readOnly} onChange={n => setSkilled({ wage: n })} className={`${field} !bg-white flex-1 min-w-0 text-right font-semibold`} />
+                <div className="w-[104px] shrink-0"><Seg value={sk.wageUnit} disabled={readOnly} onChange={v => setSkilled({ wageUnit: v })} options={[{ value: 'month', label: '/tháng' }, { value: 'day', label: '/công' }]} /></div>
+              </div>
+              {baseLine && <div className="text-[11px] text-[#86868b] mt-1">Phổ thông: {fmt(baseLine.value)}{baseLine.unit === 'day' ? '/công' : '/tháng'}</div>}
+            </div>
+            <div><span className={labelCls}>Phí dịch vụ của thợ (đ/công)</span>
+              <MoneyInput value={sk.serviceFee ?? 0} disabled={readOnly} onChange={n => setSkilled({ serviceFee: n > 0 ? n : null })}
+                placeholder={`Như phổ thông (${fmt(feeLine && feeLine.mode === 'fixed' ? (feeLine.unit === 'day' ? feeLine.value : feeLine.value / data.settings.baseDays) : result.serviceFeeDaily)})`}
+                className={`${field} !bg-white w-full text-right font-semibold`} />
+              <div className="text-[11px] text-[#86868b] mt-1">Để trống = như lao động phổ thông</div>
+            </div>
+          </div>
+          <div className={`text-[12.5px] ${list.skilled!.result.profitDaily < 0 ? 'text-[#d70015]' : 'text-[#5b2d9e]'}`}>
+            Giá ca 8h thợ <b className="tabular-nums">{fmt(list.skilled!.result.quoteDaily)} đ</b> · {list.skilled!.result.profitDaily < 0 ? 'lỗ' : 'lợi nhuận'} <b className="tabular-nums">{fmt(Math.abs(list.skilled!.result.profitDaily))} đ/công</b>
+            <span className="text-[#86868b]"> · BHXH, công đoàn, phép năm, tăng ca, ca đêm đều tính lại theo lương thợ</span>
+          </div>
         </div>
       )}
 

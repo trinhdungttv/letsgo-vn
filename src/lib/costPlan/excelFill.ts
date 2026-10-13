@@ -54,6 +54,16 @@ export function classifyLabel(raw: string): PriceKind | null {
   return null;
 }
 
+/**
+ * Dòng giá dành cho THỢ TAY NGHỀ (mẫu của công ty có 2 khối: phổ thông + tay nghề, cùng các dòng nhưng giá khác):
+ * "…lao động tay nghề", "thợ…", "kỹ thuật", "技工 / 技术工 / 熟练", "skilled".
+ */
+export function isSkilledLabel(raw: string): boolean {
+  const t = ` ${normalizeText(raw).replace(/[^a-z0-9]+/g, ' ')} `;
+  return t.includes(' tay nghe ') || t.includes(' tho ') || t.includes(' ky thuat ')
+    || /技工|技术工|技術工|熟练|熟練/.test(raw) || / skilled /.test(` ${raw.toLowerCase().replace(/[^a-z]+/g, ' ')} `);
+}
+
 export const FILL_TOKENS: { token: string; desc: string }[] = [
   { token: 'luong_co_ban', desc: 'Lương cơ bản 8h/ngày' }, { token: 'phu_cap_dem', desc: 'Phụ cấp ca đêm (30% lương cơ bản)' },
   { token: 'bhxh', desc: 'BHXH / tháng' }, { token: 'phi_dv', desc: 'Phí dịch vụ / ngày' },
@@ -83,6 +93,8 @@ const TOKEN_KIND: Record<string, PriceKind> = {
 export interface FillImage { dataUrl: string }
 export interface FillValues {
   prices: Partial<Record<PriceKind, number>>;
+  /** Giá cột thợ tay nghề — điền vào các dòng nhãn "tay nghề / thợ / 技工". Thiếu = chưa bật cột thợ: giữ nguyên các dòng đó */
+  pricesSkilled?: Partial<Record<PriceKind, number>> | null;
   text: Record<string, string>;
   /** Ảnh cần chèn (chỉ điền những ảnh người dùng đã BẬT; thiếu = không chèn) */
   images?: { signature?: FillImage | null; seal?: FillImage | null; logo?: FillImage | null };
@@ -112,6 +124,18 @@ export function buildFillValues(
   // Đã tách bảo hiểm thu riêng theo tháng → dòng BHXH của mẫu = đúng tổng khoản thu riêng
   if (result.separatedMonthly > 0) prices.bhxh = Math.round(result.separatedMonthly);
   if (result.serviceFeeDaily > 0) prices.service_fee = Math.round(result.serviceFeeDaily);
+  // Cột thợ tay nghề (nếu bật): cùng các loại dòng, giá theo lương thợ (dòng phương án giữ nguyên id nên tra được kết quả)
+  let pricesSkilled: FillValues['pricesSkilled'] = null;
+  if (list.skilled) {
+    const sr = list.skilled.result;
+    pricesSkilled = {};
+    for (const r of list.rows) if (r.kind !== 'custom' && r.skilled) pricesSkilled[r.kind] = r.skilled.price;
+    pricesSkilled.base = Math.round(sr.baseWageDaily);
+    pricesSkilled.night_allow = Math.round((q.otBase === 'worker' ? sr.workerDaily : sr.baseWageDaily) * (NORM_NIGHT - 1));
+    if (bh.length) pricesSkilled.bhxh = Math.round(bh.reduce((a, l) => a + (sr.lines[l.id]?.monthly ?? 0), 0));
+    if (sr.separatedMonthly > 0) pricesSkilled.bhxh = Math.round(sr.separatedMonthly);
+    if (sr.serviceFeeDaily > 0) pricesSkilled.service_fee = Math.round(sr.serviceFeeDaily);
+  }
   const d = meta.today ?? new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const doc = normalizeDoc(extra.doc ?? data.doc);
@@ -122,7 +146,7 @@ export function buildFillValues(
   const signLine = (lang: DocLang) => { const b = dateLong(lang, iso); const t = lang === 'zh' ? (b.b ?? b.a) : b.a; return place ? `${place}${lang === 'zh' ? '，' : ', '}${t}` : t; };
   const use = extra.use ?? {};
   return {
-    prices,
+    prices, pricesSkilled,
     text: {
       ten_khach: cus?.name?.trim() || meta.company || '', nganh: meta.industry ?? '', kcn: meta.zone ?? '',
       dia_chi_khach: cus?.address ?? '', mst_khach: cus?.taxCode ?? '', nguoi_nhan: cus?.attn ?? '', sdt_khach: cus?.phone ?? '',
@@ -603,15 +627,22 @@ export async function fillExcelTemplate(
       for (const { r, label, priceCell } of tableRows(ws, h)) {
         const kind = classifyLabel(label);
         const pv = priceCell.master?.value ?? priceCell.value;
-        if (!kind || values.prices[kind] == null) {
+        // Dòng của thợ tay nghề lấy giá cột thợ; chưa bật cột thợ thì giữ nguyên (không ghi giá phổ thông vào dòng thợ)
+        const skilledRow = isSkilledLabel(label);
+        const src = skilledRow ? values.pricesSkilled : values.prices;
+        if (skilledRow && !values.pricesSkilled) {
+          if (kind) report.skipped.push(`Dòng ${r}: giá thợ tay nghề — chưa bật cột thợ nên giữ nguyên`);
+          continue;
+        }
+        if (!kind || src?.[kind] == null) {
           if (typeof pv === 'number') report.skipped.push(`Dòng ${r}: ${label.split('\n')[0].slice(0, 60) || '(không có nhãn)'} — không nhận ra`);
           continue;
         }
         if (hasFormula(pv)) { report.skipped.push(`Dòng ${r}: ô giá có công thức nên giữ nguyên`); continue; }
         const cur = cellText(pv).trim();
         if (cur.length > 12 && /\p{L}/u.test(cur)) { report.skipped.push(`Dòng ${r}: ô giá đang chứa chữ nên giữ nguyên`); continue; }
-        setNumber(priceCell, values.prices[kind]!);
-        report.rows.push({ sheet: ws.name, cell: priceCell.address, label: label.split('\n')[0].slice(0, 60), kind, value: Math.round(values.prices[kind]!) });
+        setNumber(priceCell, src![kind]!);
+        report.rows.push({ sheet: ws.name, cell: priceCell.address, label: label.split('\n')[0].slice(0, 60), kind, value: Math.round(src![kind]!) });
       }
     }
 

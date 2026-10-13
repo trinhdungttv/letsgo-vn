@@ -12,9 +12,9 @@ import {
   NORM_NIGHT, OT_DAY_WEEKDAY, OT_DAY_SUNDAY, OT_DAY_HOLIDAY,
   OT_NIGHT_WEEKDAY_NOPRIOR, OT_NIGHT_WEEKDAY_PRIOR, OT_NIGHT_SUNDAY, OT_NIGHT_HOLIDAY,
 } from '../payroll/coefficients';
-import { normalizePlanData, newLineId } from './engine';
+import { computePlan, normalizePlanData, newLineId } from './engine';
 import { lineKey } from './presets';
-import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet } from './types';
+import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet, SkilledTier } from './types';
 
 /** Số giờ của 1 ngày công chuẩn — cơ sở quy đổi lương ngày ra lương giờ. */
 export const HOURS_PER_DAY = 8;
@@ -52,6 +52,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
   const rows: QuoteRowCfg[] = (Array.isArray(raw.rows) ? raw.rows : []).map(r => ({
     id: r.id || newLineId(), kind: r.kind ?? 'custom', name: String(r.name ?? ''), unit: String(r.unit ?? 'VNĐ/ngày'),
     override: r.override != null && Number.isFinite(Number(r.override)) ? Number(r.override) : null, hidden: !!r.hidden,
+    overrideSkilled: r.overrideSkilled != null && Number.isFinite(Number(r.overrideSkilled)) ? Number(r.overrideSkilled) : null,
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
   for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' });
@@ -64,6 +65,52 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     otBase: raw.otBase === 'worker' ? 'worker' : 'base',
     otMarkupPct: Number.isFinite(Number(raw.otMarkupPct)) ? Math.max(0, Number(raw.otMarkupPct)) : 0,
     nightOtAfterDay: !!raw.nightOtAfterDay,
+    skilled: normalizeSkilled(raw.skilled),
+  };
+}
+
+export const DEFAULT_SKILLED_LABEL = 'Thợ tay nghề';
+
+function normalizeSkilled(raw: unknown): SkilledTier | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<SkilledTier>;
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0);
+  return {
+    on: !!r.on,
+    label: typeof r.label === 'string' && r.label.trim() ? r.label : DEFAULT_SKILLED_LABEL,
+    wage: n(r.wage),
+    wageUnit: r.wageUnit === 'day' ? 'day' : 'month',
+    serviceFee: r.serviceFee == null || !Number.isFinite(Number(r.serviceFee)) ? null : Math.max(0, Number(r.serviceFee)),
+  };
+}
+
+/**
+ * Phương án "phiên bản thợ tay nghề": thay Lương cơ bản (và Phí DV nếu đặt riêng), giá gõ tay lấy ở cột thợ.
+ * null khi chưa bật cột thợ. BHXH, công đoàn, phép năm… tự tính lại theo lương thợ.
+ */
+export function skilledPlanData(input: PlanData): PlanData | null {
+  const data = normalizePlanData(input);
+  const q = normalizeQuoteSheet(data.quote);
+  const sk = q.skilled;
+  if (!sk?.on) return null;
+  let baseDone = false, feeDone = false;
+  const lines = data.lines.map(l => {
+    if (l.isBaseWage) {
+      if (sk.wage <= 0) return l;
+      if (baseDone) return { ...l, mode: 'fixed' as const, value: 0 };
+      baseDone = true;
+      return { ...l, mode: 'fixed' as const, unit: sk.wageUnit, value: sk.wage };
+    }
+    if (l.isServiceFee && sk.serviceFee != null) {
+      if (feeDone) return { ...l, mode: 'fixed' as const, unit: 'day' as const, value: 0 };
+      feeDone = true;
+      return { ...l, mode: 'fixed' as const, unit: 'day' as const, value: sk.serviceFee };
+    }
+    return l;
+  });
+  return {
+    ...data, lines,
+    quote: { ...q, skilled: { ...sk, on: false }, rows: q.rows.map(r => ({ ...r, override: r.kind === 'custom' ? (r.overrideSkilled ?? r.override ?? null) : (r.overrideSkilled ?? null) })) },
   };
 }
 
@@ -82,6 +129,8 @@ export interface PriceRow {
   formula: string;
   /** Ghi chú in cạnh dòng (cột Ghi chú khi xuất Excel / sao chép) */
   note?: string;
+  /** Giá cột Thợ tay nghề (chỉ khi bật cột thợ) */
+  skilled?: { price: number; auto: number | null; overridden: boolean; formula: string };
 }
 
 export interface PriceList {
@@ -90,6 +139,8 @@ export interface PriceList {
   otBaseDaily: number;
   /** Đơn giá giờ chuẩn = cơ sở ÷ 8 */
   shr: number;
+  /** Cột thợ tay nghề đang bật: tên cột + kết quả tính theo lương thợ (để hiện lợi nhuận/công của thợ) */
+  skilled?: { label: string; result: EffectiveResult } | null;
 }
 
 const f = (n: number) => Math.round(n).toLocaleString('vi-VN');
@@ -132,7 +183,24 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
     };
   });
-  return { rows, otBaseDaily, shr };
+  // Cột thợ tay nghề: tính lại cả bảng với lương thợ (phiên bản thợ không bật cột thợ nên không gọi đệ quy mãi)
+  const sd = skilledPlanData(data);
+  if (!sd) return { rows, otBaseDaily, shr, skilled: null };
+  const sr = computePlan(sd);
+  const sl = computePriceList(sd, sr);
+  const byId = new Map(sl.rows.map(r => [r.id, r]));
+  const cfg = new Map(q.rows.map(r => [r.id, r]));
+  return {
+    rows: rows.map(r => {
+      const s = byId.get(r.id);
+      if (!s) return r;
+      const c = cfg.get(r.id);
+      const overridden = r.kind === 'custom' ? c?.overrideSkilled != null : s.overridden;
+      return { ...r, skilled: { price: s.price, auto: s.auto, overridden, formula: r.kind === 'custom' && !overridden ? 'Như lao động phổ thông' : s.formula } };
+    }),
+    otBaseDaily, shr,
+    skilled: { label: q.skilled?.label || DEFAULT_SKILLED_LABEL, result: effectiveResult(sd, sr) },
+  };
 }
 
 export interface EffectiveResult extends PlanResult {
@@ -203,8 +271,9 @@ export function includedNoteAuto(input: PlanData): string {
 /** Văn bản dạng bảng (tab) — dán thẳng vào Excel / Word. */
 export function priceListToTsv(list: PriceList, included: string, notes: string): string {
   const vis = list.rows.filter(r => !r.hidden);
-  const lines = ['STT\tNội dung đơn giá\tĐơn vị tính\tĐơn giá (VNĐ)\tGhi chú'];
-  vis.forEach((r, i) => lines.push(`${i + 1}\t${r.name}\t${r.unit}\t${r.price}\t${i === 0 ? included : r.note ?? ''}`));
+  const sk = list.skilled;
+  const lines = [sk ? `STT\tNội dung đơn giá\tĐơn vị tính\tLĐ phổ thông (VNĐ)\t${sk.label} (VNĐ)\tGhi chú` : 'STT\tNội dung đơn giá\tĐơn vị tính\tĐơn giá (VNĐ)\tGhi chú'];
+  vis.forEach((r, i) => lines.push(`${i + 1}\t${r.name}\t${r.unit}\t${r.price}${sk ? `\t${r.skilled?.price ?? ''}` : ''}\t${i === 0 ? included : r.note ?? ''}`));
   if (notes.trim()) lines.push('', 'Ghi chú:', ...notes.split('\n').filter(Boolean).map(n => `- ${n}`));
   return lines.join('\n');
 }
