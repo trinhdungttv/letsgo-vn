@@ -14,7 +14,7 @@ import {
 } from '../payroll/coefficients';
 import { computePlan, normalizePlanData, newLineId } from './engine';
 import { lineKey } from './presets';
-import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet, SkilledTier } from './types';
+import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet, RowCalc, SkilledTier } from './types';
 
 /** Số giờ của 1 ngày công chuẩn — cơ sở quy đổi lương ngày ra lương giờ. */
 export const HOURS_PER_DAY = 8;
@@ -75,6 +75,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     id: r.id || newLineId(), kind: r.kind ?? 'custom', name: String(r.name ?? ''), unit: String(r.unit ?? 'VNĐ/ngày'),
     override: r.override != null && Number.isFinite(Number(r.override)) ? Number(r.override) : null, hidden: !!r.hidden,
     overrideSkilled: r.overrideSkilled != null && Number.isFinite(Number(r.overrideSkilled)) ? Number(r.overrideSkilled) : null,
+    ...(r.kind === 'custom' && cleanCalc(r.calc) ? { calc: cleanCalc(r.calc)! } : {}),
     ...(r.i18n && (r.i18n.zh || r.i18n.en) ? { i18n: { ...(r.i18n.zh ? { zh: String(r.i18n.zh) } : {}), ...(r.i18n.en ? { en: String(r.i18n.en) } : {}) } } : {}),
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
@@ -122,6 +123,15 @@ export function moveQuoteRow(q: QuoteSheet, fromId: string, toId: string): Quote
 
 export const DEFAULT_SKILLED_LABEL = 'Thợ tay nghề';
 
+/** Làm sạch công thức dòng tự đặt; null nếu không hợp lệ (→ dòng nhập tay). */
+export function cleanCalc(raw: unknown): RowCalc | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Partial<RowCalc>;
+  const hours = Number(c.hours), coef = Number(c.coef);
+  if (!Number.isFinite(hours) || !Number.isFinite(coef) || hours < 0 || coef < 0 || (hours === 0 && c.base !== 'day' && c.base !== 'night')) return null;
+  return { base: c.base === 'day' || c.base === 'night' ? c.base : 'none', hours: Math.min(24, hours), coef: Math.min(10, coef) };
+}
+
 function normalizeSkilled(raw: unknown): SkilledTier | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<SkilledTier>;
@@ -161,7 +171,7 @@ export function skilledPlanData(input: PlanData): PlanData | null {
   });
   return {
     ...data, lines,
-    quote: { ...q, skilled: { ...sk, on: false }, rows: q.rows.map(r => ({ ...r, override: r.kind === 'custom' ? (r.overrideSkilled ?? r.override ?? null) : (r.overrideSkilled ?? null) })) },
+    quote: { ...q, skilled: { ...sk, on: false }, rows: q.rows.map(r => ({ ...r, override: r.kind === 'custom' && !r.calc ? (r.overrideSkilled ?? r.override ?? null) : (r.overrideSkilled ?? null) })) },
   };
 }
 
@@ -184,6 +194,8 @@ export interface PriceRow {
   skilled?: { price: number; auto: number | null; overridden: boolean; formula: string };
   /** Bản dịch tên dòng (người dùng tự điền) */
   i18n?: { zh?: string; en?: string };
+  /** Công thức của dòng tuỳ chỉnh tự tính */
+  calc?: RowCalc;
 }
 
 export interface PriceList {
@@ -239,9 +251,18 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
   const rows: PriceRow[] = q.rows
     .filter(r => (r.kind !== 'insurance' || result.separatedMonthly > 0) && (r.kind !== 'service_fee' || itemized))
     .map(r => {
-    const a = auto(r.kind);
-    const overridden = r.kind !== 'custom' && r.override != null;
-    const price = r.kind === 'custom' ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
+    let a = auto(r.kind);
+    if (r.kind === 'custom' && r.calc) {
+      const { base, hours, coef } = r.calc;
+      const nightPrice = dayPrice + otBaseDaily * (NORM_NIGHT - 1);
+      const start = base === 'day' ? dayPrice : base === 'night' ? nightPrice : 0;
+      a = {
+        v: start + hours * shr * coef * mk,
+        formula: `${base === 'day' ? `Giá ngày ${f(dayPrice)} + ` : base === 'night' ? `Giá ca đêm ${f(nightPrice)} + ` : ''}${hours} giờ × ${f(shr)} đ/giờ × ${pct(coef)}${mkTxt}`,
+      };
+    }
+    const overridden = (r.kind !== 'custom' || !!r.calc) && r.override != null;
+    const price = r.kind === 'custom' && !r.calc ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
     // Báo theo giờ: dòng chính còn giữ tên/đơn vị mặc định thì đổi sang tên/đơn vị theo giờ
     const std = STD.find(x => x.kind === r.kind);
     const hourly = perHour && PER_HOUR_KINDS.includes(r.kind);
@@ -250,6 +271,7 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     return {
       id: r.id, kind: r.kind, name, unit, price,
       auto: a.v == null ? null : Math.round(a.v), overridden, hidden: !!r.hidden, formula: overridden ? `Đã sửa tay (tự tính: ${f(a.v ?? 0)} đ)` : a.formula,
+      ...(r.calc ? { calc: r.calc } : {}),
       ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
       ...(r.i18n ? { i18n: r.i18n } : {}),
     };
@@ -266,8 +288,9 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       const s = byId.get(r.id);
       if (!s) return r;
       const c = cfg.get(r.id);
-      const overridden = r.kind === 'custom' ? c?.overrideSkilled != null : s.overridden;
-      return { ...r, skilled: { price: s.price, auto: s.auto, overridden, formula: r.kind === 'custom' && !overridden ? 'Như lao động phổ thông' : s.formula } };
+      const manualCustom = r.kind === 'custom' && !r.calc;
+      const overridden = manualCustom ? c?.overrideSkilled != null : s.overridden;
+      return { ...r, skilled: { price: s.price, auto: s.auto, overridden, formula: manualCustom && !overridden ? 'Như lao động phổ thông' : s.formula } };
     }),
     otBaseDaily, shr,
     skilled: { label: q.skilled?.label || DEFAULT_SKILLED_LABEL, result: effectiveResult(sd, sr) },

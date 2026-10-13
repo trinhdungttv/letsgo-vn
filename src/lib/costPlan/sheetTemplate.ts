@@ -24,8 +24,9 @@ export function sheetToTemplate(q: QuoteSheet): QuoteSheet {
     ...n,
     rows: n.rows.map(r => ({
       id: r.kind === 'custom' ? r.id : `std-${r.kind}`, kind: r.kind, name: r.name, unit: r.unit, hidden: !!r.hidden,
-      override: r.kind === 'custom' ? r.override ?? 0 : null,
+      override: r.kind === 'custom' && !r.calc ? r.override ?? 0 : null,
       ...(r.i18n ? { i18n: r.i18n } : {}),
+      ...(r.calc ? { calc: r.calc } : {}),
     })),
     includedNote: null,
     skilled: null,
@@ -52,7 +53,7 @@ export function sheetFromTemplate(tplIn: QuoteSheet, currentIn?: QuoteSheet | nu
     }
     const c = curCustom.find(x => !usedCustom.has(x.id) && norm(x.name) === norm(r.name));
     if (c) usedCustom.add(c.id);
-    return { ...r, id: c?.id ?? newLineId(), override: c?.override ?? r.override ?? 0, overrideSkilled: c?.overrideSkilled ?? null };
+    return { ...r, id: c?.id ?? newLineId(), override: c?.override ?? (r.calc ? null : r.override ?? 0), overrideSkilled: c?.overrideSkilled ?? null };
   });
   const extra = curCustom.filter(x => !usedCustom.has(x.id));
   return {

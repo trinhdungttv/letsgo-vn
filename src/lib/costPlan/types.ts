@@ -80,6 +80,13 @@ export type QuoteRowKind =
   | 'service_fee'
   | 'custom';
 
+/**
+ * Cách tính của dòng tự đặt (kho đầu mục): giá = [nền] + số giờ × đơn giá giờ chuẩn × hệ số.
+ *   nền 'none' = 0 · 'day' = giá ngày (ca 8h) · 'night' = giá ca đêm 8h.
+ * Ví dụ ca ngày 12 tiếng = nền 'day' + 4 giờ × 150% · Lễ/Tết ca ngày 8 tiếng = 8 giờ × 300% · phụ cấp ca đêm = 8 giờ × 30%.
+ */
+export interface RowCalc { base: 'none' | 'day' | 'night'; hours: number; coef: number }
+
 export interface QuoteRowCfg {
   id: string;
   kind: QuoteRowKind;
@@ -92,6 +99,8 @@ export interface QuoteRowCfg {
   overrideSkilled?: number | null;
   /** Bản dịch tên dòng cho báo giá song ngữ (thiếu = dùng bản dịch mặc định nếu tên là tên chuẩn) */
   i18n?: { zh?: string; en?: string };
+  /** Dòng tuỳ chỉnh có công thức: tự tính theo lương (override vẫn ghi tay đè được). Thiếu = dòng nhập tay. */
+  calc?: RowCalc;
   hidden?: boolean;
 }
 

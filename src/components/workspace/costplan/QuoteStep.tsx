@@ -15,6 +15,9 @@ import { copyText } from '../../../lib/clipboard';
 import { useAuth } from '../../../lib/auth';
 import { sheetFromTemplate, templateCustomRowsMissing } from '../../../lib/costPlan/sheetTemplate';
 import { useSheetTemplate } from './useSheetTemplate';
+import { useRowCatalog } from './useRowCatalog';
+import RowPicker from './RowPicker';
+import { catalogFromRow, rowFromCatalog } from '../../../lib/costPlan/rowCatalog';
 import InsuranceBase from './InsuranceBase';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
@@ -230,6 +233,16 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   };
   const applyTemplate = () => { if (tpl) commit(sheetFromTemplate(tpl.sheet, q), 'Áp mẫu bảng giá chung'); };
 
+  // ── Kho đầu mục: chọn loại dòng có sẵn khi "Thêm dòng", lưu dòng tự đặt vào kho cho lần sau ──
+  const { mine: catalogMine, add: addToCatalog, remove: removeFromCatalogItem } = useRowCatalog();
+  const [catMsg, setCatMsg] = useState<string | null>(null);
+  const flashCat = (m: string) => { setCatMsg(m); setTimeout(() => setCatMsg(null), 3500); };
+  const saveRowToCatalog = async (r: QuoteRowCfg) => {
+    if (!r.name.trim()) { flashCat('Đặt tên dòng trước khi lưu vào kho'); return; }
+    try { await addToCatalog(catalogFromRow(r)); flashCat(`Đã lưu “${r.name.trim()}” vào kho đầu mục — lần sau chọn ở “Thêm dòng”`); }
+    catch (e) { flashCat(`Không lưu được vào kho: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+
   // ── Kéo thả để đổi thứ tự dòng ──
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -327,6 +340,31 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
               <div className="w-36"><span className={labelCls}>Đơn vị tính</span>
                 <Select value={r.unit} onChange={v => setRow(r.id, { unit: v })}>{[...new Set([r.unit, ...UNITS])].map(u => <option key={u}>{u}</option>)}</Select></div>
             )}
+            {custom && (
+              <div className="basis-full flex flex-wrap items-end gap-x-3 gap-y-2">
+                <div><span className={labelCls}>Cách tính giá</span>
+                  <Seg value={r.calc ? 'calc' : 'manual'} onChange={v => setRow(r.id, v === 'calc'
+                    ? { calc: r.calc ?? { base: 'none', hours: 8, coef: 1.5 }, override: null }
+                    : { calc: undefined, override: r.price })}
+                    options={[{ value: 'manual', label: 'Nhập tay' }, { value: 'calc', label: 'Tự tính theo lương' }]} /></div>
+                {r.calc && (
+                  <>
+                    <div className="w-40"><span className={labelCls}>Cộng thêm vào</span>
+                      <Select value={r.calc.base} onChange={v => setRow(r.id, { calc: { ...r.calc!, base: v as 'none' | 'day' | 'night' } })}>
+                        <option value="none">Không (chỉ tính giờ)</option><option value="day">Giá ca ngày 8h</option><option value="night">Giá ca đêm 8h</option>
+                      </Select></div>
+                    <div><span className={labelCls}>Số giờ</span>
+                      <NumInput value={r.calc.hours} min={0} max={24} step={0.5} onChange={n => setRow(r.id, { calc: { ...r.calc!, hours: n } })} className={`${field} !h-8 w-16 text-center font-semibold`} /></div>
+                    <div><span className={labelCls}>× Hệ số (%)</span>
+                      <NumInput value={Math.round(r.calc.coef * 1000) / 10} min={0} max={1000} step={5} onChange={n => setRow(r.id, { calc: { ...r.calc!, coef: n / 100 } })} className={`${field} !h-8 w-20 text-center font-semibold`} /></div>
+                    <span className="text-[11.5px] text-[#86868b] pb-2">giờ chuẩn × số giờ × hệ số (150% tăng ca, 200% Chủ nhật, 300% Lễ/Tết, 130% đêm…)</span>
+                  </>
+                )}
+              </div>
+            )}
+            {custom && (
+              <button type="button" onClick={() => void saveRowToCatalog(q.rows.find(x => x.id === r.id)!)} className={btnLink} title="Lần sau chọn lại ở “Thêm dòng”, không phải gõ lại">Lưu dòng này vào kho đầu mục</button>
+            )}
             {/* Bản dịch tên dòng cho báo giá song ngữ — lưu theo dòng, đi cùng mẫu bảng giá chung */}
             <label className="block w-44"><span className={labelCls}>Tên tiếng Trung</span>
               <input value={r.i18n?.zh ?? ''} onChange={e => setRow(r.id, { i18n: { ...r.i18n, zh: e.target.value || undefined } })} placeholder="để trống = dịch sẵn (nếu là tên chuẩn)" className={`${field} !h-8 w-full`} /></label>
@@ -410,19 +448,19 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
 
       {!readOnly && (
         <div className="px-5 py-2.5 border-t border-[#f2f2f4] flex items-center gap-4">
-          <Popover align="left" width="w-80" button={({ toggle }) => (
+          <Popover align="left" width="w-[420px]" button={({ toggle }) => (
             <button type="button" onClick={toggle} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0071e3] hover:text-[#0077ed]"><Plus size={14} />Thêm dòng</button>
           )}>
             {close => (
-              <div className="py-1">
-                {hiddenRows.map(r => <MenuItem key={r.id} onClick={() => { commit({ ...q, rows: q.rows.map(x => (x.id === r.id ? { ...x, hidden: false } : x)) }, `Hiện lại “${r.name}”`); close(); }}>Hiện lại: {r.name}</MenuItem>)}
-                {tplMissing.map(r => (
-                  <MenuItem key={r.id} hint={r.unit} onClick={() => { commit({ ...q, rows: [...q.rows, { ...r, id: newLineId(), hidden: false }] }, `Thêm dòng “${r.name}”`); close(); }}>Từ mẫu chung: {r.name}</MenuItem>
-                ))}
-                <MenuItem onClick={() => { const id = newLineId(); commit({ ...q, rows: [...q.rows, { id, kind: 'custom', name: 'Phụ cấp cơm trưa', unit: 'VNĐ/ngày', override: 0, hidden: false }] }, 'Thêm dòng'); setOpenId(id); close(); }}>Dòng tuỳ chỉnh (vd: phụ cấp cơm)</MenuItem>
-              </div>
+              <RowPicker sheet={q} mine={catalogMine} hiddenRows={hiddenRows} templateRows={tplMissing} close={close}
+                onAdd={it => commit({ ...q, rows: [...q.rows, rowFromCatalog(it)] }, `Thêm dòng “${it.name}”`)}
+                onShow={(id, name) => commit({ ...q, rows: q.rows.map(x => (x.id === id ? { ...x, hidden: false } : x)) }, `Hiện lại “${name}”`)}
+                onTemplateRow={r => commit({ ...q, rows: [...q.rows, { ...r, id: newLineId(), hidden: false }] }, `Thêm dòng “${r.name}”`)}
+                onBlank={() => { const id = newLineId(); commit({ ...q, rows: [...q.rows, { id, kind: 'custom', name: '', unit: 'VNĐ/ngày', override: 0, hidden: false }] }, 'Thêm dòng'); setOpenId(id); }}
+                onRemoveMine={it => { if (window.confirm(`Xoá “${it.name}” khỏi kho đầu mục của công ty?\nCác bảng giá đã dùng dòng này không bị ảnh hưởng.`)) void removeFromCatalogItem(it.id).then(() => flashCat('Đã xoá khỏi kho')).catch(e => flashCat(`Không xoá được: ${e instanceof Error ? e.message : String(e)}`)); }} />
             )}
           </Popover>
+          {catMsg && <span className="text-[12px] text-[#0a7d6e] min-w-0 truncate max-w-[320px]" title={catMsg}>{catMsg}</span>}
           <Popover align="left" width="w-80" button={({ toggle }) => (
             <button type="button" onClick={toggle} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0a7d6e] hover:underline">Mẫu bảng giá chung</button>
           )}>
