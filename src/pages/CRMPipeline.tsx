@@ -14,7 +14,7 @@ import { branchOptions, branchOf } from '../lib/branchRef';
 import { useMarketRefs, competitorsInZone, linkCompetitor, notifyMarketChanged } from '../components/crm/MarketSupplyBlock';
 import { CompanyProfileModal, STAGES, RATING_CONFIG, ARCHIVED_STAGES } from '../components/crm/CompanyProfileModal';
 import { selectContacts } from '../lib/contactOps';
-import { PipelineSourceChip, PipelineSourcePicker } from '../components/crm/PipelineSourceField';
+import { PipelineSourceChip, PipelineSourcePicker, SOURCE_NAMES_CHANGED } from '../components/crm/PipelineSourceField';
 import { EMPTY_SOURCE, cleanSource, matchesSourceFilter, sourceFilterGroups, sourceFullLabel, sourceSaveErrorHint } from '../lib/pipelineSource';
 
 interface CRMPipelineProps {
@@ -84,13 +84,22 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     if (sourceFilter === 'none') return 'Chưa ghi nguồn';
     for (const g of sourceGroups) {
       const o = g.options.find(x => x.key === sourceFilter);
-      if (o) return sourceFilter.startsWith('type:') || sourceFilter === 'company' ? o.label : `${g.label} — ${o.label}`;
+      if (o) return sourceFilter.startsWith('type:') ? o.label
+        : sourceFilter.startsWith('company:') ? `Công ty — ${o.label}`
+        : sourceFilter.startsWith('branch:') ? `Chi nhánh — ${o.label}`
+        : `${g.label} — ${o.label}`;
     }
     return '';
   })();
 
 
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
+  // Đổi tên / gộp người giới thiệu ở ô chọn Nguồn → nạp lại để thẻ và bộ lọc hiện tên mới
+  useEffect(() => {
+    const h = () => { onRefresh(); };
+    window.addEventListener(SOURCE_NAMES_CHANGED, h);
+    return () => window.removeEventListener(SOURCE_NAMES_CHANGED, h);
+  }, [onRefresh]);
 
   useEffect(() => {
     if (!focusEntryId) return;
