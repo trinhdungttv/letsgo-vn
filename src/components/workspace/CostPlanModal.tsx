@@ -6,7 +6,7 @@
 //
 // MỌI công thức ở src/lib/costPlan/engine.ts (có test). File này chỉ nối state ↔ DB ↔ giao diện.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Plus, Copy, Trash2, Share2, ChevronLeft, Link2, Search, Loader2, AlertTriangle, MoreHorizontal } from 'lucide-react';
+import { X, Plus, Copy, Trash2, Share2, ChevronLeft, Link2, Search, Loader2, AlertTriangle, MoreHorizontal, MapPin, Store } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
@@ -34,6 +34,8 @@ import { emptyMeta, resolveClient, resolvePipelineEntry, type PlanMeta } from '.
 import { fmt, fmtD, fmtShort } from './costplan/fields';
 import { FONT, Popover, MenuItem, Seg, Select, btnGhost, btnPrimary, card, field } from './costplan/ui';
 import type { LineSuggestion } from './costplan/CostSections';
+import { isReferral, isReferralPlan } from '../../lib/costPlan/referral';
+import { EMPTY_PLAN_FILTER, filterPlans, isFiltering, planFilterOptions, provinceOfPlan, zoneLabelOfPlan, type PlanListFilter } from '../../lib/costPlan/listFilter';
 
 interface Props {
   clients: Client[];
@@ -43,7 +45,7 @@ interface Props {
   onClose: () => void;
 }
 
-interface Zone { id: string; name: string; region_zone: string | null }
+interface Zone { id: string; name: string; region_zone: string | null; location: string | null }
 
 interface Draft {
   id: string | null;
@@ -105,7 +107,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
     reload();
     fetchIndustries().then(setIndustries);
     fetchRegionWages().then(setRegionWages);
-    supabase.from('market_zones').select('id, name, region_zone').order('name').then(({ data }) => { if (data) setZones(data as Zone[]); });
+    supabase.from('market_zones').select('id, name, region_zone, location').order('name').then(({ data }) => { if (data) setZones(data as Zone[]); });
   }, [reload]);
 
   // ── Màn hình ───────────────────────────────────────────────────────────────────────────
@@ -120,10 +122,9 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
   const [crmLines, setCrmLines] = useState<QuoteInfoLine[]>([]);
   const [branchKhoan, setBranchKhoan] = useState<{ lgPct: number; cnPct: number; label: string } | null>(null);
 
-  // Bộ lọc danh sách
-  const [q, setQ] = useState('');
-  const [fIndustry, setFIndustry] = useState('');
-  const [fStatus, setFStatus] = useState<'' | 'draft' | 'final' | 'archived'>('');
+  // Bộ lọc danh sách: chữ, ngành, tỉnh/TP (suy từ KCN), KCN, chi nhánh, trạng thái
+  const [filter, setFilter] = useState<PlanListFilter>(EMPTY_PLAN_FILTER);
+  const setF = (p: Partial<PlanListFilter>) => setFilter(f => ({ ...f, ...p }));
 
   const dirty = !!draft && snapshot(draft.meta, draft.data) !== draft.baseline;
   useBeforeUnloadWarning(dirty);
@@ -406,13 +407,13 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
   };
 
   // ── Danh sách ──────────────────────────────────────────────────────────────────────────
-  const industryNames = useMemo(() => [...new Set(plans.map(p => p.industry).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'vi')), [plans]);
-  const shown = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    return plans.filter(p => (fStatus ? p.status === fStatus : p.status !== 'archived')
-      && (!fIndustry || p.industry === fIndustry)
-      && (!k || [p.title, p.company_name, p.zone_name, p.industry].some(x => (x ?? '').toLowerCase().includes(k))));
-  }, [plans, q, fIndustry, fStatus]);
+  const shown = useMemo(() => filterPlans(plans, filter, zones, branches), [plans, filter, zones, branches]);
+  const filterOpts = useMemo(() => planFilterOptions(plans, filter, zones, branches), [plans, filter, zones, branches]);
+  // Đổi tỉnh mà KCN đang chọn không thuộc tỉnh đó → bỏ chọn KCN để không ra danh sách rỗng khó hiểu
+  const pickProvince = (province: string) => setFilter(f => {
+    const zoneStillFits = !f.zone || !province || plans.some(p => zoneLabelOfPlan(p, zones) === f.zone && provinceOfPlan(p, zones) === province);
+    return { ...f, province, zone: zoneStillFits ? f.zone : '' };
+  });
 
   // Thông tin khách lấy sẵn từ "Thông tin báo giá" của hồ sơ CRM để điền vào báo giá PDF
   const docDefaults = useMemo(() => {
@@ -476,7 +477,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                     <MenuItem onClick={() => { toggleFinal(); close(); }}>{draft.meta.status === 'final' ? 'Bỏ đánh dấu đã chốt' : 'Chốt phương án'}</MenuItem>
                     {draft.id && <MenuItem onClick={() => { setShowHistory(true); close(); }}>Lịch sử chỉnh sửa</MenuItem>}
                     <MenuItem onClick={() => { duplicate(draft); close(); }}>Nhân bản</MenuItem>
-                    {draft.meta.pipeline_id && draft.id && <MenuItem onClick={() => { pushToCrm(); close(); }}>Đưa vào hồ sơ CRM</MenuItem>}
+                    {draft.meta.pipeline_id && draft.id && !isReferral(draft.data) && <MenuItem onClick={() => { pushToCrm(); close(); }}>Đưa vào hồ sơ CRM</MenuItem>}
                     <MenuItem onClick={() => { setDraft(d => (d ? { ...d, meta: { ...d.meta, status: d.meta.status === 'archived' ? 'draft' : 'archived' } } : d)); close(); }}>{draft.meta.status === 'archived' ? 'Bỏ lưu trữ' : 'Lưu trữ'}</MenuItem>
                   </div>
                 )}
@@ -495,14 +496,40 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                 <button onClick={openNew} className={`${btnPrimary} !h-9 !px-4`}><Plus size={15} />Phương án mới</button>
                 <div className="relative flex-1 min-w-[180px] max-w-xs">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#86868b]" />
-                  <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm theo tên, khách, KCN" className={`${field} !bg-white w-full pl-9 shadow-[0_0_0_1px_rgba(0,0,0,0.06)]`} />
+                  <input value={filter.q} onChange={e => setF({ q: e.target.value })} placeholder="Tìm theo tên, khách, KCN, tỉnh, chi nhánh" className={`${field} !bg-white w-full pl-9 shadow-[0_0_0_1px_rgba(0,0,0,0.06)]`} />
                 </div>
-                <Select value={fIndustry} onChange={setFIndustry} className="w-44">
-                  <option value="">Mọi ngành</option>{industryNames.map(n => <option key={n} value={n}>{n}</option>)}
-                </Select>
                 <div className="w-full sm:w-[300px]">
-                  <Seg value={fStatus} onChange={setFStatus} options={[{ value: '', label: 'Đang dùng' }, { value: 'draft', label: 'Nháp' }, { value: 'final', label: 'Đã chốt' }, { value: 'archived', label: 'Lưu trữ' }]} />
+                  <Seg value={filter.status} onChange={v => setF({ status: v })} options={[{ value: '', label: 'Đang dùng' }, { value: 'draft', label: 'Nháp' }, { value: 'final', label: 'Đã chốt' }, { value: 'archived', label: 'Lưu trữ' }]} />
                 </div>
+              </div>
+
+              {/* Lọc theo ngành / tỉnh / KCN / chi nhánh — chỉ liệt kê giá trị đang có trong các phương án, kèm số lượng */}
+              <div className="flex flex-wrap items-center gap-2 -mt-2">
+                {([
+                  { key: 'industry', all: 'Mọi ngành', opts: filterOpts.industries, w: 'sm:w-44', on: (v: string) => setF({ industry: v }) },
+                  { key: 'province', all: 'Mọi tỉnh / TP', opts: filterOpts.provinces, w: 'sm:w-40', on: pickProvince },
+                  { key: 'zone', all: filter.province ? `Mọi KCN ở ${filter.province}` : 'Mọi KCN', opts: filterOpts.zones, w: 'sm:w-48', on: (v: string) => setF({ zone: v }) },
+                  { key: 'branch', all: 'Mọi chi nhánh', opts: filterOpts.branches, w: 'sm:w-44', on: (v: string) => setF({ branch: v }) },
+                ] as const).map(s => {
+                  const value = filter[s.key];
+                  return (
+                    <Select key={s.key} value={value} onChange={s.on} className={`w-[calc(50%-4px)] ${s.w}`}
+                      fieldClassName={value ? '!bg-[#e8f1fd] !text-[#0058b9] font-medium' : '!bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.06)]'}>
+                      <option value="">{s.all}</option>
+                      {s.opts.map(o => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
+                    </Select>
+                  );
+                })}
+                <Select value={filter.service} onChange={v => setF({ service: v as PlanListFilter['service'] })} className="w-[calc(50%-4px)] sm:w-44"
+                  fieldClassName={filter.service ? '!bg-[#e8f1fd] !text-[#0058b9] font-medium' : '!bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.06)]'}>
+                  <option value="">Mọi dịch vụ</option>
+                  <option value="supply">Cung ứng / cho thuê LĐ</option>
+                  <option value="referral">Giới thiệu lao động</option>
+                </Select>
+                {isFiltering(filter) && (
+                  <button onClick={() => setFilter(f => ({ ...EMPTY_PLAN_FILTER, status: f.status }))} className="h-9 px-2 text-[13px] font-medium text-[#0071e3] hover:underline">Xoá lọc</button>
+                )}
+                {!loading && <span className="ml-auto text-[12px] text-[#86868b] tabular-nums">{shown.length} phương án</span>}
               </div>
 
               {loadErr && (
@@ -528,12 +555,33 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                         <button onClick={() => openPlan(p)} className="text-left flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <div className="text-[15px] font-semibold tracking-tight leading-snug">{p.title}</div>
-                            {p.status !== 'draft' && <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${p.status === 'final' ? 'bg-[#e8f8ed] text-[#1d8a3b]' : 'bg-[#f0f0f2] text-[#6e6e73]'}`}>{STATUS_LABEL[p.status]}</span>}
+                            <span className="flex items-center gap-1 shrink-0">
+                              {isReferralPlan(p) && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-[#f1edff] text-[#5e5ce6]">Giới thiệu LĐ</span>}
+                              {p.status !== 'draft' && <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded ${p.status === 'final' ? 'bg-[#e8f8ed] text-[#1d8a3b]' : 'bg-[#f0f0f2] text-[#6e6e73]'}`}>{STATUS_LABEL[p.status]}</span>}
+                            </span>
                           </div>
-                          <div className="text-[12px] text-[#86868b] mt-0.5 truncate">{[p.company_name, p.industry, p.zone_name].filter(Boolean).join(' · ') || 'Chưa gắn khách / ngành'}</div>
-                          {s ? (
+                          <div className="text-[12px] text-[#86868b] mt-0.5 truncate">{[p.company_name, p.industry].filter(Boolean).join(' · ') || 'Chưa gắn khách / ngành'}</div>
+                          {(() => {
+                            const zone = zoneLabelOfPlan(p, zones);
+                            const prov = provinceOfPlan(p, zones);
+                            const br = branches.find(b => b.id === p.branch_id);
+                            if (!zone && !br) return null;
+                            return (
+                              <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap mt-1 text-[11.5px] text-[#6e6e73]">
+                                {zone && <span className="inline-flex items-center gap-1 min-w-0"><MapPin size={11} className="shrink-0 text-[#a1a1a6]" /><span className="truncate">{zone}{prov ? ` · ${prov}` : ''}</span></span>}
+                                {br && <span className="inline-flex items-center gap-1 min-w-0"><Store size={11} className="shrink-0 text-[#a1a1a6]" /><span className="truncate">{branchLabel(br)}</span></span>}
+                              </div>
+                            );
+                          })()}
+                          {s?.service === 'referral' ? (
                             <div className="mt-4 flex items-end gap-5">
-                              <div><div className="text-[11px] text-[#86868b]">Giá báo / công</div><div className="text-[22px] font-semibold tracking-tight tabular-nums leading-tight">{fmt(s.quoteDaily)}</div></div>
+                              <div className="min-w-0"><div className="text-[11px] text-[#86868b]">Phí giới thiệu</div><div className="text-[20px] font-semibold tracking-tight tabular-nums leading-tight text-[#5e5ce6] truncate">{s.feeText}</div></div>
+                              <div className="min-w-0"><div className="text-[11px] text-[#86868b]">Điều kiện</div><div className="text-[13px] font-medium truncate">{s.termText}</div></div>
+                              <div className="shrink-0"><div className="text-[11px] text-[#86868b]">LN ước tính</div><div className="text-[15px] font-medium tabular-nums text-[#1d8a3b]">{fmtShort(s.profitTotal ?? 0)}</div></div>
+                            </div>
+                          ) : s ? (
+                            <div className="mt-4 flex items-end gap-5">
+                              <div><div className="text-[11px] text-[#86868b]">Giá báo / công</div><div className="text-[22px] font-semibold tracking-tight tabular-nums leading-tight">{fmt(s.quoteDaily)}</div>{s.insuranceMonthly ? <div className="text-[11px] text-[#0a7d6e] whitespace-nowrap" title="Bảo hiểm thu riêng theo tháng, không gộp vào giá ngày">+ BH {fmtShort(s.insuranceMonthly)}/người/tháng</div> : null}</div>
                               <div><div className="text-[11px] text-[#86868b]">Phí DV</div><div className="text-[15px] font-medium tabular-nums">{fmtShort(s.serviceFeeDaily)}</div></div>
                               <div><div className="text-[11px] text-[#86868b]">LN / tháng</div><div className="text-[15px] font-medium tabular-nums text-[#1d8a3b]">{fmtShort(s.profitMonthly)}</div></div>
                             </div>
@@ -572,7 +620,14 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                   historySuggestions={historySuggestions} minWage={minWage} templateLines={draftTemplate?.lines ?? null} fileName={draft.meta.title || 'phuong-an-gia'} fillMeta={{ company: draft.meta.company_name, industry: draft.meta.industry, zone: draft.meta.zone_name }}
                   planId={draft.id} docDefaults={docDefaults}
                   onPushCrm={draft.meta.pipeline_id && draft.id ? pushToCrm : undefined}
-                  aboveList={
+                  aboveList={isReferral(draft.data) ? (
+                    // Giới thiệu lao động: không có bảng chi phí lương → bỏ lương tối thiểu, đơn giá CRM, mẫu ngành, tham khảo bảng chi phí
+                    <PlanContextBar
+                      meta={draft.meta} onMeta={p => patchMeta(p)} pipeline={pipeline} clients={clients} branches={branches}
+                      industries={industries} zoneNames={zones.map(z => z.name)} minWage={null} baseWageMonthly={0}
+                      onPickCompany={pickCompany} onSetBaseToMinWage={setBaseToMinWage} crmLines={[]} onApplyCrmLine={applyCrmLine} picking={picking}
+                    />
+                  ) : (
                     <>
                       <PlanContextBar
                         meta={draft.meta} onMeta={p => patchMeta(p)} pipeline={pipeline} clients={clients} branches={branches}
@@ -583,7 +638,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose }: P
                         onSave={saveIndustryTemplate} onApply={applyIndustryTemplate} onDelete={deleteIndustryTemplate} />
                       <SuggestionsPanel plans={plans} industry={draft.meta.industry} zone={draft.meta.zone_name} excludeId={draft.id} onUseTemplate={useTemplate} />
                     </>
-                  }
+                  )}
                 />
               )}
             </div>

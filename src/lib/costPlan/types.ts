@@ -33,6 +33,11 @@ export interface CostLine {
   isServiceFee?: boolean;
   /** Trần của cơ sở tính %, đ/tháng (vd trần đóng BHXH = 20 × lương cơ sở) */
   cap?: number;
+  /**
+   * Thu riêng theo tháng, KHÔNG cộng vào giá ngày công (vd BHXH: khách chỉ trả cho NLĐ làm đủ 14 công/tháng).
+   * Vẫn là chi phí của phương án (giá vốn), chỉ tách khỏi giá báo ca 8h thành 1 dòng "/người/tháng" trên bảng giá.
+   */
+  billSeparately?: boolean;
   note: string;
 }
 
@@ -51,11 +56,16 @@ export interface PlanSettings {
   simDays: number;
   /** % lợi nhuận về công ty (Let's Go). Phần còn lại về chi nhánh. */
   companyPct: number;
+  /** Khoản thu riêng theo tháng (billSeparately) chỉ áp dụng cho NLĐ làm từ ngần này công/tháng. Thiếu = 14. */
+  insuranceMinDays?: number;
 }
 
 /** Các dòng chuẩn của bảng giá dịch vụ gửi khách (theo luật: Điều 98 BLLĐ 2019, Điều 57 NĐ 145/2020). */
 export type QuoteRowKind =
-  | 'day8' | 'night8' | 'ot_day' | 'ot_night' | 'ot_sun' | 'ot_sun_night' | 'ot_hol' | 'ot_hol_night' | 'custom';
+  | 'day8' | 'night8' | 'ot_day' | 'ot_night' | 'ot_sun' | 'ot_sun_night' | 'ot_hol' | 'ot_hol_night'
+  /** Khoản thu riêng theo tháng (bảo hiểm) — chỉ hiện khi có khoản đánh dấu billSeparately */
+  | 'insurance'
+  | 'custom';
 
 export interface QuoteRowCfg {
   id: string;
@@ -83,6 +93,10 @@ export interface QuoteSheet {
 }
 
 export interface PlanData {
+  /** Loại dịch vụ — thiếu = 'supply' (cung ứng / cho thuê lao động, mọi phương án cũ). */
+  service?: import('./referral').ServiceKind;
+  /** Cấu hình phí khi service = 'referral' (giới thiệu lao động) */
+  referral?: import('./referral').ReferralConfig | null;
   settings: PlanSettings;
   lines: CostLine[];
   notes: string;
@@ -116,6 +130,13 @@ export interface PlanResult {
   directDaily: number;
   /** Chi phí trực tiếp KHÔNG gồm Phí DV */
   costDaily: number;
+  /** Phần chi phí thu riêng theo tháng (billSeparately), quy ra / công — đã TRỪ khỏi giá ngày */
+  separatedDaily: number;
+  /** Khoản thu riêng / 1 người / tháng — 1 dòng riêng trên bảng giá */
+  separatedMonthly: number;
+  /** Thu riêng cả tháng = separatedMonthly × số LĐ, chỉ khi số công/tháng ≥ separateMinDays (không thì 0) */
+  separatedBilledMonthly: number;
+  separateMinDays: number;
   serviceFeeDaily: number;
   taxDaily: number;
   /** Giá / công trước khi làm tròn */
@@ -150,6 +171,17 @@ export interface PlanSummary {
   baseWageMonthly: number;
   companyPct: number;
   lineCount: number;
+  /** Chỉ có ở phương án Giới thiệu lao động */
+  service?: 'referral';
+  /** "10.000 đ/giờ" · "3.000.000 đ/người" */
+  feeText?: string;
+  /** "tối đa 8 giờ/ngày · thu 6 tháng" · "làm đủ 7 ngày" */
+  termText?: string;
+  revenueTotal?: number;
+  /** Lợi nhuận sau thuế dự phòng, cả thời gian thu phí */
+  profitTotal?: number;
+  /** Cung ứng: khoản thu riêng theo tháng / người (bảo hiểm tách khỏi giá ngày) */
+  insuranceMonthly?: number;
 }
 
 export interface SharedInfo {

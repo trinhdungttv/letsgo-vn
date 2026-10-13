@@ -4,6 +4,7 @@
 // đã dịch & định dạng sẵn; component chỉ việc vẽ. Chỗ nào người dùng chưa sửa (null) thì dùng câu mặc định của đúng ngôn ngữ.
 import { computePriceList, DEFAULT_GENERAL_NOTES, includedNoteAuto, normalizeQuoteSheet } from './quoteSheet';
 import { normalizePlanData } from './engine';
+import { normalizeReferral, referralNotes, referralPriceRow, referralTerms } from './referral';
 import type { PlanData, PlanResult, QuoteRowKind } from './types';
 
 export type DocLang = 'vi' | 'zh' | 'en';
@@ -123,6 +124,7 @@ const T = {
   date: { vi: 'Ngày', zh: '日期', en: 'Date' },
   s1: { vi: 'Nội dung dịch vụ', zh: '服务内容', en: 'Scope of service' },
   s2: { vi: 'Bảng giá dịch vụ', zh: '服务价格表', en: 'Service price list' },
+  s3: { vi: 'Điều kiện tính phí', zh: '收费条件', en: 'Fee terms' },
   thNo: { vi: 'STT', zh: '序号', en: 'No.' },
   thDesc: { vi: 'Nội dung đơn giá', zh: '单价内容', en: 'Description' },
   thUnit: { vi: 'Đơn vị tính', zh: '计量单位', en: 'Unit' },
@@ -153,6 +155,7 @@ const ROW_NAME: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   ot_sun_night: { vi: 'Lương tăng ca ngày chủ nhật 1 tiếng ca đêm', zh: '周日加班费1小时夜班', en: 'Overtime pay per hour - Sunday night' },
   ot_hol: { vi: 'Lương tăng ca ngày lễ, Tết 1 tiếng', zh: '节假日加班1小时', en: 'Overtime pay per hour - public holiday' },
   ot_hol_night: { vi: 'Lương tăng ca ngày lễ, Tết 1 tiếng ca đêm', zh: '节假日夜班加班费1小时', en: 'Overtime pay per hour - public holiday night' },
+  insurance: { vi: 'Bảo hiểm xã hội, y tế, thất nghiệp', zh: '社会保险、医疗保险、失业保险', en: 'Social, health & unemployment insurance' },
 };
 const ROW_UNIT: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   day8: { vi: 'VNĐ/ngày', zh: '越南盾/天', en: 'VND/day' },
@@ -163,14 +166,23 @@ const ROW_UNIT: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   ot_sun_night: { vi: 'VNĐ/giờ (ca đêm)', zh: '越南盾/小时（夜班）', en: 'VND/hour (night shift)' },
   ot_hol: { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
   ot_hol_night: { vi: 'VNĐ/giờ (ca đêm)', zh: '越南盾/小时（夜班）', en: 'VND/hour (night shift)' },
+  insurance: { vi: 'VNĐ/người/tháng', zh: '越南盾/人/月', en: 'VND/worker/month' },
 };
 
 const trimLines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
 const biLines = (vi: string[], zh: string[], en: string[], lang: DocLang): Bi[] =>
   vi.map((v, i) => (lang === 'zh' ? { a: v, b: zh[i] } : lang === 'en' ? { a: en[i], b: v } : { a: v }));
 
-function defaultServiceLines(lang: DocLang, industry: string | null | undefined): Bi[] {
+function defaultServiceLines(lang: DocLang, industry: string | null | undefined, referral = false): Bi[] {
   const ind = (industry ?? '').trim();
+  if (referral) {
+    return biLines(
+      ['Giới thiệu, tuyển chọn lao động phổ thông theo yêu cầu của Quý Công ty.', ind ? `Vị trí: lao động phổ thông trong ngành ${ind}.` : 'Vị trí: lao động phổ thông theo yêu cầu của Quý Công ty.', 'Người lao động ký hợp đồng lao động trực tiếp với Quý Công ty.', 'Yêu cầu: Nam/Nữ từ 18 đến 45 tuổi, sức khỏe tốt.'],
+      ['按贵公司要求介绍、甄选普通劳动者。', ind ? `岗位：${ind}行业普通劳动。` : '岗位：按贵公司要求的普通劳动。', '劳动者与贵公司直接签订劳动合同。', '要求：男女均可，年龄18至45岁，身体健康。'],
+      ['Referral and selection of general workers as required by your company.', ind ? `Position: general labor in the ${ind} industry.` : 'Position: general labor as required by your company.', 'Workers sign labor contracts directly with your company.', 'Requirements: Male/Female, aged 18 to 45, in good health.'],
+      lang,
+    );
+  }
   return biLines(
     ['Cung ứng lao động phổ thông, không cần kinh nghiệm.', ind ? `Công việc: lao động phổ thông trong ngành ${ind}.` : 'Công việc: lao động phổ thông theo yêu cầu của Quý Công ty.', 'Thời gian làm việc: 8 giờ/ngày, theo ca/kíp của Quý Công ty.', 'Yêu cầu: Nam/Nữ từ 18 đến 45 tuổi, sức khỏe tốt.'],
     ['提供普通劳务派遣，无需工作经验。', ind ? `工作内容：${ind}行业普通劳动。` : '工作内容：按贵公司要求的普通劳动。', '工作时间：每天8小时，按贵公司班次安排。', '要求：男女均可，年龄18至45岁，身体健康。'],
@@ -186,12 +198,12 @@ const defaultNotes = (lang: DocLang): Bi[] => biLines(
 );
 // Tên đã bắt đầu bằng "Công ty"/"Cty" thì không thêm tiền tố nữa (tránh "Công ty CÔNG TY TNHH …")
 const viCompany = (name: string) => (/^\s*(công ty|cty)(\s|$)/i.test(name) ? name.trim() : `Công ty ${name}`);
-const defaultIntro = (lang: DocLang, company: string): Bi => {
-  const vi = `${viCompany(company)} xin trân trọng gửi tới Quý Công ty bảng báo giá dịch vụ cung ứng lao động như sau:`;
+const defaultIntro = (lang: DocLang, company: string, referral = false): Bi => {
+  const vi = `${viCompany(company)} xin trân trọng gửi tới Quý Công ty bảng báo giá dịch vụ ${referral ? 'giới thiệu' : 'cung ứng'} lao động như sau:`;
   return {
     vi: { a: vi },
-    zh: { a: vi, b: `${company}谨向贵公司提供劳务派遣服务报价如下：` },
-    en: { a: `${company} is pleased to submit the following quotation for labor supply services:`, b: vi },
+    zh: { a: vi, b: `${company}谨向贵公司提供${referral ? '劳动力介绍' : '劳务派遣'}服务报价如下：` },
+    en: { a: `${company} is pleased to submit the following quotation for labor ${referral ? 'referral' : 'supply'} services:`, b: vi },
   }[lang];
 };
 const defaultClosing = (lang: DocLang): Bi => ({
@@ -225,6 +237,8 @@ export interface DocView {
   rows: DocRow[];
   /** Câu "Bao gồm: …" đặt ngay dưới bảng giá ('' = không có) */
   includedNote: string;
+  /** Điều kiện tính phí (chỉ dịch vụ Giới thiệu lao động; cung ứng = []) */
+  terms: Bi[];
   notes: Bi[];
   closing: Bi;
   validText: Bi | null;
@@ -247,18 +261,31 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
     const t = kind !== 'custom' ? tbl[kind] : undefined;
     return t && t[field] === name ? bi(t, lang) : { a: name };
   };
+  const referral = plan.service === 'referral';
+  const refCfg = referral ? normalizeReferral(plan.referral) : null;
   const included = q.includedNote ?? includedNoteAuto(plan);
   // Câu "Bao gồm: …" tự sinh: bản Anh–Việt đổi tiền tố thành "Includes:" (tên các khoản vẫn là tiếng Việt vì là chữ người dùng tự đặt)
   const includedText = q.includedNote == null && lang === 'en' ? included.replace(/^Bao gồm:?/, 'Includes:') : included;
-  const rows: DocRow[] = list.map((r, i) => ({
-    no: i + 1,
-    name: defTri(r.kind, r.name, ROW_NAME, 'vi'),
-    unit: defTri(r.kind, r.unit, ROW_UNIT, 'vi'),
-    price: r.price,
-  }));
+  const rows: DocRow[] = refCfg
+    ? [{ no: 1, ...referralPriceRow(refCfg, lang) }]
+    : list.map((r, i) => ({
+        no: i + 1,
+        name: defTri(r.kind, r.name, ROW_NAME, 'vi'),
+        unit: defTri(r.kind, r.unit, ROW_UNIT, 'vi'),
+        price: r.price,
+      }));
 
   const customNotes = q.generalNotes.trim() !== DEFAULT_GENERAL_NOTES.trim();
-  const notes: Bi[] = customNotes ? trimLines(q.generalNotes).map(a => ({ a })) : defaultNotes(lang);
+  const notes: Bi[] = refCfg ? referralNotes(refCfg, lang) : customNotes ? trimLines(q.generalNotes).map(a => ({ a })) : defaultNotes(lang);
+  // Bảo hiểm tách khỏi giá ngày → ghi rõ điều kiện thu (đặt đầu phần ghi chú)
+  if (!refCfg && list.some(r => r.kind === 'insurance')) {
+    const n = result.separateMinDays;
+    notes.unshift(bi({
+      vi: `Bảo hiểm (BHXH, BHYT, BHTN) thu riêng theo tháng, chỉ áp dụng cho người lao động làm từ ${n} công/tháng trở lên; không tính vào đơn giá ngày công.`,
+      zh: `保险费（社会保险、医疗保险、失业保险）按月另行收取，仅适用于当月工作满${n}个工日及以上的劳动者，不计入日工价。`,
+      en: `Insurance (social, health and unemployment) is charged separately per month, only for workers with ${n} or more working days in the month; it is not included in the daily rate.`,
+    }, lang));
+  }
   if (doc.payment.trim()) notes.push({ a: `${bi(T.payment, lang).a}: ${doc.payment.trim()}` });
 
   const cus = doc.customer;
@@ -282,9 +309,9 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
     dateText: dateShort(doc.date),
     customer: { name: cus.name.trim(), rows: cRows },
     labels,
-    intro: doc.intro?.trim() ? { a: doc.intro.trim() } : defaultIntro(lang, companyName),
-    serviceLines: doc.serviceLines != null && doc.serviceLines.trim() ? trimLines(doc.serviceLines).map(a => ({ a })) : defaultServiceLines(lang, ctx.industry),
-    rows, includedNote: includedText.trim(), notes,
+    intro: doc.intro?.trim() ? { a: doc.intro.trim() } : defaultIntro(lang, companyName, referral),
+    serviceLines: doc.serviceLines != null && doc.serviceLines.trim() ? trimLines(doc.serviceLines).map(a => ({ a })) : defaultServiceLines(lang, ctx.industry, referral),
+    rows, includedNote: refCfg ? '' : includedText.trim(), terms: refCfg ? referralTerms(refCfg, lang, 'quote') : [], notes,
     closing: doc.closing?.trim() ? { a: doc.closing.trim() } : defaultClosing(lang),
     validText: doc.validUntil ? { a: `${labels.valid.a}: ${dateShort(doc.validUntil)}`, b: labels.valid.b ? `${labels.valid.b}: ${dateShort(doc.validUntil)}` : undefined } : null,
     placeDate: { a: withPlace(dl.a) ?? '', b: withPlace(dl.b) },

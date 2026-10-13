@@ -12,6 +12,7 @@ import {
 import { downloadBlob, renderElementToPdf } from '../../../lib/costPlan/pdf';
 import { DEFAULT_LAYOUT, pickEntity } from '../../../lib/costPlan/entity';
 import type { PlanData, PlanResult, QuoteSheet } from '../../../lib/costPlan/types';
+import { defaultReferralNotesVi, isReferral, normalizeReferral } from '../../../lib/costPlan/referral';
 import QuoteDocument, { A4_H, A4_W } from './QuoteDocument';
 import { MoneyInput, fmt } from './fields';
 import EntityManager from './EntityManager';
@@ -72,6 +73,10 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
   const setDoc = (p: Partial<QuoteDoc>) => { if (!readOnly) onChange({ ...data, doc: { ...doc, ...p } }); };
   const setCustomer = (p: Partial<QuoteDoc['customer']>) => setDoc({ customer: { ...doc.customer, ...p } });
   const setQuote = (nq: QuoteSheet) => { if (!readOnly) onChange({ ...data, quote: nq }); };
+  // Giới thiệu lao động: bảng giá 1 dòng + điều kiện tính phí lấy từ mục "Phí giới thiệu" của phương án
+  const referral = isReferral(data);
+  const refCfg = referral ? normalizeReferral(data.referral) : null;
+  const setRefNotes = (v: string) => { if (!readOnly && refCfg) onChange({ ...data, referral: { ...refCfg, notes: v } }); };
 
   // ── Pháp nhân gửi báo giá (mỗi pháp nhân có thông tin, logo, chữ ký, con dấu, cách căn riêng) ──
   const { entities, canSign: isAdmin, loading: entLoading, err: profErr, reload: reloadEntities } = useEntities(token);
@@ -194,12 +199,22 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
         <F label="Lời mở đầu"><Override disabled={dis} value={doc.intro} onChange={v => setDoc({ intro: v })} placeholder={bi2(defView.intro)} rows={3} /></F>
         <F label="Nội dung dịch vụ (mỗi dòng 1 ý)"><Override disabled={dis} value={doc.serviceLines} onChange={v => setDoc({ serviceLines: v })} placeholder={defView.serviceLines.map(l => l.a).join('\n')} rows={5} /></F>
         <F label="Điều khoản thanh toán (nếu có)"><input disabled={dis} value={doc.payment} placeholder="vd: Chuyển khoản trong 30 ngày kể từ ngày nhận hoá đơn" onChange={e => setDoc({ payment: e.target.value })} className={`${field} w-full`} /></F>
-        <F label="Ghi chú dưới bảng giá (mỗi dòng 1 ý)"><textarea rows={4} disabled={dis} value={q.generalNotes} onChange={e => setQuote({ ...q, generalNotes: e.target.value })} className={`${field} !h-auto w-full py-2.5 leading-relaxed resize-y`} /></F>
-        <F label="Ô “Bao gồm” cạnh dòng giá ngày"><textarea rows={2} disabled={dis} value={q.includedNote ?? includedNoteAuto(data)} onChange={e => setQuote({ ...q, includedNote: e.target.value })} className={`${field} !h-auto w-full py-2.5 leading-relaxed resize-y`} /></F>
+        {refCfg ? (
+          <>
+            <div className="rounded-xl bg-[#f5f5f7] px-3.5 py-2.5 text-[12px] text-[#6e6e73] leading-snug">Bảng giá và <b className="text-[#1d1d1f]">Điều kiện tính phí</b> tự sinh từ mục “Phí giới thiệu” của phương án — sửa đơn giá, thời hạn, số ngày ở đó.</div>
+            <F label="Ghi chú cuối báo giá (mỗi dòng 1 ý)"><textarea rows={4} disabled={dis} value={refCfg.notes ?? defaultReferralNotesVi(refCfg)} onChange={e => setRefNotes(e.target.value)} className={`${field} !h-auto w-full py-2.5 leading-relaxed resize-y`} /></F>
+            {refCfg.notes != null && !dis && <button type="button" onClick={() => onChange({ ...data, referral: { ...refCfg, notes: null } })} className={btnLink + ' !text-[12px] -mt-2'}>Dùng lại ghi chú mặc định (có bản dịch)</button>}
+          </>
+        ) : (
+          <>
+            <F label="Ghi chú dưới bảng giá (mỗi dòng 1 ý)"><textarea rows={4} disabled={dis} value={q.generalNotes} onChange={e => setQuote({ ...q, generalNotes: e.target.value })} className={`${field} !h-auto w-full py-2.5 leading-relaxed resize-y`} /></F>
+            <F label="Ô “Bao gồm” cạnh dòng giá ngày"><textarea rows={2} disabled={dis} value={q.includedNote ?? includedNoteAuto(data)} onChange={e => setQuote({ ...q, includedNote: e.target.value })} className={`${field} !h-auto w-full py-2.5 leading-relaxed resize-y`} /></F>
+          </>
+        )}
         <F label="Lời kết"><Override disabled={dis} value={doc.closing} onChange={v => setDoc({ closing: v })} placeholder={bi2(defView.closing)} rows={2} /></F>
       </Section>
 
-      <Section title="Dòng giá hiển thị" summary={`${rows.filter(r => !r.hidden).length}/${rows.length} dòng`} open={!!open.rows} onToggle={() => tg('rows')}>
+      {!refCfg && <Section title="Dòng giá hiển thị" summary={`${rows.filter(r => !r.hidden).length}/${rows.length} dòng`} open={!!open.rows} onToggle={() => tg('rows')}>
         <div className="text-[11.5px] text-[#86868b] -mt-1">Bật/tắt dòng, đổi tên hoặc sửa giá — thay đổi này cũng áp dụng cho Bảng giá dịch vụ của phương án.</div>
         <div className="space-y-2">
           {rows.map(r => (
@@ -213,7 +228,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
             </div>
           ))}
         </div>
-      </Section>
+      </Section>}
 
       <Section title="Người ký" summary={view.signer.name ? `${view.signer.name}${view.signer.role ? ` — ${view.signer.role}` : ''}` : 'Chưa có'} open={!!open.signer} onToggle={() => tg('signer')}>
         <F label="Họ tên người đại diện"><input disabled={dis} value={doc.signerName ?? ''} placeholder={effData.signerName || 'vd: Nguyễn Văn A'} onChange={e => setDoc({ signerName: e.target.value.trim() ? e.target.value : null })} className={`${field} w-full`} /></F>

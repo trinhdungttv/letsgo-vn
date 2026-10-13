@@ -16,6 +16,7 @@
 import type {
   CostLine, PercentBase, PlanData, PlanResult, PlanSettings, PlanSummary, PlanWarning, QuoteSheet,
 } from './types';
+import { summarizeReferral } from './referral';
 
 export const DEFAULT_SETTINGS: PlanSettings = {
   baseDays: 26, taxOption: 'profit20', vatRate: 0, roundTo: 0, workers: 20, simDays: 26, companyPct: 30,
@@ -65,6 +66,7 @@ export function normalizePlanData(raw: unknown): PlanData {
   s.workers = Math.max(1, Math.round(num(s.workers)) || DEFAULT_SETTINGS.workers);
   s.simDays = Math.min(31, Math.max(1, Math.round(num(s.simDays)) || DEFAULT_SETTINGS.simDays));
   s.companyPct = Math.min(100, Math.max(0, num(s.companyPct)));
+  if (s.insuranceMinDays !== undefined) s.insuranceMinDays = Math.min(31, Math.max(1, Math.round(num(s.insuranceMinDays)) || 14));
   const lines = (Array.isArray(r.lines) ? r.lines : []).map((l): CostLine => ({
     ...l,
     id: l.id || newLineId(),
@@ -85,7 +87,12 @@ export function normalizePlanData(raw: unknown): PlanData {
   const mw = r.minWage && num(r.minWage.monthly) > 0 ? { monthly: num(r.minWage.monthly), label: String(r.minWage.label ?? 'vùng') } : null;
   const quote = (r.quote && typeof r.quote === 'object' ? r.quote : null) as QuoteSheet | null;
   const doc = (r.doc && typeof r.doc === 'object' ? r.doc : null) as PlanData['doc'];
-  return { settings: s, lines, notes: typeof r.notes === 'string' ? r.notes : '', minWage: mw, quote, doc };
+  return {
+    // Chỉ thêm khoá khi là Giới thiệu lao động — phương án cung ứng cũ giữ nguyên hình dạng dữ liệu
+    ...(r.service === 'referral' ? { service: 'referral' as const } : {}),
+    ...(r.referral && typeof r.referral === 'object' ? { referral: r.referral } : {}),
+    settings: s, lines, notes: typeof r.notes === 'string' ? r.notes : '', minWage: mw, quote, doc,
+  };
 }
 
 export interface ComputeOptions {
@@ -149,6 +156,10 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   }
 
   const costDaily = sum([...tierA, ...tierB].map(l => out[l.id].daily));
+  // Khoản thu riêng theo tháng (vd BHXH — khách chỉ trả cho NLĐ làm đủ 14 công): vẫn là giá vốn, nhưng KHÔNG cộng vào giá ngày
+  const separate = [...tierA, ...tierB].filter(l => l.billSeparately && !l.isBaseWage);
+  const separatedDaily = sum(separate.map(l => out[l.id].daily));
+  const separatedMonthly = sum(separate.map(l => out[l.id].monthly));
   const workerAB = sum([...tierA, ...tierB].filter(l => l.paidToWorker).map(l => out[l.id].daily));
 
   // ── Tầng C (Phí DV) ──────────────────────────────────────────────────────────────────
@@ -172,11 +183,13 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   const workerDaily = sum(lines.filter(l => l.paidToWorker).map(l => out[l.id].daily));
   const workerMonthly = sum(lines.filter(l => l.paidToWorker).map(l => out[l.id].monthly));
 
+  // Phần nằm trong giá ngày = mọi chi phí + Phí DV, trừ khoản thu riêng theo tháng
+  const inPriceDaily = directDaily - separatedDaily;
   let taxDaily = 0;
   if (settings.taxOption === 'profit20') taxDaily = serviceFeeDaily / 0.8 - serviceFeeDaily; // = 25% Phí DV → sau thuế 20% vẫn còn đủ Phí DV
-  else if (settings.taxOption === 'total20') taxDaily = directDaily * 0.2;
+  else if (settings.taxOption === 'total20') taxDaily = inPriceDaily * 0.2;
 
-  const quoteRawDaily = directDaily + taxDaily;
+  const quoteRawDaily = inPriceDaily + taxDaily;
   const step = settings.roundTo;
   const quoteDaily = step > 0 ? Math.ceil(quoteRawDaily / step - 1e-9) * step : quoteRawDaily;
   const roundingGainDaily = quoteDaily - quoteRawDaily;
@@ -185,6 +198,9 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   const workers = Math.max(1, Math.round(settings.workers));
   const simDays = Math.max(1, Math.round(settings.simDays));
   const totalManDays = workers * simDays;
+  const separateMinDays = Math.min(31, Math.max(1, Math.round(num(settings.insuranceMinDays ?? 14)) || 14));
+  // Thu bao nhiêu chi bấy nhiêu: dưới ngưỡng công thì không thu, cũng không phải đóng → lợi nhuận không đổi
+  const separatedBilledMonthly = separatedMonthly > 0 && simDays >= separateMinDays ? separatedMonthly * workers : 0;
   const profitMonthly = profitDaily * totalManDays;
   const pct = Math.min(100, Math.max(0, settings.companyPct));
   const companyProfit = Math.round((profitMonthly * pct) / 100);
@@ -206,6 +222,9 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
   } else if (quoteDaily > 0 && (profitDaily / quoteDaily) * 100 < 5) {
     warnings.push({ level: 'warn', text: 'Biên lợi nhuận dưới 5% giá báo — rất mỏng, dễ lỗ khi phát sinh.' });
   }
+  if (separatedMonthly > 0 && simDays < separateMinDays) {
+    warnings.push({ level: 'info', text: `Đang tính ${simDays} công/tháng, dưới ${separateMinDays} công — khoản bảo hiểm thu riêng không phát sinh trong tháng.` });
+  }
   if (pct === 0 || pct === 100) {
     warnings.push({ level: 'info', text: pct === 100 ? 'Toàn bộ lợi nhuận về công ty, chi nhánh không nhận gì.' : 'Toàn bộ lợi nhuận về chi nhánh, công ty không nhận gì.' });
   }
@@ -222,21 +241,25 @@ export function computePlan(input: PlanData, opts: ComputeOptions = {}): PlanRes
     baseWageDaily, insurableDaily,
     workerDaily, workerMonthly,
     directDaily, costDaily, serviceFeeDaily, taxDaily,
+    separatedDaily, separatedMonthly, separatedBilledMonthly, separateMinDays,
     quoteRawDaily, quoteDaily, roundingGainDaily,
     quoteMonthly: quoteDaily * baseDays,
     quoteWithVatDaily: quoteDaily * (1 + settings.vatRate),
     profitDaily, totalManDays,
-    revenueMonthly: quoteDaily * totalManDays,
+    revenueMonthly: quoteDaily * totalManDays + separatedBilledMonthly,
     profitMonthly, companyProfit, branchProfit,
     companyPerDay: (profitDaily * pct) / 100,
     branchPerDay: profitDaily - (profitDaily * pct) / 100,
-    marginPct: quoteDaily > 0 ? (profitDaily / quoteDaily) * 100 : 0,
+    // Có khoản thu riêng thì biên tính trên tổng khách trả / công (giá ngày + phần thu riêng quy ra công)
+    marginPct: quoteDaily + separatedDaily > 0 ? (profitDaily / (quoteDaily + separatedDaily)) * 100 : 0,
     warnings,
   };
 }
 
 export function summarizePlan(data: PlanData, r: PlanResult): PlanSummary {
   const d = normalizePlanData(data);
+  // Giới thiệu lao động không có giá 1 công — tóm tắt theo phí giới thiệu
+  if (d.service === 'referral') return summarizeReferral(d);
   return {
     quoteDaily: Math.round(r.quoteDaily),
     workerDaily: Math.round(r.workerDaily),
@@ -248,6 +271,7 @@ export function summarizePlan(data: PlanData, r: PlanResult): PlanSummary {
     baseWageMonthly: Math.round(sum(d.lines.filter(l => l.isBaseWage).map(l => r.lines[l.id]?.monthly ?? 0))),
     companyPct: d.settings.companyPct,
     lineCount: d.lines.length,
+    ...(r.separatedMonthly > 0 ? { insuranceMonthly: Math.round(r.separatedMonthly) } : {}),
   };
 }
 
@@ -270,7 +294,7 @@ export function solveServiceFee(data: PlanData, targetQuoteDaily: number): CostL
   if (!fee) return null;
   const zeroed: PlanData = { ...d, settings: { ...d.settings, roundTo: 0 }, lines: d.lines.map(l => (l.id === fee.id ? { ...l, mode: 'fixed' as const, unit: 'day' as const, value: 0 } : l)) };
   const r = computePlan(zeroed);
-  const cost = r.costDaily;          // chi phí không gồm Phí DV
+  const cost = r.costDaily - r.separatedDaily;   // chi phí trong giá ngày, không gồm Phí DV (khoản thu riêng theo tháng nằm ngoài)
   const otherFee = r.serviceFeeDaily; // các dòng Phí DV khác (nếu có) — dòng đang giải đã về 0
   let totalFee: number;
   if (d.settings.taxOption === 'profit20') totalFee = (targetQuoteDaily - cost) * 0.8;     // quote = cost + fee/0,8

@@ -101,7 +101,9 @@ export function ProfitCard({ data, result, readOnly, onChange }: {
   const md = result.totalManDays;
   const rows: { label: string; v: string; c?: string; bold?: boolean }[] = [
     { label: 'Doanh thu', v: fmtShort(result.revenueMonthly), c: '#0071e3', bold: true },
-    { label: 'Chi phí lao động (giá vốn)', v: fmtShort(result.costDaily * md) },
+    ...(result.separatedMonthly > 0 ? [{ label: '· trong đó bảo hiểm thu riêng', v: fmtShort(result.separatedBilledMonthly), c: '#0a7d6e' }] : []),
+    // Bảo hiểm thu riêng: chỉ đóng cho NLĐ đủ công — chi đúng bằng phần thu riêng
+    { label: 'Chi phí lao động (giá vốn)', v: fmtShort((result.costDaily - result.separatedDaily) * md + result.separatedBilledMonthly) },
     ...(result.taxDaily > 0.5 ? [{ label: 'Thuế TNDN dự phòng', v: fmtShort(result.taxDaily * md), c: '#c4620a' }] : []),
     { label: 'Lợi nhuận mỗi công', v: `${fmt(result.profitDaily)} đ`, c: '#1d8a3b' },
   ];

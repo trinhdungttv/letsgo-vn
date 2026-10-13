@@ -28,6 +28,8 @@ const STD: { kind: QuoteRowKind; name: string; unit: string; hidden?: boolean }[
   { kind: 'ot_sun_night', name: 'Lương tăng ca ngày chủ nhật 1 tiếng ca đêm', unit: 'VNĐ/giờ (ca đêm)' },
   { kind: 'ot_hol', name: 'Lương tăng ca ngày lễ, Tết 1 tiếng', unit: 'VNĐ/giờ', hidden: true },
   { kind: 'ot_hol_night', name: 'Lương tăng ca ngày lễ, Tết 1 tiếng ca đêm', unit: 'VNĐ/giờ (ca đêm)', hidden: true },
+  // Chỉ xuất hiện khi có khoản "thu riêng theo tháng" (computePriceList tự bỏ khi không có)
+  { kind: 'insurance', name: 'Bảo hiểm xã hội, y tế, thất nghiệp', unit: 'VNĐ/người/tháng' },
 ];
 
 export const DEFAULT_GENERAL_NOTES = [
@@ -51,7 +53,8 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     id: r.id || newLineId(), kind: r.kind ?? 'custom', name: String(r.name ?? ''), unit: String(r.unit ?? 'VNĐ/ngày'),
     override: r.override != null && Number.isFinite(Number(r.override)) ? Number(r.override) : null, hidden: !!r.hidden,
   }));
-  for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: true });
+  // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
+  for (const d of def.rows) if (!rows.some(r => r.kind === d.kind)) rows.push({ ...d, hidden: d.kind !== 'insurance' });
   const order = new Map(STD.map((s, i) => [s.kind, i]));
   rows.sort((a, b) => (order.get(a.kind) ?? 99) - (order.get(b.kind) ?? 99));   // dòng tuỳ chỉnh luôn nằm cuối, giữ thứ tự thêm
   return {
@@ -77,6 +80,8 @@ export interface PriceRow {
   hidden: boolean;
   /** Công thức bằng lời để người dùng hiểu số từ đâu ra */
   formula: string;
+  /** Ghi chú in cạnh dòng (cột Ghi chú khi xuất Excel / sao chép) */
+  note?: string;
 }
 
 export interface PriceList {
@@ -109,17 +114,19 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       case 'ot_sun_night': return ot(OT_NIGHT_SUNDAY, 'ngày nghỉ hằng tuần, ban đêm 270%');
       case 'ot_hol': return ot(OT_DAY_HOLIDAY, 'ngày lễ, Tết 300%');
       case 'ot_hol_night': return ot(OT_NIGHT_HOLIDAY, 'ngày lễ, Tết, ban đêm 390%');
+      case 'insurance': return { v: result.separatedMonthly, formula: `Thu riêng mỗi tháng, chỉ NLĐ làm từ ${result.separateMinDays} công/tháng — không cộng vào giá ngày` };
       default: return { v: null, formula: 'Nhập tay' };
     }
   };
 
-  const rows: PriceRow[] = q.rows.map(r => {
+  const rows: PriceRow[] = q.rows.filter(r => r.kind !== 'insurance' || result.separatedMonthly > 0).map(r => {
     const a = auto(r.kind);
     const overridden = r.kind !== 'custom' && r.override != null;
     const price = r.kind === 'custom' ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
     return {
       id: r.id, kind: r.kind, name: r.name, unit: r.unit, price,
       auto: a.v == null ? null : Math.round(a.v), overridden, hidden: !!r.hidden, formula: overridden ? `Đã sửa tay (tự tính: ${f(a.v ?? 0)} đ)` : a.formula,
+      ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
     };
   });
   return { rows, otBaseDaily, shr };
@@ -131,7 +138,7 @@ export function includedNoteAuto(input: PlanData): string {
   const names: string[] = [];
   const seen = new Set<string>();
   for (const l of data.lines) {
-    if (l.isBaseWage) continue;
+    if (l.isBaseWage || l.billSeparately) continue;   // khoản thu riêng theo tháng không nằm trong giá ngày
     let n = l.name.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
     if (/bhxh/i.test(n)) n = 'BHXH';
     const k = lineKey(n);
@@ -147,7 +154,7 @@ export function includedNoteAuto(input: PlanData): string {
 export function priceListToTsv(list: PriceList, included: string, notes: string): string {
   const vis = list.rows.filter(r => !r.hidden);
   const lines = ['STT\tNội dung đơn giá\tĐơn vị tính\tĐơn giá (VNĐ)\tGhi chú'];
-  vis.forEach((r, i) => lines.push(`${i + 1}\t${r.name}\t${r.unit}\t${r.price}\t${i === 0 ? included : ''}`));
+  vis.forEach((r, i) => lines.push(`${i + 1}\t${r.name}\t${r.unit}\t${r.price}\t${i === 0 ? included : r.note ?? ''}`));
   if (notes.trim()) lines.push('', 'Ghi chú:', ...notes.split('\n').filter(Boolean).map(n => `- ${n}`));
   return lines.join('\n');
 }

@@ -280,6 +280,12 @@ export interface CRMPipelineEntry {
   custom_price: number | null;
   /** Thông tin báo giá điền sẵn (migration 156). */
   quote_info?: import('./quoteInfo').QuoteInfo | null;
+  /** Nguồn mang công ty về (migration 162) — xem src/lib/pipelineSource.ts. */
+  source_type?: import('./pipelineSource').PipelineSourceType | null;
+  /** Tên sale / đối tác giới thiệu. */
+  source_name?: string | null;
+  /** Chi nhánh mang về khi source_type = 'branch'. */
+  source_branch_id?: string | null;
   contacts?: { name: string; phone: string | null } | null;
   crm_products?: { name: string; category: string | null; price?: number } | null;
   created_at: string;

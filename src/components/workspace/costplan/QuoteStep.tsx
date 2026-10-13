@@ -6,10 +6,12 @@ import {
   computePriceList, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
+import { normalizeText } from '../../../lib/costPlan/presets';
 import { MoneyInput, NumInput, fmt } from './fields';
 import QuoteTemplateDialog from './QuoteTemplateDialog';
 import QuoteDocDialog from './QuoteDocDialog';
 import type { DocDefaults } from '../../../lib/costPlan/quoteDoc';
+import { copyText } from '../../../lib/clipboard';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
 /** Hình thành giá 1 công: giá vốn + phí dịch vụ + thuế dự phòng (+ làm tròn). */
@@ -26,6 +28,7 @@ export function PriceBuild({ data, result, onGoCost }: { data: PlanData; result:
         <div className="flex justify-between"><dt className="text-[#6e6e73]">Phí dịch vụ</dt><dd className="font-semibold tabular-nums text-[#5e5ce6]">+{fmt(result.serviceFeeDaily)}</dd></div>
         {result.taxDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Thuế TNDN dự phòng</dt><dd className="font-semibold tabular-nums text-[#c4620a]">+{fmt(result.taxDaily)}</dd></div>}
         {result.roundingGainDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Làm tròn lên</dt><dd className="font-semibold tabular-nums text-[#c4620a]">+{fmt(result.roundingGainDaily)}</dd></div>}
+        {result.separatedDaily > 0.5 && <div className="flex justify-between"><dt className="text-[#6e6e73]">Bảo hiểm thu riêng theo tháng</dt><dd className="font-semibold tabular-nums text-[#0a7d6e]">−{fmt(result.separatedDaily)}</dd></div>}
       </dl>
       <div className="mt-3 pt-3 border-t border-[#f0f0f2] flex items-baseline justify-between gap-3">
         <div className="text-[12px] text-[#6e6e73]">Giá báo khách{s.vatRate > 0 ? ` · đã VAT ${s.vatRate * 100}%: ${fmt(result.quoteWithVatDaily)} đ` : ' · chưa VAT'}</div>
@@ -34,21 +37,69 @@ export function PriceBuild({ data, result, onGoCost }: { data: PlanData; result:
           <span className="text-[16px] font-medium text-[#0071e3]/60">đ / ngày</span>
         </div>
       </div>
+      {result.separatedMonthly > 0 && (
+        <div className="mt-2 text-right text-[12.5px] text-[#0a7d6e]">
+          + Bảo hiểm thu riêng <b className="tabular-nums">{fmt(result.separatedMonthly)} đ/người/tháng</b> · NLĐ làm từ {result.separateMinDays} công/tháng
+        </div>
+      )}
     </div>
   );
 }
 
-/** Copy vào clipboard; trình duyệt chặn clipboard API thì thử cách cũ (execCommand). */
-async function copyText(text: string): Promise<boolean> {
-  try { await navigator.clipboard.writeText(text); return true; } catch { /* thử cách cũ */ }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
+const isInsuranceName = (name: string) => /bhxh|bhyt|bhtn|bao hiem/.test(normalizeText(name));
+
+/**
+ * Tách bảo hiểm khỏi giá ca 8h: khoản đánh dấu "thu riêng" vẫn là giá vốn nhưng không cộng vào giá ngày,
+ * mà thành 1 dòng "/người/tháng" trên bảng giá — khách chỉ trả cho NLĐ làm đủ số công trong tháng (mặc định 14).
+ */
+export function InsuranceSplit({ data, result, readOnly, onPlan }: { data: PlanData; result: PlanResult; readOnly?: boolean; onPlan: (d: PlanData) => void }) {
+  const cands = data.lines.filter(l => !l.isBaseWage && !l.isServiceFee && !l.paidToWorker);
+  const insLines = cands.filter(l => isInsuranceName(l.name));
+  const on = data.lines.some(l => l.billSeparately);
+  const minDays = data.settings.insuranceMinDays ?? 14;
+  const insDaily = insLines.reduce((a, l) => a + (result.lines[l.id]?.daily ?? 0), 0);
+  const mark = (ids: Set<string>, v: boolean) => onPlan({ ...data, lines: data.lines.map(l => (ids.has(l.id) ? { ...l, billSeparately: v || undefined } : l)) });
+  const setOn = (v: boolean) => (v
+    ? mark(new Set(insLines.map(l => l.id)), true)
+    : mark(new Set(data.lines.filter(l => l.billSeparately).map(l => l.id)), false));
+
+  return (
+    <div className={`${card} p-5`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold text-[#1d1d1f]">Bảo hiểm thu riêng theo tháng</div>
+          <div className="text-[12px] text-[#86868b] leading-snug mt-0.5">
+            {on ? `Không cộng vào giá ca 8h — khách trả riêng cho NLĐ làm từ ${minDays} công/tháng trở lên`
+              : insLines.length ? <>Đang cộng <b className="text-[#1d1d1f]">{fmt(insDaily)} đ/công</b> bảo hiểm vào giá ca 8h. Bật để tách ra, khách trả riêng theo tháng cho NLĐ làm đủ công.</>
+              : 'Bước 1 chưa có khoản bảo hiểm (BHXH, BHYT, BHTN) để tách.'}
+          </div>
+        </div>
+        <Switch on={on} disabled={readOnly || (!on && !insLines.length)} onChange={setOn} />
+      </div>
+      {on && (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-xl ring-1 ring-black/5 divide-y divide-[#f2f2f4]">
+            {cands.map(l => (
+              <label key={l.id} className={`flex items-center gap-2.5 px-3.5 py-2 text-[13px] ${readOnly ? '' : 'cursor-pointer'}`}>
+                <input type="checkbox" className="accent-[#0a7d6e] w-4 h-4" disabled={readOnly} checked={!!l.billSeparately} onChange={e => mark(new Set([l.id]), e.target.checked)} />
+                <span className="flex-1 min-w-0 truncate">{l.name || 'Khoản chưa đặt tên'}</span>
+                <span className="text-[12px] tabular-nums text-[#6e6e73]">{fmt(result.lines[l.id]?.monthly ?? 0)}/tháng</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-[13px] text-[#1d1d1f]">
+            <span>Áp dụng cho NLĐ làm từ</span>
+            <NumInput value={minDays} min={1} max={31} disabled={readOnly} onChange={n => onPlan({ ...data, settings: { ...data.settings, insuranceMinDays: Math.max(1, Math.min(31, n)) } })} className={`${field} !h-8 w-14 text-center font-semibold`} />
+            <span>công/tháng trở lên</span>
+          </div>
+          <div className="rounded-xl bg-[#e9f7f4] px-3.5 py-2.5 text-[12.5px] text-[#0a5c51] leading-relaxed">
+            Khách trả riêng <b className="tabular-nums">{fmt(result.separatedMonthly)} đ/người/tháng</b> · giá ca 8h còn <b className="tabular-nums">{fmt(result.quoteDaily)} đ</b> (đã bỏ {fmt(result.separatedDaily)} đ/công).
+            Lợi nhuận không đổi — bảo hiểm thu bao nhiêu đóng bấy nhiêu.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const UNITS = ['VNĐ/ngày', 'VNĐ/giờ', 'VNĐ/tháng', 'VNĐ/suất'];
@@ -86,7 +137,7 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   const excel = async () => {
     const XLSX = await import('xlsx');
     const aoa: (string | number)[][] = [['STT', 'Nội dung đơn giá', 'Đơn vị tính', 'Đơn giá (VNĐ)', 'Ghi chú']];
-    visible.forEach((r, i) => aoa.push([i + 1, r.name, r.unit, r.price, i === 0 ? included : '']));
+    visible.forEach((r, i) => aoa.push([i + 1, r.name, r.unit, r.price, i === 0 ? included : r.note ?? '']));
     const notes = q.generalNotes.split('\n').filter(Boolean);
     if (notes.length) aoa.push([], ['Ghi chú:'], ...notes.map(n => [`- ${n}`]));
     const ws = XLSX.utils.aoa_to_sheet(aoa);

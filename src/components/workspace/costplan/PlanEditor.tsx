@@ -6,10 +6,34 @@ import { normalizeText, optionalFor } from '../../../lib/costPlan/presets';
 import type { CostLine, PlanData, PlanResult, PlanSettings, QuoteSheet } from '../../../lib/costPlan/types';
 import CostSections, { secOf, withSection, type LineSuggestion } from './CostSections';
 import ProfitSplit from './ProfitSplit';
-import { PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
+import { InsuranceSplit, PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
+import ReferralEditor from './ReferralEditor';
+import { defaultReferral, type ServiceKind } from '../../../lib/costPlan/referral';
 import { CostTotalCard, LegalCard, NegotiateCard, ProfitCard, SettingsCard, Warnings } from './SummaryPanel';
 import { fmt } from './fields';
-import { card, field, labelCls, btnGhost } from './ui';
+import { Seg, card, field, labelCls, btnGhost } from './ui';
+
+const SERVICE_OPTS: { value: ServiceKind; label: string }[] = [
+  { value: 'supply', label: 'Cung ứng / cho thuê lao động' },
+  { value: 'referral', label: 'Giới thiệu lao động' },
+];
+
+/** Chọn loại dịch vụ của phương án. Đổi qua lại không mất dữ liệu bên kia (bảng chi phí / cấu hình phí vẫn giữ). */
+function ServiceSwitch({ data, readOnly, onChange }: { data: PlanData; readOnly?: boolean; onChange: (d: PlanData) => void }) {
+  const cur: ServiceKind = data.service === 'referral' ? 'referral' : 'supply';
+  const pick = (v: ServiceKind) => {
+    if (v === cur) return;
+    if (v === 'referral') onChange({ ...data, service: 'referral', referral: data.referral ?? defaultReferral() });
+    else { const next = { ...data }; delete next.service; onChange(next); }   // cung ứng = không có khoá service, như phương án cũ
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span className="text-[12px] font-medium text-[#6e6e73]">Loại dịch vụ</span>
+      <div className="w-full sm:w-[420px]"><Seg value={cur} disabled={readOnly} onChange={pick} options={SERVICE_OPTS} /></div>
+      <span className="text-[11.5px] text-[#86868b]">{cur === 'referral' ? 'NLĐ ký HĐ với khách, mình thu phí giới thiệu' : 'NLĐ ký HĐ với mình, khách trả giá theo công'}</span>
+    </div>
+  );
+}
 
 type Step = 'cost' | 'quote';
 
@@ -111,8 +135,19 @@ export default function PlanEditor({
     </div>
   );
 
+  if (data.service === 'referral') {
+    return (
+      <div className="space-y-4">
+        <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} />
+        <ReferralEditor data={data} result={result} readOnly={readOnly} onChange={onChange} aboveList={aboveList}
+          branchLabel={branchLabel} branchKhoan={branchKhoan} planId={planId} docDefaults={docDefaults} meta={fillMeta} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} />
       <StepTabs step={cur} onStep={setStep} cost={result.costDaily} price={result.quoteDaily} canQuote={canQuote} />
 
       {cur === 'cost' ? (
@@ -140,6 +175,7 @@ export default function PlanEditor({
           <div className="space-y-4 min-w-0">
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines} suggestions={[]} show={['service']} />
             <PriceBuild data={data} result={result} onGoCost={() => setStep('cost')} />
+            <InsuranceSplit data={data} result={result} readOnly={readOnly} onPlan={onChange} />
             <PriceTable data={data} result={result} readOnly={readOnly} fileName={fileName} meta={fillMeta} planId={planId} docDefaults={docDefaults} onQuote={setQuote} onPlan={onChange} onPushCrm={readOnly ? undefined : onPushCrm} />
             <QuoteNotes data={data} readOnly={readOnly} onQuote={setQuote} />
             {!readOnly && <div className="px-1"><button type="button" onClick={() => setStep('cost')} className={btnGhost}>← Quay lại chi phí lao động</button></div>}

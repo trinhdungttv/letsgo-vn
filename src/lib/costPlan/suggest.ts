@@ -4,6 +4,7 @@
 import { computePlan, normalizePlanData } from './engine';
 import { lineKey, normalizeText } from './presets';
 import type { CostLine, CostPlanRow } from './types';
+import { isReferralPlan } from './referral';
 
 export type MatchLevel = 'zone_industry' | 'industry' | 'zone';
 
@@ -30,7 +31,8 @@ export function matchPlans(
 ): PlanMatch[] {
   const out: PlanMatch[] = [];
   for (const plan of plans) {
-    if (plan.id === q.excludeId || plan.status === 'archived') continue;
+    // Phương án Giới thiệu lao động không có bảng chi phí lương → không dùng làm mẫu / mặt bằng giá cho cung ứng
+    if (plan.id === q.excludeId || plan.status === 'archived' || isReferralPlan(plan)) continue;
     const si = sameText(plan.industry, q.industry);
     const sz = sameText(plan.zone_name, q.zone);
     const level: MatchLevel | null = si && sz ? 'zone_industry' : si ? 'industry' : sz ? 'zone' : null;
@@ -69,7 +71,7 @@ export function suggestLines(
   const groups = new Map<string, { line: CostLine; at: string; dailies: number[]; plans: Set<string>; zonePlans: Set<string>; titles: string[] }>();
 
   const pool = plans
-    .filter(p => p.id !== q.excludeId && p.status !== 'archived' && sameText(p.industry, q.industry))
+    .filter(p => p.id !== q.excludeId && p.status !== 'archived' && !isReferralPlan(p) && sameText(p.industry, q.industry))
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
   for (const plan of pool) {
@@ -126,7 +128,7 @@ export function benchmarkFromPlans(
   plans: CostPlanRow[],
   q: { industry?: string | null; zone?: string | null; excludeId?: string | null },
 ): Benchmark {
-  const usable = plans.filter(p => p.id !== q.excludeId && p.status !== 'archived' && p.summary && sameText(p.industry, q.industry));
+  const usable = plans.filter(p => p.id !== q.excludeId && p.status !== 'archived' && p.summary && !isReferralPlan(p) && sameText(p.industry, q.industry));
   const inZone = usable.filter(p => sameText(p.zone_name, q.zone));
   const scope = inZone.length ? 'zone_industry' as const : usable.length ? 'industry' as const : null;
   const pool = scope === 'zone_industry' ? inZone : usable;

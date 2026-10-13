@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Plus, X, Briefcase, Columns3, RotateCcw,
+  Plus, X, Briefcase, Columns3, RotateCcw, Filter,
 } from 'lucide-react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import PageHeader from '../components/PageHeader';
@@ -14,6 +14,8 @@ import { branchOptions, branchOf } from '../lib/branchRef';
 import { useMarketRefs, competitorsInZone, linkCompetitor, notifyMarketChanged } from '../components/crm/MarketSupplyBlock';
 import { CompanyProfileModal, STAGES, RATING_CONFIG, ARCHIVED_STAGES } from '../components/crm/CompanyProfileModal';
 import { selectContacts } from '../lib/contactOps';
+import { PipelineSourceChip, PipelineSourcePicker } from '../components/crm/PipelineSourceField';
+import { EMPTY_SOURCE, cleanSource, matchesSourceFilter, sourceFilterGroups, sourceFullLabel, sourceSaveErrorHint } from '../lib/pipelineSource';
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
@@ -46,7 +48,8 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
-  const [modalForm, setModalForm] = useState({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '' });
+  const emptyModalForm = { name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '', source: EMPTY_SOURCE };
+  const [modalForm, setModalForm] = useState(emptyModalForm);
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -64,6 +67,27 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
 
   const { branches } = useBranchData();
   const { zones: refZones, competitors: refCompetitors } = useMarketRefs();
+
+  // Lọc theo nguồn (sale / đối tác giới thiệu / công ty / chi nhánh) — áp cho cả
+  // kanban lẫn 2 mục lưu trữ, để xem một người giới thiệu đã mang về những dự án nào.
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const sourceGroups = useMemo(() => sourceFilterGroups(localPipeline, branches), [localPipeline, branches]);
+  const noSourceCount = localPipeline.filter(e => matchesSourceFilter(e, 'none')).length;
+  const visible = useMemo(() => localPipeline.filter(e => matchesSourceFilter(e, sourceFilter)), [localPipeline, sourceFilter]);
+  // Tên người giới thiệu bị sửa hết khỏi các công ty → bộ lọc không còn khớp gì, trả về Tất cả.
+  useEffect(() => {
+    if (sourceFilter === 'all' || sourceFilter === 'none') return;
+    if (!sourceGroups.some(g => g.options.some(o => o.key === sourceFilter))) setSourceFilter('all');
+  }, [sourceGroups, sourceFilter]);
+  // "Đối tác giới thiệu — Minh Phát" khi lọc 1 người; "Tất cả sale" khi lọc cả nhóm.
+  const sourceFilterTitle = (() => {
+    if (sourceFilter === 'none') return 'Chưa ghi nguồn';
+    for (const g of sourceGroups) {
+      const o = g.options.find(x => x.key === sourceFilter);
+      if (o) return sourceFilter.startsWith('type:') || sourceFilter === 'company' ? o.label : `${g.label} — ${o.label}`;
+    }
+    return '';
+  })();
 
 
   useEffect(() => { setLocalPipeline(pipeline); }, [pipeline]);
@@ -118,6 +142,8 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
   const handleAdd = async () => {
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
     const recruitImages = modalForm.images.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
+    // Chỉ gửi cột nguồn khi có chọn — chưa chạy migration 162 vẫn thêm được công ty.
+    const source = cleanSource(modalForm.source);
     try {
       const { data, error } = await supabase.from('crm_pipeline').insert({
         company_name: modalForm.name, branch_id: modalForm.branchId || null,
@@ -127,8 +153,9 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         product_id: modalForm.productId || null,
         custom_price: modalForm.customPrice ? parseFloat(modalForm.customPrice) : null,
         last_contact: new Date().toISOString().split('T')[0],
+        ...(source.source_type ? source : {}),
       }).select('*, contacts(name, phone), crm_products(name, category, price)').single();
-      if (error) throw error;
+      if (error) throw new Error(sourceSaveErrorHint(error.message) ?? error.message);
       // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
       await supabase.from('market_leads').insert({
         company_name: modalForm.name, region: modalForm.zone || (branches.find(b => b.id === modalForm.branchId)?.name ?? null),
@@ -142,12 +169,12 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
       await Promise.all(modalForm.ncc.map(n => { const c = refCompetitors.find(x => x.company_name === n); return c ? linkCompetitor(c, modalForm.name, modalForm.zone || null) : null; }));
       if (modalForm.ncc.length || recruitImages.length || modalForm.zone) notifyMarketChanged();
       await onRefresh();
-      setModalForm({ name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [], images: '' });
+      setModalForm(emptyModalForm);
       setShowModal(false);
       toast('Đã thêm vào pipeline!');
       await logActivity({
         user, action: 'insert', table: 'crm_pipeline', recordId: data.id,
-        description: `Thêm công ty "${data.company_name}" vào pipeline`,
+        description: `Thêm công ty "${data.company_name}" vào pipeline${source.source_type ? ` (nguồn: ${sourceFullLabel(source, branches)})` : ''}`,
         newData: data,
       });
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -202,11 +229,11 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
     if (profileEntry?.id === updated.id) setProfileEntry(updated);
   };
 
-  const archivedKNN = localPipeline.filter(e => e.stage === 'khong-nhu-cau');
-  const archivedNgung = localPipeline.filter(e => e.stage === 'ngung');
+  const archivedKNN = visible.filter(e => e.stage === 'khong-nhu-cau');
+  const archivedNgung = visible.filter(e => e.stage === 'ngung');
 
   const COLUMN_DEFS = [
-    ...STAGES.map(s => ({ id: s.id, label: s.label, count: localPipeline.filter(e => e.stage === s.id).length })),
+    ...STAGES.map(s => ({ id: s.id, label: s.label, count: visible.filter(e => e.stage === s.id).length })),
     { id: 'khong-nhu-cau', label: 'Không hợp tác', count: archivedKNN.length },
     { id: 'ngung', label: 'Ngưng HĐ', count: archivedNgung.length },
   ];
@@ -288,27 +315,49 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
       />
 
       <div className="flex-1 overflow-y-auto p-3 md:p-5">
-        {hiddenDefs.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[11.5px] text-[#888]">
-            Đang ẩn:
-            {hiddenDefs.map(c => (
-              <button key={c.id} onClick={() => toggleCol(c.id)} title="Bấm để hiện lại"
-                className="px-2 py-0.5 rounded-full bg-white border border-[#E8E7E2] text-[#555] hover:border-blue-300 hover:text-blue-700">
-                {c.label} ({c.count}) <span className="text-[#bbb]">+</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap mb-2 text-[11.5px] text-[#888]">
+          <label title="Lọc công ty theo nguồn: sale, đối tác giới thiệu, công ty, chi nhánh"
+            className={`inline-flex items-center gap-1.5 pl-2.5 pr-1 rounded-lg border transition ${sourceFilter !== 'all' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666]'}`}>
+            <Filter size={12} className="shrink-0" /> Nguồn:
+            <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+              className="bg-transparent outline-none text-[13px] md:text-[12px] font-medium py-1.5 md:py-1 max-w-[200px] cursor-pointer">
+              <option value="all">Tất cả ({localPipeline.length})</option>
+              {sourceGroups.map(g => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.options.map(o => <option key={o.key} value={o.key}>{o.label} ({o.count})</option>)}
+                </optgroup>
+              ))}
+              <option value="none">Chưa ghi nguồn ({noSourceCount})</option>
+            </select>
+          </label>
+          {sourceFilter !== 'all' && (
+            <span className="inline-flex items-center gap-1.5 text-[#555]">
+              {sourceFilterTitle}: <b className="text-[#111]">{visible.length}</b> công ty
+              <button onClick={() => setSourceFilter('all')} className="inline-flex items-center gap-0.5 text-blue-600 hover:underline"><X size={11} /> Bỏ lọc</button>
+            </span>
+          )}
+          {hiddenDefs.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 flex-wrap">
+              Đang ẩn:
+              {hiddenDefs.map(c => (
+                <button key={c.id} onClick={() => toggleCol(c.id)} title="Bấm để hiện lại"
+                  className="px-2 py-0.5 rounded-full bg-white border border-[#E8E7E2] text-[#555] hover:border-blue-300 hover:text-blue-700">
+                  {c.label} ({c.count}) <span className="text-[#bbb]">+</span>
+                </button>
+              ))}
+            </span>
+          )}
+        </div>
         {/* Kanban — điện thoại: chip chọn giai đoạn + danh sách thẻ rộng đủ đọc tên */}
         {(() => {
           if (!visibleStages.length) return null;
           const cur = visibleStages.find(s => s.id === mobileStage) ?? visibleStages[0];
-          const items = localPipeline.filter(e => e.stage === cur.id);
+          const items = visible.filter(e => e.stage === cur.id);
           return (
             <div className="md:hidden mb-4">
               <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 pb-2.5">
                 {visibleStages.map(stage => {
-                  const n = localPipeline.filter(e => e.stage === stage.id).length;
+                  const n = visible.filter(e => e.stage === stage.id).length;
                   const active = stage.id === cur.id;
                   return (
                     <button key={stage.id} onClick={() => setMobileStage(stage.id)}
@@ -332,10 +381,13 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                           <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-1 ${rc.dot}`} title={rc.label} />
                           <div className="min-w-0">
                             <div className="text-[14px] font-semibold text-[#111] leading-snug line-clamp-2">{entry.company_name}</div>
-                            <div className="text-[12px] text-[#888] truncate mt-0.5">
-                              {branchOf(entry, branches)?.name ?? entry.region ?? '—'}
-                              {entry.worker_estimate ? ` · ~${entry.worker_estimate} LĐ` : ''}
-                              {entry.last_contact ? ` · LH ${entry.last_contact}` : ''}
+                            <div className="flex items-center gap-1.5 min-w-0 text-[12px] text-[#888] mt-0.5">
+                              <span className="truncate">
+                                {branchOf(entry, branches)?.name ?? entry.region ?? '—'}
+                                {entry.worker_estimate ? ` · ~${entry.worker_estimate} LĐ` : ''}
+                                {entry.last_contact ? ` · LH ${entry.last_contact}` : ''}
+                              </span>
+                              <PipelineSourceChip entry={entry} branches={branches} className="shrink-0 max-w-[55%]" />
                             </div>
                           </div>
                         </div>
@@ -362,7 +414,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
         })()}
         <div className="hidden md:grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${Math.max(visibleStages.length, 1)}, minmax(0, 1fr))` }}>
           {visibleStages.map(stage => {
-            const items = localPipeline.filter(e => e.stage === stage.id);
+            const items = visible.filter(e => e.stage === stage.id);
             const isOver = dragOver === stage.id;
             return (
               <div
@@ -392,9 +444,11 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                           <div className="text-[12px] font-semibold text-[#111] leading-tight truncate">{entry.company_name}</div>
                           <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${rc.dot}`} title={rc.label} />
                         </div>
-                        <div className="text-[11px] text-[#888] truncate">
-                          {branchOf(entry, branches)?.name ?? entry.region ?? ''}
-                          {entry.worker_estimate ? ` · ~${entry.worker_estimate} LĐ` : ''}
+                        <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-[#888]">
+                          <span className="truncate">
+                            {[branchOf(entry, branches)?.name ?? entry.region, entry.worker_estimate ? `~${entry.worker_estimate} LĐ` : null].filter(Boolean).join(' · ')}
+                          </span>
+                          <PipelineSourceChip entry={entry} branches={branches} className="shrink-0 max-w-[55%]" />
                         </div>
                       </div>
                     );
@@ -425,6 +479,7 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                           {e.company_name}{(() => { const n = branchOf(e, branches)?.name ?? e.region; return n ? ` · ${n}` : ''; })()}
                           {e.sub_status && <span className="text-[10.5px] text-red-400"> — {e.sub_status}</span>}
                         </button>
+                        <PipelineSourceChip entry={e} branches={branches} className="shrink-0 max-w-[40%]" />
                         <button onClick={() => handleRestore(e)} title="Khôi phục về Tiềm năng"
                           className="md:opacity-0 md:group-hover:opacity-100 p-2 md:p-0.5 rounded text-[#999] hover:text-blue-600 hover:bg-white transition shrink-0"><RotateCcw size={13} className="md:hidden" /><RotateCcw size={11} className="hidden md:block" /></button>
                       </div>
@@ -461,6 +516,15 @@ export default function CRMPipeline({ pipeline, products, onRefresh, onDealCreat
                   <option value="">Chọn chi nhánh</option>
                   {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Nguồn <span className="font-normal text-[#aaa]">— ai / đâu mang dự án về</span></label>
+                <PipelineSourcePicker
+                  value={modalForm.source}
+                  onChange={v => setModalForm(f => ({ ...f, source: v }))}
+                  branches={branches}
+                  defaultBranchId={modalForm.branchId}
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">

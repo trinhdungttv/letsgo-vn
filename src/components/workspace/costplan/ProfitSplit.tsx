@@ -10,9 +10,11 @@ const BRANCH = '#34c759';
  * Chia lợi nhuận Công ty ⇄ Chi nhánh bằng thanh KÉO THẢ (chuột hoặc ngón tay; phím ← → khi đã chọn tay cầm).
  * Chỉnh một bên thì bên còn lại tự bù cho đủ 100%.
  */
-export default function ProfitSplit({ settings, result, readOnly, onChange, branchLabel, branchKhoan }: {
+export default function ProfitSplit({ settings, result, readOnly, onChange, branchLabel, branchKhoan, figures }: {
   settings: PlanSettings;
   result: PlanResult;
+  /** Số tiền mỗi bên + dòng chú thích thay cho "/ tháng · đ/công" (dịch vụ Giới thiệu lao động không tính theo công) */
+  figures?: { company: number; branch: number; companyNote: string; branchNote: string };
   readOnly?: boolean;
   onChange: (p: Partial<PlanSettings>) => void;
   branchLabel?: string | null;
@@ -80,8 +82,8 @@ export default function ProfitSplit({ settings, result, readOnly, onChange, bran
             <NumInput value={pct} max={100} disabled={readOnly} onChange={n => onChange({ companyPct: n })} className={`${field} !h-8 w-14 text-right !text-[15px] font-semibold`} />
             <span className="text-[13px] text-[#86868b]">%</span>
           </div>
-          <div className="mt-1.5 text-[22px] leading-tight font-semibold tracking-tight tabular-nums" style={{ color: COMPANY }} title={fmtD(result.companyProfit)}>{fmtShort(result.companyProfit)}</div>
-          <div className="text-[11px] text-[#86868b]">/ tháng · {fmt(result.companyPerDay)} đ/công</div>
+          <div className="mt-1.5 text-[22px] leading-tight font-semibold tracking-tight tabular-nums" style={{ color: COMPANY }} title={fmtD(figures?.company ?? result.companyProfit)}>{fmtShort(figures?.company ?? result.companyProfit)}</div>
+          <div className="text-[11px] text-[#86868b]">{figures ? figures.companyNote : `/ tháng · ${fmt(result.companyPerDay)} đ/công`}</div>
         </div>
         <div>
           <div className="flex items-center gap-1.5 text-[12px] text-[#6e6e73] min-w-0"><span className="w-2 h-2 rounded-full shrink-0" style={{ background: BRANCH }} /><span className="truncate">{branchLabel || 'Chi nhánh'}</span></div>
@@ -89,8 +91,8 @@ export default function ProfitSplit({ settings, result, readOnly, onChange, bran
             <NumInput value={100 - pct} max={100} disabled={readOnly} onChange={n => onChange({ companyPct: 100 - n })} className={`${field} !h-8 w-14 text-right !text-[15px] font-semibold`} />
             <span className="text-[13px] text-[#86868b]">%</span>
           </div>
-          <div className="mt-1.5 text-[22px] leading-tight font-semibold tracking-tight tabular-nums" style={{ color: '#1d8a3b' }} title={fmtD(result.branchProfit)}>{fmtShort(result.branchProfit)}</div>
-          <div className="text-[11px] text-[#86868b]">/ tháng · {fmt(result.branchPerDay)} đ/công</div>
+          <div className="mt-1.5 text-[22px] leading-tight font-semibold tracking-tight tabular-nums" style={{ color: '#1d8a3b' }} title={fmtD(figures?.branch ?? result.branchProfit)}>{fmtShort(figures?.branch ?? result.branchProfit)}</div>
+          <div className="text-[11px] text-[#86868b]">{figures ? figures.branchNote : `/ tháng · ${fmt(result.branchPerDay)} đ/công`}</div>
         </div>
       </div>
 

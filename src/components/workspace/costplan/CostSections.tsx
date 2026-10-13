@@ -139,6 +139,7 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
                           className="w-full bg-transparent text-[14px] font-medium text-[#1d1d1f] outline-none placeholder:text-[#a1a1a6] truncate" />
                         <div className={`text-[11.5px] truncate ${issue ? 'text-[#d70015]' : 'text-[#86868b]'}`}>
                           {l.isBaseWage && <span className="font-semibold text-[#0071e3]">Lương cơ bản · </span>}
+                          {l.billSeparately && <span className="font-semibold text-[#0a7d6e]" title="Không cộng vào giá ca 8h — khách trả riêng theo tháng (bật/tắt ở bước 2)">Thu riêng theo tháng · </span>}
                           {issue ? issue.text.replace(/^".*?":\s*/, '') : caption(l)}
                         </div>
                       </div>

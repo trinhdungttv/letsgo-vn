@@ -28,12 +28,14 @@ function useClickOutside(ref: React.RefObject<HTMLElement>, onOut: () => void, a
 }
 
 /** Ô chọn gọn kiểu Apple (thay <select> mặc định của trình duyệt). */
-export function Select({ value, onChange, children, disabled, className = '' }: {
+export function Select({ value, onChange, children, disabled, className = '', fieldClassName = '' }: {
   value: string | number; onChange: (v: string) => void; children: ReactNode; disabled?: boolean; className?: string;
+  /** Thêm class cho chính ô <select> (vd. nền trắng khi đặt trên nền xám). */
+  fieldClassName?: string;
 }) {
   return (
     <div className={`relative ${className}`}>
-      <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className={`${field} w-full appearance-none pr-8 cursor-pointer`}>{children}</select>
+      <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className={`${field} w-full appearance-none pr-8 cursor-pointer ${fieldClassName}`}>{children}</select>
       <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#86868b] pointer-events-none" />
     </div>
   );

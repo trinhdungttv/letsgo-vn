@@ -109,6 +109,8 @@ export function buildFillValues(
   prices.night_allow = Math.round(list.otBaseDaily * (NORM_NIGHT - 1));
   const bh = normalizePlanData(data).lines.filter(l => /\bbhxh\b|bao hiem xa hoi/.test(normalizeText(l.name)));
   if (bh.length) prices.bhxh = Math.round(bh.reduce((a, l) => a + (result.lines[l.id]?.monthly ?? 0), 0));
+  // Đã tách bảo hiểm thu riêng theo tháng → dòng BHXH của mẫu = đúng tổng khoản thu riêng
+  if (result.separatedMonthly > 0) prices.bhxh = Math.round(result.separatedMonthly);
   if (result.serviceFeeDaily > 0) prices.service_fee = Math.round(result.serviceFeeDaily);
   const d = meta.today ?? new Date();
   const pad = (n: number) => String(n).padStart(2, '0');

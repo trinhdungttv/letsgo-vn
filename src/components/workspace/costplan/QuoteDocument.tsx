@@ -156,6 +156,21 @@ export default function QuoteDocument({ view, images, layout = DEFAULT_LAYOUT, s
         <div data-pdf-block style={{ marginTop: 7, padding: '6px 10px', background: '#f6f7f9', borderLeft: `3px solid ${NAVY}`, fontSize: 11.5, fontStyle: 'italic', color: '#3a3a3f' }}>{view.includedNote}</div>
       ) : null}
 
+      {/* 3. Điều kiện tính phí (Giới thiệu lao động) */}
+      {view.terms.length > 0 && (
+        <>
+          <Heading n={3} t={L.s3} />
+          <div style={{ paddingLeft: 4 }}>
+            {view.terms.map((l, i) => (
+              <div key={i} data-pdf-block style={{ display: 'flex', gap: 9, marginBottom: 4, breakInside: 'avoid' }}>
+                <span style={{ color: NAVY, fontWeight: 700 }}>–</span>
+                <B t={l} size={12.5} sub={0.9} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Ghi chú */}
       {view.notes.length > 0 && (
         <div data-pdf-block style={{ marginTop: 10, breakInside: 'avoid' }}>

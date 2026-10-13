@@ -80,14 +80,16 @@ describe('tuỳ chọn tăng ca', () => {
 });
 
 describe('chuẩn hoá bảng giá đọc từ DB', () => {
-  it('thiếu cấu hình → đủ dòng chuẩn', () => expect(normalizeQuoteSheet(null).rows).toHaveLength(8));
+  it('thiếu cấu hình → đủ dòng chuẩn', () => expect(normalizeQuoteSheet(null).rows).toHaveLength(9));
   it('cấu hình cũ thiếu dòng lễ/Tết → tự thêm ở trạng thái ẩn, giữ thứ tự chuẩn, custom nằm cuối', () => {
     const q = normalizeQuoteSheet({ ...defaultQuoteSheet(), rows: [
       { id: 'x', kind: 'custom', name: 'Cơm', unit: 'VNĐ/ngày', override: 1 },
       ...defaultQuoteSheet().rows.filter(r => r.kind === 'day8' || r.kind === 'ot_day'),
     ] });
-    expect(q.rows.map(r => r.kind)).toEqual(['day8', 'night8', 'ot_day', 'ot_night', 'ot_sun', 'ot_sun_night', 'ot_hol', 'ot_hol_night', 'custom']);
+    expect(q.rows.map(r => r.kind)).toEqual(['day8', 'night8', 'ot_day', 'ot_night', 'ot_sun', 'ot_sun_night', 'ot_hol', 'ot_hol_night', 'insurance', 'custom']);
     expect(q.rows.find(r => r.kind === 'night8')!.hidden).toBe(true);
+    // dòng bảo hiểm tự ẩn khi không có khoản thu riêng nên được thêm ở trạng thái hiện
+    expect(q.rows.find(r => r.kind === 'insurance')!.hidden).toBe(false);
   });
   it('dữ liệu rác không ném lỗi', () => {
     expect(() => computePriceList(normalizePlanData(null), computePlan(normalizePlanData(null)))).not.toThrow();

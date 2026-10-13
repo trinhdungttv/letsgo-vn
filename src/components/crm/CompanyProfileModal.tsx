@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
@@ -17,6 +17,8 @@ import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
 import MarketSupplyBlock from './MarketSupplyBlock';
 import QuoteInfoBlock from './QuoteInfoBlock';
+import { PipelineSourcePicker } from './PipelineSourceField';
+import { sourceOf, cleanSource, sameSource, sourceFullLabel, sourceSaveErrorHint, type PipelineSource } from '../../lib/pipelineSource';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 
 export const STAGES = [
@@ -261,8 +263,28 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
       });
       return true;
     }
-    toast('Lỗi: ' + error.message);
+    toast(sourceSaveErrorHint(error.message) ?? 'Lỗi: ' + error.message);
     return false;
+  };
+
+  // Nguồn (sale / đối tác giới thiệu / công ty / chi nhánh) — lưu tuần tự để
+  // rời ô tên rồi bấm ngay loại khác không làm 2 lần lưu về sai thứ tự.
+  const [sourceDraft, setSourceDraft] = useState<PipelineSource>(() => sourceOf(entry));
+  const savedSourceRef = useRef<PipelineSource>(sourceOf(entry));
+  const sourceChain = useRef<Promise<void>>(Promise.resolve());
+  const { source_type: srcType, source_name: srcName, source_branch_id: srcBranch } = entry;
+  useEffect(() => {
+    const s = sourceOf({ source_type: srcType, source_name: srcName, source_branch_id: srcBranch });
+    setSourceDraft(s);
+    savedSourceRef.current = s;
+  }, [srcType, srcName, srcBranch]);
+  const commitSource = (v: PipelineSource) => {
+    const next = cleanSource(v);
+    sourceChain.current = sourceChain.current.then(async () => {
+      if (sameSource(next, savedSourceRef.current)) return;
+      const ok = await patchEntry(next, `Cập nhật nguồn "${entry.company_name}" → ${sourceFullLabel(next, branches)}`);
+      if (ok) savedSourceRef.current = next;
+    });
   };
 
   // Đổi tên công ty: cùng 1 công ty còn xuất hiện ở Thị trường → Công ty/Dự án (market_leads.crm_id)
@@ -853,6 +875,16 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           )}
         </div>
         )}
+        <div className="col-span-2">
+          <div className="text-[11px] text-[#888] font-medium mb-1">Nguồn <span className="font-normal text-[#bbb]">— ai / đâu mang dự án về</span></div>
+          <PipelineSourcePicker
+            value={sourceDraft}
+            onChange={setSourceDraft}
+            onCommit={commitSource}
+            branches={branches}
+            defaultBranchId={entry.branch_id}
+          />
+        </div>
         <InlineEdit
           label="Tổng Thời Vụ"
           value={String(entry.workers_seasonal ?? 0)}
