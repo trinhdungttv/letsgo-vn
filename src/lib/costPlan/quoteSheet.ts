@@ -40,6 +40,24 @@ export const DEFAULT_GENERAL_NOTES = [
   'Báo giá không bao gồm các yêu cầu phát sinh khác từ khách hàng.',
 ].join('\n');
 
+/** Dòng chính đổi đơn vị khi báo THEO GIỜ (giá công ÷ 8) */
+export const PER_HOUR_KINDS: QuoteRowKind[] = ['day8', 'night8', 'service_fee'];
+/** Tên / đơn vị mặc định khi báo theo giờ — chỉ thay khi dòng còn giữ tên/đơn vị mặc định (người dùng đã đặt tên riêng thì giữ) */
+const HOURLY_NAME: Partial<Record<QuoteRowKind, string>> = { day8: 'Lương 1 giờ làm việc ca ngày', night8: 'Lương 1 giờ làm việc ca đêm' };
+const HOURLY_UNIT: Partial<Record<QuoteRowKind, string>> = { day8: 'VNĐ/giờ', night8: 'VNĐ/giờ (ca đêm)', service_fee: 'VNĐ/giờ' };
+
+/**
+ * Đổi đơn vị giá ngày ⇄ giờ: các giá đã ghi tay ở dòng chính quy đổi theo (÷ 8 hoặc × 8) để không bị lệch nghĩa.
+ */
+export function setPerHour(q: QuoteSheet, perHour: boolean): QuoteSheet {
+  if (!!q.perHour === perHour) return q;
+  const conv = (v: number | null | undefined) => (v == null ? v : Math.round(perHour ? v / HOURS_PER_DAY : v * HOURS_PER_DAY));
+  return {
+    ...q, perHour,
+    rows: q.rows.map(r => (PER_HOUR_KINDS.includes(r.kind) ? { ...r, override: conv(r.override) ?? null, overrideSkilled: conv(r.overrideSkilled) ?? null } : r)),
+  };
+}
+
 export function defaultQuoteSheet(): QuoteSheet {
   return {
     // Mã CỐ ĐỊNH theo loại dòng: phương án chưa lưu bảng giá vẫn ra cùng mã mỗi lần vẽ (mã ngẫu nhiên làm nút ⋯ không mở được,
@@ -75,6 +93,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     skilled: normalizeSkilled(raw.skilled),
     ...(raw.ordered ? { ordered: true } : {}),
     ...(raw.itemized ? { itemized: true } : {}),
+    ...(raw.perHour ? { perHour: true } : {}),
   };
 }
 
@@ -186,19 +205,23 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
   // Giá ngày thật = giá người dùng ghi ở dòng ca 8h (nếu có), không thì giá tự tính từ bước 1 — ca đêm tính theo giá này
   const itemized = !!q.itemized;
   const parts = itemizedParts(result);
+  // Báo theo giờ: dòng chính = giá công ÷ 8, giá ghi tay ở các dòng đó cũng là giá/giờ
+  const perHour = !!q.perHour;
+  const div = perHour ? HOURS_PER_DAY : 1;
   const dayRow = q.rows.find(r => r.kind === 'day8' && !r.hidden && r.override != null);
-  // Giá ngày dùng để tính ca đêm: gộp = giá 1 công; tách khoản = phần lương
-  const dayPrice = dayRow ? Math.max(0, dayRow.override!) : itemized ? parts.wage : result.quoteDaily;
+  // Giá ngày (1 công) dùng để tính ca đêm: gộp = giá 1 công; tách khoản = phần lương
+  const dayPrice = dayRow ? Math.max(0, dayRow.override!) * div : itemized ? parts.wage : result.quoteDaily;
+  const hTxt = perHour ? ' ÷ 8 giờ' : '';
   const mkTxt = q.otMarkupPct > 0 ? ` + ${q.otMarkupPct}%` : '';
 
   const auto = (kind: QuoteRowKind): { v: number | null; formula: string } => {
     const ot = (c: number, label: string) => ({ v: shr * c * mk, formula: `${f(shr)} đ/giờ × ${pct(c)}${mkTxt} — ${label}` });
     switch (kind) {
       case 'day8': return itemized
-        ? { v: parts.wage, formula: `Chi phí lao động / công ở bước 1${result.separatedDaily > 0 ? ' (không gồm bảo hiểm thu riêng)' : ''} — phí dịch vụ là dòng riêng` }
-        : { v: result.quoteDaily, formula: 'Giá 1 công từ bước 1: chi phí + phí dịch vụ + thuế dự phòng' };
-      case 'service_fee': return { v: parts.fee, formula: `Phí dịch vụ ${f(result.serviceFeeDaily)} đ${result.taxDaily > 0.5 ? ` + thuế dự phòng ${f(result.taxDaily)} đ` : ''}${result.roundingGainDaily > 0.5 ? ' + làm tròn' : ''} / ngày công` };
-      case 'night8': return { v: dayPrice + otBaseDaily * (NORM_NIGHT - 1), formula: `Giá ngày${dayRow ? ` đang báo (${f(dayPrice)})` : ''} + 30% × ${f(otBaseDaily)} đ — làm đêm tối thiểu +30% (Điều 98 BLLĐ)` };
+        ? { v: parts.wage / div, formula: `Chi phí lao động / công ở bước 1${hTxt}${result.separatedDaily > 0 ? ' (không gồm bảo hiểm thu riêng)' : ''} — phí dịch vụ là dòng riêng` }
+        : { v: result.quoteDaily / div, formula: `Giá 1 công từ bước 1: chi phí + phí dịch vụ + thuế dự phòng${perHour ? ` (${f(result.quoteDaily)} đ ÷ 8 giờ)` : ''}` };
+      case 'service_fee': return { v: parts.fee / div, formula: `Phí dịch vụ ${f(result.serviceFeeDaily)} đ${result.taxDaily > 0.5 ? ` + thuế dự phòng ${f(result.taxDaily)} đ` : ''}${result.roundingGainDaily > 0.5 ? ' + làm tròn' : ''} / ngày công${hTxt}` };
+      case 'night8': return { v: (dayPrice + otBaseDaily * (NORM_NIGHT - 1)) / div, formula: `(Giá ngày${dayRow ? ` đang báo (${f(dayPrice)})` : ''} + 30% × ${f(otBaseDaily)} đ)${hTxt} — làm đêm tối thiểu +30% (Điều 98 BLLĐ)` };
       case 'ot_day': return ot(OT_DAY_WEEKDAY, 'tăng ca ngày thường 150%');
       case 'ot_night': return q.nightOtAfterDay ? ot(OT_NIGHT_WEEKDAY_PRIOR, 'tăng ca đêm liền sau ca ngày 210%') : ot(OT_NIGHT_WEEKDAY_NOPRIOR, 'tăng ca đêm ngày thường 200%');
       case 'ot_sun': return ot(OT_DAY_SUNDAY, 'ngày nghỉ hằng tuần 200%');
@@ -216,8 +239,13 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     const a = auto(r.kind);
     const overridden = r.kind !== 'custom' && r.override != null;
     const price = r.kind === 'custom' ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
+    // Báo theo giờ: dòng chính còn giữ tên/đơn vị mặc định thì đổi sang tên/đơn vị theo giờ
+    const std = STD.find(x => x.kind === r.kind);
+    const hourly = perHour && PER_HOUR_KINDS.includes(r.kind);
+    const name = hourly && std && r.name === std.name && HOURLY_NAME[r.kind] ? HOURLY_NAME[r.kind]! : r.name;
+    const unit = hourly && std && r.unit === std.unit && HOURLY_UNIT[r.kind] ? HOURLY_UNIT[r.kind]! : r.unit;
     return {
-      id: r.id, kind: r.kind, name: r.name, unit: r.unit, price,
+      id: r.id, kind: r.kind, name, unit, price,
       auto: a.v == null ? null : Math.round(a.v), overridden, hidden: !!r.hidden, formula: overridden ? `Đã sửa tay (tự tính: ${f(a.v ?? 0)} đ)` : a.formula,
       ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
     };
@@ -259,15 +287,17 @@ export function effectiveResult(input: PlanData, r: PlanResult): EffectiveResult
   const q = normalizeQuoteSheet(data.quote);
   const row = q.rows.find(x => x.kind === 'day8' && !x.hidden && x.override != null);
   // Tách khoản: khách trả = dòng lương + dòng phí dịch vụ (mỗi dòng có thể ghi tay). Gộp: chỉ dòng giá ngày.
+  // Báo theo giờ: giá ghi tay là giá/giờ → quy ra công (× 8)
+  const mul = q.perHour ? HOURS_PER_DAY : 1;
   let price: number;
   if (q.itemized) {
     const parts = itemizedParts(r);
     const feeRow = q.rows.find(x => x.kind === 'service_fee' && !x.hidden && x.override != null);
     if (!row && !feeRow) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
-    price = Math.max(0, Math.round((row ? row.override! : parts.wage) + (feeRow ? feeRow.override! : parts.fee)));
+    price = Math.max(0, Math.round((row ? row.override! * mul : parts.wage) + (feeRow ? feeRow.override! * mul : parts.fee)));
   } else {
     if (!row) return { ...r, dayOverridden: false, autoQuoteDaily: r.quoteDaily };
-    price = Math.max(0, Math.round(row.override!));
+    price = Math.max(0, Math.round(row.override! * mul));
   }
   const s = data.settings;
   const delta = price - r.quoteDaily;

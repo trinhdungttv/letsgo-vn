@@ -129,6 +129,11 @@ export interface QuoteSheet {
    * true = TÁCH KHOẢN (như mẫu Let's Go): dòng lương = chi phí lao động / công, "Phí dịch vụ" là 1 dòng riêng — khách trả tổng các dòng.
    */
   itemized?: boolean;
+  /**
+   * Đơn vị giá các dòng chính (ca ngày, ca đêm, phí dịch vụ): false = theo ngày công 8 giờ · true = THEO GIỜ (= giá công ÷ 8).
+   * Giá ghi tay ở các dòng này cũng theo giờ. Tăng ca / Chủ nhật / Lễ vốn đã theo giờ; bảo hiểm vẫn theo tháng.
+   */
+  perHour?: boolean;
 }
 
 export interface PlanData {

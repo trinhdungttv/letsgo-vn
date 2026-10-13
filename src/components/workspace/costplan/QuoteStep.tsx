@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Download, FileSpreadsheet, FileText, GripVertical, MoreHorizontal, Plus, Undo2, Upload } from 'lucide-react';
 import { newLineId } from '../../../lib/costPlan/engine';
 import {
-  DEFAULT_SKILLED_LABEL, computePriceList, itemizedParts, moveQuoteRow, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
+  DEFAULT_SKILLED_LABEL, HOURS_PER_DAY, computePriceList, itemizedParts, moveQuoteRow, setPerHour, includedNoteAuto, normalizeQuoteSheet, priceListToTsv, type EffectiveResult, type PriceRow,
 } from '../../../lib/costPlan/quoteSheet';
 import type { PlanData, PlanResult, QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { normalizeText } from '../../../lib/costPlan/presets';
@@ -35,7 +35,8 @@ export function PriceBuild({ data, result, eff, onGoCost, onResetDay, onItemize 
   const itemized = !!qs.itemized;
   const parts = itemizedParts(result);
   const ovOf = (k: 'day8' | 'service_fee') => qs.rows.find(r => r.kind === k && !r.hidden)?.override;
-  const shownWage = ovOf('day8') ?? parts.wage, shownFee = ovOf('service_fee') ?? parts.fee;
+  const per = qs.perHour ? HOURS_PER_DAY : 1;   // báo theo giờ: giá ghi tay ở các dòng chính là giá/giờ
+  const shownWage = ovOf('day8') ?? parts.wage / per, shownFee = ovOf('service_fee') ?? parts.fee / per;
   // Đang báo GỘP mà ghi giá ngày đúng bằng tiền lương → gần như chắc là muốn báo tách khoản (phí DV thu riêng)
   const looksLikeWage = manual && !itemized && Math.abs((eff?.quoteDaily ?? 0) - parts.wage) < 1 && result.serviceFeeDaily > 0;
   const shown = manual ? eff! : result;
@@ -68,7 +69,7 @@ export function PriceBuild({ data, result, eff, onGoCost, onResetDay, onItemize 
       </div>
       {itemized && (
         <div className="mt-2 text-right text-[12.5px] text-[#6e6e73]">
-          Báo tách khoản: lương <b className="tabular-nums text-[#1d1d1f]">{fmt(shownWage)}</b> + phí dịch vụ <b className="tabular-nums text-[#5e5ce6]">{fmt(shownFee)}</b> / công
+          Báo tách khoản: lương <b className="tabular-nums text-[#1d1d1f]">{fmt(shownWage)}</b> + phí dịch vụ <b className="tabular-nums text-[#5e5ce6]">{fmt(shownFee)}</b> / {qs.perHour ? 'giờ' : 'công'}
         </div>
       )}
       {looksLikeWage && (
@@ -86,6 +87,9 @@ export function PriceBuild({ data, result, eff, onGoCost, onResetDay, onItemize 
           </span>
           {onResetDay && <button type="button" onClick={onResetDay} className={btnLink + ' !text-[12px]'}>Dùng lại giá tự tính</button>}
         </div>
+      )}
+      {qs.perHour && (
+        <div className="mt-1 text-right text-[12.5px] text-[#6e6e73]">Báo theo giờ: <b className="tabular-nums text-[#1d1d1f]">{fmt(shown.quoteDaily / HOURS_PER_DAY)} đ/giờ</b> (= giá công ÷ {HOURS_PER_DAY} giờ)</div>
       )}
       {result.separatedMonthly > 0 && (
         <div className="mt-2 text-right text-[12.5px] text-[#0a7d6e]">
@@ -359,6 +363,15 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
             options={[{ value: 'gop', label: 'Gộp 1 giá / công' }, { value: 'item', label: 'Tách: lương + phí dịch vụ' }]} />
         </div>
         <span className="text-[11.5px] text-[#86868b]">{q.itemized ? 'Dòng lương = chi phí lao động; Phí dịch vụ là 1 dòng riêng — khách trả tổng các dòng' : 'Dòng "Lương ngày 8 tiếng" đã gồm chi phí + phí dịch vụ + thuế'}</span>
+      </div>
+      <div className="px-5 pb-3 -mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="text-[12px] font-medium text-[#6e6e73]">Đơn vị giá</span>
+        <div className="w-full sm:w-[380px]">
+          <Seg value={q.perHour ? 'hour' : 'day'} disabled={readOnly}
+            onChange={v => { if ((v === 'hour') !== !!q.perHour) commit(setPerHour(q, v === 'hour'), v === 'hour' ? 'Chuyển sang báo theo giờ' : 'Chuyển sang báo theo ngày công'); }}
+            options={[{ value: 'day', label: 'Theo ngày công (8 giờ)' }, { value: 'hour', label: 'Theo giờ' }]} />
+        </div>
+        <span className="text-[11.5px] text-[#86868b]">{q.perHour ? `Ca ngày, ca đêm${q.itemized ? ', phí dịch vụ' : ''} báo theo giờ (= giá công ÷ ${HOURS_PER_DAY}); khách trả theo giờ làm thực tế` : 'Ca ngày, ca đêm báo theo ngày công; tăng ca, Chủ nhật, Lễ theo giờ'}</span>
       </div>
 
       {skOn ? (

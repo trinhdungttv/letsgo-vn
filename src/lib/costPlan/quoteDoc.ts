@@ -198,6 +198,17 @@ const ROW_UNIT: Record<Exclude<QuoteRowKind, 'custom'>, Tri> = {
   service_fee: { vi: 'VNĐ/ngày công', zh: '越南盾/工日', en: 'VND/working day' },
 };
 
+/** Tên & đơn vị các dòng chính khi báo THEO GIỜ (quoteSheet đổi sang khi dòng còn giữ tên mặc định) */
+const ROW_HOURLY: Partial<Record<QuoteRowKind, Tri>> = {
+  day8: { vi: 'Lương 1 giờ làm việc ca ngày', zh: '白班每小时工资', en: 'Hourly wage - day shift' },
+  night8: { vi: 'Lương 1 giờ làm việc ca đêm', zh: '夜班每小时工资', en: 'Hourly wage - night shift' },
+};
+const UNIT_HOURLY: Partial<Record<QuoteRowKind, Tri>> = {
+  day8: { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
+  night8: { vi: 'VNĐ/giờ (ca đêm)', zh: '越南盾/小时（夜班）', en: 'VND/hour (night shift)' },
+  service_fee: { vi: 'VNĐ/giờ', zh: '越南盾/小时', en: 'VND/hour' },
+};
+
 const trimLines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
 const biLines = (vi: string[], zh: string[], en: string[], lang: DocLang): Bi[] =>
   vi.map((v, i) => (lang === 'zh' ? { a: v, b: zh[i] } : lang === 'en' ? { a: en[i], b: v } : { a: v }));
@@ -294,7 +305,11 @@ export function resolveDoc(docIn: QuoteDoc, input: PlanData, result: PlanResult,
   const skLabel = !plan.service && priceList.skilled ? priceList.skilled.label : null;
   const defTri = (kind: QuoteRowKind, name: string, tbl: Record<string, Tri>, field: 'vi'): Bi => {
     const t = kind !== 'custom' ? tbl[kind] : undefined;
-    return t && t[field] === name ? bi(t, lang) : { a: name };
+    if (t && t[field] === name) return bi(t, lang);
+    const h = kind !== 'custom' ? ROW_HOURLY[kind] : undefined;     // tên / đơn vị khi báo theo giờ
+    if (h && h.vi === name) return bi(h, lang);
+    const hu = kind !== 'custom' ? UNIT_HOURLY[kind] : undefined;
+    return hu && hu.vi === name ? bi(hu, lang) : { a: name };
   };
   const referral = plan.service === 'referral';
   const refCfg = referral ? normalizeReferral(plan.referral) : null;
