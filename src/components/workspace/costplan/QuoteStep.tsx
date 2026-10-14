@@ -18,7 +18,8 @@ import { useSheetTemplate } from './useSheetTemplate';
 import { useRowCatalog } from './useRowCatalog';
 import RowPicker from './RowPicker';
 import RowCatalogManager from './RowCatalogManager';
-import { catalogFromRow, mergedCatalog, rowFromCatalog } from '../../../lib/costPlan/rowCatalog';
+import CatalogMapDialog, { CatalogSelect } from './CatalogMapDialog';
+import { addCatalogItem, applyCatalogMap, catalogFromRow, catalogItemNamed, catalogRef, doubleBilled, findCatalogItem, mergedCatalog, suggestCatalog, usedRows } from '../../../lib/costPlan/rowCatalog';
 import InsuranceBase from './InsuranceBase';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
@@ -188,6 +189,10 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   const included = q.includedNote ?? includedNoteAuto(data);
   const visible = list.rows.filter(r => !r.hidden);
   const hiddenRows = list.rows.filter(r => r.hidden);
+  /** Dòng tự đặt chưa gắn danh mục (bảng giá cũ) */
+  const unmapped = visible.filter(r => r.kind === 'custom' && !r.ref).length;
+  /** Dòng riêng trên bảng giá trùng khoản đã nằm trong giá ca 8h ở bước 1 */
+  const dup = doubleBilled(data.lines, visible);
   const [openId, setOpenId] = useState<string | null>(null);
   const [opts, setOpts] = useState(false);
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null);
@@ -236,13 +241,31 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
 
   // ── Kho đầu mục: chọn loại dòng có sẵn khi "Thêm dòng", lưu dòng tự đặt vào kho cho lần sau ──
   const { mine: catalogMine, add: addToCatalog, remove: removeFromCatalogItem, replace: replaceCatalog } = useRowCatalog();
+  const catalogAll = mergedCatalog(catalogMine);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const [catMsg, setCatMsg] = useState<string | null>(null);
   const flashCat = (m: string) => { setCatMsg(m); setTimeout(() => setCatMsg(null), 3500); };
+  const setRowCatalog = (r: { id: string; name: string }, ref: string | null) => {
+    const it = findCatalogItem(catalogAll, ref);
+    commit({ ...q, rows: q.rows.map(x => {
+      if (x.id !== r.id) return x;
+      const n = { ...x, catalogId: ref ?? undefined };
+      if (!ref) delete n.catalogId;
+      return n;
+    }) }, ref ? `Gắn “${r.name || 'dòng'}” vào danh mục ${it?.name ?? ref}` : `Bỏ gắn danh mục “${r.name || 'dòng'}”`);
+  };
   const saveRowToCatalog = async (r: QuoteRowCfg) => {
     if (!r.name.trim()) { flashCat('Đặt tên dòng trước khi lưu vào kho'); return; }
-    try { await addToCatalog(catalogFromRow(r)); flashCat(`Đã lưu “${r.name.trim()}” vào kho đầu mục — lần sau chọn ở “Thêm dòng”`); }
-    catch (e) { flashCat(`Không lưu được vào kho: ${e instanceof Error ? e.message : String(e)}`); }
+    // Kho đã có mục cùng tên → chỉ gắn dòng vào mục đó, không tạo mục trùng
+    const ex = catalogItemNamed(catalogAll, r.name);
+    if (ex) { setRowCatalog(r, catalogRef(ex)); flashCat(`Kho đã có “${ex.name}” — đã gắn dòng vào mục này`); return; }
+    const it = catalogFromRow(r);
+    try {
+      await addToCatalog(it);
+      setRowCatalog(r, it.id);
+      flashCat(`Đã lưu “${r.name.trim()}” vào kho đầu mục — lần sau chọn ở “Thêm dòng”`);
+    } catch (e) { flashCat(`Không lưu được vào kho: ${e instanceof Error ? e.message : String(e)}`); }
   };
 
   // ── Kéo thả để đổi thứ tự dòng ──
@@ -315,7 +338,8 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
           <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0">
             <input value={r.name} disabled={readOnly} onChange={e => setRow(r.id, { name: e.target.value })} placeholder="Nội dung đơn giá"
               className="w-full bg-transparent text-[14px] font-medium text-[#1d1d1f] outline-none placeholder:text-[#a1a1a6] truncate" />
-            <div className="text-[11.5px] text-[#86868b] truncate"><span className="font-medium text-[#6e6e73]">{r.unit}</span> · {r.formula}</div>
+            <div className="text-[11.5px] text-[#86868b] truncate"><span className="font-medium text-[#6e6e73]">{r.unit}</span> · {r.formula}
+              {custom && !r.ref && !readOnly && <span className="text-[#b25e00]"> · chưa gắn danh mục</span>}</div>
           </div>
           <div className="ml-auto flex items-center gap-2 sm:contents">
           {readOnly ? (
@@ -364,8 +388,20 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
                 )}
               </div>
             )}
-            {custom && (
-              <button type="button" onClick={() => void saveRowToCatalog(q.rows.find(x => x.id === r.id)!)} className={btnLink} title="Lần sau chọn lại ở “Thêm dòng”, không phải gõ lại">Lưu dòng này vào kho đầu mục</button>
+            {custom ? (
+              <div className="basis-full flex flex-wrap items-end gap-x-3 gap-y-1.5">
+                <div className="w-full sm:w-[360px]"><span className={labelCls}>Danh mục quy chiếu (so sánh giữa các dự án)</span>
+                  <CatalogSelect items={catalogAll} value={r.ref} onChange={v => setRowCatalog(r, v)} /></div>
+                {!r.ref && (() => {
+                  const s = suggestCatalog(q.rows.find(x => x.id === r.id)!, catalogAll, 1)[0];
+                  return s && s.score >= 0.5
+                    ? <button type="button" onClick={() => setRowCatalog(r, catalogRef(s.item))} className={`${btnLink} pb-2`}>Gắn vào “{s.item.name}”?</button>
+                    : null;
+                })()}
+                {!r.ref && <button type="button" onClick={() => void saveRowToCatalog(q.rows.find(x => x.id === r.id)!)} className={`${btnLink} pb-2`} title="Lần sau chọn lại ở “Thêm dòng”, không phải gõ lại">Lưu dòng này thành mục mới trong kho</button>}
+              </div>
+            ) : r.ref && (
+              <div className="basis-full text-[11.5px] text-[#86868b]">Danh mục: <span className="text-[#1d1d1f]">{findCatalogItem(catalogAll, r.ref)?.name ?? r.ref}</span> · tự gắn theo loại dòng</div>
             )}
             {/* Bản dịch tên dòng cho báo giá song ngữ — lưu theo dòng, đi cùng mẫu bảng giá chung */}
             <label className="block w-44"><span className={labelCls}>Tên tiếng Trung</span>
@@ -435,6 +471,22 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
         <span className="text-[11.5px] text-[#86868b]">{q.perHour ? `Ca ngày, ca đêm${q.itemized ? ', phí dịch vụ' : ''} báo theo giờ (= giá công ÷ ${HOURS_PER_DAY}); khách trả theo giờ làm thực tế` : 'Ca ngày, ca đêm báo theo ngày công; tăng ca, Chủ nhật, Lễ theo giờ'}</span>
       </div>
 
+      {dup.length > 0 && (
+        <div className="mx-5 mb-3 rounded-xl bg-[#fff4e5] px-3.5 py-2.5 text-[12.5px] text-[#8a4b00] leading-snug space-y-1.5">
+          <div className="font-semibold">Có thể khách trả 2 lần</div>
+          {dup.map(({ rowId, lineId }) => {
+            const r = visible.find(x => x.id === rowId)!, l = data.lines.find(x => x.id === lineId)!;
+            return (
+              <div key={rowId}>
+                “{r.name}” báo riêng <b className="tabular-nums">{fmt(r.price)} đ</b> ({r.unit}), nhưng bước 1 đã tính “{l.name}” <b className="tabular-nums">{fmt(result.lines[l.id]?.daily ?? 0)} đ/công</b> vào giá ca 8h.
+                {!readOnly && <button type="button" onClick={() => commit({ ...q, rows: q.rows.filter(x => x.id !== rowId) }, `Xoá dòng “${r.name}”`)} className="ml-2 font-semibold text-[#0071e3] hover:underline">Xoá dòng trên bảng giá</button>}
+              </div>
+            );
+          })}
+          <div className="text-[11.5px] text-[#a0681c]">Muốn báo riêng dòng này thì bỏ khoản đó ở bước 1; nếu dòng chỉ để ghi chú (đã gồm trong giá ngày) thì đặt giá 0.</div>
+        </div>
+      )}
+
       {skOn ? (
         <div className="flex px-5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]">
           <span className="pl-8 flex-1 hidden sm:block">Nội dung đơn giá · đơn vị tính</span>
@@ -454,8 +506,8 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
             <button type="button" onClick={toggle} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0071e3] hover:text-[#0077ed]"><Plus size={14} />Thêm dòng</button>
           )}>
             {close => (
-              <RowPicker sheet={q} mine={catalogMine} hiddenRows={hiddenRows} templateRows={tplMissing} close={close}
-                onAdd={it => commit({ ...q, rows: [...q.rows, rowFromCatalog(it)] }, `Thêm dòng “${it.name}”`)}
+              <RowPicker used={usedRows(list.rows)} mine={catalogMine} hiddenRows={hiddenRows} templateRows={tplMissing} close={close}
+                onAdd={it => commit(addCatalogItem(q, it), `Thêm dòng “${it.name}”`)}
                 onShow={(id, name) => commit({ ...q, rows: q.rows.map(x => (x.id === id ? { ...x, hidden: false } : x)) }, `Hiện lại “${name}”`)}
                 onTemplateRow={r => commit({ ...q, rows: [...q.rows, { ...r, id: newLineId(), hidden: false }] }, `Thêm dòng “${r.name}”`)}
                 onManage={() => setManagerOpen(true)}
@@ -477,6 +529,12 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
               </div>
             )}
           </Popover>
+          {visible.some(r => r.kind === 'custom') && (
+            <button type="button" onClick={() => setMapOpen(true)} title="Gắn mỗi dòng với 1 mục trong kho đầu mục — mã chung để so sánh giữa các dự án"
+              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#0a7d6e] hover:underline">
+              Gắn danh mục{unmapped > 0 && <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#fff4e5] text-[#b25e00] text-[11px] font-semibold flex items-center justify-center">{unmapped}</span>}
+            </button>
+          )}
           {tplMsg && <span className="text-[12px] text-[#0a7d6e]">{tplMsg}</span>}
           {history.length > 0 && (
             <button type="button" onClick={undo} title="Hoàn tác (Ctrl/⌘ + Z)"
@@ -547,8 +605,22 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
       </div>
       {docOpen && <QuoteDocDialog data={data} result={result} meta={meta} planId={planId} defaults={docDefaults} readOnly={readOnly} onChange={onPlan} onClose={() => setDocOpen(false)} />}
       {managerOpen && !readOnly && (
-        <RowCatalogManager items={mergedCatalog(catalogMine)} ctx={list.calcCtx} onClose={() => setManagerOpen(false)}
+        <RowCatalogManager items={catalogAll} ctx={list.calcCtx} onClose={() => setManagerOpen(false)}
           onSave={async l => { await replaceCatalog(l); flashCat('Đã lưu kho đầu mục'); }} />
+      )}
+      {mapOpen && !readOnly && (
+        <CatalogMapDialog items={catalogAll} onClose={() => setMapOpen(false)}
+          entries={visible.map(r => {
+            const stored = r.kind === 'custom' ? q.rows.find(x => x.id === r.id)?.catalogId ?? null : null;
+            return r.kind === 'custom'
+              ? { id: r.id, name: r.name, sub: `${r.unit} · ${fmt(r.price)} đ`, stored, auto: stored ? null : r.ref, calc: r.calc }
+              : { id: r.id, name: r.name, sub: r.unit, stored: null, auto: r.ref, locked: 'Dòng chuẩn — tự gắn theo loại dòng' };
+          })}
+          onApply={(map, rn) => {
+            const n = Object.keys(map).length;
+            commit(applyCatalogMap(q, map, catalogAll, rn), `Gắn danh mục ${n} dòng`);
+            flashCat(`Đã gắn danh mục ${n} dòng — nhớ Lưu phương án`);
+          }} />
       )}
       {tplOpen && <QuoteTemplateDialog data={data} result={result} meta={meta} planTitle={fileName} planId={planId} defaults={docDefaults} readOnly={readOnly} onChange={onPlan} onClose={() => setTplOpen(false)} />}
     </div>

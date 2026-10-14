@@ -27,6 +27,7 @@ export function sheetToTemplate(q: QuoteSheet): QuoteSheet {
       override: r.kind === 'custom' && !r.calc ? r.override ?? 0 : null,
       ...(r.i18n ? { i18n: r.i18n } : {}),
       ...(r.calc ? { calc: r.calc } : {}),
+      ...(r.catalogId ? { catalogId: r.catalogId } : {}),
     })),
     includedNote: null,
     skilled: null,
@@ -51,9 +52,12 @@ export function sheetFromTemplate(tplIn: QuoteSheet, currentIn?: QuoteSheet | nu
       const c = curStd.get(r.kind);
       return { ...r, id: c?.id ?? r.id, override: c?.override ?? null, overrideSkilled: c?.overrideSkilled ?? null };
     }
-    const c = curCustom.find(x => !usedCustom.has(x.id) && norm(x.name) === norm(r.name));
+    // Khớp dòng của phương án: cùng mã danh mục trước, rồi cùng tên
+    const c = curCustom.find(x => !usedCustom.has(x.id) && !!r.catalogId && x.catalogId === r.catalogId)
+      ?? curCustom.find(x => !usedCustom.has(x.id) && norm(x.name) === norm(r.name));
     if (c) usedCustom.add(c.id);
-    return { ...r, id: c?.id ?? newLineId(), override: c?.override ?? (r.calc ? null : r.override ?? 0), overrideSkilled: c?.overrideSkilled ?? null };
+    const catalogId = r.catalogId ?? c?.catalogId;
+    return { ...r, id: c?.id ?? newLineId(), override: c?.override ?? (r.calc ? null : r.override ?? 0), overrideSkilled: c?.overrideSkilled ?? null, ...(catalogId ? { catalogId } : {}) };
   });
   const extra = curCustom.filter(x => !usedCustom.has(x.id));
   return {
@@ -68,8 +72,10 @@ export function sheetFromTemplate(tplIn: QuoteSheet, currentIn?: QuoteSheet | nu
 /** Dòng nhập tay của mẫu mà bảng hiện tại chưa có — để gợi ý ở menu "Thêm dòng". */
 export function templateCustomRowsMissing(tpl: QuoteSheet | null | undefined, current: QuoteSheet): QuoteRowCfg[] {
   if (!tpl) return [];
-  const have = new Set(current.rows.filter(r => r.kind === 'custom').map(r => norm(r.name)));
-  return normalizeQuoteSheet(tpl).rows.filter(r => r.kind === 'custom' && r.name.trim() && !have.has(norm(r.name)));
+  const cur = current.rows.filter(r => r.kind === 'custom');
+  const have = new Set(cur.map(r => norm(r.name)));
+  const refs = new Set(cur.map(r => r.catalogId).filter(Boolean));
+  return normalizeQuoteSheet(tpl).rows.filter(r => r.kind === 'custom' && r.name.trim() && !have.has(norm(r.name)) && !(r.catalogId && refs.has(r.catalogId)));
 }
 
 export function parseSheetTemplate(raw: string | null | undefined): SheetTemplate | null {

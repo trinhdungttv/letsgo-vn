@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { loadCatalog, removeFromCatalog, saveCatalog, upsertCatalog, type CatalogItem } from '../../../lib/costPlan/rowCatalog';
+import { loadCatalog, parseCatalog, removeFromCatalog, saveCatalog, toStored, upsertCatalog, type CatalogItem } from '../../../lib/costPlan/rowCatalog';
 
 // Kho đầu mục của công ty — đọc 1 lần (cache module), thêm/xoá xong báo các nơi khác nạp lại.
 let cache: CatalogItem[] | undefined;
@@ -23,7 +23,8 @@ export function useRowCatalog() {
   }, []);
   const commit = useCallback(async (next: CatalogItem[]) => {
     await saveCatalog(next);
-    cache = next;
+    // Giữ trong bộ nhớ đúng như lần nạp sau sẽ đọc ra (mục có sẵn chưa sửa chỉ lưu mã → dựng lại bản đầy đủ)
+    cache = parseCatalog(JSON.stringify(next.map(toStored)));
     window.dispatchEvent(new Event(EVT));
   }, []);
   const add = useCallback((it: CatalogItem) => commit(upsertCatalog(cache ?? [], it)), [commit]);

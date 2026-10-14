@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { ArrowDown, ArrowUp, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
 import { BASE_LABELS, allowedBases, newLine } from '../../../lib/costPlan/engine';
+import {
+  builtinRefByName, costCatalog, costLineRef, describeCost, findCatalogItem, isStructuralLine, isUsed, lineFromCatalog, usedCostLines, type CatalogItem,
+} from '../../../lib/costPlan/rowCatalog';
 import type { CostLine, LineMode, PercentBase, PlanResult } from '../../../lib/costPlan/types';
+import { CatalogSelect } from './CatalogMapDialog';
 import { MoneyInput, NumInput, fmt, fmtShort } from './fields';
 import { Popover, MenuItem, Select, Seg, Switch, Row, card, field, labelCls } from './ui';
 
@@ -34,9 +38,10 @@ export const blankFor = (s: Sec): CostLine => ({
 
 export interface LineSuggestion { line: CostLine; hint?: string }
 
+
 const MODES: { value: LineMode; label: string }[] = [{ value: 'fixed', label: 'Nhập số' }, { value: 'percent', label: 'Theo %' }, { value: 'leave', label: 'Phép năm' }];
 
-export default function CostSections({ lines, result, baseDays, readOnly, onChange, suggestions, show }: {
+export default function CostSections({ lines, result, baseDays, readOnly, onChange, suggestions, show, catalog, onCatalogManage, onCatalogMap, onSaveToCatalog }: {
   lines: CostLine[];
   result: PlanResult;
   baseDays: number;
@@ -45,8 +50,26 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
   suggestions: LineSuggestion[];
   /** Chỉ hiện các nhóm này (bước 1: chi phí lao động; bước 2: phí dịch vụ). Mặc định hiện tất cả. */
   show?: Sec[];
+  /** Kho đầu mục dùng chung với bảng giá (cả mục ẩn ở bảng giá) — có thì "Thêm khoản" chọn từ danh mục + gắn mã quy chiếu */
+  catalog?: CatalogItem[];
+  onCatalogManage?: () => void;
+  /** Mở màn gắn danh mục cho các khoản (phương án cũ) */
+  onCatalogMap?: () => void;
+  /** Lưu khoản tự đặt thành mục kho (hoặc gắn vào mục cùng tên đã có) → trả mã danh mục */
+  onSaveToCatalog?: (l: CostLine) => Promise<string>;
 }) {
+  const [catMsg, setCatMsg] = useState<{ id: string; text: string } | null>(null);
+  const saveToCatalog = async (l: CostLine) => {
+    if (!onSaveToCatalog) return;
+    if (!l.name.trim()) { setCatMsg({ id: l.id, text: 'Đặt tên khoản trước khi lưu vào kho' }); return; }
+    try { const ref = await onSaveToCatalog(l); replace({ ...l, catalogId: ref }); setCatMsg({ id: l.id, text: 'Đã gắn vào kho đầu mục — lần sau chọn ở “Thêm khoản”' }); }
+    catch (e) { setCatMsg({ id: l.id, text: `Không lưu được: ${e instanceof Error ? e.message : String(e)}` }); }
+  };
   const [openId, setOpenId] = useState<string | null>(null);
+  const costItems = catalog ? costCatalog(catalog) : [];
+  const used = usedCostLines(lines);
+  // Khoản chưa thuộc danh mục nào (phương án cũ / khoản tự đặt) — lương cơ bản, phí DV, phép năm tự gắn
+  const unmapped = catalog ? lines.filter(l => !isStructuralLine(l) && !costLineRef(l)).length : 0;
 
   const replace = (l: CostLine) => onChange(lines.map(x => (x.id === l.id ? l : x)));
   const patch = (id: string, p: Partial<CostLine>) => onChange(lines.map(l => (l.id === id ? { ...l, ...p } : l)));
@@ -61,7 +84,9 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
   };
 
   const add = (line: CostLine, s: Sec) => {
-    const l = withSection({ ...line, id: newLine({ name: '' }).id }, s);
+    // Gợi ý / khoản theo ngành trùng tên mục có sẵn → ghi luôn mã danh mục
+    const ref = line.catalogId ?? builtinRefByName(line.name);
+    const l = withSection({ ...line, id: newLine({ name: '' }).id, ...(ref ? { catalogId: ref } : {}) }, s);
     if (s === 'service') onChange([...lines, l]);
     else {
       const i = lines.findIndex(x => x.isServiceFee);
@@ -105,11 +130,20 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
 
   return (
     <div className="space-y-4">
+      {!readOnly && onCatalogMap && unmapped > 0 && (!show || show.includes('worker')) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[#fff4e5] px-4 py-2.5 text-[12.5px] text-[#8a4b00]">
+          <span className="min-w-0 flex-1">{unmapped} khoản chưa gắn danh mục — gắn để so sánh cùng khoản giữa các dự án và kiểm tra trùng với bảng giá.</span>
+          <button type="button" onClick={onCatalogMap} className="shrink-0 font-semibold text-[#0071e3] hover:underline">Gắn danh mục</button>
+        </div>
+      )}
       {SECS.filter(sec => !show || show.includes(sec.key)).map(sec => {
         const items = lines.filter(l => secOf(l) === sec.key);
         if (sec.key === 'other' && items.length === 0) return null;
         const subtotal = items.reduce((s, l) => s + (result.lines[l.id]?.daily ?? 0), 0);
-        const opt = suggestions.filter(s => secOf(s.line) === sec.key || (sec.key === 'other' && secOf(s.line) === 'other'));
+        const fromCat = sec.key === 'service' ? [] : costItems.filter(i => i.cost!.section === sec.key);
+        const catRefs = new Set(fromCat.map(i => i.builtinId ?? i.id));
+        // Gợi ý theo ngành trùng 1 mục danh mục thì để mục danh mục thay; gợi ý từ lịch sử (có số tiền) vẫn giữ
+        const opt = suggestions.filter(s => secOf(s.line) === sec.key && (s.hint || !catRefs.has(costLineRef(s.line) ?? '')));
         const empty = items.length === 0;
 
         return (
@@ -141,6 +175,7 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
                           {l.isBaseWage && <span className="font-semibold text-[#0071e3]">Lương cơ bản · </span>}
                           {l.billSeparately && <span className="font-semibold text-[#0a7d6e]" title="Không cộng vào giá ca 8h — khách trả riêng theo tháng (bật/tắt ở bước 2)">Thu riêng theo tháng · </span>}
                           {issue ? issue.text.replace(/^".*?":\s*/, '') : caption(l)}
+                          {catalog && !readOnly && !isStructuralLine(l) && !costLineRef(l) && <span className="text-[#b25e00]"> · chưa gắn danh mục</span>}
                         </div>
                       </div>
 
@@ -201,6 +236,23 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
                           </div>
                         )}
 
+                        {catalog && (
+                          <div className="sm:col-span-2">
+                            <span className={labelCls}>Danh mục quy chiếu (so sánh giữa các dự án, đối chiếu bảng giá)</span>
+                            {isStructuralLine(l)
+                              ? <div className="text-[12.5px] text-[#6e6e73] py-1.5">{findCatalogItem(catalog, costLineRef(l))?.name ?? costLineRef(l)} · tự gắn theo vai trò dòng</div>
+                              : <CatalogSelect items={costItems} value={costLineRef(l)} onChange={v => {
+                                  const next = { ...l, catalogId: v ?? undefined };
+                                  if (!v) delete next.catalogId;
+                                  replace(next);
+                                }} />}
+                            {!isStructuralLine(l) && !costLineRef(l) && onSaveToCatalog && (
+                              <button type="button" onClick={() => void saveToCatalog(l)} className="mt-1.5 text-[12.5px] font-medium text-[#0071e3] hover:underline">Lưu khoản này thành mục mới trong kho</button>
+                            )}
+                            {catMsg?.id === l.id && <div className="mt-1 text-[12px] text-[#0a7d6e]">{catMsg.text}</div>}
+                          </div>
+                        )}
+
                         <div className="sm:col-span-2">
                           <span className={labelCls}>Căn cứ / ghi chú</span>
                           <input value={l.note} onChange={e => patch(l.id, { note: e.target.value })} placeholder="Điều khoản, thoả thuận…" className={`${field} w-full`} />
@@ -223,16 +275,37 @@ export default function CostSections({ lines, result, baseDays, readOnly, onChan
             {!readOnly && (
               <div className="px-5 py-2.5 border-t border-[#f2f2f4]">
                 {sec.key === 'service' && !empty ? null : (
-                  <Popover align="left" width="w-80" button={({ toggle }) => (
+                  <Popover align="left" width="w-96" button={({ toggle }) => (
                     <button type="button" onClick={toggle} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0071e3] hover:text-[#0077ed]"><Plus size={14} />Thêm khoản</button>
                   )}>
                     {close => (
-                      <div className="max-h-80 overflow-y-auto py-1">
-                        <MenuItem onClick={() => { add(blankFor(sec.key), sec.key); close(); }}>Khoản trống</MenuItem>
-                        {opt.length > 0 && <div className="px-3.5 pt-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]">Gợi ý</div>}
-                        {opt.map(s => (
-                          <MenuItem key={s.line.id} hint={s.hint} onClick={() => { add(s.line, sec.key); close(); }}>{s.line.name}</MenuItem>
-                        ))}
+                      <div className="flex flex-col max-h-[min(70vh,460px)]">
+                        <div className="overflow-y-auto py-1">
+                          <MenuItem onClick={() => { add(blankFor(sec.key), sec.key); close(); }}>Khoản trống</MenuItem>
+                          {fromCat.length > 0 && <div className="px-3.5 pt-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]">Từ danh mục</div>}
+                          {fromCat.map(it => {
+                            const have = isUsed(used, it);
+                            return (
+                              <button key={it.id} type="button" disabled={have} onClick={() => { add(lineFromCatalog(it), sec.key); close(); }}
+                                className={`w-full text-left px-3.5 py-2 ${have ? 'opacity-50 cursor-default' : 'hover:bg-[#f5f5f7]'}`}>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[13px] text-[#1d1d1f] truncate">{it.name}</span>
+                                  {it.custom && <span className="shrink-0 text-[9.5px] font-semibold px-1 rounded bg-[#e9f7f4] text-[#0a7d6e]">của công ty</span>}
+                                  {have && <span className="shrink-0 text-[10.5px] text-[#86868b]">đã có</span>}
+                                </div>
+                                <div className="text-[11px] text-[#86868b] truncate">{describeCost(it.cost)}</div>
+                              </button>
+                            );
+                          })}
+                          {opt.length > 0 && <div className="px-3.5 pt-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-[#86868b]">{fromCat.length ? 'Gợi ý khác' : 'Gợi ý'}</div>}
+                          {opt.map(s => (
+                            <MenuItem key={s.line.id} hint={s.hint} onClick={() => { add(s.line, sec.key); close(); }}>{s.line.name}</MenuItem>
+                          ))}
+                        </div>
+                        {onCatalogManage && (
+                          <button type="button" onClick={() => { onCatalogManage(); close(); }}
+                            className="shrink-0 border-t border-[#f0f0f2] px-3.5 py-2.5 text-left text-[13px] font-medium text-[#0a7d6e] hover:bg-[#f5f5f7]">Quản lý kho đầu mục…</button>
+                        )}
                       </div>
                     )}
                   </Popover>

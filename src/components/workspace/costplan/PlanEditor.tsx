@@ -4,7 +4,13 @@ import { newLineId } from '../../../lib/costPlan/engine';
 import { legalChecklist } from '../../../lib/costPlan/legal';
 import { normalizeText, optionalFor } from '../../../lib/costPlan/presets';
 import type { CostLine, PlanData, PlanResult, PlanSettings, QuoteSheet } from '../../../lib/costPlan/types';
-import { effectiveResult, normalizeQuoteSheet } from '../../../lib/costPlan/quoteSheet';
+import { computePriceList, effectiveResult, normalizeQuoteSheet } from '../../../lib/costPlan/quoteSheet';
+import {
+  COST_SECTION_LABEL, applyCostCatalogMap, catalogFromCostLine, catalogItemNamed, catalogRef, costCatalog, costLineRef, isStructuralLine, mergedCatalog,
+} from '../../../lib/costPlan/rowCatalog';
+import { useRowCatalog } from './useRowCatalog';
+import RowCatalogManager from './RowCatalogManager';
+import CatalogMapDialog from './CatalogMapDialog';
 import CostSections, { secOf, withSection, type LineSuggestion } from './CostSections';
 import ProfitSplit from './ProfitSplit';
 import { InsuranceSplit, PriceBuild, PriceTable, QuoteNotes } from './QuoteStep';
@@ -119,6 +125,19 @@ export default function PlanEditor({
   // Chuyển sang báo tách khoản: lương = chi phí lao động, phí dịch vụ 1 dòng riêng (bỏ giá ngày ghi tay — giờ dòng đó là phần lương)
   const itemize = () => { const q = normalizeQuoteSheet(data.quote); setQuote({ ...q, itemized: true, rows: q.rows.map(r => (r.kind === 'day8' || r.kind === 'service_fee' ? { ...r, override: null } : r)) }); };
 
+  // ── Kho đầu mục dùng chung với bảng giá: "Thêm khoản" chọn từ danh mục, gắn mã quy chiếu cho khoản của phương án cũ ──
+  const { mine: catalogMine, replace: replaceCatalog, add: addToCatalog } = useRowCatalog();
+  const catalogAll = useMemo(() => mergedCatalog(catalogMine), [catalogMine]);
+  const [catManager, setCatManager] = useState(false);
+  const [costMap, setCostMap] = useState(false);
+  const saveLineToCatalog = async (l: CostLine): Promise<string> => {
+    const ex = catalogItemNamed(catalogAll, l.name);    // kho đã có mục cùng tên → gắn vào mục đó, không tạo trùng
+    if (ex) return catalogRef(ex);
+    const it = catalogFromCostLine(l);
+    await addToCatalog(it);
+    return it.id;
+  };
+
   const addFix = (fix: CostLine) => {
     const l = withSection({ ...fix, id: newLineId() }, secOf(fix));
     const i = data.lines.findIndex(x => x.isServiceFee);
@@ -175,8 +194,24 @@ export default function PlanEditor({
             {aboveList}
             <InsuranceBase data={data} result={result} minWage={minWage} readOnly={readOnly} onSettings={setSettings} />
             <CostSections lines={data.lines} result={result} baseDays={data.settings.baseDays} readOnly={readOnly} onChange={setLines}
-              suggestions={suggestions} show={['worker', 'compliance', 'other']} />
+              suggestions={suggestions} show={['worker', 'compliance', 'other']}
+              catalog={catalogAll} onCatalogManage={readOnly ? undefined : () => setCatManager(true)} onCatalogMap={readOnly ? undefined : () => setCostMap(true)}
+              onSaveToCatalog={readOnly ? undefined : saveLineToCatalog} />
             {notesCard}
+            {catManager && !readOnly && (
+              <RowCatalogManager items={catalogAll} ctx={canQuote ? computePriceList(data, result).calcCtx : undefined}
+                onClose={() => setCatManager(false)} onSave={l => replaceCatalog(l)} />
+            )}
+            {costMap && !readOnly && (
+              <CatalogMapDialog title="Gắn danh mục cho các khoản chi phí" items={costCatalog(catalogAll)} onClose={() => setCostMap(false)}
+                entries={data.lines.map(l => {
+                  const sub = `${l.isServiceFee ? 'Phí dịch vụ' : COST_SECTION_LABEL[secOf(l) as 'worker' | 'compliance' | 'other']} · ${fmt(result.lines[l.id]?.daily ?? 0)} đ/công`;
+                  return isStructuralLine(l)
+                    ? { id: l.id, name: l.name, sub, stored: null, auto: costLineRef(l), locked: l.isBaseWage ? 'Dòng lương cơ bản' : 'Dòng phí dịch vụ' }
+                    : { id: l.id, name: l.name, sub, stored: l.catalogId ?? null, auto: l.catalogId ? null : costLineRef(l) };
+                })}
+                onApply={(map, rn) => setLines(applyCostCatalogMap(data.lines, map, catalogAll, rn))} />
+            )}
           </div>
           <div className="space-y-4 min-w-0 order-first xl:order-none xl:sticky xl:top-0">
             <Warnings result={result} />

@@ -14,7 +14,8 @@ import {
 } from '../payroll/coefficients';
 import { computePlan, normalizePlanData, newLineId } from './engine';
 import { lineKey } from './presets';
-import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet, RowCalc, SkilledTier } from './types';
+import { builtinRefByName } from './catalogData';
+import type { PlanData, PlanResult, QuoteRowCfg, QuoteRowKind, QuoteSheet, RowCalc, RowCalcBase, SkilledTier } from './types';
 
 /** Số giờ của 1 ngày công chuẩn — cơ sở quy đổi lương ngày ra lương giờ. */
 export const HOURS_PER_DAY = 8;
@@ -76,6 +77,7 @@ export function normalizeQuoteSheet(raw: QuoteSheet | null | undefined): QuoteSh
     override: r.override != null && Number.isFinite(Number(r.override)) ? Number(r.override) : null, hidden: !!r.hidden,
     overrideSkilled: r.overrideSkilled != null && Number.isFinite(Number(r.overrideSkilled)) ? Number(r.overrideSkilled) : null,
     ...(r.kind === 'custom' && cleanCalc(r.calc) ? { calc: cleanCalc(r.calc)! } : {}),
+    ...(r.kind === 'custom' && typeof r.catalogId === 'string' && r.catalogId.trim() ? { catalogId: r.catalogId.trim().slice(0, 64) } : {}),
     ...(r.i18n && (r.i18n.zh || r.i18n.en) ? { i18n: { ...(r.i18n.zh ? { zh: String(r.i18n.zh) } : {}), ...(r.i18n.en ? { en: String(r.i18n.en) } : {}) } } : {}),
   }));
   // Dòng chuẩn thiếu (dữ liệu cũ) thêm vào ở trạng thái ẩn — riêng dòng bảo hiểm thì hiện, vì nó tự ẩn khi không có khoản thu riêng
@@ -123,13 +125,35 @@ export function moveQuoteRow(q: QuoteSheet, fromId: string, toId: string): Quote
 
 export const DEFAULT_SKILLED_LABEL = 'Thợ tay nghề';
 
+const CALC_BASES: RowCalcBase[] = ['none', 'day', 'night', 'dayHour', 'nightHour', 'insSalary'];
+
 /** Làm sạch công thức dòng tự đặt; null nếu không hợp lệ (→ dòng nhập tay). */
 export function cleanCalc(raw: unknown): RowCalc | null {
   if (!raw || typeof raw !== 'object') return null;
   const c = raw as Partial<RowCalc>;
-  const hours = Number(c.hours), coef = Number(c.coef);
-  if (!Number.isFinite(hours) || !Number.isFinite(coef) || hours < 0 || coef < 0 || (hours === 0 && c.base !== 'day' && c.base !== 'night')) return null;
-  return { base: c.base === 'day' || c.base === 'night' ? c.base : 'none', hours: Math.min(24, hours), coef: Math.min(10, coef) };
+  const base: RowCalcBase = CALC_BASES.includes(c.base as RowCalcBase) ? c.base as RowCalcBase : 'none';
+  const hours = base === 'insSalary' ? 0 : Number(c.hours), coef = Number(c.coef);
+  if (!Number.isFinite(hours) || !Number.isFinite(coef) || hours < 0 || coef < 0 || (hours === 0 && base === 'none')) return null;
+  return { base, hours: Math.min(24, hours), coef: Math.min(10, coef) };
+}
+
+/**
+ * MÃ DANH MỤC của các dòng chuẩn (theo loại dòng) — để so sánh giữa các dự án không cần người dùng tự gắn.
+ * Báo theo giờ thì dòng ca ngày / ca đêm là mục "1 giờ".
+ */
+export const STD_CATALOG_ID: Record<Exclude<QuoteRowKind, 'custom'>, string> = {
+  day8: 'b-day8', night8: 'b-night8', ot_day: 'b-ot-day', ot_night: 'b-ot-night', ot_sun: 'b-ot-sun', ot_sun_night: 'b-ot-sun-night',
+  ot_hol: 'b-ot-hol', ot_hol_night: 'b-ot-hol-night', insurance: 'b-ins-all', service_fee: 'b-svc-fee',
+};
+const STD_CATALOG_ID_HOURLY: Partial<Record<QuoteRowKind, string>> = { day8: 'b-hour-day', night8: 'b-hour-night' };
+
+/**
+ * Mã danh mục quy chiếu của 1 dòng: dòng chuẩn suy theo loại; dòng tự đặt lấy `catalogId` đã gắn, không thì tự gắn khi tên trùng
+ * đúng tên (hoặc tên cũ) của mục có sẵn; còn lại null = chưa gắn.
+ */
+export function rowCatalogRef(r: Pick<QuoteRowCfg, 'kind' | 'catalogId' | 'name'>, perHour?: boolean): string | null {
+  if (r.kind === 'custom') return r.catalogId || builtinRefByName(r.name);
+  return (perHour && STD_CATALOG_ID_HOURLY[r.kind]) || STD_CATALOG_ID[r.kind];
 }
 
 function normalizeSkilled(raw: unknown): SkilledTier | null {
@@ -196,15 +220,32 @@ export interface PriceRow {
   i18n?: { zh?: string; en?: string };
   /** Công thức của dòng tuỳ chỉnh tự tính */
   calc?: RowCalc;
+  /** Mã danh mục quy chiếu (xem rowCatalogRef) — null = dòng tự đặt chưa gắn danh mục */
+  ref: string | null;
 }
 
 /** Bối cảnh để tính dòng tự đặt có công thức (và xem trước trong màn Quản lý kho). */
-export interface CalcCtx { dayPrice: number; nightPrice: number; shr: number; mk: number }
+export interface CalcCtx {
+  dayPrice: number; nightPrice: number; shr: number; mk: number;
+  /** Lương đóng BHXH / tháng của phương án (cho các dòng tính theo % BHXH) */
+  insSalary?: number;
+}
 
-/** Giá của dòng có công thức = [nền] + số giờ × giờ chuẩn × hệ số. */
+/** Giá của dòng có công thức = [nền] + số giờ × giờ chuẩn × hệ số; dòng theo % BHXH = lương đóng BHXH × hệ số. */
 export function calcValue(c: RowCalc, ctx: CalcCtx): number {
-  const start = c.base === 'day' ? ctx.dayPrice : c.base === 'night' ? ctx.nightPrice : 0;
+  if (c.base === 'insSalary') return (ctx.insSalary ?? 0) * c.coef;
+  const start = c.base === 'day' ? ctx.dayPrice : c.base === 'night' ? ctx.nightPrice
+    : c.base === 'dayHour' ? ctx.dayPrice / HOURS_PER_DAY : c.base === 'nightHour' ? ctx.nightPrice / HOURS_PER_DAY : 0;
   return start + c.hours * ctx.shr * c.coef * ctx.mk;
+}
+
+/** Công thức bằng số để người dùng hiểu giá từ đâu ra: "Giá ngày 300.000 + 4 giờ × 31.250 đ/giờ × 150%". */
+export function calcFormula(c: RowCalc, ctx: CalcCtx, otMarkupPct = 0): string {
+  if (c.base === 'insSalary') return `${pct(c.coef)} × lương đóng BHXH ${f(ctx.insSalary ?? 0)} đ/tháng`;
+  const start = c.base === 'day' ? `Giá ngày ${f(ctx.dayPrice)}` : c.base === 'night' ? `Giá ca đêm ${f(ctx.nightPrice)}`
+    : c.base === 'dayHour' ? `Giá ngày ${f(ctx.dayPrice)} ÷ 8 giờ` : c.base === 'nightHour' ? `Giá ca đêm ${f(ctx.nightPrice)} ÷ 8 giờ` : '';
+  const hrs = c.hours > 0 && c.coef > 0 ? `${c.hours} giờ × ${f(ctx.shr)} đ/giờ × ${pct(c.coef)}${otMarkupPct > 0 ? ` + ${otMarkupPct}%` : ''}` : '';
+  return [start, hrs].filter(Boolean).join(' + ') || '0';
 }
 
 export interface PriceList {
@@ -259,18 +300,12 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     }
   };
 
+  const calcCtx: CalcCtx = { dayPrice, nightPrice: dayPrice + otBaseDaily * (NORM_NIGHT - 1), shr, mk, insSalary: result.insuranceSalaryMonthly };
   const rows: PriceRow[] = q.rows
     .filter(r => (r.kind !== 'insurance' || result.separatedMonthly > 0) && (r.kind !== 'service_fee' || itemized))
     .map(r => {
     let a = auto(r.kind);
-    if (r.kind === 'custom' && r.calc) {
-      const { base, hours, coef } = r.calc;
-      const nightPrice = dayPrice + otBaseDaily * (NORM_NIGHT - 1);
-      a = {
-        v: calcValue(r.calc, { dayPrice, nightPrice, shr, mk }),
-        formula: `${base === 'day' ? `Giá ngày ${f(dayPrice)} + ` : base === 'night' ? `Giá ca đêm ${f(nightPrice)} + ` : ''}${hours} giờ × ${f(shr)} đ/giờ × ${pct(coef)}${mkTxt}`,
-      };
-    }
+    if (r.kind === 'custom' && r.calc) a = { v: calcValue(r.calc, calcCtx), formula: calcFormula(r.calc, calcCtx, q.otMarkupPct) };
     const overridden = (r.kind !== 'custom' || !!r.calc) && r.override != null;
     const price = r.kind === 'custom' && !r.calc ? Math.round(r.override ?? 0) : Math.round(overridden ? r.override! : a.v ?? 0);
     // Báo theo giờ: dòng chính còn giữ tên/đơn vị mặc định thì đổi sang tên/đơn vị theo giờ
@@ -282,13 +317,13 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       id: r.id, kind: r.kind, name, unit, price,
       auto: a.v == null ? null : Math.round(a.v), overridden, hidden: !!r.hidden, formula: overridden ? `Đã sửa tay (tự tính: ${f(a.v ?? 0)} đ)` : a.formula,
       ...(r.calc ? { calc: r.calc } : {}),
+      ref: rowCatalogRef(r, perHour),
       ...(r.kind === 'insurance' ? { note: `Chỉ áp dụng cho NLĐ làm từ ${result.separateMinDays} công/tháng trở lên` } : {}),
       ...(r.i18n ? { i18n: r.i18n } : {}),
     };
   });
   // Cột thợ tay nghề: tính lại cả bảng với lương thợ (phiên bản thợ không bật cột thợ nên không gọi đệ quy mãi)
   const sd = skilledPlanData(data);
-  const calcCtx: CalcCtx = { dayPrice, nightPrice: dayPrice + otBaseDaily * (NORM_NIGHT - 1), shr, mk };
   if (!sd) return { rows, otBaseDaily, shr, skilled: null, calcCtx };
   const sr = computePlan(sd);
   const sl = computePriceList(sd, sr);

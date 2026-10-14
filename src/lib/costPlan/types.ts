@@ -38,6 +38,8 @@ export interface CostLine {
    * Vẫn là chi phí của phương án (giá vốn), chỉ tách khỏi giá báo ca 8h thành 1 dòng "/người/tháng" trên bảng giá.
    */
   billSeparately?: boolean;
+  /** MÃ DANH MỤC quy chiếu (dùng chung với bảng giá) — so sánh cùng khoản giữa các dự án. Xem costLineRef. */
+  catalogId?: string;
   note: string;
 }
 
@@ -82,10 +84,13 @@ export type QuoteRowKind =
 
 /**
  * Cách tính của dòng tự đặt (kho đầu mục): giá = [nền] + số giờ × đơn giá giờ chuẩn × hệ số.
- *   nền 'none' = 0 · 'day' = giá ngày (ca 8h) · 'night' = giá ca đêm 8h.
- * Ví dụ ca ngày 12 tiếng = nền 'day' + 4 giờ × 150% · Lễ/Tết ca ngày 8 tiếng = 8 giờ × 300% · phụ cấp ca đêm = 8 giờ × 30%.
+ *   nền 'none' = 0 · 'day' = giá ngày (ca 8h) · 'night' = giá ca đêm 8h · 'dayHour' / 'nightHour' = giá 1 giờ (÷ 8).
+ *   'insSalary' = theo % lương đóng BHXH / tháng: giá = lương đóng BHXH × hệ số (bỏ qua số giờ).
+ * Ví dụ ca ngày 12 tiếng = nền 'day' + 4 giờ × 150% · Lễ/Tết ca ngày 8 tiếng = 8 giờ × 300% · phụ cấp ca đêm = 8 giờ × 30%
+ * · BHYT = 'insSalary' × 3%.
  */
-export interface RowCalc { base: 'none' | 'day' | 'night'; hours: number; coef: number }
+export type RowCalcBase = 'none' | 'day' | 'night' | 'dayHour' | 'nightHour' | 'insSalary';
+export interface RowCalc { base: RowCalcBase; hours: number; coef: number }
 
 export interface QuoteRowCfg {
   id: string;
@@ -101,6 +106,11 @@ export interface QuoteRowCfg {
   i18n?: { zh?: string; en?: string };
   /** Dòng tuỳ chỉnh có công thức: tự tính theo lương (override vẫn ghi tay đè được). Thiếu = dòng nhập tay. */
   calc?: RowCalc;
+  /**
+   * MÃ DANH MỤC quy chiếu (id mục trong kho đầu mục, vd 'b-hol8') — 1 trường chung để so sánh cùng 1 hạng mục giữa các dự án,
+   * dù tên in trên báo giá mỗi nơi một kiểu. Dòng chuẩn (ca ngày, tăng ca…) tự suy ra theo loại, không cần ghi.
+   */
+  catalogId?: string;
   hidden?: boolean;
 }
 
