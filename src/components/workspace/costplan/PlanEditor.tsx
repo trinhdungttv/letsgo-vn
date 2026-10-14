@@ -103,7 +103,7 @@ export default function PlanEditor({
   docDefaults?: import('../../../lib/costPlan/quoteDoc').DocDefaults;
   onPushCrm?: () => void;
   initialStep?: Step;
-  /** Quy mô chuẩn dùng chung (số người × số công) — nhập số mới ở đây thì ghi thành chuẩn mới */
+  /** Quy mô chuẩn dùng chung (số người × số công) — chỉ đổi khi người dùng bấm "Đặt số này làm chuẩn" */
   scale?: { defaults: ScaleDefaults; remember: (service: ServiceKind, p: Partial<Scale>) => void };
 }) {
   const baseWageDaily = result.baseWageDaily;
@@ -112,9 +112,6 @@ export default function PlanEditor({
   const cur: Step = step === 'quote' && !canQuote ? 'cost' : step;
 
   const setSettings = (p: Partial<PlanSettings>) => {
-    if (p.workers !== undefined || p.simDays !== undefined) {
-      scale?.remember('supply', { ...(p.workers !== undefined ? { workers: p.workers } : {}), ...(p.simDays !== undefined ? { simDays: p.simDays } : {}) });
-    }
     onChange({ ...data, settings: { ...data.settings, ...p } });
   };
   const setLines = (lines: CostLine[]) => onChange({ ...data, lines });
@@ -178,7 +175,7 @@ export default function PlanEditor({
         <ServiceSwitch data={data} readOnly={readOnly} onChange={onChange} defaults={scale?.defaults} />
         <ReferralEditor data={data} result={result} readOnly={readOnly} onChange={onChange} aboveList={aboveList}
           branchLabel={branchLabel} branchKhoan={branchKhoan} planId={planId} docDefaults={docDefaults} meta={fillMeta}
-          standardScale={scale?.defaults.referral} onScaleChange={scale ? p => scale.remember('referral', p) : undefined} />
+          standardScale={scale?.defaults.referral} onSetStandard={scale ? s => scale.remember('referral', s) : undefined} />
       </div>
     );
   }
@@ -238,7 +235,7 @@ export default function PlanEditor({
           </div>
           <div className="space-y-4 min-w-0 order-first xl:order-none xl:sticky xl:top-0">
             <Warnings result={eff} />
-            <ProfitCard data={data} result={eff} readOnly={readOnly} onChange={setSettings} standard={scale?.defaults.supply} />
+            <ProfitCard data={data} result={eff} readOnly={readOnly} onChange={setSettings} standard={scale?.defaults.supply} onSetStandard={scale ? s => scale.remember('supply', s) : undefined} />
             <ProfitSplit settings={data.settings} result={eff} readOnly={readOnly} onChange={setSettings} branchLabel={branchLabel} branchKhoan={branchKhoan} />
             {!readOnly && <NegotiateCard data={data} result={result} onApplyLine={fee => setLines(data.lines.map(l => (l.id === fee.id ? fee : l)))} />}
             <SettingsCard settings={data.settings} readOnly={readOnly} onChange={setSettings} />

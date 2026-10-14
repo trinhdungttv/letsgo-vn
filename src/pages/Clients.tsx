@@ -26,6 +26,7 @@ import { anchorDay, dayLabel, isDynamicDay } from '../utils/timelineDays';
 import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, todayISO, isActiveInMonth, suspensionDate } from '../utils/suspension';
 import ServiceTypeBadge from '../components/ServiceTypeBadge';
 import MobileActionSheet from '../components/ui/MobileActionSheet';
+import { buildCompanyIndex, findSimilarCompanies } from '../lib/companyMatch';
 
 interface ClientsProps {
   clients: Client[];
@@ -552,9 +553,26 @@ export default function Clients({
         toast('Không tìm thấy dòng dữ liệu hợp lệ trong file');
         return;
       }
-      const existingNames = new Set(clients.map(c => c.name.trim().toLowerCase()));
-      const toInsert = rows.filter(r => !existingNames.has(r.name.trim().toLowerCase()));
-      const skipped = rows.length - toInsert.length;
+      // Dò trùng: cùng tên (kể cả khác dấu / loại hình "Công ty TNHH" / khoảng trắng) với khách đã có HOẶC với dòng trước trong file → bỏ qua;
+      // rất giống (lệch 1–2 ký tự) → hỏi lại trước khi nhập. Tên chỉ nằm trong tên khác ("có thể trùng") vẫn nhập, không hỏi.
+      const index = buildCompanyIndex({ clients: clients.map(c => ({ id: c.id, name: c.name })), pipeline: [], leads: [] });
+      const accepted: typeof rows = [];
+      const uncertain: { row: typeof rows[number]; like: string }[] = [];
+      let skipped = 0;
+      for (const r of rows) {
+        const acceptedIndex = buildCompanyIndex({ clients: accepted.map((a, i) => ({ id: `new${i}`, name: a.name })), pipeline: [], leads: [] });
+        const hits = [...findSimilarCompanies(r.name, index), ...findSimilarCompanies(r.name, acceptedIndex)];
+        if (hits.some(h => h.level === 'same')) { skipped += 1; continue; }
+        const likely = hits.find(h => h.level === 'likely');
+        if (likely) uncertain.push({ row: r, like: likely.entry.name });
+        else accepted.push(r);
+      }
+      let toInsert = accepted;
+      if (uncertain.length) {
+        const list = uncertain.slice(0, 8).map(u => `• “${u.row.name}” giống “${u.like}”`).join('\n') + (uncertain.length > 8 ? `\n… và ${uncertain.length - 8} dòng khác` : '');
+        if (window.confirm(`${uncertain.length} dòng có tên RẤT GIỐNG công ty đã có (có thể gõ nhầm / trùng):\n\n${list}\n\nBấm OK để vẫn nhập các dòng này, Huỷ để bỏ qua chúng.`)) toInsert = [...accepted, ...uncertain.map(u => u.row)];
+        else skipped += uncertain.length;
+      }
 
       let inserted = 0;
       for (const row of toInsert) {

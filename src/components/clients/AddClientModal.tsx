@@ -9,6 +9,8 @@ import { normalizeDayRange } from '../../utils/timelineDays';
 import DayCell from '../DayCell';
 import { branchOptions, resolveBranchByLegacyText } from '../../lib/branchRef';
 import MapLinkHint from '../MapLinkHint';
+import DuplicateCompanyNotice from '../common/DuplicateCompanyNotice';
+import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates';
 
 interface AddClientModalProps {
   open: boolean;
@@ -85,6 +87,9 @@ export default function AddClientModal({
     ? [branchHead, ...baseManagerOptions.filter(n => n !== branchHead)]
     : baseManagerOptions;
 
+  // Dò tên đã có (khác dấu / loại hình / thiếu-thừa ký tự) — hook phải đặt trước `return null`
+  const dup = useCompanyDuplicates(name, { enabled: open });
+
   if (!open) return null;
 
   const reset = () => {
@@ -113,6 +118,10 @@ export default function AddClientModal({
     if (!trimmed) { setNameError('Vui lòng nhập tên công ty'); return; }
     if (clients.some(c => c.name.trim().toLowerCase() === trimmed.toLowerCase())) {
       setNameError('Tên công ty này đã tồn tại trong hệ thống');
+      return;
+    }
+    if (dup.blocked) {
+      setNameError('Công ty này có thể đã có trong hệ thống — xem cảnh báo bên dưới. Nếu đúng là công ty khác thì tích “vẫn thêm mới”.');
       return;
     }
     setSubmitting(true);
@@ -156,6 +165,7 @@ export default function AddClientModal({
       if (error) throw error;
       const created = data as Client;
 
+      invalidateCompanyIndex();
       onCreated(created);
       await logActivity({
         user, action: 'insert', table: 'clients', recordId: created.id,
@@ -225,6 +235,7 @@ export default function AddClientModal({
               className={`w-full text-[13px] px-3 py-2 border rounded-lg outline-none focus:border-blue-500 ${nameError ? 'border-red-400' : 'border-gray-300'}`}
             />
             {nameError && <div className="text-[11px] text-red-600 mt-1">{nameError}</div>}
+            <DuplicateCompanyNotice dup={dup} onUseName={n => { setName(n); setNameError(''); }} />
           </div>
 
           {/* Location */}

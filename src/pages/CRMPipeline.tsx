@@ -19,6 +19,8 @@ import { useMarketRefs, competitorsInZone, linkCompetitor, notifyMarketChanged }
 import { CompanyProfileModal, STAGES, RATING_CONFIG, ARCHIVED_STAGES } from '../components/crm/CompanyProfileModal';
 import { selectContacts } from '../lib/contactOps';
 import { PipelineSourceChip, PipelineSourcePicker, SOURCE_NAMES_CHANGED } from '../components/crm/PipelineSourceField';
+import DuplicateCompanyNotice from '../components/common/DuplicateCompanyNotice';
+import { invalidateCompanyIndex, useCompanyDuplicates } from '../hooks/useCompanyDuplicates';
 import { EMPTY_SOURCE, cleanSource, matchesSourceFilter, sourceFilterGroups, sourceFullLabel, sourceSaveErrorHint } from '../lib/pipelineSource';
 
 interface CRMPipelineProps {
@@ -56,6 +58,8 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const emptyModalForm = { name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '', source: EMPTY_SOURCE };
   const [modalForm, setModalForm] = useState(emptyModalForm);
+  // Dò công ty đã có (Khách hàng / Pipeline / Thị trường) khi gõ tên — khác dấu, loại hình, thiếu-thừa ký tự vẫn bắt được
+  const dup = useCompanyDuplicates(modalForm.name, { enabled: showModal });
   const [localPipeline, setLocalPipeline] = useState(pipeline);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -179,6 +183,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
 
   const handleAdd = async () => {
     if (!modalForm.name) { toast('Nhập tên công ty'); return; }
+    if (dup.blocked) { toast('Công ty này có thể đã có — xem cảnh báo dưới ô tên; nếu là công ty khác thì tích “vẫn thêm mới”'); return; }
     const recruitImages = modalForm.images.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
     // Chỉ gửi cột nguồn khi có chọn — chưa chạy migration 162 vẫn thêm được công ty.
     const source = cleanSource(modalForm.source);
@@ -206,6 +211,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
       // NCC chọn từ đối thủ → ghi "Đang cung cấp cho" ở hồ sơ đối thủ
       await Promise.all(modalForm.ncc.map(n => { const c = refCompetitors.find(x => x.company_name === n); return c ? linkCompetitor(c, modalForm.name, modalForm.zone || null) : null; }));
       if (modalForm.ncc.length || recruitImages.length || modalForm.zone) notifyMarketChanged();
+      invalidateCompanyIndex();
       await onRefresh();
       setModalForm(emptyModalForm);
       setShowModal(false);
@@ -559,6 +565,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
                 <label className="text-[12px] text-[#666] font-medium">Tên công ty *</label>
                 <input value={modalForm.name} onChange={e => setModalForm(f => ({ ...f, name: e.target.value }))}
                   className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                <DuplicateCompanyNotice dup={dup} onUseName={n => setModalForm(f => ({ ...f, name: n }))} />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-[#666] font-medium">Chi nhánh</label>

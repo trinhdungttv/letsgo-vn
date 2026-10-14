@@ -170,6 +170,8 @@ export interface PlanData {
   doc?: import('./quoteDoc').QuoteDoc | null;
   /** Ảnh chụp lương tối thiểu vùng lúc chủ phương án lưu — để người xem qua link cũng thấy cảnh báo lương thấp hơn mức tối thiểu. */
   minWage?: { monthly: number; label: string; effectiveFrom?: string; decree?: string } | null;
+  /** Các lần BAN HÀNH (gửi khách) — mới nhất cuối. Có = phương án "Đã ban hành". Xem issue.ts */
+  issues?: import('./issue').PlanIssue[];
 }
 
 export interface LineResult {

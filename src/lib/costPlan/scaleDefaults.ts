@@ -9,7 +9,10 @@ export interface Scale { workers: number; simDays: number }
 export type ScaleDefaults = Record<ServiceKind, Scale>;
 
 export const SCALE_KEY = 'cost_plan_scale_defaults';
-export const FALLBACK_SCALE: ScaleDefaults = { supply: { workers: 20, simDays: 26 }, referral: { workers: 20, simDays: 26 } };
+// Mặc định: Cung ứng = 1 người × 20 công (để xem lợi nhuận / công là chính; số người thật đổi ở từng phương án khi cần).
+export const FALLBACK_SCALE: ScaleDefaults = { supply: { workers: 1, simDays: 20 }, referral: { workers: 20, simDays: 26 } };
+/** Đời dữ liệu: v2 = chuẩn chỉ đổi khi người dùng bấm "Đặt làm chuẩn". Giá trị đời 1 (tự đổi theo số vừa gõ) bị bỏ, về mặc định. */
+const STORE_V = 2;
 
 const clampScale = (raw: unknown, d: Scale): Scale => {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<Scale>;
@@ -24,6 +27,7 @@ const clampScale = (raw: unknown, d: Scale): Scale => {
 export function parseScaleDefaults(raw: string | null | undefined): ScaleDefaults {
   let obj: Record<string, unknown> = {};
   try { obj = raw ? JSON.parse(raw) : {}; } catch { obj = {}; }
+  if (obj.v !== STORE_V) obj = {};
   return { supply: clampScale(obj.supply, FALLBACK_SCALE.supply), referral: clampScale(obj.referral, FALLBACK_SCALE.referral) };
 }
 
@@ -34,6 +38,6 @@ export async function loadScaleDefaults(): Promise<ScaleDefaults> {
 
 export async function saveScaleDefaults(d: ScaleDefaults): Promise<void> {
   const { error } = await supabase.from('app_settings')
-    .upsert({ key: SCALE_KEY, value: JSON.stringify(d), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    .upsert({ key: SCALE_KEY, value: JSON.stringify({ ...d, v: STORE_V }), updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw error;
 }

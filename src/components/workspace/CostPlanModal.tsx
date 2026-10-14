@@ -37,6 +37,8 @@ import HistoryPanel from './costplan/HistoryPanel';
 import RowCatalogManager from './costplan/RowCatalogManager';
 import { useRowCatalog } from './costplan/useRowCatalog';
 import { mergedCatalog } from '../../lib/costPlan/rowCatalog';
+import { ISSUE_CHANNEL_LABEL, STAGE_LABEL, addIssue, changedSinceIssue, cleanIssues, latestIssue, planStage, removeLastIssue, type PlanStage } from '../../lib/costPlan/issue';
+import IssueDialog, { type IssueInput } from './costplan/IssueDialog';
 import { normalizeQuoteInfo as normQI } from '../../lib/quoteInfo';
 import { dateShort, daysLeft, defaultDoc } from '../../lib/costPlan/quoteDoc';
 import { effectiveResult } from '../../lib/costPlan/quoteSheet';
@@ -78,7 +80,10 @@ interface Draft {
   updatedAt: string | null;
 }
 
-const STATUS_LABEL = { draft: 'Nháp', final: 'Đã chốt', archived: 'Lưu trữ' } as const;
+/** Màu nhãn trạng thái (Nháp / Đã chốt / Đã ban hành / Lưu trữ) */
+const STAGE_CLS: Record<PlanStage, string> = {
+  draft: 'bg-[#f0f0f2] text-[#6e6e73]', final: 'bg-[#e8f8ed] text-[#1d8a3b]', issued: 'bg-[#e8f1fd] text-[#0058b9]', archived: 'bg-[#f0f0f2] text-[#6e6e73]',
+};
 
 const snapshot = (meta: PlanMeta, data: PlanData) => JSON.stringify({ meta, data });
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -101,7 +106,7 @@ function draftOfRow(p: CostPlanRow): Draft {
 }
 
 export function CostPlanModal({ clients, pipeline, branches, toast, onClose, focus, onPlansChanged }: Props) {
-  const { token } = useAuth();
+  const { token, logout, user } = useAuth();
 
   // ── Dữ liệu tham chiếu ─────────────────────────────────────────────────────────────────
   const [plans, setPlans] = useState<CostPlanRow[]>([]);
@@ -254,7 +259,9 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
   const openPlan = (p: CostPlanRow) => { setDraft(draftOfRow(p)); setCrmLines([]); setRemote(null); setSaveNote(''); };
 
   const duplicate = (p: { meta: PlanMeta; data: PlanData }) => {
+    // Bản sao là bản nháp mới — không mang các lần ban hành (đã gửi khách) của bản gốc
     const data: PlanData = { ...p.data, lines: p.data.lines.map(l => ({ ...l, id: newLineId() })) };
+    delete data.issues;
     const meta: PlanMeta = { ...p.meta, title: `${p.meta.title || 'Phương án'} (bản sao)`, status: 'draft' };
     setDraft({ id: null, meta, data, version: 0, share: null, baseline: '', linesTouched: true, updatedBy: null, updatedAt: null });
     setCrmLines([]); setRemote(null); setSaveNote('');
@@ -392,7 +399,10 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
 
   const restoreRevision = (rev: PlanRevision) => {
     if (!draft) return;
-    setData(normalizePlanData(rev.data));
+    // Nạp lại nội dung bản cũ nhưng GIỮ các lần ban hành hiện có (lịch sử gửi khách không quay ngược theo)
+    const next = normalizePlanData(rev.data);
+    if (draft.data.issues?.length) next.issues = draft.data.issues; else delete next.issues;
+    setData(next);
     setShowHistory(false);
     toast(`Đã nạp lại bản v${rev.version} — bấm Lưu để giữ`);
   };
@@ -402,7 +412,7 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
    * Lưu phương án. `metaPatch`: đổi trạng thái (Chốt / Lưu trữ…) rồi LƯU LUÔN — trước đây chỉ đổi trên màn hình,
    * người dùng tưởng đã chốt, đóng lại thì mất.
    */
-  const doSave = async (force = false, metaPatch?: Partial<PlanMeta>, okMsg = 'Đã lưu phương án') => {
+  const doSave = async (force = false, metaPatch?: Partial<PlanMeta>, okMsg = 'Đã lưu phương án', dataPatch?: (d: PlanData) => PlanData, noteOverride?: string) => {
     if (!draft || !token || !result) return;
     // Ghi vào bản nháp trước: nếu vướng xung đột phiên bản thì lần "Ghi đè" sau vẫn giữ trạng thái mới
     if (metaPatch) setDraft(d => (d ? { ...d, meta: { ...d.meta, ...metaPatch } } : d));
@@ -412,16 +422,19 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
       if (!meta.title.trim()) meta.title = `${meta.company_name || meta.industry || 'Phương án'} — ${new Date().toLocaleDateString('vi-VN')}`;
       // Kèm ảnh chụp lương tối thiểu vùng để người xem qua link cũng thấy cảnh báo lương thấp.
       // Chưa từng mở phần báo giá → chốt số báo giá, ngày ban hành (hôm nay), hiệu lực mặc định ngay lần lưu đầu.
-      const data: PlanData = {
+      const base: PlanData = {
         ...draft.data, minWage: minWage ?? null,
         doc: draft.data.doc ?? defaultDoc(new Date(), { ...docDefaults, name: docDefaults.name || meta.company_name || '' }),
       };
+      // Ban hành / bỏ ban hành: áp lên đúng dữ liệu sắp lưu (dấu vân tay tính trên bản này), ghi cả vào bản nháp để "Ghi đè" sau xung đột vẫn giữ
+      const data = dataPatch ? dataPatch(base) : base;
+      if (dataPatch) setDraft(d => (d ? { ...d, data } : d));
       const fields: PlanFields = {
         ...meta, industry: meta.industry || null, zone_name: meta.zone_name || null, company_name: meta.company_name || null,
         // Lưu theo giá đang báo khách (giá ca 8h ghi tay ở Bảng giá, nếu có) — danh sách hiện đúng giá đã gửi
         data, summary: summarizePlan(data, effectiveResult(data, result)),
       };
-      const r = await savePlan(token, draft.id, fields, { expectedVersion: draft.id ? draft.version : null, force, note: saveNote.trim() || undefined });
+      const r = await savePlan(token, draft.id, fields, { expectedVersion: draft.id ? draft.version : null, force, note: (noteOverride ?? saveNote).trim() || undefined });
       if (!r.ok) { setConflict(r.plan); return; }
       const row = r.plan;
       const next = { ...draft, id: row.id, meta, data, version: row.version, baseline: snapshot(meta, data), updatedBy: row.updated_by_name, updatedAt: row.updated_at };
@@ -448,6 +461,28 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
     if (!draft) return;
     const status = draft.meta.status === 'archived' ? 'draft' : 'archived';
     void doSave(false, { status }, status === 'archived' ? 'Đã lưu trữ phương án' : 'Đã bỏ lưu trữ');
+  };
+
+  // ── Đã ban hành (đã gửi khách) ─────────────────────────────────────────────────────────
+  const [issueOpen, setIssueOpen] = useState(false);
+  const stage: PlanStage | null = draft ? planStage({ status: draft.meta.status, data: draft.data }) : null;
+  const lastIssue = draft ? latestIssue(draft.data) : null;
+  // Nội dung báo giá đã khác bản gửi khách gần nhất? (so dấu vân tay: dòng giá, giá công, số/ngày/hiệu lực báo giá…)
+  const draftData = draft?.data;
+  const changedAfterIssue = useMemo(() => (draftData && latestIssue(draftData) ? !!changedSinceIssue(draftData) : false), [draftData]);
+  const issue = (v: IssueInput) => {
+    if (!draft) return;
+    setIssueOpen(false);
+    // Đã gửi khách thì cũng là đã chốt (giữ Lưu trữ nếu đang lưu trữ)
+    const status = draft.meta.status === 'archived' ? 'archived' : 'final';
+    // Ghi chú lần lưu = mốc ban hành → trong "Lịch sử chỉnh sửa" thấy ngay bản nào đã gửi khách
+    const note = `ĐÃ BAN HÀNH — gửi khách ${dateShort(v.date)}${v.channel ? ` qua ${ISSUE_CHANNEL_LABEL[v.channel]}` : ''}${v.to ? ` · ${v.to}` : ''}${saveNote.trim() ? ` · ${saveNote.trim()}` : ''}`;
+    void doSave(false, { status }, `Đã ban hành — ghi nhận gửi khách ngày ${dateShort(v.date)}`, d => addIssue(d, { ...v, by: user?.full_name ?? null }), note);
+  };
+  const unissue = () => {
+    if (!draft || !lastIssue) return;
+    if (!window.confirm(`Bỏ đánh dấu lần ban hành ngày ${dateShort(lastIssue.date)}?\nChỉ bỏ ghi nhận "đã gửi khách" (đánh dấu nhầm), nội dung phương án giữ nguyên.`)) return;
+    void doSave(false, undefined, 'Đã bỏ đánh dấu ban hành', removeLastIssue);
   };
 
   // ── Đẩy kết quả sang "Thông tin báo giá" của hồ sơ CRM ─────────────────────────────────
@@ -486,6 +521,18 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
     [plans, fPid, fCid, fName]);
   const listBase = focusOn ? companyPlans : plans;
   const shown = useMemo(() => filterPlans(listBase, filter, zones, branches), [listBase, filter, zones, branches]);
+  // Các phương án đã gửi khách: lần gửi gần nhất, số lần gửi, đã sửa sau lần gửi chưa (chỉ tính cho phương án đã ban hành)
+  const issueInfo = useMemo(() => {
+    const m = new Map<string, { last: NonNullable<ReturnType<typeof latestIssue>>; count: number; changed: boolean }>();
+    for (const p of plans) {
+      const l = cleanIssues(p.data?.issues);
+      if (!l.length) continue;
+      let changed = false;
+      try { changed = !!changedSinceIssue(normalizePlanData(p.data)); } catch { /* dữ liệu hỏng: coi như chưa sửa */ }
+      m.set(p.id, { last: l[l.length - 1], count: l.length, changed });
+    }
+    return m;
+  }, [plans]);
   // Công ty chưa có phương án nào → vào thẳng phương án mới (chỉ 1 lần khi vừa mở)
   const autoNewDone = useRef(false);
   useEffect(() => {
@@ -530,7 +577,11 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                 <input value={draft.meta.title} onChange={e => patchMeta({ title: e.target.value })} placeholder="Đặt tên phương án"
                   className="w-full text-[17px] font-semibold tracking-tight bg-transparent outline-none placeholder:text-[#a1a1a6]" />
                 <div className="flex items-center gap-2 text-[12px] text-[#86868b] min-h-[20px]">
-                  <span className={`px-1.5 rounded text-[10.5px] font-semibold ${draft.meta.status === 'final' ? 'bg-[#e8f8ed] text-[#1d8a3b]' : draft.meta.status === 'archived' ? 'bg-[#f0f0f2] text-[#6e6e73]' : 'bg-[#f0f0f2] text-[#6e6e73]'}`}>{STATUS_LABEL[draft.meta.status]}</span>
+                  <span className={`px-1.5 rounded text-[10.5px] font-semibold whitespace-nowrap ${STAGE_CLS[stage ?? 'draft']}`}
+                    title={lastIssue ? `Gửi khách ${dateShort(lastIssue.date)}${lastIssue.to ? ` · ${lastIssue.to}` : ''}${lastIssue.channel ? ` · ${ISSUE_CHANNEL_LABEL[lastIssue.channel]}` : ''}` : undefined}>
+                    {STAGE_LABEL[stage ?? 'draft']}{stage === 'issued' && lastIssue ? ` ${dateShort(lastIssue.date).slice(0, 5)}` : ''}
+                  </span>
+                  {stage === 'issued' && changedAfterIssue && <span className="px-1.5 rounded text-[10.5px] font-semibold whitespace-nowrap bg-[#fff4e5] text-[#b25e00]">Đã sửa sau khi gửi</span>}
                   {dirty ? (
                     <input value={saveNote} onChange={e => setSaveNote(e.target.value)} placeholder="Ghi chú cho lần lưu này (tuỳ chọn)…" maxLength={200}
                       className="flex-1 min-w-0 max-w-sm bg-transparent outline-none text-[12px] text-[#1d1d1f] placeholder:text-[#a1a1a6] border-b border-[#e5e5ea] focus:border-[#0071e3]" />
@@ -560,7 +611,10 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
               )}>
                 {close => (
                   <div className="py-1">
-                    <MenuItem onClick={() => { toggleFinal(); close(); }}>{draft.meta.status === 'final' ? 'Bỏ đánh dấu đã chốt' : 'Chốt phương án'}</MenuItem>
+                    {stage !== 'issued' && <MenuItem onClick={() => { toggleFinal(); close(); }}>{draft.meta.status === 'final' ? 'Bỏ đánh dấu đã chốt' : 'Chốt phương án'}</MenuItem>}
+                    {stage !== 'issued' && stage !== 'archived' && <MenuItem hint="đã gửi khách" onClick={() => { setIssueOpen(true); close(); }}>Đánh dấu đã ban hành…</MenuItem>}
+                    {stage === 'issued' && changedAfterIssue && <MenuItem hint="gửi bản đã sửa" onClick={() => { setIssueOpen(true); close(); }}>Ban hành lại…</MenuItem>}
+                    {stage === 'issued' && <MenuItem onClick={() => { unissue(); close(); }}>Bỏ đánh dấu ban hành</MenuItem>}
                     {draft.id && <MenuItem onClick={() => { setShowHistory(true); close(); }}>Lịch sử chỉnh sửa</MenuItem>}
                     <MenuItem onClick={() => { duplicate(draft); close(); }}>Nhân bản</MenuItem>
                     {draft.meta.pipeline_id && draft.id && !isReferral(draft.data) && <MenuItem onClick={() => { pushToCrm(); close(); }}>Đưa vào hồ sơ CRM</MenuItem>}
@@ -601,8 +655,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#86868b]" />
                   <input value={filter.q} onChange={e => setF({ q: e.target.value })} placeholder="Tìm theo tên, khách, KCN, tỉnh, chi nhánh" className={`${field} !bg-white w-full pl-9 shadow-[0_0_0_1px_rgba(0,0,0,0.06)]`} />
                 </div>
-                <div className="w-full sm:w-[300px]">
-                  <Seg value={filter.status} onChange={v => setF({ status: v })} options={[{ value: '', label: 'Đang dùng' }, { value: 'draft', label: 'Nháp' }, { value: 'final', label: 'Đã chốt' }, { value: 'archived', label: 'Lưu trữ' }]} />
+                <div className="w-full sm:w-[420px]">
+                  <Seg value={filter.status} onChange={v => setF({ status: v })} options={[{ value: '', label: 'Đang dùng' }, { value: 'draft', label: 'Nháp' }, { value: 'final', label: 'Đã chốt' }, { value: 'issued', label: 'Đã ban hành' }, { value: 'archived', label: 'Lưu trữ' }]} />
                 </div>
                 <button onClick={() => setShowCatalog(true)} title="Danh mục đầu mục dùng chung cho Bảng giá & Bảng chi phí của mọi phương án: ẩn/hiện, cách tính, bản dịch, mục của công ty"
                   className={`${btnGhost} !h-9 sm:ml-auto`}><Library size={14} />Kho đầu mục</button>
@@ -639,7 +693,16 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
 
               {loadErr && (
                 <div className="flex gap-2 items-start text-[13px] text-[#b3140a] bg-[#fff1f0] rounded-xl px-4 py-3">
-                  <AlertTriangle size={15} className="shrink-0 mt-0.5" /><span>{loadErr}</span>
+                  <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div>{loadErr}</div>
+                    {/phiên đăng nhập|đăng nhập lại/i.test(loadErr) && (
+                      <>
+                        <div className="text-[12px] text-[#b3140a]/80 mt-0.5">Phiên đăng nhập chỉ có hiệu lực 7 ngày (hoặc máy này đăng nhập từ bản cũ). Đăng nhập lại là dùng tiếp được, không mất dữ liệu.</div>
+                        <button onClick={() => { logout(); onClose(); }} className="mt-2 h-8 px-3 rounded-full bg-[#d70015] text-white text-[12.5px] font-semibold hover:bg-[#c20013]">Đăng xuất & đăng nhập lại</button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -655,6 +718,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                   {shown.map(p => {
                     const s = p.summary;
                     const sh = p.share && !p.share.revoked ? p.share : null;
+                    const st = planStage(p);
+                    const iss = issueInfo.get(p.id) ?? null;
                     return (
                       <div key={p.id} className={`${card} p-5 hover:shadow-[0_0_0_1px_rgba(0,113,227,0.35),0_4px_16px_rgba(0,0,0,0.06)] transition flex flex-col`}>
                         <button onClick={() => openPlan(p)} className="text-left flex-1">
@@ -662,7 +727,13 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                             <div className="text-[15px] font-semibold tracking-tight leading-snug">{p.title}</div>
                             <span className="flex items-center gap-1 shrink-0">
                               {isReferralPlan(p) && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-[#f1edff] text-[#5e5ce6]">Giới thiệu LĐ</span>}
-                              {p.status !== 'draft' && <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded ${p.status === 'final' ? 'bg-[#e8f8ed] text-[#1d8a3b]' : 'bg-[#f0f0f2] text-[#6e6e73]'}`}>{STATUS_LABEL[p.status]}</span>}
+                              {st !== 'draft' && (
+                                <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${STAGE_CLS[st]}`}
+                                  title={iss ? `Gửi khách ${dateShort(iss.last.date)}${iss.last.to ? ` · ${iss.last.to}` : ''}${iss.last.channel ? ` · ${ISSUE_CHANNEL_LABEL[iss.last.channel]}` : ''}${iss.count > 1 ? ` · đã gửi ${iss.count} lần` : ''}` : undefined}>
+                                  {STAGE_LABEL[st]}{st === 'issued' && iss ? ` ${dateShort(iss.last.date).slice(0, 5)}` : ''}
+                                </span>
+                              )}
+                              {st === 'issued' && iss?.changed && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-[#fff4e5] text-[#b25e00] whitespace-nowrap" title="Nội dung báo giá đã sửa sau lần gửi khách gần nhất — khách chưa nhận bản này">Sửa sau gửi</span>}
                             </span>
                           </div>
                           <div className="text-[12px] text-[#86868b] mt-0.5 truncate">{[p.company_name, p.industry].filter(Boolean).join(' · ') || 'Chưa gắn khách / ngành'}</div>
@@ -695,9 +766,10 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                         <div className="mt-4 pt-3 border-t border-[#f2f2f4] flex items-center gap-2 text-[11.5px] text-[#86868b]">
                           <span className="truncate">{p.updated_by_name ?? '—'} · {formatDate(p.updated_at)}</span>
                           {(() => {
+                            // Hiệu lực chỉ có nghĩa khi báo giá đã gửi khách — bản nháp / đã chốt chưa gửi thì không hiện
                             const d = p.data?.doc;
                             const n = daysLeft(d?.validUntil);
-                            if (!d?.date) return null;
+                            if (!d?.date || !iss) return null;
                             return (
                               <span className={`whitespace-nowrap ${n != null && n < 0 ? 'text-[#d70015] font-medium' : ''}`} title={`Ban hành ${dateShort(d.date)}${d.validUntil ? ` · hiệu lực đến ${dateShort(d.validUntil)}` : ''}`}>
                                 · {n == null ? `BH ${dateShort(d.date)}` : n < 0 ? 'Hết hiệu lực' : `HL đến ${dateShort(d.validUntil).slice(0, 5)}`}
@@ -725,6 +797,21 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                   <span><b>{remote.updated_by_name ?? 'Có người'}</b> vừa cập nhật phương án này (v{remote.version}).</span>
                   <button onClick={() => loadRemote(remote)} className="ml-auto h-7 px-3 rounded-full bg-[#5e5ce6] text-white text-[12px] font-medium hover:bg-[#6e6cf0]">Tải bản mới</button>
                   <button onClick={() => setRemote(null)} className="w-6 h-6 rounded-full flex items-center justify-center hover:bg-white/60"><X size={13} /></button>
+                </div>
+              )}
+
+              {stage === 'issued' && lastIssue && (
+                <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl px-4 py-2.5 text-[12.5px] leading-snug ${changedAfterIssue ? 'bg-[#fff4e5] text-[#8a4b00]' : 'bg-[#e8f1fd] text-[#0b4a99]'}`}>
+                  <span className="min-w-0 flex-1">
+                    {changedAfterIssue
+                      ? <><b>Đã sửa sau khi gửi khách.</b> Báo giá đã ban hành ngày {dateShort(lastIssue.date)} — nội dung hiện tại khác bản khách đang giữ (khách chưa nhận các thay đổi này).</>
+                      : <><b>Đã ban hành</b> ngày {dateShort(lastIssue.date)}{lastIssue.number ? ` · số ${lastIssue.number}` : ''}{lastIssue.to ? ` · gửi ${lastIssue.to}` : ''}{lastIssue.channel ? ` qua ${ISSUE_CHANNEL_LABEL[lastIssue.channel]}` : ''}{lastIssue.by ? ` · ${lastIssue.by} ghi nhận` : ''}. Làm báo giá mới thì nhân bản để giữ nguyên bản đã gửi.</>}
+                  </span>
+                  <span className="flex items-center gap-3 shrink-0">
+                    {changedAfterIssue && <button onClick={() => setIssueOpen(true)} className="font-semibold text-[#0071e3] hover:underline">Ban hành lại</button>}
+                    {changedAfterIssue && draft.id && <button onClick={() => setShowHistory(true)} className="font-semibold text-[#0071e3] hover:underline">Xem bản đã gửi</button>}
+                    <button onClick={() => duplicate(draft)} className="font-semibold text-[#0071e3] hover:underline">Nhân bản thành bản mới</button>
+                  </span>
                 </div>
               )}
 
@@ -787,6 +874,11 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
           token={token} toast={toast} onClose={() => setShowShare(false)}
           onChanged={share => { setDraft(d => (d ? { ...d, share } : d)); setPlans(prev => prev.map(p => (p.id === draft.id ? { ...p, share } : p))); }}
         />
+      )}
+      {issueOpen && draft && (
+        <IssueDialog reissue={stage === 'issued'} docNumber={draft.data.doc?.number} docDate={draft.data.doc?.date}
+          defaultTo={draft.data.doc?.customer?.attn || docDefaults.attn || undefined} previous={cleanIssues(draft.data.issues)} dirty={dirty}
+          onConfirm={issue} onClose={() => setIssueOpen(false)} />
       )}
       {showCatalog && (
         <RowCatalogManager items={mergedCatalog(catalogMine)} onClose={() => setShowCatalog(false)}

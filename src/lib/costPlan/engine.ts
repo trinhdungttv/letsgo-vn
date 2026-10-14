@@ -100,6 +100,8 @@ export function normalizePlanData(raw: unknown): PlanData {
     ...(r.service === 'referral' ? { service: 'referral' as const } : {}),
     ...(r.referral && typeof r.referral === 'object' ? { referral: r.referral } : {}),
     settings: s, lines, notes: typeof r.notes === 'string' ? r.notes : '', minWage: mw, quote, doc,
+    // Lần ban hành (gửi khách) — làm sạch ở issue.ts khi đọc
+    ...(Array.isArray(r.issues) && r.issues.length ? { issues: r.issues } : {}),
   };
 }
 

@@ -25,6 +25,7 @@ const BASE_OPTS: [RowCalc['base'], string][] = [
 const LAW_CHIPS: [string, number][] = [['Ngày thường 150%', 1.5], ['Đêm thường 200%', 2], ['Chủ nhật 200%', 2], ['CN đêm 270%', 2.7], ['Lễ/Tết 300%', 3], ['Lễ/Tết đêm 390%', 3.9], ['Làm đêm +30%', 0.3]];
 const INS_CHIPS: [string, number][] = [['NLĐ đóng 10,5%', 0.105], ['BHXH DN 17,5%', 0.175], ['DN cả 3 loại 21,5%', 0.215], ['BHYT 3%', 0.03], ['BHTN 1%', 0.01], ['TNLĐ-BNN 0,5%', 0.005]];
 type View = 'all' | 'on' | 'off' | 'cost';
+const SAMPLE_WAGE_KEY = 'lgvn:catalog-sample-wage';
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const iconBtn = 'w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-25';
 
@@ -44,7 +45,14 @@ export default function RowCatalogManager({ items, ctx: planCtx, onSave, onClose
   const [bulkOpen, setBulkOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [sampleWage, setSampleWage] = useState(250_000);
+  // Lương mẫu chỉ để xem trước giá — nhớ trên máy này, mở lại vẫn giữ số đã nhập
+  const [sampleWage, setSampleWageState] = useState(() => {
+    try { const n = Number(localStorage.getItem(SAMPLE_WAGE_KEY)); return n > 0 ? n : 250_000; } catch { return 250_000; }
+  });
+  const setSampleWage = (n: number) => {
+    setSampleWageState(n);
+    try { localStorage.setItem(SAMPLE_WAGE_KEY, String(n)); } catch { /* trình duyệt chặn lưu: bỏ qua */ }
+  };
   const ctx: CalcCtx = planCtx ?? sampleCalcCtx(sampleWage);
   const ctxLabel = planCtx ? 'với bảng giá đang mở' : 'với lương mẫu';
 

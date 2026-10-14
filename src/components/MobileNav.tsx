@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3, Home, Building2, Building, Briefcase, DollarSign, MapPin, Landmark, History,
   LayoutDashboard, Network, UserCircle2, Package, Settings, Users,
-  MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin,
+  LogOut, MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin,
 } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
@@ -46,7 +46,7 @@ function pinsKey(username?: string | null) {
 }
 
 export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
-  const { user, rolePermissions } = useAuth();
+  const { user, logout, rolePermissions } = useAuth();
   const role = user?.role || 'kinhdoanh';
 
   const allowed = useMemo(
@@ -176,6 +176,20 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
                   </span>
                   <ChevronRight size={16} className="text-[#bbb]" />
                 </button>
+                {/* Tài khoản: trên điện thoại không có thanh bên nên đăng xuất đặt ở đây */}
+                <div className="flex items-center gap-2.5 w-full mt-3 px-3.5 py-3 bg-white border border-[#E8E7E2] rounded-[14px]">
+                  <span className="w-[30px] h-[30px] rounded-full bg-[#EAE8E1] text-[#5F5E5A] flex items-center justify-center shrink-0"><UserCircle2 size={17} /></span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[12.5px] font-semibold text-[#111] truncate">{user?.full_name || user?.username}</span>
+                    <span className="block text-[10.5px] text-[#888] truncate">{user?.role}</span>
+                  </span>
+                  <button
+                    onClick={() => { if (window.confirm('Đăng xuất khỏi tài khoản này?')) { setDrawer(false); logout(); } }}
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-[7px] rounded-[10px] bg-red-50 text-red-600 text-[12px] font-semibold active:scale-95 transition-transform"
+                  >
+                    <LogOut size={13} /> Đăng xuất
+                  </button>
+                </div>
               </div>
             </>
           ) : (

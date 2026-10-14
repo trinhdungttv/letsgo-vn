@@ -22,6 +22,8 @@ import { todayISO } from '../../utils/suspension'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
 import { branchOf, branchLabel, branchOptions } from '../../lib/branchRef'
 import { selectContacts } from '../../lib/contactOps'
+import DuplicateCompanyNotice from '../common/DuplicateCompanyNotice'
+import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -449,6 +451,8 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   const [qAssignee, setQAssignee] = useState('')
   const [qSaving, setQSaving] = useState(false)
   const quickInputRef = useRef<HTMLInputElement>(null)
+  // Thêm "Công ty mới (CRM)": dò công ty đã có khi gõ tên (khác dấu / loại hình / thiếu-thừa ký tự vẫn bắt được)
+  const qDup = useCompanyDuplicates(qTitle, { enabled: quickOpen && qKind === 'pipeline' })
 
   useEffect(() => {
     if (quickAddSignal > 0) {
@@ -459,6 +463,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
   async function saveQuickTask() {
     if (!qTitle.trim() || !user || qSaving) return
+    if (qKind === 'pipeline' && qDup.blocked) { toast('Công ty này có thể đã có — xem cảnh báo bên dưới; nếu là công ty khác thì tích “vẫn thêm mới”'); return }
     setQSaving(true)
     if (qKind === 'work') {
       const { data, error } = await supabase.from('work_tasks').insert({
@@ -491,6 +496,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       }).select().single()
       if (!error && data) setWsTasks(prev => [data as WorkspaceTask, ...prev])
     }
+    if (qKind === 'pipeline') invalidateCompanyIndex()
     setQSaving(false)
     setQTitle('')
     toast(qKind === 'pipeline' ? 'Đã thêm công ty vào CRM Pipeline' : 'Đã thêm việc')
@@ -1404,6 +1410,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   <button onClick={() => setQuickOpen(false)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] text-[#666]">✕</button>
                 </div>
               </div>
+              {qKind === 'pipeline' && <DuplicateCompanyNotice dup={qDup} onUseName={setQTitle} className="!mt-0" />}
               <button onClick={() => { setQuickOpen(false); setFullForm(true); setFDesc(qTitle) }} className="self-start text-[11px] text-blue-600 hover:underline">
                 Mở form đầy đủ (khách hàng, loại việc, ưu tiên, Chi nhánh...) →
               </button>

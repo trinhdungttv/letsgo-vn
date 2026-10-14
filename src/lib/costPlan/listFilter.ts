@@ -2,8 +2,9 @@
 //
 // Tỉnh/TP không lưu trên phương án — suy ra từ KCN (market_zones.location, cùng cách tab Thị trường
 // làm), nên sửa tỉnh của KCN ở Thị trường thì bộ lọc tự theo. Phương án chưa gắn KCN thì không thuộc tỉnh nào.
-import type { CostPlanRow, PlanStatus } from './types'
+import type { CostPlanRow } from './types'
 import { isReferralPlan } from './referral'
+import { planStage, type PlanStage } from './issue'
 
 export interface ZoneRef { id: string; name: string; location?: string | null }
 export interface BranchRef { id: string; name: string }
@@ -16,8 +17,8 @@ export interface PlanListFilter {
   branch: string
   /** '' = mọi loại dịch vụ */
   service: '' | 'supply' | 'referral'
-  /** '' = đang dùng (mọi trạng thái trừ Lưu trữ) */
-  status: '' | PlanStatus
+  /** '' = đang dùng (mọi trạng thái trừ Lưu trữ). 'issued' = đã gửi khách (xem issue.ts) */
+  status: '' | PlanStage
 }
 
 export const EMPTY_PLAN_FILTER: PlanListFilter = { q: '', industry: '', province: '', zone: '', branch: '', service: '', status: '' }
@@ -42,7 +43,8 @@ export function zoneLabelOfPlan(p: Pick<CostPlanRow, 'zone_id' | 'zone_name'>, z
 }
 
 export function matchesStatus(p: CostPlanRow, status: PlanListFilter['status']): boolean {
-  return status ? p.status === status : p.status !== 'archived'
+  const st = planStage(p)
+  return status ? st === status : st !== 'archived'
 }
 
 export function filterPlans(plans: CostPlanRow[], f: PlanListFilter, zones: ZoneRef[], branches: BranchRef[]): CostPlanRow[] {

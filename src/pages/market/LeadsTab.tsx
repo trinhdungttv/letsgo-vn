@@ -31,6 +31,8 @@ import {
   deleteSupplyRows, sameCompany,
 } from './supplierLink';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
+import DuplicateCompanyNotice from '../../components/common/DuplicateCompanyNotice';
+import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates';
 
 const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
 const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-700' : s === 'Đang TH' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700';
@@ -95,6 +97,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
   const { user } = useAuth();
   const [addTab, setAddTab] = useState<'client' | 'lead' | null>(null);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
+  // Dò công ty đã có khi gõ tên (khác dấu / loại hình / thiếu-thừa ký tự vẫn bắt được)
+  const leadDup = useCompanyDuplicates(leadForm.company_name, { enabled: addTab === 'lead' });
   const [clientForm, setClientForm] = useState(emptyClientSetupForm);
   // Cảnh báo F5/đóng tab khi đang gõ dở form thêm KH/dự án mới mà chưa bấm "Thêm".
   useBeforeUnloadWarning(!!addTab && (
@@ -302,6 +306,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 
   const handleAddLead = async () => {
     if (!leadForm.company_name.trim()) { toast('Nhập tên công ty'); return; }
+    if (leadDup.blocked) { toast('Công ty này có thể đã có — xem cảnh báo dưới ô tên; nếu là công ty khác thì tích “vẫn thêm mới”'); return; }
     setSaving(true);
     try {
       const mapPos = parseLatLngFromLink(leadForm.map_link);
@@ -327,6 +332,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Thêm công ty/dự án "${leadForm.company_name.trim()}"`,
         newData: data,
       });
+      invalidateCompanyIndex();
       await onRefresh();
       setAddTab(null);
       setLeadForm(emptyLeadForm);
@@ -940,7 +946,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Tên công ty *</label>
-                  <input value={leadForm.company_name} onChange={e => setLeadForm(f => ({ ...f, company_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                  <input value={leadForm.company_name} onChange={e => setLeadForm(f => ({ ...f, company_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                  <DuplicateCompanyNotice dup={leadDup} onUseName={n => setLeadForm(f => ({ ...f, company_name: n }))} /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Khu vực</label>
                   <SearchSelect value={leadForm.region} onChange={v => setLeadForm(f => ({ ...f, region: v }))}
                     options={zoneNames.map(z => ({ value: z, label: z }))} placeholder="Chọn KCN…" /></div>

@@ -94,29 +94,34 @@ export function LegalCard({ items, readOnly, onAdd }: {
 }
 
 /**
- * Dòng nhắc dưới ô "số người × số công": quy mô chuẩn DÙNG CHUNG cho mọi phương án (nhập số mới = đổi chuẩn).
- * Phương án đang mở khác chuẩn (lập từ trước) → nút áp dụng chuẩn.
+ * Dòng nhắc dưới ô "số người × số công": quy mô chuẩn DÙNG CHUNG cho mọi phương án mới. Sửa số ở 1 phương án chỉ đổi phương án đó
+ * (không tự đổi chuẩn); muốn đổi chuẩn thì bấm "Đặt làm chuẩn". Số người × công chỉ ảnh hưởng lợi nhuận / doanh thu THÁNG —
+ * không ảnh hưởng giá 1 công và bảng giá gửi khách.
  */
-export function StandardScaleHint({ workers, simDays, standard, onApply, readOnly }: {
-  workers: number; simDays: number; standard?: { workers: number; simDays: number }; onApply?: () => void; readOnly?: boolean;
+export function StandardScaleHint({ workers, simDays, standard, onApply, onSetStandard, readOnly }: {
+  workers: number; simDays: number; standard?: { workers: number; simDays: number }; onApply?: () => void;
+  /** Lấy số hiện tại làm quy mô chuẩn cho các phương án sau */
+  onSetStandard?: () => void; readOnly?: boolean;
 }) {
   if (!standard) return null;
   const same = standard.workers === workers && standard.simDays === simDays;
   return same ? (
-    <div className="mt-1.5 text-[11px] text-[#86868b] leading-snug">Quy mô chuẩn dùng chung cho mọi phương án — nhập số khác sẽ đổi chuẩn cho các phương án sau.</div>
+    <div className="mt-1.5 text-[11px] text-[#86868b] leading-snug">Quy mô chuẩn cho phương án mới — chỉ ảnh hưởng lợi nhuận / doanh thu tháng, không đổi giá báo khách.</div>
   ) : (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-[#8a5a00]">
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-[#8a5a00]">
       <span>Khác quy mô chuẩn ({standard.workers} người × {standard.simDays} công)</span>
       {!readOnly && onApply && <button type="button" onClick={onApply} className="font-semibold text-[#0071e3] hover:underline">Dùng quy mô chuẩn</button>}
+      {!readOnly && onSetStandard && <button type="button" onClick={onSetStandard} className="font-semibold text-[#0071e3] hover:underline">Đặt số này làm chuẩn</button>}
     </div>
   );
 }
 
 /** BƯỚC 2 — lợi nhuận tháng theo quy mô: số lao động × số công = tổng công, từ đó ra doanh thu, chi phí, thuế, lợi nhuận. */
-export function ProfitCard({ data, result, readOnly, onChange, standard }: {
+export function ProfitCard({ data, result, readOnly, onChange, standard, onSetStandard }: {
   data: PlanData; result: PlanResult; readOnly?: boolean; onChange: (p: Partial<PlanSettings>) => void;
   /** Quy mô chuẩn dùng chung (số người × số công) */
   standard?: { workers: number; simDays: number };
+  onSetStandard?: (s: { workers: number; simDays: number }) => void;
 }) {
   const s = data.settings;
   const md = result.totalManDays;
@@ -150,7 +155,8 @@ export function ProfitCard({ data, result, readOnly, onChange, standard }: {
           <span className="text-[12px] font-medium text-[#6e6e73]">= Tổng ngày công / tháng</span>
           <span className="text-[24px] leading-none font-semibold tracking-tight tabular-nums text-[#5e5ce6]">{fmt(md)}<span className="ml-1 text-[13px] font-medium text-[#5e5ce6]/70">công</span></span>
         </div>
-        <StandardScaleHint workers={s.workers} simDays={s.simDays} standard={standard} readOnly={readOnly} onApply={() => standard && onChange({ workers: standard.workers, simDays: standard.simDays })} />
+        <StandardScaleHint workers={s.workers} simDays={s.simDays} standard={standard} readOnly={readOnly} onApply={() => standard && onChange({ workers: standard.workers, simDays: standard.simDays })}
+          onSetStandard={onSetStandard ? () => onSetStandard({ workers: s.workers, simDays: s.simDays }) : undefined} />
       </div>
 
       <dl className="mt-3.5 space-y-1.5 text-[13px]">
