@@ -8,7 +8,7 @@ import {
   BUILTIN_CATALOG, CATALOG_GROUPS, CATALOG_GROUP_LABEL, COST_SECTION_LABEL, builtinOf, describeCalc, describeCost, isEditedBuiltin, parseBulkItems,
   searchCatalog, toStored, type CatalogCost, type CatalogGroup, type CatalogItem, type CostSection,
 } from '../../../lib/costPlan/rowCatalog';
-import { calcValue, type CalcCtx } from '../../../lib/costPlan/quoteSheet';
+import { calcValue, sampleCalcCtx, type CalcCtx } from '../../../lib/costPlan/quoteSheet';
 import type { RowCalc } from '../../../lib/costPlan/types';
 import { newLineId } from '../../../lib/costPlan/engine';
 import { MoneyInput, NumInput, fmt } from './fields';
@@ -28,10 +28,10 @@ type View = 'all' | 'on' | 'off' | 'cost';
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const iconBtn = 'w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-25';
 
-export default function RowCatalogManager({ items, ctx, onSave, onClose }: {
+export default function RowCatalogManager({ items, ctx: planCtx, onSave, onClose }: {
   /** Kho hiện tại (có sẵn + của công ty, kể cả mục đang ẩn) */
   items: CatalogItem[];
-  /** Bối cảnh của bảng giá đang mở — để xem trước giá của mục tự tính */
+  /** Bối cảnh của bảng giá đang mở — để xem trước giá của mục tự tính. Không có (mở từ danh sách) → xem trước theo lương mẫu */
   ctx?: CalcCtx;
   onSave: (list: CatalogItem[]) => Promise<void>;
   onClose: () => void;
@@ -44,6 +44,9 @@ export default function RowCatalogManager({ items, ctx, onSave, onClose }: {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [sampleWage, setSampleWage] = useState(250_000);
+  const ctx: CalcCtx = planCtx ?? sampleCalcCtx(sampleWage);
+  const ctxLabel = planCtx ? 'với bảng giá đang mở' : 'với lương mẫu';
 
   const dirty = !same(list.map(toStored), items.map(toStored));
   const onCount = list.filter(i => !i.hidden).length;
@@ -91,7 +94,7 @@ export default function RowCatalogManager({ items, ctx, onSave, onClose }: {
   const itemRow = (it: CatalogItem) => {
     const open = openId === it.id;
     const b = builtinOf(it);
-    const preview = it.calc && ctx ? calcValue(it.calc, ctx) : null;
+    const preview = it.calc ? calcValue(it.calc, ctx) : null;
     const sameGroup = list.filter(x => x.group === it.group);
     const gi = sameGroup.findIndex(x => x.id === it.id);
     const ins = it.calc?.base === 'insSalary';
@@ -171,9 +174,7 @@ export default function RowCatalogManager({ items, ctx, onSave, onClose }: {
                     ))}
                   </div>
                   <div className="text-[12.5px] text-[#6e6e73]">
-                    {describeCalc(it.calc)} {ctx
-                      ? <>→ với bảng giá đang mở ({ins ? <>lương đóng BHXH <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.insSalary ?? 0)}</b> đ</> : <>giờ chuẩn <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.shr)}</b> đ, giá ngày <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.dayPrice)}</b> đ</>}): <b className="tabular-nums text-[#0071e3]">{fmt(calcValue(it.calc, ctx))} đ</b></>
-                      : '(mở từ bảng giá để xem trước số tiền)'}
+                    {describeCalc(it.calc)} → {ctxLabel} ({ins ? <>lương đóng BHXH <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.insSalary ?? 0)}</b> đ</> : <>giờ chuẩn <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.shr)}</b> đ, giá ngày <b className="tabular-nums text-[#1d1d1f]">{fmt(ctx.dayPrice)}</b> đ</>}): <b className="tabular-nums text-[#0071e3]">{fmt(calcValue(it.calc, ctx))} đ</b>
                   </div>
                 </>
               ) : (
@@ -267,6 +268,15 @@ export default function RowCatalogManager({ items, ctx, onSave, onClose }: {
           <button type="button" onClick={addItem} className={`${btnPrimary} !h-9`}><Plus size={14} />Thêm mục</button>
           <button type="button" onClick={() => setBulkOpen(o => !o)} className={`${btnGhost} !h-9`}>Dán nhiều mục</button>
         </div>
+
+        {!planCtx && (
+          <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-[#6e6e73] shrink-0">
+            <span>Xem trước giá tự tính với lương mẫu</span>
+            <MoneyInput value={sampleWage} onChange={n => setSampleWage(Math.max(0, n))} className={`${field} !bg-white !h-8 w-28 text-right font-semibold shadow-[0_0_0_1px_rgba(0,0,0,0.06)]`} />
+            <span>đ/công</span>
+            <span className="text-[11.5px] text-[#86868b]">(giá ngày = lương, chưa gồm phí DV · lương đóng BHXH ≈ × 26 công — mở từ bảng giá của phương án thì xem đúng số của phương án)</span>
+          </div>
+        )}
 
         {bulkOpen && (
           <div className="mx-5 mb-2 rounded-xl bg-white p-3.5 space-y-2 shadow-[0_0_0_1px_rgba(0,0,0,0.05)] shrink-0">

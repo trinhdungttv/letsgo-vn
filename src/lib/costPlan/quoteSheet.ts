@@ -239,6 +239,14 @@ export function calcValue(c: RowCalc, ctx: CalcCtx): number {
   return start + c.hours * ctx.shr * c.coef * ctx.mk;
 }
 
+/**
+ * Bối cảnh MẪU để xem trước giá khi mở kho đầu mục ngoài phương án: lương mẫu / công (giá ngày = lương, chưa gồm phí DV),
+ * ca đêm +30%, giờ chuẩn = lương ÷ 8, lương đóng BHXH ≈ lương × 26 công.
+ */
+export const sampleCalcCtx = (wageDaily: number): CalcCtx => ({
+  dayPrice: wageDaily, nightPrice: wageDaily * NORM_NIGHT, shr: wageDaily / HOURS_PER_DAY, mk: 1, insSalary: wageDaily * 26,
+});
+
 /** Công thức bằng số để người dùng hiểu giá từ đâu ra: "Giá ngày 300.000 + 4 giờ × 31.250 đ/giờ × 150%". */
 export function calcFormula(c: RowCalc, ctx: CalcCtx, otMarkupPct = 0): string {
   if (c.base === 'insSalary') return `${pct(c.coef)} × lương đóng BHXH ${f(ctx.insSalary ?? 0)} đ/tháng`;

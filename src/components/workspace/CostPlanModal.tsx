@@ -6,7 +6,7 @@
 //
 // MỌI công thức ở src/lib/costPlan/engine.ts (có test). File này chỉ nối state ↔ DB ↔ giao diện.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Plus, Copy, Trash2, Share2, ChevronLeft, Link2, Search, Loader2, AlertTriangle, MoreHorizontal, MapPin, Store } from 'lucide-react';
+import { X, Plus, Copy, Trash2, Share2, ChevronLeft, Link2, Search, Loader2, AlertTriangle, MoreHorizontal, MapPin, Store, Library } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
@@ -34,6 +34,9 @@ import SuggestionsPanel from './costplan/SuggestionsPanel';
 import IndustryTemplateBar from './costplan/IndustryTemplateBar';
 import SharePanel from './costplan/SharePanel';
 import HistoryPanel from './costplan/HistoryPanel';
+import RowCatalogManager from './costplan/RowCatalogManager';
+import { useRowCatalog } from './costplan/useRowCatalog';
+import { mergedCatalog } from '../../lib/costPlan/rowCatalog';
 import { normalizeQuoteInfo as normQI } from '../../lib/quoteInfo';
 import { dateShort, daysLeft, defaultDoc } from '../../lib/costPlan/quoteDoc';
 import { effectiveResult } from '../../lib/costPlan/quoteSheet';
@@ -135,6 +138,9 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
   const [saveNote, setSaveNote] = useState('');
   const [showShare, setShowShare] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // Kho đầu mục (dùng chung mọi phương án: bảng giá + bảng chi phí) — mở thẳng từ danh sách, không cần vào phương án nào
+  const [showCatalog, setShowCatalog] = useState(false);
+  const { mine: catalogMine, replace: replaceCatalog } = useRowCatalog();
   const [conflict, setConflict] = useState<CostPlanRow | null>(null);
   const [remote, setRemote] = useState<CostPlanRow | null>(null);   // bản mới do người khác sửa qua link
   const [picking, setPicking] = useState(false);
@@ -559,6 +565,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                     <MenuItem onClick={() => { duplicate(draft); close(); }}>Nhân bản</MenuItem>
                     {draft.meta.pipeline_id && draft.id && !isReferral(draft.data) && <MenuItem onClick={() => { pushToCrm(); close(); }}>Đưa vào hồ sơ CRM</MenuItem>}
                     <MenuItem onClick={() => { toggleArchive(); close(); }}>{draft.meta.status === 'archived' ? 'Bỏ lưu trữ' : 'Lưu trữ'}</MenuItem>
+                    <div className="my-1 border-t border-[#f0f0f2]" />
+                    <MenuItem hint="Dùng chung mọi phương án" onClick={() => { setShowCatalog(true); close(); }}>Kho đầu mục…</MenuItem>
                   </div>
                 )}
               </Popover>
@@ -596,6 +604,8 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
                 <div className="w-full sm:w-[300px]">
                   <Seg value={filter.status} onChange={v => setF({ status: v })} options={[{ value: '', label: 'Đang dùng' }, { value: 'draft', label: 'Nháp' }, { value: 'final', label: 'Đã chốt' }, { value: 'archived', label: 'Lưu trữ' }]} />
                 </div>
+                <button onClick={() => setShowCatalog(true)} title="Danh mục đầu mục dùng chung cho Bảng giá & Bảng chi phí của mọi phương án: ẩn/hiện, cách tính, bản dịch, mục của công ty"
+                  className={`${btnGhost} !h-9 sm:ml-auto`}><Library size={14} />Kho đầu mục</button>
               </div>
 
               {/* Lọc theo ngành / tỉnh / KCN / chi nhánh — chỉ liệt kê giá trị đang có trong các phương án, kèm số lượng */}
@@ -777,6 +787,10 @@ export function CostPlanModal({ clients, pipeline, branches, toast, onClose, foc
           token={token} toast={toast} onClose={() => setShowShare(false)}
           onChanged={share => { setDraft(d => (d ? { ...d, share } : d)); setPlans(prev => prev.map(p => (p.id === draft.id ? { ...p, share } : p))); }}
         />
+      )}
+      {showCatalog && (
+        <RowCatalogManager items={mergedCatalog(catalogMine)} onClose={() => setShowCatalog(false)}
+          onSave={async l => { await replaceCatalog(l); toast('Đã lưu kho đầu mục'); }} />
       )}
       {showHistory && draft?.id && token && (
         <HistoryPanel planId={draft.id} token={token} currentVersion={draft.version} onRestore={restoreRevision} onClose={() => setShowHistory(false)} />
