@@ -17,7 +17,8 @@ import { sheetFromTemplate, templateCustomRowsMissing } from '../../../lib/costP
 import { useSheetTemplate } from './useSheetTemplate';
 import { useRowCatalog } from './useRowCatalog';
 import RowPicker from './RowPicker';
-import { catalogFromRow, rowFromCatalog } from '../../../lib/costPlan/rowCatalog';
+import RowCatalogManager from './RowCatalogManager';
+import { catalogFromRow, mergedCatalog, rowFromCatalog } from '../../../lib/costPlan/rowCatalog';
 import InsuranceBase from './InsuranceBase';
 import { MenuItem, Popover, Row, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, card, field, labelCls } from './ui';
 
@@ -234,7 +235,8 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
   const applyTemplate = () => { if (tpl) commit(sheetFromTemplate(tpl.sheet, q), 'Áp mẫu bảng giá chung'); };
 
   // ── Kho đầu mục: chọn loại dòng có sẵn khi "Thêm dòng", lưu dòng tự đặt vào kho cho lần sau ──
-  const { mine: catalogMine, add: addToCatalog, remove: removeFromCatalogItem } = useRowCatalog();
+  const { mine: catalogMine, add: addToCatalog, remove: removeFromCatalogItem, replace: replaceCatalog } = useRowCatalog();
+  const [managerOpen, setManagerOpen] = useState(false);
   const [catMsg, setCatMsg] = useState<string | null>(null);
   const flashCat = (m: string) => { setCatMsg(m); setTimeout(() => setCatMsg(null), 3500); };
   const saveRowToCatalog = async (r: QuoteRowCfg) => {
@@ -456,6 +458,7 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
                 onAdd={it => commit({ ...q, rows: [...q.rows, rowFromCatalog(it)] }, `Thêm dòng “${it.name}”`)}
                 onShow={(id, name) => commit({ ...q, rows: q.rows.map(x => (x.id === id ? { ...x, hidden: false } : x)) }, `Hiện lại “${name}”`)}
                 onTemplateRow={r => commit({ ...q, rows: [...q.rows, { ...r, id: newLineId(), hidden: false }] }, `Thêm dòng “${r.name}”`)}
+                onManage={() => setManagerOpen(true)}
                 onBlank={() => { const id = newLineId(); commit({ ...q, rows: [...q.rows, { id, kind: 'custom', name: '', unit: 'VNĐ/ngày', override: 0, hidden: false }] }, 'Thêm dòng'); setOpenId(id); }}
                 onRemoveMine={it => { if (window.confirm(`Xoá “${it.name}” khỏi kho đầu mục của công ty?\nCác bảng giá đã dùng dòng này không bị ảnh hưởng.`)) void removeFromCatalogItem(it.id).then(() => flashCat('Đã xoá khỏi kho')).catch(e => flashCat(`Không xoá được: ${e instanceof Error ? e.message : String(e)}`)); }} />
             )}
@@ -543,6 +546,10 @@ export function PriceTable({ data, result, readOnly, fileName, meta, planId, doc
         )}
       </div>
       {docOpen && <QuoteDocDialog data={data} result={result} meta={meta} planId={planId} defaults={docDefaults} readOnly={readOnly} onChange={onPlan} onClose={() => setDocOpen(false)} />}
+      {managerOpen && !readOnly && (
+        <RowCatalogManager items={mergedCatalog(catalogMine)} ctx={list.calcCtx} onClose={() => setManagerOpen(false)}
+          onSave={async l => { await replaceCatalog(l); flashCat('Đã lưu kho đầu mục'); }} />
+      )}
       {tplOpen && <QuoteTemplateDialog data={data} result={result} meta={meta} planTitle={fileName} planId={planId} defaults={docDefaults} readOnly={readOnly} onChange={onPlan} onClose={() => setTplOpen(false)} />}
     </div>
   );

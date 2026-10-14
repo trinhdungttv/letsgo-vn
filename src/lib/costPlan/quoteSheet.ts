@@ -198,7 +198,18 @@ export interface PriceRow {
   calc?: RowCalc;
 }
 
+/** Bối cảnh để tính dòng tự đặt có công thức (và xem trước trong màn Quản lý kho). */
+export interface CalcCtx { dayPrice: number; nightPrice: number; shr: number; mk: number }
+
+/** Giá của dòng có công thức = [nền] + số giờ × giờ chuẩn × hệ số. */
+export function calcValue(c: RowCalc, ctx: CalcCtx): number {
+  const start = c.base === 'day' ? ctx.dayPrice : c.base === 'night' ? ctx.nightPrice : 0;
+  return start + c.hours * ctx.shr * c.coef * ctx.mk;
+}
+
 export interface PriceList {
+  /** Bối cảnh tính công thức của bảng giá hiện tại */
+  calcCtx?: CalcCtx;
   rows: PriceRow[];
   /** Cơ sở tính (lương/công) dùng cho giờ tăng ca & phụ cấp đêm */
   otBaseDaily: number;
@@ -255,9 +266,8 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
     if (r.kind === 'custom' && r.calc) {
       const { base, hours, coef } = r.calc;
       const nightPrice = dayPrice + otBaseDaily * (NORM_NIGHT - 1);
-      const start = base === 'day' ? dayPrice : base === 'night' ? nightPrice : 0;
       a = {
-        v: start + hours * shr * coef * mk,
+        v: calcValue(r.calc, { dayPrice, nightPrice, shr, mk }),
         formula: `${base === 'day' ? `Giá ngày ${f(dayPrice)} + ` : base === 'night' ? `Giá ca đêm ${f(nightPrice)} + ` : ''}${hours} giờ × ${f(shr)} đ/giờ × ${pct(coef)}${mkTxt}`,
       };
     }
@@ -278,7 +288,8 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
   });
   // Cột thợ tay nghề: tính lại cả bảng với lương thợ (phiên bản thợ không bật cột thợ nên không gọi đệ quy mãi)
   const sd = skilledPlanData(data);
-  if (!sd) return { rows, otBaseDaily, shr, skilled: null };
+  const calcCtx: CalcCtx = { dayPrice, nightPrice: dayPrice + otBaseDaily * (NORM_NIGHT - 1), shr, mk };
+  if (!sd) return { rows, otBaseDaily, shr, skilled: null, calcCtx };
   const sr = computePlan(sd);
   const sl = computePriceList(sd, sr);
   const byId = new Map(sl.rows.map(r => [r.id, r]));
@@ -292,7 +303,7 @@ export function computePriceList(input: PlanData, result: PlanResult): PriceList
       const overridden = manualCustom ? c?.overrideSkilled != null : s.overridden;
       return { ...r, skilled: { price: s.price, auto: s.auto, overridden, formula: manualCustom && !overridden ? 'Như lao động phổ thông' : s.formula } };
     }),
-    otBaseDaily, shr,
+    otBaseDaily, shr, calcCtx,
     skilled: { label: q.skilled?.label || DEFAULT_SKILLED_LABEL, result: effectiveResult(sd, sr) },
   };
 }

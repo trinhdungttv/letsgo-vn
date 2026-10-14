@@ -70,3 +70,35 @@ describe('Kho đầu mục', () => {
     expect(removeFromCatalog(mine, mine[0].id)).toEqual([]);
   });
 });
+
+import { builtinOf, describeCalc, mergedCatalog as merged, parseBulkItems, parseCatalog as parse, pickerCatalog, toStored } from './rowCatalog';
+
+describe('Quản lý kho đầu mục', () => {
+  it('lưu cả kho: giữ thứ tự, mục có sẵn đã sửa không bị nạp trùng, mục ẩn không hiện ở bộ chọn', () => {
+    const all = merged([]);
+    const edited = all.map(i => (i.id === 'b-hol8' ? { ...i, name: 'Lễ Tết 8h ca ngày', calc: { base: 'none' as const, hours: 8, coef: 3 }, hidden: false } : i.id === 'b-uniform' ? { ...i, hidden: true } : i));
+    const stored = parse(JSON.stringify([...edited].reverse().map(toStored)));
+    const m = merged(stored);
+    expect(m.length).toBe(all.length);                                   // không nạp trùng mục gốc
+    expect(m[0].id).toBe(all[all.length - 1].id);                        // giữ thứ tự đã sắp (đảo)
+    expect(m.find(i => i.builtinId === 'b-hol8')!.name).toBe('Lễ Tết 8h ca ngày');
+    expect(pickerCatalog(stored).some(i => i.id === 'b-uniform')).toBe(false);
+    expect(merged(stored).some(i => i.id === 'b-uniform' && i.hidden)).toBe(true);
+  });
+  it('mục có sẵn nhận ra gốc để khôi phục; mục tự thêm không có gốc', () => {
+    const e = { ...merged([])[0], name: 'Tên khác' };
+    expect(builtinOf(e)?.name).toBe('Lương ca ngày 12 tiếng');
+    expect(builtinOf({ id: 'c-1', group: 'other', name: 'X', unit: 'VNĐ' })).toBeUndefined();
+  });
+  it('dán nhiều mục: Tên | Đơn vị | Giá, cả dán từ Excel (Tab), bỏ trống và trùng tên', () => {
+    const got = parseBulkItems('Phụ cấp thâm niên | VNĐ/tháng | 500.000\nTiền thưởng chuyên cần\t VNĐ/tháng\n\nphụ cấp  thâm  niên\nPhụ cấp cơm\nXe đưa đón;VNĐ/ngày;10000', merged([]));
+    expect(got.map(g => [g.name, g.unit, g.price])).toEqual([
+      ['Phụ cấp thâm niên', 'VNĐ/tháng', 500_000], ['Tiền thưởng chuyên cần', 'VNĐ/tháng', 0], ['Xe đưa đón', 'VNĐ/ngày', 10_000],
+    ]);   // "Phụ cấp cơm" đã có sẵn trong kho; "phụ cấp  thâm  niên" trùng dòng đầu
+  });
+  it('mô tả cách tính', () => {
+    expect(describeCalc(undefined)).toBe('nhập tay');
+    expect(describeCalc({ base: 'night', hours: 4, coef: 2 })).toBe('giá ca đêm + 4 giờ × 200%');
+    expect(describeCalc({ base: 'none', hours: 8, coef: 3.9 })).toBe('8 giờ × 390%');
+  });
+});

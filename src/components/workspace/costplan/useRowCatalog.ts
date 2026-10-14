@@ -27,6 +27,8 @@ export function useRowCatalog() {
     window.dispatchEvent(new Event(EVT));
   }, []);
   const add = useCallback((it: CatalogItem) => commit(upsertCatalog(cache ?? [], it)), [commit]);
+  /** Ghi cả danh sách (màn Quản lý kho: sửa, sắp thứ tự, ẩn, xoá, nhập hàng loạt) */
+  const replace = useCallback((list: CatalogItem[]) => commit(list), [commit]);
   const remove = useCallback((id: string) => commit(removeFromCatalog(cache ?? [], id)), [commit]);
-  return { mine, add, remove };
+  return { mine, add, remove, replace };
 }

@@ -24,8 +24,12 @@ export interface CatalogItem {
   price?: number;
   /** Mô tả ngắn hiện trong danh sách */
   hint?: string;
-  /** Do công ty tự lưu (xoá được) */
+  /** Do công ty tự thêm (xoá được). Mục có sẵn thì chỉ ẩn được. */
   custom?: boolean;
+  /** Mục có sẵn đã được lưu lại sau khi sửa: trỏ về mục gốc (để "Khôi phục mặc định" và không bị nạp trùng) */
+  builtinId?: string;
+  /** Ẩn khỏi bộ chọn "Thêm dòng" (vẫn còn trong màn Quản lý) */
+  hidden?: boolean;
 }
 
 const calc = (base: RowCalc['base'], hours: number, coef: number): RowCalc => ({ base, hours, coef });
@@ -85,8 +89,46 @@ export const sheetHasItem = (q: QuoteSheet, it: CatalogItem) => q.rows.some(r =>
 
 /** Kho gộp: có sẵn + của công ty (cùng tên thì bản của công ty thắng — họ đã tự chỉnh). */
 export function mergedCatalog(mine: CatalogItem[]): CatalogItem[] {
-  const own = new Set(mine.map(m => norm(m.name)));
-  return [...mine, ...BUILTIN_CATALOG.filter(b => !own.has(norm(b.name)))];
+  const names = new Set(mine.map(m => norm(m.name)));
+  const ids = new Set(mine.map(m => m.builtinId).filter(Boolean));
+  return [...mine, ...BUILTIN_CATALOG.filter(b => !ids.has(b.id) && !names.has(norm(b.name)))];
+}
+
+/** Mục hiện trong bộ chọn "Thêm dòng" (bỏ mục đã ẩn). */
+export const pickerCatalog = (mine: CatalogItem[]): CatalogItem[] => mergedCatalog(mine).filter(i => !i.hidden);
+
+/** Mục có sẵn gốc của 1 mục đã sửa (để so / khôi phục mặc định). */
+export const builtinOf = (it: CatalogItem): CatalogItem | undefined => BUILTIN_CATALOG.find(b => b.id === (it.builtinId ?? it.id));
+
+/** Mục → dạng lưu: mục có sẵn đã sửa giữ builtinId; mục tự thêm đánh dấu custom. */
+export function toStored(it: CatalogItem): CatalogItem {
+  const b = builtinOf(it);
+  return { ...it, ...(b ? { builtinId: b.id, custom: false } : { custom: true }) };
+}
+
+/** Mô tả cách tính bằng lời: "ca đêm 8h + 4 giờ × 200%" / "nhập tay". */
+export function describeCalc(c: RowCalc | undefined): string {
+  if (!c) return 'nhập tay';
+  const base = c.base === 'day' ? 'giá ca ngày + ' : c.base === 'night' ? 'giá ca đêm + ' : '';
+  return `${base}${c.hours} giờ × ${Math.round(c.coef * 1000) / 10}%`;
+}
+
+/**
+ * Dán nhiều mục một lúc: mỗi dòng 1 mục — "Tên | Đơn vị | Giá" (đơn vị, giá không bắt buộc; ngăn bằng | hoặc Tab hoặc ;).
+ * Bỏ dòng trống, bỏ trùng tên (so với `existing` và trong chính danh sách dán).
+ */
+export function parseBulkItems(text: string, existing: CatalogItem[] = []): CatalogItem[] {
+  const seen = new Set(existing.map(e => norm(e.name)));
+  const out: CatalogItem[] = [];
+  for (const line of text.split('\n')) {
+    const [name = '', unit = '', price = ''] = line.split(/\s*[|\t;]\s*/);
+    const n = name.trim().replace(/\s+/g, ' ');
+    if (!n || seen.has(norm(n))) continue;
+    seen.add(norm(n));
+    const digits = price.replace(/\D/g, '');
+    out.push({ id: `c-${newLineId()}`, group: 'allowance', name: n, unit: unit.trim() || 'VNĐ/ngày', price: digits ? Number(digits) : 0, custom: true });
+  }
+  return out;
 }
 
 /** Tìm trong kho — không cần gõ dấu, bỏ dấu câu, mọi từ gõ vào phải có mặt (không cần đúng thứ tự). */
@@ -107,9 +149,12 @@ export function parseCatalog(raw: string | null | undefined): CatalogItem[] {
       const name = typeof x?.name === 'string' ? x.name.trim() : '';
       if (!name) continue;
       const c = cleanCalc(x.calc);
+      const bid = typeof x.builtinId === 'string' && BUILTIN_CATALOG.some(b => b.id === x.builtinId) ? x.builtinId : undefined;
       out.push({
         id: typeof x.id === 'string' ? x.id : `c-${newLineId()}`, group: x.group === 'shift' || x.group === 'other' ? x.group : 'allowance',
-        name, unit: typeof x.unit === 'string' && x.unit ? x.unit : 'VNĐ/ngày', custom: true,
+        name, unit: typeof x.unit === 'string' && x.unit ? x.unit : 'VNĐ/ngày', custom: !bid,
+        ...(bid ? { builtinId: bid } : {}),
+        ...(x.hidden ? { hidden: true } : {}),
         ...(c ? { calc: c } : { price: Math.max(0, Number(x.price) || 0) }),
         ...(x.i18n && (x.i18n.zh || x.i18n.en) ? { i18n: { zh: x.i18n.zh || undefined, en: x.i18n.en || undefined } } : {}),
       });

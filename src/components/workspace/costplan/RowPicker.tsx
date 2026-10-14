@@ -1,11 +1,11 @@
 // Bộ chọn từ KHO ĐẦU MỤC khi bấm "+ Thêm dòng": tìm nhanh, chia nhóm, bấm là thêm (kèm công thức & bản dịch).
 import { useMemo, useState } from 'react';
 import { Plus, Search, Trash2 } from 'lucide-react';
-import { CATALOG_GROUP_LABEL, mergedCatalog, searchCatalog, sheetHasItem, type CatalogGroup, type CatalogItem } from '../../../lib/costPlan/rowCatalog';
+import { CATALOG_GROUP_LABEL, pickerCatalog, searchCatalog, sheetHasItem, type CatalogGroup, type CatalogItem } from '../../../lib/costPlan/rowCatalog';
 import type { QuoteRowCfg, QuoteSheet } from '../../../lib/costPlan/types';
 import { field } from './ui';
 
-export default function RowPicker({ sheet, mine, hiddenRows, templateRows, onAdd, onShow, onTemplateRow, onBlank, onRemoveMine, close }: {
+export default function RowPicker({ sheet, mine, hiddenRows, templateRows, onAdd, onShow, onTemplateRow, onBlank, onRemoveMine, onManage, close }: {
   sheet: QuoteSheet;
   /** Kho của công ty */
   mine: CatalogItem[];
@@ -17,11 +17,13 @@ export default function RowPicker({ sheet, mine, hiddenRows, templateRows, onAdd
   onShow: (id: string, name: string) => void;
   onTemplateRow: (r: QuoteRowCfg) => void;
   onBlank: () => void;
+  /** Mở màn Quản lý kho đầu mục */
+  onManage: () => void;
   onRemoveMine: (it: CatalogItem) => void;
   close: () => void;
 }) {
   const [q, setQ] = useState('');
-  const items = useMemo(() => searchCatalog(mergedCatalog(mine), q), [mine, q]);
+  const items = useMemo(() => searchCatalog(pickerCatalog(mine), q), [mine, q]);
   const groups = (['shift', 'allowance', 'other'] as CatalogGroup[]).map(g => ({ g, list: items.filter(i => i.group === g) })).filter(x => x.list.length);
   const hidden = q ? hiddenRows.filter(h => h.name.toLowerCase().includes(q.toLowerCase())) : hiddenRows;
 
@@ -77,10 +79,14 @@ export default function RowPicker({ sheet, mine, hiddenRows, templateRows, onAdd
         )}
         {groups.length === 0 && hidden.length === 0 && <div className="px-3.5 py-4 text-[12.5px] text-[#86868b]">Không có đầu mục nào khớp “{q}”.</div>}
       </div>
-      <button type="button" onClick={() => { onBlank(); close(); }}
-        className="shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 border-t border-[#f0f0f2] text-[13px] font-medium text-[#0071e3] hover:bg-[#f5f5f7]">
-        <Plus size={14} />Dòng trống — tự đặt tên{q ? ` “${q}”` : ''}
-      </button>
+      <div className="shrink-0 flex items-center border-t border-[#f0f0f2]">
+        <button type="button" onClick={() => { onBlank(); close(); }}
+          className="flex-1 min-w-0 flex items-center gap-1.5 px-3.5 py-2.5 text-[13px] font-medium text-[#0071e3] hover:bg-[#f5f5f7]">
+          <Plus size={14} className="shrink-0" /><span className="truncate">Dòng trống — tự đặt tên{q ? ` “${q}”` : ''}</span>
+        </button>
+        <button type="button" onClick={() => { onManage(); close(); }}
+          className="shrink-0 px-3.5 py-2.5 text-[13px] font-medium text-[#0a7d6e] hover:bg-[#f5f5f7] border-l border-[#f0f0f2]">Quản lý kho…</button>
+      </div>
     </div>
   );
 }
