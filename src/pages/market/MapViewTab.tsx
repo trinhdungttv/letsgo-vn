@@ -16,8 +16,12 @@ import { shortId } from '../../hooks/useHashSubRoute';
 import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep, haversineKm } from '../../lib/geo';
 import type { Branch, MarketLeadSupplier } from '../../lib/types';
 import type { MarketTabProps } from './shared';
+import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, loadGroupIcons, DEFAULT_VIEW_KEY, loadDefaultView, SOUTH_VN_BOUNDS, type MapGroup, type SavedMapView } from '../../lib/mapGroups';
 
-type Group = 'branch' | 'kcn' | 'client' | 'prospect' | 'lead';
+// Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
+type Group = MapGroup;
+const GROUPS = MAP_GROUPS;
+const GROUP_COLOR = MAP_GROUP_COLOR;
 
 interface MapPoint {
   id: string;
@@ -31,33 +35,6 @@ interface MapPoint {
   // Lương công ty + chi tiết theo từng NCC — chỉ có ở client/prospect/lead đã nhập lương.
   wage?: { min: number; max: number } | null;
   suppliers?: MarketLeadSupplier[];
-}
-
-const GROUPS: { id: Group; label: string; color: string }[] = [
-  { id: 'branch', label: 'Chi nhánh', color: '#1D4ED8' },
-  { id: 'kcn', label: 'Khu công nghiệp', color: '#D97706' },
-  { id: 'client', label: 'KH đang hợp tác', color: '#059669' },
-  { id: 'prospect', label: 'KH tiềm năng', color: '#7C3AED' },
-  { id: 'lead', label: 'Công ty / Dự án', color: '#DB2777' },
-];
-
-const GROUP_COLOR: Record<Group, string> = Object.fromEntries(GROUPS.map(g => [g.id, g.color])) as Record<Group, string>;
-
-// Icon (emoji) mặc định cho từng loại — người dùng tự đổi qua nút Cài đặt, lưu ở máy (localStorage).
-const DEFAULT_GROUP_ICONS: Record<Group, string> = {
-  branch: '', kcn: '🏭', client: '', prospect: '', lead: '',
-};
-const GROUP_ICONS_KEY = 'lgmap_group_icons_v1';
-
-function loadGroupIcons(): Record<Group, string> {
-  try {
-    const raw = localStorage.getItem(GROUP_ICONS_KEY);
-    if (!raw) return { ...DEFAULT_GROUP_ICONS };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_GROUP_ICONS, ...parsed };
-  } catch {
-    return { ...DEFAULT_GROUP_ICONS };
-  }
 }
 
 // Bộ lọc/hiển thị bản đồ — nhớ theo máy (localStorage) để mở lại/F5 không phải chọn lại.
@@ -87,27 +64,6 @@ function loadMapPrefs(): MapPrefs {
 }
 
 const VN_CENTER: [number, number] = [16.05, 107.5];
-
-// Vùng hoạt động chính (miền Nam: Đông Nam Bộ + Tây Nam Bộ + rìa Tây Nguyên) — dùng
-// làm khung nhìn mặc định mỗi lần mở Bản đồ, thay vì zoom hết toàn Việt Nam.
-const SOUTH_VN_BOUNDS: L.LatLngBoundsExpression = [
-  [8.2, 103.3],
-  [14.6, 109.6],
-];
-
-// Khung nhìn mặc định do người dùng tự đặt (Công cụ → Đặt view hiện tại làm mặc định)
-// — lưu localStorage, ghi đè SOUTH_VN_BOUNDS ở lần mở sau. Không có thì dùng mặc định gốc.
-const DEFAULT_VIEW_KEY = 'lgmap_default_view';
-type SavedMapView = { center: [number, number]; zoom: number };
-function loadDefaultView(): SavedMapView | null {
-  try {
-    const raw = localStorage.getItem(DEFAULT_VIEW_KEY);
-    if (!raw) return null;
-    const v = JSON.parse(raw);
-    if (Array.isArray(v.center) && v.center.length === 2 && typeof v.zoom === 'number') return v;
-  } catch { /* ignore */ }
-  return null;
-}
 
 // Zoom >= mức này thì hiện tên cố định cạnh marker (không cần click/hover).
 const LABEL_ZOOM = 12;

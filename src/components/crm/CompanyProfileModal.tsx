@@ -3,7 +3,7 @@ import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
   ClipboardList, Circle, Clock, CheckCircle2, StickyNote, Send,
-  ChevronDown, ChevronUp, GitCompare, FileText, PanelRight, AppWindow, Maximize2,
+  ChevronDown, ChevronUp, GitCompare, FileText, PanelRight, AppWindow, Maximize2, Trash2,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/format';
 import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus, PipelineAppendix, ClientGift } from '../../lib/types';
@@ -18,11 +18,12 @@ import { useBranchData } from '../../hooks/useBranchData';
 import MarketSupplyBlock from './MarketSupplyBlock';
 import QuoteInfoBlock from './QuoteInfoBlock';
 import { PipelineSourcePicker } from './PipelineSourceField';
+import { findClientsByName, otherPipelineEntryOf, pipelineDataCounts, linkPipelineToClient } from '../../lib/pipelineHelpers';
 import { sourceOf, cleanSource, sameSource, sourceFullLabel, sourceSaveErrorHint, type PipelineSource } from '../../lib/pipelineSource';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { useCompanyMedia, mediaToClientFields, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow } from './CompanyMedia';
+import { useCompanyMedia, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow } from './CompanyMedia';
 
 export const STAGES = [
   { id: 'tiem-nang',  label: 'Tiềm năng',    headerBg: 'bg-blue-50',    headerText: 'text-blue-700',    border: 'border-blue-200'   },
@@ -166,9 +167,11 @@ export interface CompanyProfileModalProps {
   onOpenCostPlan?: () => void;
   /** Số phương án giá đã lập cho công ty này */
   costPlanCount?: number;
+  /** Nạp lại danh sách ở trang cha sau thay đổi lớn (chuyển sang Khách hàng, gộp thẻ CRM) */
+  onRefresh?: () => void;
 }
 
-export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary, onOpenCostPlan, costPlanCount }: CompanyProfileModalProps) {
+export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary, onOpenCostPlan, costPlanCount, onRefresh }: CompanyProfileModalProps) {
   const { user } = useAuth();
   // Chi nhánh — nguồn duy nhất để hiển thị/gán, không đọc cột `region` (tên cũ).
   const { branches } = useBranchData();
@@ -522,6 +525,40 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     else toast('Lỗi: ' + error.message);
   };
 
+  // Sửa / xoá ghi chú nội bộ (crm_interactions loại 'note') — dùng chung với trang Khách hàng.
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const saveNoteEdit = async (note: CRMInteraction) => {
+    const content = noteDraft.trim();
+    if (!content) return;
+    if (content === (note.content ?? '').trim()) { setEditingNoteId(null); return; }
+    setSavingNote(true);
+    const { error } = await supabase.from('crm_interactions').update({ content }).eq('id', note.id);
+    setSavingNote(false);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    setInteractions(prev => prev.map(i => i.id === note.id ? { ...i, content } : i));
+    setEditingNoteId(null);
+    await logActivity({
+      user, action: 'update', table: 'crm_interactions', recordId: note.id,
+      description: `Sửa ghi chú nội bộ của "${entry.company_name}"`,
+      oldData: note, newData: { ...note, content },
+    });
+  };
+  const deleteNote = async (note: CRMInteraction) => {
+    const preview = (note.content ?? '').trim().slice(0, 80);
+    if (!confirm(`Xoá ghi chú này?\n\n"${preview}${(note.content ?? '').length > 80 ? '…' : ''}"`)) return;
+    const { error } = await supabase.from('crm_interactions').delete().eq('id', note.id);
+    if (error) { toast('Lỗi: ' + error.message); return; }
+    setInteractions(prev => prev.filter(i => i.id !== note.id));
+    toast('Đã xoá ghi chú');
+    await logActivity({
+      user, action: 'delete', table: 'crm_interactions', recordId: note.id,
+      description: `Xoá ghi chú nội bộ của "${entry.company_name}"`,
+      oldData: note,
+    });
+  };
+
   const addAppendix = async () => {
     if (!newPLContent.trim()) return;
     setAddingPL(true);
@@ -712,31 +749,65 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     }
   };
 
+  // Bắt đầu hợp tác = gắn thẻ CRM này vào hồ sơ Khách hàng (tạo mới, hoặc dùng hồ sơ trùng tên đã có).
+  // Gắn client_id thì trang Khách hàng đọc đúng thẻ này → lịch sử, ghi chú, quà tặng, việc, sở thích,
+  // phụ lục hiện ở cả 2 nơi; thông tin Thị trường / bản đồ / ảnh bìa được chép sang (pipelineHelpers).
   const handleActivate = async () => {
-    if (!confirm(`Chuyển "${entry.company_name}" sang Khách hàng đang hợp tác?`)) return;
     setActivating(true);
     try {
-      // Khách hàng mới nhận thẳng branch_id — trước đây chép `entry.region`
-      // (tên chi nhánh cũ) vào `clients.region`, chính là đường khiến tên cũ
-      // quay lại hệ thống sau mỗi lần kích hoạt.
-      const { error } = await supabase.from('clients').insert({
-        name: entry.company_name, branch_id: entry.branch_id || null,
-        client_type: 'active', pipeline_stage: 'won',
-        won_date: new Date().toISOString().slice(0, 10),
-        notes: entry.notes || null, status: 'ok',
-        cutoff_day: 25, payment_start: 5, payment_end: 8,
-        // Ảnh bìa + vị trí bản đồ đã nhập ở Pipeline đi theo sang hồ sơ Khách hàng
-        ...mediaToClientFields(media?.kind === 'lead' ? media : null),
-      });
-      if (error) throw error;
-      await supabase.from('crm_pipeline').update({ stage: 'hop-tac' }).eq('id', entry.id);
-      onUpdate({ ...entry, stage: 'hop-tac' });
+      const name = entry.company_name.trim();
+      const matches = await findClientsByName(name);
+      const match = matches.find(c => !c.archived_at) ?? matches[0] ?? null;
+      const other = match ? await otherPipelineEntryOf(match.id, entry.id) : null;
+      let msg = match
+        ? `Đã có hồ sơ Khách hàng "${match.name}"${match.archived_at ? ' (đang lưu trữ)' : ''}.\n\n` +
+          'Gắn công ty này vào hồ sơ đó — KHÔNG tạo Khách hàng trùng. Ô nào bên Khách hàng còn trống sẽ được điền từ CRM.'
+        : `Chuyển "${name}" sang Khách hàng đang hợp tác?\n\n` +
+          'Tạo hồ sơ Khách hàng mới, mang theo: lịch sử chăm sóc, ghi chú nội bộ, quà tặng, việc cần làm, sở thích, phụ lục, người liên hệ, KCN & nhà cung ứng, ảnh bìa, vị trí bản đồ.';
+      if (other) {
+        const n = await pipelineDataCounts(other.id);
+        msg += `\n\nKhách hàng này đang có 1 thẻ CRM riêng (${n.interactions} lịch sử/ghi chú, ${n.gifts} quà tặng, ${n.tasks} việc, ${n.appendices} phụ lục) — sẽ GỘP hết vào thẻ này. ` +
+          'Thẻ cũ chuyển sang "Ngưng HĐ" kèm ghi chú "Đã gộp", không xoá dữ liệu nào.';
+      }
+      if (!confirm(msg)) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      let clientId = match?.id ?? null;
+      if (!clientId) {
+        // Khách hàng mới nhận thẳng branch_id — không chép `entry.region` (tên chi nhánh cũ).
+        const { data, error } = await supabase.from('clients').insert({
+          name: entry.company_name, branch_id: entry.branch_id || null,
+          client_type: 'active', pipeline_stage: 'won', won_date: today,
+          notes: entry.notes || null, status: 'ok',
+          cutoff_day: 25, payment_start: 5, payment_end: 8,
+        }).select('id').single();
+        if (error) throw error;
+        clientId = data.id as string;
+      } else if (match && match.client_type !== 'active') {
+        await supabase.from('clients').update({ client_type: 'active', pipeline_stage: 'won', won_date: today }).eq('id', clientId);
+      }
+      const { filled, warning } = await linkPipelineToClient(entry, clientId, { existingClient: !!match, mergeWith: other });
+
+      // Người liên hệ đang chọn → gắn vào công ty để trang Khách hàng / CSKH thấy ngay
+      const contact = entry.contact_id ? contacts.find(c => c.id === entry.contact_id) : null;
+      if (contact && !clientIdsOf(contact).includes(clientId)) {
+        try {
+          await addContactClient(contact, clientId, { user, clientName: () => entry.company_name });
+          onContactsChanged?.();
+        } catch (e: any) { toast('Chưa gắn được người liên hệ vào Khách hàng: ' + e.message); }
+      }
+      await logNoteInteraction(match ? `Bắt đầu hợp tác — gắn vào hồ sơ Khách hàng "${match.name}"` : 'Bắt đầu hợp tác — tạo hồ sơ Khách hàng');
+      const updated = { ...entry, ...filled, stage: 'hop-tac', sub_status: null, client_id: clientId };
+      onUpdate(updated);
       await logActivity({
         user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
-        description: `Chuyển "${entry.company_name}" sang Khách hàng đang hợp tác`,
-        oldData: entry, newData: { ...entry, stage: 'hop-tac' },
+        description: match
+          ? `Gắn "${entry.company_name}" vào Khách hàng "${match.name}"${other ? ' (gộp thẻ CRM cũ)' : ''}`
+          : `Chuyển "${entry.company_name}" sang Khách hàng đang hợp tác`,
+        oldData: entry, newData: updated,
       });
-      toast(`Đã chuyển "${entry.company_name}" sang Khách hàng!`);
+      toast(warning ?? `Đã chuyển "${entry.company_name}" sang Khách hàng — dữ liệu CRM hiện cả ở hồ sơ Khách hàng`);
+      onRefresh?.();
       onClose?.();
     } catch (e: any) { toast('Lỗi: ' + e.message); }
     finally { setActivating(false); }
@@ -903,14 +974,26 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
 
   /* ═══ Các khối nội dung — dùng chung cho cả biến thể modal và panel ═══ */
 
+  const lastContactEl = (
+    <div>
+      <div className="text-[11px] text-[#888] font-medium mb-0.5">Liên hệ cuối</div>
+      <div className="text-[12.5px] font-medium text-[#111]">
+        {entry.last_contact || '—'}
+      </div>
+    </div>
+  );
+
   const blkBasicInfo = (
     <>
       <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-        <InlineEdit
-          label="Tên công ty"
-          value={entry.company_name}
-          onSave={v => renameCompany(v)}
-        />
+        {/* Hồ sơ dạng modal: tên + đánh giá đã có ở đầu hồ sơ (sửa được tại đó) — không lặp lại */}
+        {!isModal && (
+          <InlineEdit
+            label="Tên công ty"
+            value={entry.company_name}
+            onSave={v => renameCompany(v)}
+          />
+        )}
         {/*
           Chi nhánh — ghi thẳng vào branch_id (khoá duy nhất), không đụng tới
           cột `region`. Trước đây ô này là InlineEdit ghi text tự do vào
@@ -950,6 +1033,7 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           )}
         </div>
         )}
+        {isModal && lastContactEl}
         <div className="col-span-2">
           <div className="text-[11px] text-[#888] font-medium mb-1">Nguồn <span className="font-normal text-[#bbb]">— ai / đâu mang dự án về</span></div>
           <PipelineSourcePicker
@@ -972,23 +1056,20 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           type="number"
           onSave={v => patchEntry({ workers_permanent: parseInt(v) || 0 }, `Cập nhật tổng LĐ chính thức cho "${entry.company_name}"`)}
         />
-        <div>
-          <div className="text-[11px] text-[#888] font-medium mb-0.5">Đánh giá</div>
-          <button
-            onClick={cycleRating}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[12px] font-medium transition hover:opacity-80 ${ratingInfo.badge}`}
-          >
-            <span className={`w-2 h-2 rounded-full ${ratingInfo.dot}`} />
-            {ratingInfo.label}
-            <span className="text-[10px] opacity-60 ml-0.5">↻</span>
-          </button>
-        </div>
-        <div>
-          <div className="text-[11px] text-[#888] font-medium mb-0.5">Liên hệ cuối</div>
-          <div className="text-[12.5px] font-medium text-[#111]">
-            {entry.last_contact || '—'}
+        {!isModal && (
+          <div>
+            <div className="text-[11px] text-[#888] font-medium mb-0.5">Đánh giá</div>
+            <button
+              onClick={cycleRating}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[12px] font-medium transition hover:opacity-80 ${ratingInfo.badge}`}
+            >
+              <span className={`w-2 h-2 rounded-full ${ratingInfo.dot}`} />
+              {ratingInfo.label}
+              <span className="text-[10px] opacity-60 ml-0.5">↻</span>
+            </button>
           </div>
-        </div>
+        )}
+        {!isModal && lastContactEl}
         {onDealOwnerChange ? (
           <InlineEdit
             label="Người phụ trách"
@@ -1168,14 +1249,41 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
               .slice()
               .reverse()
               .map(i => (
-                <div key={i.id} className="flex gap-2 items-start">
+                <div key={i.id} className="group flex gap-2 items-start">
                   <div className="w-6 h-6 rounded-full bg-yellow-100 flex items-center justify-center shrink-0 mt-0.5">
                     <StickyNote size={11} className="text-yellow-600" />
                   </div>
-                  <div className="flex-1 bg-[#FAFAF8] border border-[#E8E7E2] rounded-lg px-3 py-2">
-                    <div className="text-[12.5px] text-[#222] leading-relaxed whitespace-pre-wrap">{i.content}</div>
-                    <div className="text-[10.5px] text-[#aaa] mt-1">{formatDate(i.interaction_date)}</div>
-                  </div>
+                  {editingNoteId === i.id ? (
+                    <div className="flex-1 min-w-0">
+                      <textarea
+                        autoFocus value={noteDraft} onChange={e => setNoteDraft(e.target.value)} rows={3}
+                        onFocus={e => { const n = e.currentTarget.value.length; e.currentTarget.setSelectionRange(n, n); }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveNoteEdit(i); }
+                          if (e.key === 'Escape') setEditingNoteId(null);
+                        }}
+                        className="w-full text-[12.5px] px-3 py-2 border border-blue-400 rounded-lg outline-none resize-y leading-relaxed"
+                      />
+                      <div className="flex justify-end gap-1.5 mt-1">
+                        <button onClick={() => setEditingNoteId(null)} className="px-2.5 py-1 rounded-md text-[11.5px] text-[#777] hover:bg-gray-100">Huỷ</button>
+                        <button onClick={() => saveNoteEdit(i)} disabled={savingNote || !noteDraft.trim()}
+                          className="px-2.5 py-1 rounded-md text-[11.5px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                          {savingNote ? 'Đang lưu…' : 'Lưu'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative flex-1 min-w-0 bg-[#FAFAF8] border border-[#E8E7E2] rounded-lg px-3 py-2">
+                      <div className="text-[12.5px] text-[#222] leading-relaxed whitespace-pre-wrap break-words pr-10">{i.content}</div>
+                      <div className="text-[10.5px] text-[#aaa] mt-1">{formatDate(i.interaction_date)}</div>
+                      <div className="absolute top-1.5 right-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <button onClick={() => { setEditingNoteId(i.id); setNoteDraft(i.content ?? ''); }} title="Sửa ghi chú"
+                          className="p-1 rounded text-[#aaa] hover:text-blue-600 hover:bg-white"><Pencil size={11} /></button>
+                        <button onClick={() => deleteNote(i)} title="Xoá ghi chú"
+                          className="p-1 rounded text-[#aaa] hover:text-red-600 hover:bg-white"><Trash2 size={11} /></button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
           </div>
@@ -1313,21 +1421,11 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg text-[13px] font-semibold hover:bg-emerald-700 disabled:opacity-50 transition"
         >
           <Rocket size={14} />
-          {activating ? 'Đang xử lý...' : 'Bắt đầu hợp tác'}
+          {activating ? 'Đang xử lý...' : entry.stage === 'hop-tac' ? 'Liên kết sang hồ sơ Khách hàng' : 'Bắt đầu hợp tác'}
         </button>
       )}
 
-      {!isLinkedToClient && !ARCHIVED_STAGES[entry.stage] && (
-        <button onClick={() => setDeclineOpen(true)} className="block text-[12px] text-orange-600 hover:text-orange-700 transition">
-          Khách không hợp tác…
-        </button>
-      )}
-      {!isLinkedToClient && ARCHIVED_STAGES[entry.stage] && (
-        <button onClick={handleRestore} className="block text-[12px] text-blue-600 hover:text-blue-700 transition">
-          Khôi phục về Tiềm năng
-        </button>
-      )}
-
+      {/* "Không hợp tác" / "Khôi phục" nằm ở hàng nhãn đầu hồ sơ — không lặp lại ở đây */}
       {isAdmin && !isLinkedToClient && onDelete && (
         <button
           onClick={() => { if (confirm(`Xóa "${entry.company_name}"?`)) onDelete(); }}
@@ -1752,8 +1850,8 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   );
 
   const blkLocation = (
-    <CompanyLocationCard media={media} companyName={entry.company_name} mapClassName={wide ? 'h-56' : 'h-40'}
-      onSaveLink={link => saveMedia({ mapLink: link }, link ? 'Cập nhật vị trí bản đồ' : 'Xoá link bản đồ')} />
+    <CompanyLocationCard media={media} companyName={entry.company_name} crmId={entry.id}
+      mapClassName={wide ? 'h-64' : 'h-48'} onSave={saveMedia} />
   );
   const coverDialog = coverEditing && media ? (
     <CoverEditDialog media={media} onClose={() => setCoverEditing(false)}
@@ -1766,9 +1864,9 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   const wideWrap = mode === 'full' ? 'max-w-[1400px] mx-auto' : '';
 
   const headerEl = (
-    <div className={`bg-white border-b border-[#E8E7E2] py-4 shrink-0 ${wide ? 'px-5 md:px-6' : 'px-5'}`}>
+    <div className={`bg-white border-b border-[#E8E7E2] py-3.5 shrink-0 ${wide ? 'px-5 md:px-6' : 'px-5'}`}>
       <div className={wideWrap}>
-        <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-start justify-between gap-3 mb-2.5">
           <div className="flex-1 min-w-0">
             {renaming ? (
               <div className="flex items-center gap-1">
@@ -1789,12 +1887,6 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
                 <button onClick={() => setRenaming(true)} title="Sửa tên công ty" className="p-1 rounded text-[#bbb] hover:text-blue-600 hover:bg-blue-50 shrink-0"><Pencil size={13} /></button>
               </h2>
             )}
-            {(clientBranchId || entry.branch_id) && (
-              <div className="flex items-center gap-1 mt-1 text-[12px] text-[#888]">
-                <MapPin size={11} />
-                {branchLabelOf({ branch_id: clientBranchId ?? entry.branch_id }, branches)}
-              </div>
-            )}
           </div>
           {!wide && (
             <div className="flex items-center gap-1.5 shrink-0">
@@ -1803,7 +1895,14 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap">
+          {/* Chi nhánh chung hàng với các nhãn cho gọn (trước đây chiếm 1 dòng riêng dưới tên) */}
+          {(clientBranchId || entry.branch_id) && (
+            <span className="inline-flex items-center gap-1 text-[12px] text-[#888] mr-0.5">
+              <MapPin size={11} />
+              {branchLabelOf({ branch_id: clientBranchId ?? entry.branch_id }, branches)}
+            </span>
+          )}
           {stageInfo && (
             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${stageInfo.headerBg} ${stageInfo.headerText} ${stageInfo.border}`}>
               {stageInfo.label}

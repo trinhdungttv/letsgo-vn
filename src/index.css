@@ -119,6 +119,28 @@ body {
 .lgmap-marker:hover .lgmap-pin {
   transform: rotate(-45deg) scale(1.15);
 }
+.lgmap-pin.lgmap-pin-sm {
+  width: 20px;
+  height: 20px;
+  border-width: 1.5px;
+}
+.lgmap-pin-sm::after {
+  width: 7px;
+  height: 7px;
+}
+.lgmap-pin-sm .lgmap-pin-icon {
+  font-size: 10px;
+}
+/* Ghim công ty đang mở trong bản đồ nhỏ của hồ sơ — to hơn, có quầng để nổi giữa các điểm khác */
+.lgmap-pin.lgmap-pin-main {
+  width: 30px;
+  height: 30px;
+  border-width: 3px;
+  box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.22), 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+.lgmini-picking.leaflet-container {
+  cursor: crosshair;
+}
 .lgmap-pin-has-icon::after {
   display: none;
 }

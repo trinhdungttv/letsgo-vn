@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
-import { Camera, ImagePlus, MapPin, ExternalLink, Pencil, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Camera, ImagePlus, MapPin, ExternalLink, Pencil, X, Maximize2, Minimize2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import CoverImageEditor, { type CoverImageValue } from '../CoverImageEditor';
 import MapLinkHint from '../MapLinkHint';
-import MiniMap from '../MiniMap';
+import MiniMap, { type LatLngLite } from '../MiniMap';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { MAP_GROUPS, fetchMapContextPoints, type MapContextPoint, type MapGroup } from '../../lib/mapGroups';
 import { notifyMarketChanged, US } from './MarketSupplyBlock';
 
 /* ═══ Ảnh bìa + vị trí bản đồ của 1 công ty trong CRM Pipeline ═══
@@ -46,19 +48,6 @@ function fromRow(kind: 'client' | 'lead', row: MediaRow): CompanyMediaData {
   };
 }
 
-/** Các cột ảnh bìa + bản đồ để chép sang hồ sơ Khách hàng khi "Bắt đầu hợp tác" — chỉ gửi cột có giá trị. */
-export function mediaToClientFields(m: CompanyMediaData | null): Record<string, unknown> {
-  if (!m) return {};
-  return {
-    ...(m.cover.url ? {
-      cover_image_url: m.cover.url, cover_image_fit: m.cover.fit ?? 'cover',
-      cover_image_pos_x: m.cover.posX ?? 50, cover_image_pos_y: m.cover.posY ?? 50,
-    } : {}),
-    ...(m.mapLink ? { map_link: m.mapLink } : {}),
-    ...(m.lat != null && m.lng != null ? { lat: m.lat, lng: m.lng, geocoded_at: new Date().toISOString() } : {}),
-  };
-}
-
 export function useCompanyMedia(
   entry: { id: string; company_name: string; client_id?: string | null },
   toast: (m: string) => void,
@@ -83,10 +72,16 @@ export function useCompanyMedia(
     return () => { alive = false; };
   }, [entry.id, entry.client_id, enabled]);
 
-  const save = async (patch: { cover?: CoverImageValue; mapLink?: string }, description: string): Promise<boolean> => {
+  const save = async (patch: { cover?: CoverImageValue; mapLink?: string; pin?: LatLngLite }, description: string): Promise<boolean> => {
     if (!media) return false;
     const row: Record<string, unknown> = {};
     const next: CompanyMediaData = { ...media };
+    if (patch.pin) {
+      // Ghim đặt tay trên bản đồ → sinh link Google Maps dạng ?q=lat,lng (mở được, tab Bản đồ đọc được toạ độ)
+      if (!isValidVnLatLng(patch.pin)) { toast('Vị trí nằm ngoài Việt Nam — chọn lại trên bản đồ'); return false; }
+      const lat = +patch.pin.lat.toFixed(6), lng = +patch.pin.lng.toFixed(6);
+      patch = { ...patch, pin: undefined, mapLink: `https://www.google.com/maps?q=${lat},${lng}` };
+    }
     if (patch.cover) {
       const url = (patch.cover.url ?? '').trim() || null;
       const cover = { url, fit: patch.cover.fit ?? 'cover', posX: Math.round(patch.cover.posX ?? 50), posY: Math.round(patch.cover.posY ?? 50) };
@@ -245,74 +240,146 @@ export function CoverEditDialog({ media, onSave, onClose }: {
   );
 }
 
-/** Khối "Vị trí trên bản đồ": bản đồ nhỏ có ghim + dán/sửa link Google Maps. */
-export function CompanyLocationCard({ media, companyName, onSaveLink, mapClassName = 'h-44' }: {
+/** Khối "Vị trí trên bản đồ": bản đồ nhỏ có ghim đỏ của công ty + các điểm của Bản đồ Thị trường
+ *  (chi nhánh, KCN, khách hàng, công ty/dự án) để phóng ra là thấy xung quanh. Đặt vị trí bằng
+ *  cách bấm/kéo ghim trên bản đồ hoặc dán link Google Maps. */
+export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClassName = 'h-44' }: {
   media: CompanyMediaData | null;
   companyName: string;
-  onSaveLink: (link: string) => Promise<boolean>;
+  /** id dòng crm_pipeline — để bỏ chính công ty này khỏi lớp điểm xung quanh */
+  crmId: string;
+  onSave: (patch: { mapLink?: string; pin?: LatLngLite }, description: string) => Promise<boolean>;
   mapClassName?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<LatLngLite | null>(null);
   const [saving, setSaving] = useState(false);
+  const [big, setBig] = useState(false);
+  const [points, setPoints] = useState<MapContextPoint[]>([]);
+  const [shownGroups, setShownGroups] = usePersistedState<MapGroup[]>('crm_minimap_groups', MAP_GROUPS.map(g => g.id));
   const saved = media?.mapLink ?? '';
-  useEffect(() => { setDraft(saved); setEditing(false); }, [saved]);
+  useEffect(() => { setDraft(saved); setEditing(false); setPending(null); }, [saved]);
+  useEffect(() => {
+    let alive = true;
+    fetchMapContextPoints().then(p => { if (alive) setPoints(p); });
+    return () => { alive = false; };
+  }, [media?.mapLink]);
+
+  const ownId = media?.id ?? null;
+  const around = useMemo(() => points.filter(p => p.id !== ownId && p.crmId !== crmId), [points, ownId, crmId]);
+  const others = useMemo(() => around.filter(p => shownGroups.includes(p.group)), [around, shownGroups]);
+  const countBy = useMemo(() => {
+    const m: Partial<Record<MapGroup, number>> = {};
+    around.forEach(p => { m[p.group] = (m[p.group] ?? 0) + 1; });
+    return m;
+  }, [around]);
 
   if (!media) return <div className="text-[11.5px] text-[#999]">Đang tải vị trí…</div>;
-  const hasPin = media.lat != null && media.lng != null;
+  const savedPin = media.lat != null && media.lng != null ? { lat: media.lat, lng: media.lng } : null;
+  const picking = editing || !savedPin;
   const showInput = editing || !saved;
-  const submit = async () => {
+
+  const cancel = () => { setDraft(saved); setPending(null); setEditing(false); };
+  const savePin = async () => {
+    if (!pending) return;
+    setSaving(true);
+    const ok = await onSave({ pin: pending }, savedPin ? 'Dời ghim vị trí trên bản đồ' : 'Đặt ghim vị trí trên bản đồ');
+    setSaving(false);
+    if (ok) { setPending(null); setEditing(false); }
+  };
+  const saveLink = async () => {
     const link = draft.trim();
     if (link === saved) { setEditing(false); return; }
     if (!link && !confirm('Xoá link Google Maps và ghim bản đồ của công ty này?')) return;
     setSaving(true);
-    const ok = await onSaveLink(link);
+    const ok = await onSave({ mapLink: link }, link ? 'Cập nhật vị trí bản đồ' : 'Xoá link bản đồ');
     setSaving(false);
-    if (ok) setEditing(false);
+    if (ok) { setEditing(false); setPending(null); }
   };
+  const toggleGroup = (g: MapGroup) => setShownGroups(cur => cur.includes(g) ? cur.filter(x => x !== g) : [...cur, g]);
 
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <div className="text-[12px] font-semibold text-[#333] inline-flex items-center gap-1"><MapPin size={13} className="text-violet-500" /> Vị trí trên bản đồ</div>
-        {saved && (
-          <a href={saved} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11.5px] text-blue-600 hover:underline shrink-0">
-            Mở Google Maps <ExternalLink size={11} />
-          </a>
-        )}
-      </div>
-      {hasPin ? (
-        <MiniMap lat={media.lat!} lng={media.lng!} label={companyName} className={`w-full rounded-lg border border-[#E8E7E2] overflow-hidden ${mapClassName}`} />
-      ) : saved ? (
-        <div className="text-[11.5px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
-          Link chưa có toạ độ nên chưa ghim được lên bản đồ — mở link, copy lại link dài trên thanh địa chỉ rồi dán vào.
+        <div className="text-[12px] font-semibold text-[#333] inline-flex items-center gap-1"><MapPin size={13} className="text-red-500" /> Vị trí trên bản đồ</div>
+        <div className="flex items-center gap-2.5 shrink-0 text-[11.5px]">
+          <button onClick={() => setBig(v => !v)} className="text-[#888] hover:text-blue-600" title={big ? 'Thu nhỏ bản đồ' : 'Phóng to bản đồ'}>
+            {big ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          {saved && (
+            <a href={saved} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline">
+              Google Maps <ExternalLink size={11} />
+            </a>
+          )}
         </div>
-      ) : null}
+      </div>
+
+      <MiniMap pin={pending ?? savedPin} pinLabel={companyName} others={others}
+        picking={picking} onPick={setPending}
+        className={`w-full rounded-lg border border-[#E8E7E2] overflow-hidden transition-[height] ${big ? 'h-[420px]' : mapClassName}`} />
+
+      {/* Chú thích = bật/tắt từng nhóm điểm (nhớ theo máy) */}
+      <div className="flex flex-wrap gap-1 mt-1.5">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium bg-red-50 text-red-700 border border-red-200">
+          <span className="w-2 h-2 rounded-full bg-red-600" /> Công ty này
+        </span>
+        {MAP_GROUPS.map(g => {
+          const on = shownGroups.includes(g.id);
+          return (
+            <button key={g.id} onClick={() => toggleGroup(g.id)} title={on ? 'Bấm để ẩn nhóm này' : 'Bấm để hiện nhóm này'}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px] border transition ${on ? 'bg-white border-[#E2E0D9] text-[#555]' : 'bg-transparent border-dashed border-[#DDD] text-[#bbb]'}`}>
+              <span className="w-2 h-2 rounded-full" style={{ background: on ? g.color : '#ddd' }} />
+              {g.label}{countBy[g.id] ? ` ${countBy[g.id]}` : ''}
+            </button>
+          );
+        })}
+      </div>
+
+      {pending ? (
+        <div className="mt-2 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+          <span className="flex-1 text-[11.5px] text-red-800">{savedPin ? 'Dời ghim tới vị trí mới?' : 'Đặt ghim tại vị trí này?'}</span>
+          <button onClick={() => setPending(null)} className="px-2 py-1 rounded-md text-[11.5px] text-[#777] hover:bg-white">Bỏ</button>
+          <button onClick={savePin} disabled={saving} className="px-2.5 py-1 rounded-md text-[11.5px] font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+            {saving ? 'Đang lưu…' : 'Lưu vị trí'}
+          </button>
+        </div>
+      ) : picking && (
+        <div className="mt-1.5 text-[11px] text-[#888]">
+          {savedPin ? 'Bấm lên bản đồ hoặc kéo ghim đỏ để dời vị trí' : 'Chưa có vị trí — bấm lên bản đồ để đặt ghim'}, hoặc dán link Google Maps:
+        </div>
+      )}
+
       {showInput ? (
-        <div className="mt-2">
+        <div className="mt-1.5">
           <div className="flex gap-1.5">
-            <input value={draft} onChange={e => setDraft(e.target.value)} autoFocus={editing}
-              onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape' && saved) { setDraft(saved); setEditing(false); } }}
+            <input value={draft} onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveLink(); if (e.key === 'Escape' && saved) cancel(); }}
               placeholder="Dán link Google Maps (…/@lat,lng…)"
               className="flex-1 min-w-0 text-[12.5px] px-2.5 py-1.5 border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-            <button onClick={submit} disabled={saving || draft.trim() === saved}
+            <button onClick={saveLink} disabled={saving || draft.trim() === saved}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 shrink-0">
-              {saving ? '…' : 'Lưu'}
+              Lưu
             </button>
             {editing && saved && (
-              <button onClick={() => { setDraft(saved); setEditing(false); }} className="px-2 py-1.5 rounded-lg text-[12px] text-[#888] hover:bg-gray-100 shrink-0">Huỷ</button>
+              <button onClick={cancel} className="px-2 py-1.5 rounded-lg text-[12px] text-[#888] hover:bg-gray-100 shrink-0">Xong</button>
             )}
           </div>
           <MapLinkHint value={draft} className="mt-1" />
+          {saved && !savedPin && (
+            <div className="text-[11px] text-amber-600 mt-1">Link đang lưu chưa có toạ độ — bấm lên bản đồ để đặt ghim, hoặc dán lại link dài.</div>
+          )}
         </div>
       ) : (
-        <button onClick={() => setEditing(true)} className="mt-1.5 inline-flex items-center gap-1 text-[11.5px] text-[#888] hover:text-blue-600">
-          <Pencil size={11} /> Sửa link bản đồ
-        </button>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1 text-[11.5px] text-[#888] hover:text-blue-600">
+            <Pencil size={11} /> Sửa vị trí
+          </button>
+          <a href="#/market/map" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-[#999] hover:text-blue-600">
+            Mở Bản đồ Thị trường <ExternalLink size={10} />
+          </a>
+        </div>
       )}
-      <div className="text-[10.5px] text-[#aaa] mt-1">
-        Cùng ghim với Bản đồ Thị trường ({media.kind === 'client' ? 'hồ sơ Khách hàng' : 'Công ty/Dự án'}).
-      </div>
     </div>
   );
 }

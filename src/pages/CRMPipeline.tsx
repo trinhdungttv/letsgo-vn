@@ -721,6 +721,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
           isAdmin={user?.role === 'admin'}
           onOpenCostPlan={() => setCostPlanFor(profileEntry)}
           costPlanCount={planCounts[profileEntry.id] ?? 0}
+          onRefresh={onRefresh}
         />
       )}
 
