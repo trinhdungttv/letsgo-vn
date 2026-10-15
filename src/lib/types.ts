@@ -631,6 +631,11 @@ export interface MarketLead {
   crm_id?: string | null;
   // Ảnh tuyển dụng dán link (migration 147)
   recruit_image_urls?: string[] | null;
+  // Ảnh bìa 16:9 — cùng cơ chế với clients.cover_image_* (migration 163)
+  cover_image_url?: string | null;
+  cover_image_fit?: string | null;
+  cover_image_pos_x?: number | null;
+  cover_image_pos_y?: number | null;
 }
 
 export interface Quote {

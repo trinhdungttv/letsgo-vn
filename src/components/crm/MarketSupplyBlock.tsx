@@ -44,7 +44,7 @@ export async function linkCompetitor(comp: RefCompetitor, companyName: string, z
 
 export const notifyMarketChanged = () => window.dispatchEvent(new Event('lgvn:market-changed'));
 
-const US: MarketLeadSupplier = { name: "Let's Go VN", qty: 0, is_us: true };
+export const US: MarketLeadSupplier = { name: "Let's Go VN", qty: 0, is_us: true };
 
 type Target = { kind: 'lead' | 'client'; id: string | null; zone: string; suppliers: MarketLeadSupplier[]; images: string[] };
 
@@ -103,19 +103,27 @@ export default function MarketSupplyBlock({ entry, toast }: Props) {
         ...(next.images ? { recruit_image_urls: next.images } : {}),
         ...(next.zone !== undefined ? { industrial_zones: next.zone ? [next.zone] : [] } : {}),
       }).eq('id', id!));
-    } else if (id) {
-      ({ error } = await supabase.from('market_leads').update({
-        ...(next.suppliers ? { suppliers: next.suppliers } : {}),
-        ...(next.images ? { recruit_image_urls: next.images } : {}),
-        ...(next.zone !== undefined ? { region: next.zone || null } : {}),
-      }).eq('id', id));
     } else {
-      const res = await supabase.from('market_leads').insert({
-        company_name: entry.company_name, region: merged.zone || null, workers_needed: 0, source: 'CRM Pipeline', status: 'Chưa LH',
-        suppliers: merged.suppliers, crm_id: entry.id,
-        ...(merged.images.length ? { recruit_image_urls: merged.images } : {}),
-      }).select('id').single();
-      error = res.error; id = res.data?.id ?? null;
+      // Ảnh bìa / vị trí bản đồ (CompanyMedia) có thể vừa tạo dòng market_leads cho công ty này
+      // sau khi khối này nạp — tìm lại trước khi tạo mới để không sinh 2 dòng cho 1 công ty.
+      if (!id) {
+        const { data } = await supabase.from('market_leads').select('id').eq('crm_id', entry.id).limit(1).maybeSingle();
+        id = data?.id ?? null;
+      }
+      if (id) {
+        ({ error } = await supabase.from('market_leads').update({
+          ...(next.suppliers ? { suppliers: next.suppliers } : {}),
+          ...(next.images ? { recruit_image_urls: next.images } : {}),
+          ...(next.zone !== undefined ? { region: next.zone || null } : {}),
+        }).eq('id', id));
+      } else {
+        const res = await supabase.from('market_leads').insert({
+          company_name: entry.company_name, region: merged.zone || null, workers_needed: 0, source: 'CRM Pipeline', status: 'Chưa LH',
+          suppliers: merged.suppliers, crm_id: entry.id,
+          ...(merged.images.length ? { recruit_image_urls: merged.images } : {}),
+        }).select('id').single();
+        error = res.error; id = res.data?.id ?? null;
+      }
     }
     if (error) {
       toast(/recruit_image_urls/.test(error.message) ? 'Chưa chạy migration 147 (cột ảnh tuyển dụng) — chạy xong rồi thử lại' : 'Lỗi: ' + error.message);

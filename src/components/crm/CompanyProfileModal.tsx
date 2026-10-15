@@ -3,7 +3,7 @@ import {
   X, Phone, Users, Mail, MessageSquare, Gift,
   Rocket, Star, MapPin, UserCheck, CalendarDays, Pencil, Check,
   ClipboardList, Circle, Clock, CheckCircle2, StickyNote, Send,
-  ChevronDown, ChevronUp, GitCompare, FileText,
+  ChevronDown, ChevronUp, GitCompare, FileText, PanelRight, AppWindow, Maximize2,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../lib/format';
 import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus, PipelineAppendix, ClientGift } from '../../lib/types';
@@ -11,7 +11,7 @@ import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
-import { addContactClient, clientIdsOf, isPrimaryAt } from '../../lib/contactOps';
+import { addContactClient, clientIdsOf, isPrimaryAt, saveContact, emptyContactForm, findPhoneDuplicates } from '../../lib/contactOps';
 import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
@@ -20,6 +20,9 @@ import QuoteInfoBlock from './QuoteInfoBlock';
 import { PipelineSourcePicker } from './PipelineSourceField';
 import { sourceOf, cleanSource, sameSource, sourceFullLabel, sourceSaveErrorHint, type PipelineSource } from '../../lib/pipelineSource';
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { useCompanyMedia, mediaToClientFields, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow } from './CompanyMedia';
 
 export const STAGES = [
   { id: 'tiem-nang',  label: 'Tiềm năng',    headerBg: 'bg-blue-50',    headerText: 'text-blue-700',    border: 'border-blue-200'   },
@@ -57,6 +60,15 @@ export const INTERACTION_TYPES = [
 
 export type Section = 'info' | 'contacts' | 'history' | 'gifts' | 'preferences';
 
+/** Kiểu mở hồ sơ (biến thể 'modal'): bảng trượt bên phải / cửa sổ giữa màn hình / toàn màn hình.
+ *  Nhớ theo trình duyệt, dùng chung mọi nơi mở hồ sơ (CRM Pipeline, CSKH, Workspace). */
+export type ProfileViewMode = 'drawer' | 'center' | 'full';
+const VIEW_MODES: { id: ProfileViewMode; label: string; icon: typeof PanelRight }[] = [
+  { id: 'drawer', label: 'Bảng bên phải', icon: PanelRight },
+  { id: 'center', label: 'Cửa sổ giữa màn hình', icon: AppWindow },
+  { id: 'full',   label: 'Toàn màn hình', icon: Maximize2 },
+];
+
 /** Các khối của biến thể 'panel' — hiển thị inline trong trang Khách hàng. */
 export type PanelSection = 'profile' | 'history' | 'contacts' | 'appendix' | 'notes' | 'gifts' | 'prefs';
 
@@ -69,6 +81,9 @@ const PANEL_NAV: { key: PanelSection; label: string; icon: string }[] = [
   { key: 'appendix', label: 'Phụ lục',          icon: '📑' },
   { key: 'prefs',    label: 'Sở thích',         icon: '⭐' },
 ];
+
+/** Giá trị đặc biệt trong ô chọn người liên hệ — mở form tạo mới thay vì chọn. */
+const NEW_CONTACT = '__new_contact__';
 
 function giftMissingFields(date: string, item: string, value: string, recipientId: string): string[] {
   const missing: string[] = [];
@@ -153,13 +168,25 @@ export interface CompanyProfileModalProps {
   costPlanCount?: number;
 }
 
-export function CompanyProfileModal({ entry, contacts, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary, onOpenCostPlan, costPlanCount }: CompanyProfileModalProps) {
+export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsChanged, products, onClose, onUpdate, onDelete, toast, isAdmin, variant = 'modal', dealOwner, onDealOwnerChange, legacyGifts, dealSummary, onOpenCostPlan, costPlanCount }: CompanyProfileModalProps) {
   const { user } = useAuth();
   // Chi nhánh — nguồn duy nhất để hiển thị/gán, không đọc cột `region` (tên cũ).
   const { branches } = useBranchData();
   // Công ty đã là Khách hàng thì chi nhánh thuộc về hồ sơ Khách hàng
   // (clients.branch_id) — đọc thẳng từ đó để hai nơi không lệch nhau.
   const [clientBranchId, setClientBranchId] = useState<string | null>(null);
+  // Kiểu mở hồ sơ + ảnh bìa / vị trí bản đồ — chỉ cho biến thể 'modal' (trang Khách hàng đã có ô sửa riêng).
+  const isModal = variant !== 'panel';
+  const [viewMode, setViewMode] = usePersistedState<ProfileViewMode>('crm_profile_view_mode', 'drawer');
+  const isMobile = useIsMobile();
+  const { media, save: saveMedia } = useCompanyMedia(entry, toast, isModal);
+  const [coverEditing, setCoverEditing] = useState(false);
+  // Người liên hệ vừa tạo ngay trong hồ sơ — hiện luôn trong ô chọn, không phải chờ trang cha nạp lại.
+  const [createdContacts, setCreatedContacts] = useState<Contact[]>([]);
+  const contacts = useMemo(
+    () => [...contactsProp, ...createdContacts.filter(c => !contactsProp.some(x => x.id === c.id))],
+    [contactsProp, createdContacts],
+  );
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
@@ -410,6 +437,48 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
     );
   };
 
+  // Tạo người liên hệ ngay tại ô "Người liên hệ (CSKH)" — ghi vào bảng contacts qua saveContact
+  // (cùng đường với CRM → CSKH: gắn công ty, ghi lịch sử, audit) rồi chọn luôn cho công ty này.
+  const [newContactOpen, setNewContactOpen] = useState(false);
+  const [newContact, setNewContact] = useState({ name: '', role: '', phone: '', email: '' });
+  const [creatingContact, setCreatingContact] = useState(false);
+  const roleOptions = useMemo(
+    () => [...new Set(contacts.map(c => c.role?.trim()).filter((r): r is string => !!r))].sort((a, b) => a.localeCompare(b, 'vi')),
+    [contacts],
+  );
+  const closeNewContact = () => { setNewContactOpen(false); setNewContact({ name: '', role: '', phone: '', email: '' }); };
+  const createContact = async () => {
+    const name = newContact.name.trim();
+    if (!name) return;
+    setCreatingContact(true);
+    try {
+      const phone = newContact.phone.trim();
+      const dups = phone ? await findPhoneDuplicates(phone) : [];
+      if (dups.length && !confirm(
+        `Số ${phone} đã có ở: ${dups.map(d => d.name + (d.role ? ` — ${d.role}` : '')).join(', ')}.\n\n` +
+        'Vẫn tạo người liên hệ mới? (Bấm Huỷ để quay lại chọn người đã có trong danh sách.)'
+      )) return;
+      const saved = await saveContact(
+        { ...emptyContactForm(entry.client_id ?? ''), name, role: newContact.role.trim(), phone, email: newContact.email },
+        null,
+        { user, clientName: id => (id === entry.client_id ? entry.company_name : null) },
+      );
+      setCreatedContacts(prev => [...prev, saved]);
+      await updateLink(
+        { contact_id: saved.id },
+        { contact_id: saved.id, contacts: { name: saved.name, phone: saved.phone } },
+        `Tạo mới & chọn người liên hệ "${saved.name}" cho "${entry.company_name}"`,
+      );
+      toast(`Đã tạo "${saved.name}" và chọn làm người liên hệ`);
+      closeNewContact();
+      onContactsChanged?.();
+    } catch (e: any) {
+      toast('Lỗi tạo người liên hệ: ' + e.message);
+    } finally {
+      setCreatingContact(false);
+    }
+  };
+
   const cycleRating = async () => {
     const order = ['hot', 'normal', 'low'] as const;
     const next = order[(order.indexOf(rating as 'hot' | 'normal' | 'low') + 1) % order.length];
@@ -656,6 +725,8 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
         won_date: new Date().toISOString().slice(0, 10),
         notes: entry.notes || null, status: 'ok',
         cutoff_day: 25, payment_start: 5, payment_end: 8,
+        // Ảnh bìa + vị trí bản đồ đã nhập ở Pipeline đi theo sang hồ sơ Khách hàng
+        ...mediaToClientFields(media?.kind === 'lead' ? media : null),
       });
       if (error) throw error;
       await supabase.from('crm_pipeline').update({ stage: 'hop-tac' }).eq('id', entry.id);
@@ -934,10 +1005,14 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           <div className="text-[11px] text-[#888] font-medium mb-0.5">Người liên hệ (CSKH)</div>
           <select
             value={entry.contact_id || ''}
-            onChange={e => handlePickContact(e.target.value || null)}
+            onChange={e => {
+              if (e.target.value === NEW_CONTACT) { setNewContactOpen(true); return; }
+              handlePickContact(e.target.value || null);
+            }}
             className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
           >
             <option value="">Chưa chọn</option>
+            <option value={NEW_CONTACT}>＋ Tạo người liên hệ mới…</option>
             {ownContacts.length > 0 && (
               <optgroup label="Người liên hệ của công ty này">
                 {ownContacts.map(c => (
@@ -957,10 +1032,10 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               </optgroup>
             )}
           </select>
-          {ownContacts.length === 0 && freeContacts.length === 0 && (
-            <p className="text-[10.5px] text-[#999] mt-0.5">
-              Chưa có ai — thêm ở khối "Người liên hệ" bên dưới hoặc ở CRM → CSKH.
-            </p>
+          {!newContactOpen && (
+            <button onClick={() => setNewContactOpen(true)} className="mt-1 text-[11.5px] font-medium text-blue-600 hover:underline">
+              ＋ Tạo người liên hệ mới
+            </button>
           )}
         </div>
         <div>
@@ -1011,6 +1086,36 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
             );
           })()}
         </div>
+        {newContactOpen && (
+          <div className="col-span-2 bg-blue-50/60 border border-blue-200 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[12px] font-semibold text-blue-800">Tạo người liên hệ mới</div>
+              <button onClick={closeNewContact} title="Đóng" className="p-0.5 rounded text-blue-400 hover:text-blue-700"><X size={13} /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input autoFocus value={newContact.name} onChange={e => setNewContact(f => ({ ...f, name: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') createContact(); if (e.key === 'Escape') closeNewContact(); }}
+                placeholder="Họ tên *" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+              <input value={newContact.role} onChange={e => setNewContact(f => ({ ...f, role: e.target.value }))} list="cp-contact-roles"
+                placeholder="Chức vụ (VD: Nhân sự)" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+              <input value={newContact.phone} onChange={e => setNewContact(f => ({ ...f, phone: e.target.value }))} inputMode="tel"
+                placeholder="Số điện thoại" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+              <input value={newContact.email} onChange={e => setNewContact(f => ({ ...f, email: e.target.value }))} type="email"
+                placeholder="Email" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+            </div>
+            <datalist id="cp-contact-roles">{roleOptions.map(r => <option key={r} value={r} />)}</datalist>
+            <div className="text-[10.5px] text-blue-900/60 leading-snug">
+              Lưu vào danh sách liên hệ chung (CRM → CSKH){entry.client_id ? ' và gắn vào công ty này' : ''}, rồi chọn luôn ở ô trên. Ngày sinh, sở thích… bổ sung sau ở CSKH.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={closeNewContact} className="px-3 py-1.5 rounded-lg text-[12px] border border-gray-300 bg-white text-[#666] hover:bg-gray-50">Huỷ</button>
+              <button onClick={createContact} disabled={creatingContact || !newContact.name.trim()}
+                className="px-3.5 py-1.5 rounded-lg text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                {creatingContact ? 'Đang tạo…' : 'Tạo & chọn'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -1617,12 +1722,52 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
     </div>
   ) : null;
 
-  /* ═══ Biến thể 'modal' — bảng trượt từ phải, giữ nguyên bố cục cũ ═══ */
-  const modalContent = (
-    <div className="bg-white w-full max-w-lg h-full flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-      {declineDialog}
-      {/* Header */}
-      <div className="bg-white border-b border-[#E8E7E2] px-5 py-4 shrink-0">
+  /* ═══ Biến thể 'modal' — bảng bên phải (mặc định) / cửa sổ giữa màn hình / toàn màn hình ═══
+     Điện thoại: "giữa màn hình" mở thành toàn màn hình. Hai kiểu rộng có dải ảnh bìa ở đầu
+     và trang Thông tin chia 2 cột (bên phải: bản đồ, ghi chú nội bộ). */
+  const mode: ProfileViewMode = !VIEW_MODES.some(m => m.id === viewMode) ? 'drawer'
+    : isMobile && viewMode === 'center' ? 'full' : viewMode;
+  const wide = mode !== 'drawer';
+
+  const viewSwitch = (onImage: boolean) => (
+    <div role="group" aria-label="Kiểu hiển thị hồ sơ"
+      className={`hidden md:inline-flex items-center gap-0.5 rounded-lg p-0.5 ${onImage ? 'bg-white/90 backdrop-blur shadow-sm' : 'bg-[#F4F3EF]'}`}>
+      {VIEW_MODES.map(m => {
+        const Icon = m.icon;
+        const on = mode === m.id;
+        return (
+          <button key={m.id} onClick={() => setViewMode(m.id)} title={m.label} aria-label={m.label} aria-pressed={on}
+            className={`p-1.5 rounded-md transition ${on ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-700'}`}>
+            <Icon size={14} />
+          </button>
+        );
+      })}
+    </div>
+  );
+  const closeBtn = (onImage: boolean) => onClose && (
+    <button onClick={onClose} title="Đóng"
+      className={`p-1.5 rounded-lg transition shrink-0 ${onImage ? 'bg-white/90 backdrop-blur shadow-sm hover:bg-white' : 'hover:bg-gray-100'}`}>
+      <X size={16} className="text-gray-500" />
+    </button>
+  );
+
+  const blkLocation = (
+    <CompanyLocationCard media={media} companyName={entry.company_name} mapClassName={wide ? 'h-56' : 'h-40'}
+      onSaveLink={link => saveMedia({ mapLink: link }, link ? 'Cập nhật vị trí bản đồ' : 'Xoá link bản đồ')} />
+  );
+  const coverDialog = coverEditing && media ? (
+    <CoverEditDialog media={media} onClose={() => setCoverEditing(false)}
+      onSave={v => saveMedia({ cover: v }, v.url ? 'Cập nhật ảnh bìa' : 'Gỡ ảnh bìa')} />
+  ) : null;
+
+  const shellCls = mode === 'drawer' ? 'w-full max-w-lg h-full'
+    : mode === 'center' ? 'w-full max-w-[1100px] h-[min(92vh,960px)] rounded-2xl overflow-hidden'
+    : 'w-full h-full';
+  const wideWrap = mode === 'full' ? 'max-w-[1400px] mx-auto' : '';
+
+  const headerEl = (
+    <div className={`bg-white border-b border-[#E8E7E2] py-4 shrink-0 ${wide ? 'px-5 md:px-6' : 'px-5'}`}>
+      <div className={wideWrap}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
             {renaming ? (
@@ -1639,8 +1784,8 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
                 <button onClick={() => { setNameDraft(entry.company_name); setRenaming(false); }} title="Huỷ" className="p-1 text-gray-400 hover:text-gray-600"><X size={13} /></button>
               </div>
             ) : (
-              <h2 className="group flex items-center gap-1.5 text-[16px] font-bold text-[#111] leading-tight">
-                <span className="truncate">{entry.company_name}</span>
+              <h2 className={`group flex items-center gap-1.5 font-bold text-[#111] leading-tight ${wide ? 'text-[18px] md:text-[21px]' : 'text-[16px]'}`}>
+                <span className={wide ? 'min-w-0' : 'truncate'}>{entry.company_name}</span>
                 <button onClick={() => setRenaming(true)} title="Sửa tên công ty" className="p-1 rounded text-[#bbb] hover:text-blue-600 hover:bg-blue-50 shrink-0"><Pencil size={13} /></button>
               </h2>
             )}
@@ -1651,10 +1796,11 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
               </div>
             )}
           </div>
-          {onClose && (
-            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition shrink-0">
-              <X size={16} className="text-gray-500" />
-            </button>
+          {!wide && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {viewSwitch(false)}
+              {closeBtn(false)}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1693,14 +1839,18 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           )}
         </div>
       </div>
+    </div>
+  );
 
-      {/* Section Tabs */}
-      <div className="flex border-b border-[#E8E7E2] bg-[#FAFAFA] shrink-0">
+  // Kiểu rộng: thanh tab dính trên cùng khi cuộn (ảnh bìa + tên cuộn đi theo nội dung)
+  const tabsEl = (
+    <div className={`flex border-b border-[#E8E7E2] bg-[#FAFAFA] ${wide ? 'sticky top-0 z-10 px-3 md:px-4 overflow-x-auto no-scrollbar' : 'shrink-0'}`}>
+      <div className={`flex w-full ${wideWrap}`}>
         {SECTIONS.map(s => (
           <button
             key={s.id}
             onClick={() => setActiveSection(s.id)}
-            className={`flex-1 py-2.5 text-[12px] font-medium transition border-b-2 ${
+            className={`${wide ? 'shrink-0 whitespace-nowrap px-4' : 'flex-1'} py-2.5 text-[12px] font-medium transition border-b-2 ${
               activeSection === s.id
                 ? 'border-blue-600 text-blue-700 bg-white'
                 : 'border-transparent text-gray-500 hover:text-gray-800'
@@ -1713,57 +1863,111 @@ export function CompanyProfileModal({ entry, contacts, onContactsChanged, produc
           </button>
         ))}
       </div>
+    </div>
+  );
 
-      {/* Section content */}
-      <div className="flex-1 overflow-y-auto">
-        {activeSection === 'info' && (
-          <div className="p-5 space-y-5">
+  const bodyEl = (
+    <>
+      {activeSection === 'info' && (wide ? (
+        <div className={`p-5 md:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)] gap-6 items-start ${wideWrap}`}>
+          <div className="space-y-5 min-w-0">
             {blkBasicInfo}
             {blkWorkerBar}
             {blkMarket}
             {blkQuote}
-            {blkNotes}
             {blkAppendix}
+          </div>
+          <div className="space-y-5 min-w-0">
+            <div className="bg-[#FAFAF8] border border-[#EEEDE8] rounded-xl p-3.5">{blkLocation}</div>
+            {blkNotes}
             {blkActivate}
           </div>
-        )}
-        {activeSection === 'contacts' && blkContacts && <div className="p-5">{blkContacts}</div>}
-        {activeSection === 'history' && <div className="p-5 space-y-4">{blkHistory}</div>}
-        {activeSection === 'gifts' && <div className="p-5 space-y-4">{blkGifts}</div>}
-        {activeSection === 'preferences' && <div className="p-5 space-y-4">{blkPrefs}</div>}
-      </div>
+        </div>
+      ) : (
+        <div className="p-5 space-y-5">
+          {blkBasicInfo}
+          {blkWorkerBar}
+          {blkMarket}
+          <div className="border border-[#EEEDE8] rounded-xl p-3.5 space-y-4">
+            <CoverThumbRow media={media} onEdit={() => setCoverEditing(true)} />
+            {blkLocation}
+          </div>
+          {blkQuote}
+          {blkNotes}
+          {blkAppendix}
+          {blkActivate}
+        </div>
+      ))}
+      {activeSection === 'contacts' && blkContacts && <div className={`p-5 ${wide ? 'max-w-4xl mx-auto' : ''}`}>{blkContacts}</div>}
+      {activeSection === 'history' && <div className={`p-5 space-y-4 ${wide ? 'max-w-3xl mx-auto' : ''}`}>{blkHistory}</div>}
+      {activeSection === 'gifts' && <div className={`p-5 space-y-4 ${wide ? 'max-w-3xl mx-auto' : ''}`}>{blkGifts}</div>}
+      {activeSection === 'preferences' && <div className={`p-5 space-y-4 ${wide ? 'max-w-3xl mx-auto' : ''}`}>{blkPrefs}</div>}
+    </>
+  );
 
-      {/* Footer: contact quick actions */}
-      <div className="border-t border-[#E8E7E2] px-5 py-3 flex items-center gap-2 shrink-0 bg-[#FAFAFA]">
-        <UserCheck size={13} className="text-gray-400" />
-        <span className="text-[11.5px] text-gray-500 flex-1">
-          Tạo: {new Date(entry.created_at).toLocaleDateString('vi-VN')}
-        </span>
-        <button
-          onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('call'); }}
-          className="flex items-center gap-1 px-2.5 py-1.5 bg-green-100 text-green-700 rounded-lg text-[11.5px] font-medium hover:bg-green-200 transition"
-        >
-          <Phone size={11} /> Log cuộc gọi
-        </button>
-        <button
-          onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('meeting'); }}
-          className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-[11.5px] font-medium hover:bg-blue-200 transition"
-        >
-          <Users size={11} /> Log gặp mặt
-        </button>
-        <button
-          onClick={() => { setActiveSection('history'); setHistoryForm('task'); }}
-          className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-[11.5px] font-medium hover:bg-orange-200 transition"
-        >
-          <ClipboardList size={11} /> Thêm việc
-        </button>
-      </div>
+  // Footer: contact quick actions
+  const footerEl = (
+    <div className={`border-t border-[#E8E7E2] py-3 flex items-center gap-2 shrink-0 bg-[#FAFAFA] ${wide ? 'px-5 md:px-6' : 'px-5'}`}>
+      <UserCheck size={13} className="text-gray-400" />
+      <span className="text-[11.5px] text-gray-500 flex-1">
+        Tạo: {new Date(entry.created_at).toLocaleDateString('vi-VN')}
+      </span>
+      <button
+        onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('call'); }}
+        className="flex items-center gap-1 px-2.5 py-1.5 bg-green-100 text-green-700 rounded-lg text-[11.5px] font-medium hover:bg-green-200 transition"
+      >
+        <Phone size={11} /> Log cuộc gọi
+      </button>
+      <button
+        onClick={() => { setActiveSection('history'); setHistoryForm('interaction'); setIntType('meeting'); }}
+        className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-[11.5px] font-medium hover:bg-blue-200 transition"
+      >
+        <Users size={11} /> Log gặp mặt
+      </button>
+      <button
+        onClick={() => { setActiveSection('history'); setHistoryForm('task'); }}
+        className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-[11.5px] font-medium hover:bg-orange-200 transition"
+      >
+        <ClipboardList size={11} /> Thêm việc
+      </button>
     </div>
   );
 
-  if (variant !== 'panel') {
+  const modalContent = (
+    <div className={`relative bg-white flex flex-col shadow-2xl ${shellCls}`} onClick={e => e.stopPropagation()}>
+      {declineDialog}
+      {coverDialog}
+      {wide ? (
+        <>
+          {/* Nút đổi kiểu hiển thị + đóng luôn nổi ở góc, kể cả khi đã cuộn qua ảnh bìa */}
+          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5">
+            {viewSwitch(true)}
+            {closeBtn(true)}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <CoverBanner media={media} onEdit={() => setCoverEditing(true)} tall={mode === 'full'} />
+            {headerEl}
+            {tabsEl}
+            {bodyEl}
+          </div>
+        </>
+      ) : (
+        <>
+          {headerEl}
+          {tabsEl}
+          <div className="flex-1 overflow-y-auto">{bodyEl}</div>
+        </>
+      )}
+      {footerEl}
+    </div>
+  );
+
+  if (isModal) {
+    const overlayCls = mode === 'drawer' ? 'fixed inset-0 bg-black/50 flex items-center justify-end z-50'
+      : mode === 'center' ? 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 md:p-6'
+      : 'fixed inset-0 bg-black/50 flex z-50';
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-end z-50" onClick={onClose}>
+      <div className={overlayCls} onClick={onClose}>
         {modalContent}
       </div>
     );

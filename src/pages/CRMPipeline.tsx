@@ -22,6 +22,8 @@ import { PipelineSourceChip, PipelineSourcePicker, SOURCE_NAMES_CHANGED } from '
 import DuplicateCompanyNotice from '../components/common/DuplicateCompanyNotice';
 import { invalidateCompanyIndex, useCompanyDuplicates } from '../hooks/useCompanyDuplicates';
 import { EMPTY_SOURCE, cleanSource, matchesSourceFilter, sourceFilterGroups, sourceFullLabel, sourceSaveErrorHint } from '../lib/pipelineSource';
+import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
+import MapLinkHint from '../components/MapLinkHint';
 
 interface CRMPipelineProps {
   pipeline: CRMPipelineEntry[];
@@ -56,7 +58,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
   const { user, token } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
-  const emptyModalForm = { name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '', source: EMPTY_SOURCE };
+  const emptyModalForm = { name: '', branchId: '', estimate: '', rating: 'normal', contactId: '', productId: '', customPrice: '', zone: '', ncc: [] as string[], images: '', mapLink: '', cover: '', source: EMPTY_SOURCE };
   const [modalForm, setModalForm] = useState(emptyModalForm);
   // Dò công ty đã có (Khách hàng / Pipeline / Thị trường) khi gõ tên — khác dấu, loại hình, thiếu-thừa ký tự vẫn bắt được
   const dup = useCompanyDuplicates(modalForm.name, { enabled: showModal });
@@ -200,14 +202,25 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
       }).select('*, contacts(name, phone), crm_products(name, category, price)').single();
       if (error) throw new Error(sourceSaveErrorHint(error.message) ?? error.message);
       // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
-      await supabase.from('market_leads').insert({
+      // Link Google Maps + ảnh bìa cũng nằm ở dòng này (nguồn chung với hồ sơ công ty — CompanyMedia).
+      const mapLink = modalForm.mapLink.trim();
+      const mapPos = parseLatLngFromLink(mapLink);
+      const { data: lead } = await supabase.from('market_leads').insert({
         company_name: modalForm.name, region: modalForm.zone || (branches.find(b => b.id === modalForm.branchId)?.name ?? null),
         workers_needed: parseInt(modalForm.estimate) || 0,
         source: 'CRM Pipeline', status: 'Chưa LH',
         suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }, ...modalForm.ncc.map(name => ({ name, qty: 0, is_us: false }))],
         crm_id: data.id,
         ...(recruitImages.length ? { recruit_image_urls: recruitImages } : {}),
-      });
+        ...(mapLink ? { map_link: mapLink } : {}),
+        ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
+      }).select('id').single();
+      // Ảnh bìa ghi riêng: chưa chạy migration 163 thì chỉ thiếu ảnh bìa, không mất cả dòng Thị trường.
+      const cover = modalForm.cover.trim();
+      if (lead && /^https?:\/\//i.test(cover)) {
+        const { error: coverErr } = await supabase.from('market_leads').update({ cover_image_url: cover }).eq('id', lead.id);
+        if (coverErr) toast(/cover_image/.test(coverErr.message) ? 'Chưa lưu được ảnh bìa — cần chạy migration 163 trên Supabase' : 'Lỗi lưu ảnh bìa: ' + coverErr.message);
+      }
       // NCC chọn từ đối thủ → ghi "Đang cung cấp cho" ở hồ sơ đối thủ
       await Promise.all(modalForm.ncc.map(n => { const c = refCompetitors.find(x => x.company_name === n); return c ? linkCompetitor(c, modalForm.name, modalForm.zone || null) : null; }));
       if (modalForm.ncc.length || recruitImages.length || modalForm.zone) notifyMarketChanged();
@@ -636,6 +649,19 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
                   className="text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 resize-none" />
               </div>
               <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Link Google Maps (tuỳ chọn)</label>
+                <input value={modalForm.mapLink} onChange={e => setModalForm(f => ({ ...f, mapLink: e.target.value }))}
+                  placeholder="https://maps.google.com/…/@lat,lng… → ghim lên bản đồ"
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+                <MapLinkHint value={modalForm.mapLink} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] text-[#666] font-medium">Ảnh bìa (dán link ảnh, tuỳ chọn)</label>
+                <input value={modalForm.cover} onChange={e => setModalForm(f => ({ ...f, cover: e.target.value }))}
+                  placeholder="Ảnh cổng / nhà xưởng — chỉnh vị trí sau trong hồ sơ"
+                  className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1">
                 <label className="text-[12px] text-[#666] font-medium">Người liên hệ (từ CSKH)</label>
                 <select value={modalForm.contactId} onChange={e => setModalForm(f => ({ ...f, contactId: e.target.value }))}
                   className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
@@ -681,7 +707,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
         </div>
       )}
 
-      {/* Profile drawer */}
+      {/* Hồ sơ công ty — bên phải / giữa màn hình / toàn màn hình (chọn ở góc trên hồ sơ) */}
       {profileEntry && (
         <CompanyProfileModal
           entry={profileEntry}
