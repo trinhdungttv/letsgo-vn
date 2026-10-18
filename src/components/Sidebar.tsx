@@ -3,6 +3,7 @@ import { Home, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
+import { OFFICE_ICON, OFFICE_NAV, isOfficePage } from '../modules/office-rental/pages';
 
 interface SidebarProps {
   currentPage: Page;
@@ -45,7 +46,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const activeP = (currentPage === 'client-detail' ? 'clients' : currentPage) as Page;
   const isCrmActive = CRM_PAGES.includes(currentPage);
   const isAdminActive = ADMIN_PAGES.includes(currentPage);
+  const isOfficeActive = isOfficePage(currentPage);
   const [crmOpen, setCrmOpen] = useState(isCrmActive);
+  const [officeOpen, setOfficeOpen] = useState(isOfficeActive);
   const [adminOpen, setAdminOpen] = useState(isAdminActive);
   const [collapsed, setCollapsed] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -86,6 +89,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
   const hasCRM = CRM_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
   const hasAdmin = ADMIN_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
+  const hasOffice = OFFICE_NAV.some(item => canAccess(role, item.page, rolePermissions));
 
   return (
     <aside
@@ -166,6 +170,41 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                   } ${collapsed ? 'justify-center pl-0 pr-0' : ''}`}
                 >
                   <span className={isActive ? 'text-white' : 'text-white/40'}>{item.icon}</span>
+                  {!collapsed && <span>{item.label}</span>}
+                </button>
+              );
+            })}
+          </>
+        )}
+
+        {/* Văn phòng Orient — mảng cho thuê văn phòng, tách biệt dữ liệu với cung ứng lao động (chỉ admin) */}
+        {hasOffice && (
+          <>
+            <div className="mx-4 my-2 border-t border-white/10" />
+            {!collapsed && (
+              <button
+                onClick={() => setOfficeOpen(!officeOpen)}
+                className="flex items-center gap-2 px-4 py-1.5 w-full text-left text-[10.5px] font-semibold text-white/30 uppercase tracking-wider hover:text-white/50 transition"
+              >
+                <span className="flex-1">Văn phòng Orient</span>
+                {officeOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+              </button>
+            )}
+            {(collapsed || officeOpen) && OFFICE_NAV.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
+              const isActive = currentPage === item.page;
+              const Icon = OFFICE_ICON[item.page];
+              return (
+                <button
+                  key={item.page}
+                  onClick={() => handleNavigate(item.page)}
+                  title={collapsed ? `Văn phòng Orient · ${item.label}` : undefined}
+                  className={`flex items-center gap-2 pl-6 pr-4 py-1.5 text-[12px] w-full text-left transition-all border-l-[3px] ${
+                    isActive
+                      ? 'bg-white/10 text-white border-l-amber-400'
+                      : 'text-white/50 border-l-transparent hover:bg-white/6 hover:text-white/80'
+                  } ${collapsed ? 'justify-center pl-0 pr-0' : ''}`}
+                >
+                  <span className={isActive ? 'text-white' : 'text-white/40'}><Icon size={13} /></span>
                   {!collapsed && <span>{item.label}</span>}
                 </button>
               );

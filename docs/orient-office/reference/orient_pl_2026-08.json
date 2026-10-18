@@ -1,0 +1,190 @@
+{
+  "version": 3,
+  "exchangeRate": 25870,
+  "vatRate": 8,
+  "startMonth": "2026-01",
+  "range": 24,
+  "hideEmpty": true,
+  "parkingPriceMoto": 150000,
+  "parkingPriceCar": 150000,
+  "showCustFees": false,
+  "includeForecastInCost": false,
+  "payables": {
+    "mbt": {
+      "name": "Minh Bảo Tín",
+      "units": [
+        {
+          "id": "u_105",
+          "name": "Mặt bằng 1.05",
+          "currency": "VND",
+          "basePrice": 57971000,
+          "baseMonth": "2025-03",
+          "vatMode": "incl",
+          "increases": [
+            {
+              "month": "2027-03",
+              "percent": 10
+            }
+          ]
+        },
+        {
+          "id": "u_201",
+          "name": "Mặt bằng 2.01",
+          "currency": "VND",
+          "basePrice": 305556000,
+          "baseMonth": "2025-03",
+          "vatMode": "incl",
+          "increases": [
+            {
+              "month": "2027-01",
+              "percent": 5
+            }
+          ]
+        }
+      ]
+    },
+    "ts4": {
+      "name": "Thủy Sản 4",
+      "units": [
+        {
+          "id": "u_mt",
+          "name": "Mặt tiền phía trước",
+          "currency": "VND",
+          "basePrice": 101306795,
+          "baseMonth": "2026-01",
+          "vatMode": "incl",
+          "increases": []
+        },
+        {
+          "id": "u_xe",
+          "name": "Bãi giữ xe",
+          "currency": "VND",
+          "basePrice": 27000000,
+          "baseMonth": "2026-01",
+          "vatMode": "incl",
+          "increases": []
+        }
+      ]
+    }
+  },
+  "customers": [
+    {
+      "id": "c_1785738443725",
+      "name": "XHOME",
+      "currency": "USD",
+      "vatMode": "none"
+    }
+  ],
+  "opexCats": [
+    {
+      "id": "o_ql",
+      "name": "Phí quản lý",
+      "vatMode": "none"
+    },
+    {
+      "id": "o_bt",
+      "name": "Bảo trì",
+      "vatMode": "none"
+    },
+    {
+      "id": "o_sc",
+      "name": "Sửa chữa",
+      "vatMode": "none"
+    },
+    {
+      "id": "o_lg",
+      "name": "Lương NV (bảo vệ/vệ sinh)",
+      "vatMode": "none"
+    },
+    {
+      "id": "o_dn",
+      "name": "Đối ngoại",
+      "vatMode": "none"
+    }
+  ],
+  "revenue": {
+    "2026-01": {},
+    "2026-02": {},
+    "2026-03": {},
+    "2026-04": {},
+    "2026-05": {},
+    "2026-06": {},
+    "2026-07": {}
+  },
+  "opex": {
+    "2026-01": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 0,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-02": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 0,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-03": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 0,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-04": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 8000000,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-05": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 0,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-06": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 4000000,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    },
+    "2026-07": {
+      "o_ql": 5000000,
+      "o_bt": 2000000,
+      "o_sc": 0,
+      "o_lg": 15000000,
+      "o_dn": 3000000
+    }
+  },
+  "custFees": {
+    "2026-01": {},
+    "2026-02": {},
+    "2026-03": {},
+    "2026-04": {},
+    "2026-05": {},
+    "2026-06": {},
+    "2026-07": {}
+  },
+  "forecastExpenses": [
+    {
+      "id": "f_seed1",
+      "name": "Sơn lại mặt tiền",
+      "month": "2026-09",
+      "amount": 12000000,
+      "note": "Chưa báo giá chính thức, ước tính"
+    },
+    {
+      "id": "f_seed2",
+      "name": "Bảo trì thang máy định kỳ",
+      "month": "2026-12",
+      "amount": 8000000,
+      "note": ""
+    }
+  ]
+}

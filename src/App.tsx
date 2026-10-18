@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
 import { useAppData } from './hooks/useAppData';
@@ -32,8 +32,12 @@ import Loans from './pages/Loans';
 import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
+import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans'];
+// Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
+const OfficeRental = lazy(() => import('./modules/office-rental'));
+
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -184,6 +188,15 @@ function AppInner() {
     const t = setTimeout(() => setToastMsg(''), 2500);
     setToastTimer(t);
   }, [toastTimer]);
+
+  // Chặn mở thẳng URL #/office… khi không có quyền (chỉ admin) → về trang chính + báo
+  useEffect(() => {
+    if (user && isOfficePage(page) && !canAccess(user.role, page, rolePermissions)) {
+      setPage('dashboard', true);
+      toast('Chỉ tài khoản admin được vào Văn phòng Orient');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, user, rolePermissions]);
 
   const navigate = useCallback((p: Page) => {
     setPage(p);
@@ -365,6 +378,11 @@ function AppInner() {
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'loans' && <Loans toast={toast} />}
+        {isOfficePage(page) && user && canAccess(user.role, page, rolePermissions) && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin" /></div>}>
+            <OfficeRental page={page} toast={toast} />
+          </Suspense>
+        )}
         {page === 'workspace' && (
           <Workspace clients={clients} finance={finance} pipeline={pipeline} products={products} onNavigate={navigate} onClientUpdate={handleClientUpdate} toast={toast} />
         )}

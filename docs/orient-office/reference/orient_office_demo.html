@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTV HR Group — Quản lý Văn phòng Orient</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  :root {
+    --sidebar: #0F172A;
+    --sidebar-hover: #1E293B;
+    --accent: #F59E0B;
+    --accent-dim: #FEF3C7;
+    --bg: #F1F5F9;
+    --surface: #FFFFFF;
+    --text: #0F172A;
+    --text-secondary: #64748B;
+    --border: #E2E8F0;
+    --success: #10B981;
+    --danger: #EF4444;
+    --warning: #F59E0B;
+    --info: #3B82F6;
+    --purple: #8B5CF6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+  /* === SIDEBAR === */
+  .sidebar {
+    width: 240px; background: var(--sidebar); display: flex; flex-direction: column;
+    flex-shrink: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .sidebar-logo .brand { color: var(--accent); font-weight: 800; font-size: 14px; letter-spacing: 0.5px; }
+  .sidebar-logo .sub { color: rgba(255,255,255,0.4); font-size: 11px; margin-top: 2px; }
+
+  .sidebar-section { padding: 16px 12px 8px; }
+  .sidebar-section-label { color: rgba(255,255,255,0.3); font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; padding: 0 8px 8px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-radius: 8px; cursor: pointer; color: rgba(255,255,255,0.55);
+    font-size: 13px; font-weight: 500; transition: all 0.15s; margin-bottom: 2px;
+  }
+  .nav-item:hover { background: var(--sidebar-hover); color: rgba(255,255,255,0.85); }
+  .nav-item.active { background: var(--accent); color: #0F172A; }
+  .nav-item .icon { width: 16px; text-align: center; font-size: 14px; }
+  .nav-item .badge {
+    margin-left: auto; background: var(--danger); color: white;
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+  }
+
+  .sidebar-footer {
+    margin-top: auto; padding: 16px 12px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .rate-widget { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 10px 12px; }
+  .rate-label { color: rgba(255,255,255,0.4); font-size: 10px; margin-bottom: 4px; }
+  .rate-value { color: var(--accent); font-weight: 700; font-size: 13px; }
+  .rate-time { color: rgba(255,255,255,0.25); font-size: 10px; margin-top: 2px; }
+
+  /* === MAIN === */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .topbar-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  .topbar-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .btn { padding: 7px 14px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: #0F172A; }
+  .btn-primary:hover { background: #D97706; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text-secondary); }
+  .btn-outline:hover { border-color: var(--text-secondary); color: var(--text); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); font-size: 18px; padding: 4px 8px; }
+
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+  /* === VIEWS === */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* === KPI CARDS === */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .kpi-card {
+    background: var(--surface); border-radius: 12px; padding: 20px;
+    border: 1px solid var(--border); position: relative; overflow: hidden;
+  }
+  .kpi-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  }
+  .kpi-card.revenue::before { background: var(--success); }
+  .kpi-card.cost::before { background: var(--danger); }
+  .kpi-card.profit::before { background: var(--info); }
+  .kpi-card.occupancy::before { background: var(--accent); }
+
+  .kpi-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .kpi-main { font-size: 22px; font-weight: 800; color: var(--text); }
+  .kpi-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+  .kpi-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 7px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-top: 8px;
+  }
+  .kpi-badge.up { background: #D1FAE5; color: #065F46; }
+  .kpi-badge.down { background: #FEE2E2; color: #991B1B; }
+  .kpi-badge.neutral { background: #EFF6FF; color: #1D4ED8; }
+
+  .occupancy-bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .occupancy-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 1s ease; }
+
+  /* === CHART GRID === */
+  .chart-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card {
+    background: var(--surface); border-radius: 12px; padding: 20px;
+    border: 1px solid var(--border);
+  }
+  .chart-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 220px; }
+
+  /* === ALERT STRIP === */
+  .alert-strip {
+    background: linear-gradient(135deg, #FEF3C7, #FFFBEB);
+    border: 1px solid #FDE68A; border-radius: 10px; padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px; margin-bottom: 24px;
+  }
+  .alert-icon { font-size: 18px; }
+  .alert-text { flex: 1; }
+  .alert-text strong { font-size: 13px; color: #92400E; display: block; }
+  .alert-text span { font-size: 12px; color: #B45309; }
+  .alert-cta { font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  /* === TABLE === */
+  .table-card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .table-header {
+    padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-header-left h3 { font-size: 14px; font-weight: 700; }
+  .table-header-left p { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; background: #F8FAFC; border-bottom: 1px solid var(--border); }
+  td { padding: 13px 16px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #F8FAFC; }
+  .status-badge {
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    display: inline-block;
+  }
+  .status-active { background: #D1FAE5; color: #065F46; }
+  .status-empty { background: #F1F5F9; color: #64748B; }
+  .status-expiring { background: #FEF3C7; color: #92400E; }
+  .status-overdue { background: #FEE2E2; color: #991B1B; }
+  .status-pending { background: #EFF6FF; color: #1E40AF; }
+  .status-done { background: #D1FAE5; color: #065F46; }
+  .status-inprogress { background: #FEF3C7; color: #92400E; }
+
+  .currency-usd { color: var(--info); font-weight: 600; }
+  .currency-vnd { color: var(--text); font-weight: 600; }
+
+  /* === SECTION TITLE === */
+  .section-title { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+  .section-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+
+  /* === ROOMS VIEW === */
+  .floor-block { margin-bottom: 24px; }
+  .floor-label {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-secondary); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .floor-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .rooms-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .room-card {
+    background: var(--surface); border-radius: 12px; border: 1.5px solid var(--border);
+    padding: 18px; cursor: pointer; transition: all 0.15s; position: relative;
+  }
+  .room-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+  .room-card.occupied { border-left: 4px solid var(--success); }
+  .room-card.empty { border-left: 4px solid var(--border); }
+  .room-card.expiring { border-left: 4px solid var(--warning); }
+  .room-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .room-area { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+  .room-tenant { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .room-price { font-size: 12px; color: var(--text-secondary); }
+  .room-price span { font-weight: 700; color: var(--info); }
+  .room-footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .room-days { font-size: 11px; color: var(--text-secondary); }
+  .room-days strong { color: var(--warning); }
+
+  /* === BILLING VIEW === */
+  .billing-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .action-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px; cursor: pointer; transition: all 0.15s; text-align: center;
+  }
+  .action-card:hover { border-color: var(--accent); box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+  .action-icon { font-size: 28px; margin-bottom: 8px; }
+  .action-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .action-desc { font-size: 11px; color: var(--text-secondary); }
+
+  /* === MODAL === */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 1000; align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 16px; padding: 24px;
+    width: 560px; max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  }
+  .modal-title { font-size: 16px; font-weight: 800; margin-bottom: 4px; }
+  .modal-sub { font-size: 12px; color: var(--text-secondary); margin-bottom: 20px; }
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: block; }
+  .form-input, .form-select {
+    width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 8px;
+    font-size: 13px; font-family: 'Inter', sans-serif; background: var(--surface);
+    transition: border-color 0.15s; color: var(--text);
+  }
+  .form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+  /* === INVOICE PREVIEW === */
+  .invoice-box {
+    background: #FFFBEB; border: 1.5px solid #FDE68A; border-radius: 12px; padding: 20px; margin-top: 16px;
+  }
+  .invoice-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px; }
+  .invoice-brand { font-weight: 800; color: var(--text); font-size: 15px; }
+  .invoice-month { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .invoice-line { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px dashed var(--border); }
+  .invoice-total { display: flex; justify-content: space-between; padding: 10px 0 0; font-size: 15px; font-weight: 800; }
+  .invoice-note { font-size: 11px; color: var(--text-secondary); margin-top: 10px; font-style: italic; }
+
+  /* === PARKING VIEW === */
+  .parking-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .p-stat { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 16px; }
+  .p-stat-label { font-size: 11px; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .p-stat-value { font-size: 24px; font-weight: 800; }
+  .p-stat-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+  /* === TICKET VIEW === */
+  .ticket-list { display: flex; flex-direction: column; gap: 12px; }
+  .ticket-card {
+    background: var(--surface); border-radius: 12px; border: 1px solid var(--border);
+    padding: 16px 20px; cursor: pointer; transition: all 0.15s;
+  }
+  .ticket-card:hover { border-color: var(--info); }
+  .ticket-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .ticket-id { font-size: 11px; font-weight: 700; color: var(--text-secondary); background: var(--bg); padding: 2px 8px; border-radius: 4px; }
+  .ticket-title { font-size: 14px; font-weight: 700; flex: 1; }
+  .ticket-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); }
+  .ticket-progress { margin-top: 10px; }
+  .checklist { list-style: none; }
+  .checklist li { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
+  .checklist li.done { color: var(--success); text-decoration: line-through; }
+  .check-icon { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; cursor: pointer; }
+  .check-icon.checked { background: var(--success); border-color: var(--success); color: white; }
+
+  /* === TABS === */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--surface); padding: 4px; border-radius: 10px; border: 1px solid var(--border); width: fit-content; }
+  .tab { padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-secondary); transition: all 0.15s; }
+  .tab.active { background: var(--accent); color: #0F172A; }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* === SETTINGS === */
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .settings-card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 20px; }
+  .settings-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .settings-card p { font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; }
+
+  /* Toggle */
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .toggle-label { font-size: 13px; font-weight: 500; }
+  .toggle { width: 40px; height: 22px; background: var(--border); border-radius: 11px; position: relative; cursor: pointer; transition: all 0.15s; }
+  .toggle.on { background: var(--success); }
+  .toggle::after { content: ''; position: absolute; width: 16px; height: 16px; background: white; border-radius: 50%; top: 3px; left: 3px; transition: all 0.15s; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+  .toggle.on::after { transform: translateX(18px); }
+
+  /* responsive tweaks */
+  .scrollable-table { overflow-x: auto; }
+
+  /* Pulse animation for live KPIs */
+  @keyframes pulse-dot { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+  .live-dot { width: 7px; height: 7px; background: var(--success); border-radius: 50%; display: inline-block; margin-right: 5px; animation: pulse-dot 2s infinite; }
+
+  .empty-state { text-align: center; padding: 48px; color: var(--text-secondary); }
+  .empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="brand">TTV HR GROUP</div>
+    <div class="sub">Orient Apartment · Quản lý VP</div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Tổng quan</div>
+    <div class="nav-item active" onclick="showView('dashboard', this)">
+      <span class="icon">📊</span> Dashboard
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Vận hành</div>
+    <div class="nav-item" onclick="showView('rooms', this)">
+      <span class="icon">🏢</span> Mặt bằng & Phòng
+    </div>
+    <div class="nav-item" onclick="showView('leases', this)">
+      <span class="icon">📋</span> Hợp đồng
+    </div>
+    <div class="nav-item" onclick="showView('billing', this)">
+      <span class="icon">💳</span> Hóa đơn & Thu chi
+    </div>
+    <div class="nav-item" onclick="showView('parking', this)">
+      <span class="icon">🚗</span> Bãi xe
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Kỹ thuật</div>
+    <div class="nav-item" onclick="showView('tickets', this)">
+      <span class="icon">🔧</span> Sự cố & Bảo trì
+      <span class="badge">3</span>
+    </div>
+    <div class="nav-item" onclick="showView('assets', this)">
+      <span class="icon">🖥️</span> Tài sản thiết bị
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Hệ thống</div>
+    <div class="nav-item" onclick="showView('settings', this)">
+      <span class="icon">⚙️</span> Cài đặt
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="rate-widget">
+      <div class="rate-label">Tỷ giá hiện tại</div>
+      <div class="rate-value">1 USD = 25,870 VNĐ</div>
+      <div class="rate-time">🏦 Vietcombank · 22/06/2026</div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div>
+      <div class="topbar-title" id="topbar-title">Dashboard tổng quan</div>
+      <div class="topbar-sub" id="topbar-sub"><span class="live-dot"></span>Dữ liệu tháng 6/2026</div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-outline">📥 Xuất báo cáo</button>
+      <button class="btn btn-primary" onclick="openModal('modal-room')">+ Thêm mới</button>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- ===================== VIEW: DASHBOARD ===================== -->
+    <div class="view active" id="view-dashboard">
+      <!-- Alerts -->
+      <div class="alert-strip">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-text">
+          <strong>3 việc cần xử lý ngay</strong>
+          <span>VP2 (Thịnh Phát) hết HĐ sau 22 ngày · MT-01 công nợ quá hạn 5 ngày · VP4 trống ~38tr/tháng đang bỏ phí</span>
+        </div>
+        <span class="alert-cta" onclick="showView('leases', null)">Xem chi tiết →</span>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card revenue">
+          <div class="kpi-label">Doanh thu tháng 6</div>
+          <div class="kpi-main">247.6 tr</div>
+          <div class="kpi-sub">≈ $9,570 USD · Đã thu 168.9 tr</div>
+          <span class="kpi-badge up">↑ +8.3% vs T5</span>
+        </div>
+        <div class="kpi-card cost">
+          <div class="kpi-label">Tổng chi phí</div>
+          <div class="kpi-main">168.4 tr</div>
+          <div class="kpi-sub">Cố định 142 tr · Phát sinh 26.4 tr</div>
+          <span class="kpi-badge down">↑ +3.1% (phát sinh sửa chữa)</span>
+        </div>
+        <div class="kpi-card profit">
+          <div class="kpi-label">Lợi nhuận ròng</div>
+          <div class="kpi-main" style="color:var(--info)">79.2 tr</div>
+          <div class="kpi-sub">Biên LN: <strong>32%</strong></div>
+          <span class="kpi-badge neutral">↑ +5.2% vs T5</span>
+        </div>
+        <div class="kpi-card occupancy">
+          <div class="kpi-label">Tỷ lệ lấp đầy</div>
+          <div class="kpi-main">86%</div>
+          <div class="kpi-sub">660/766 m² đang có khách · còn VP4 trống</div>
+          <div class="occupancy-bar"><div class="occupancy-fill" style="width:86%"></div></div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Doanh thu — Chi phí — Lợi nhuận</div>
+          <div class="chart-sub">Cột = Chi phí + Lợi nhuận · tổng chiều cao = Doanh thu (triệu VNĐ)</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <div class="tabs" style="margin-bottom:0">
+              <div class="tab active">Tháng</div>
+              <div class="tab">Quý</div>
+              <div class="tab">Năm</div>
+            </div>
+            <select class="form-select" style="width:auto;font-size:12px;padding:6px 10px">
+              <option>So sánh: Không</option>
+              <option>So sánh cùng kỳ năm trước</option>
+              <option>So sánh kỳ liền trước</option>
+            </select>
+          </div>
+          <div class="chart-wrap"><canvas id="chart-main"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Cơ cấu chi phí T6</div>
+          <div class="chart-sub">Phân bổ theo hạng mục</div>
+          <div class="chart-wrap" style="height:240px"><canvas id="chart-pie"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Quick Table: Công nợ -->
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-header-left">
+            <h3>Tình trạng thu tiền tháng 6/2026</h3>
+            <p>4 khách thuê đang hoạt động · 1 phòng trống (VP4)</p>
+          </div>
+          <button class="btn btn-outline" style="font-size:12px">Lọc theo phòng</button>
+        </div>
+        <div class="scrollable-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Phòng</th><th>Khách thuê</th><th>Tiền thuê</th>
+                <th>Điện + Nước</th><th>Bãi xe</th><th>Tổng phải thu</th><th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>VP1</strong> · 1.05</td>
+                <td>Cty TNHH ABC Korea</td>
+                <td class="currency-usd">$3,680 <small style="color:var(--text-secondary)">(95.2 tr)</small></td>
+                <td>2.525 tr</td>
+                <td>8 thẻ × 150K = 1.2 tr</td>
+                <td><strong>98.93 tr</strong></td>
+                <td><span class="status-badge status-active">Đã thu</span></td>
+              </tr>
+              <tr>
+                <td><strong>VP2</strong> · 1.05</td>
+                <td>Cty CP Thịnh Phát</td>
+                <td class="currency-vnd">56 tr</td>
+                <td>1.975 tr</td>
+                <td>6 thẻ × 150K = 0.9 tr</td>
+                <td><strong>58.88 tr</strong></td>
+                <td><span class="status-badge status-expiring">Chưa thu</span></td>
+              </tr>
+              <tr>
+                <td><strong>VP3</strong> · 2.01</td>
+                <td>Cty TM Dịch vụ Hùng</td>
+                <td class="currency-vnd">65 tr</td>
+                <td>3.47 tr</td>
+                <td>10 thẻ × 150K = 1.5 tr</td>
+                <td><strong>69.97 tr</strong></td>
+                <td><span class="status-badge status-active">Đã thu</span></td>
+              </tr>
+              <tr>
+                <td><strong>MT-01</strong> · Trệt</td>
+                <td>Cửa hàng đồ ăn</td>
+                <td class="currency-vnd">18 tr</td>
+                <td>1.1825 tr</td>
+                <td>4 thẻ × 150K = 0.6 tr</td>
+                <td><strong>19.78 tr</strong></td>
+                <td><span class="status-badge status-overdue">Quá hạn 5N</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: ROOMS ===================== -->
+    <div class="view" id="view-rooms">
+      <div class="section-title">Mặt bằng & Phòng</div>
+      <div class="section-sub">Sơ đồ phân bổ · Orient Apartment</div>
+
+      <div class="floor-block">
+        <div class="floor-label">Tầng Trệt — Mặt bằng 1.05 (230 m² + 200 m²) · Thuê từ Minh Bảo Tín</div>
+        <div class="rooms-grid">
+          <div class="room-card occupied">
+            <div class="status-badge status-active" style="margin-bottom:10px">Đang thuê</div>
+            <div class="room-name">VP1 — Phòng A</div>
+            <div class="room-area">📐 230 m² · Tầng trệt, cánh trái</div>
+            <div class="room-tenant">🏢 Cty TNHH ABC Korea</div>
+            <div class="room-price">Giá thuê: <span>$16/m² · $3,680/th (≈95.2tr)</span></div>
+            <div class="room-footer">
+              <span class="room-days">Còn <strong>8 tháng</strong> HĐ</span>
+              <button class="btn btn-outline" style="font-size:11px;padding:4px 10px">Chi tiết</button>
+            </div>
+          </div>
+          <div class="room-card expiring">
+            <div class="status-badge status-expiring" style="margin-bottom:10px">⚠️ Sắp hết HĐ</div>
+            <div class="room-name">VP2 — Phòng B</div>
+            <div class="room-area">📐 200 m² · Tầng trệt, cánh phải</div>
+            <div class="room-tenant">🏢 Cty CP Thịnh Phát</div>
+            <div class="room-price">Giá thuê: <span style="color:var(--text)">280,000 VNĐ/m²</span></div>
+            <div class="room-footer">
+              <span class="room-days">Còn <strong style="color:var(--danger)">22 ngày</strong> HĐ</span>
+              <button class="btn btn-outline" style="font-size:11px;padding:4px 10px">Gia hạn</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="floor-block">
+        <div class="floor-label">Tầng 1 — Mặt bằng 2.01 (286 m²) · Thuê từ Minh Bảo Tín</div>
+        <div class="rooms-grid">
+          <div class="room-card occupied">
+            <div class="status-badge status-active" style="margin-bottom:10px">Đang thuê</div>
+            <div class="room-name">VP3 — Phòng C</div>
+            <div class="room-area">📐 180 m² · Tầng 1, cánh trái</div>
+            <div class="room-tenant">🏢 Cty TM Dịch vụ Hùng</div>
+            <div class="room-price">Giá thuê: <span style="color:var(--text)">65,000,000 VNĐ/tháng</span></div>
+            <div class="room-footer">
+              <span class="room-days">Còn <strong>4 tháng</strong> HĐ</span>
+              <button class="btn btn-outline" style="font-size:11px;padding:4px 10px">Chi tiết</button>
+            </div>
+          </div>
+          <div class="room-card empty">
+            <div class="status-badge status-empty" style="margin-bottom:10px">Trống</div>
+            <div class="room-name">VP4 — Phòng D</div>
+            <div class="room-area">📐 106 m² · Tầng 1, cánh phải</div>
+            <div class="room-tenant" style="color:var(--text-secondary)">Chưa có khách thuê</div>
+            <div class="room-price">Giá chào: <span style="color:var(--success)">~38,000,000 VNĐ/tháng</span></div>
+            <div class="room-footer">
+              <span class="room-days">Bỏ trống <strong style="color:var(--danger)">~38tr/tháng</strong></span>
+              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px">🔍 Tìm khách</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="floor-block">
+        <div class="floor-label">Tầng Trệt — Mặt trước (Mặt tiền đường) · Thuê từ Thủy Sản 4</div>
+        <div class="rooms-grid">
+          <div class="room-card occupied">
+            <div class="status-badge status-active" style="margin-bottom:10px">Đang thuê</div>
+            <div class="room-name">MT-01 · Mặt tiền</div>
+            <div class="room-area">📐 50 m² · Mặt tiền, vị trí đắc địa</div>
+            <div class="room-tenant">🍜 Cửa hàng đồ ăn</div>
+            <div class="room-price">Giá thuê: <span style="color:var(--text)">18,000,000 VNĐ/tháng</span></div>
+            <div class="room-footer">
+              <span class="room-days">Còn <strong>10 tháng</strong> HĐ</span>
+              <button class="btn btn-outline" style="font-size:11px;padding:4px 10px">Chi tiết</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: LEASES ===================== -->
+    <div class="view" id="view-leases">
+      <div class="section-title">Quản lý Hợp đồng</div>
+      <div class="section-sub">Hợp đồng đầu vào (Inbound) & đầu ra (Outbound)</div>
+
+      <div class="tabs">
+        <div class="tab active">📤 Đầu ra (Khách thuê lại)</div>
+        <div class="tab">📥 Đầu vào (CĐT)</div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-header-left">
+            <h3>Hợp đồng đầu ra — Outbound Leases</h3>
+            <p>4 hợp đồng hiệu lực · 1 phòng trống đang chào thuê</p>
+          </div>
+          <button class="btn btn-primary" style="font-size:12px">+ Hợp đồng mới</button>
+        </div>
+        <div class="scrollable-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Mã HĐ</th><th>Phòng</th><th>Khách thuê</th><th>Diện tích</th>
+                <th>Giá thuê</th><th>Tiền cọc</th><th>Thời hạn</th><th>Hết hạn</th><th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:700;color:var(--info)">HD-2025-01</td>
+                <td>VP1</td>
+                <td>Cty TNHH ABC Korea</td>
+                <td>230 m²</td>
+                <td class="currency-usd">$16/m²/th</td>
+                <td class="currency-usd">2 tháng</td>
+                <td>12 tháng</td>
+                <td>28/02/2027</td>
+                <td><span class="status-badge status-active">Hiệu lực</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:700;color:var(--warning)">HD-2025-02</td>
+                <td>VP2</td>
+                <td>Cty CP Thịnh Phát</td>
+                <td>200 m²</td>
+                <td class="currency-vnd">280K VNĐ/m²</td>
+                <td class="currency-vnd">112 tr</td>
+                <td>12 tháng</td>
+                <td><strong style="color:var(--danger)">14/07/2026</strong></td>
+                <td><span class="status-badge status-expiring">⚠️ Sắp hết</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:700;color:var(--info)">HD-2025-03</td>
+                <td>VP3</td>
+                <td>Cty TM Dịch vụ Hùng</td>
+                <td>180 m²</td>
+                <td class="currency-vnd">65 tr/tháng</td>
+                <td class="currency-vnd">130 tr</td>
+                <td>12 tháng</td>
+                <td>31/10/2026</td>
+                <td><span class="status-badge status-active">Hiệu lực</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:700;color:var(--info)">HD-2025-04</td>
+                <td>MT-01</td>
+                <td>Cửa hàng đồ ăn</td>
+                <td>50 m²</td>
+                <td class="currency-vnd">18 tr/tháng</td>
+                <td class="currency-vnd">36 tr</td>
+                <td>12 tháng</td>
+                <td>15/04/2027</td>
+                <td><span class="status-badge status-active">Hiệu lực</span></td>
+              </tr>
+              <tr style="opacity:0.7">
+                <td style="font-weight:700;color:var(--text-secondary)">—</td>
+                <td>VP4</td>
+                <td style="color:var(--text-secondary)">Chưa có khách</td>
+                <td>106 m²</td>
+                <td class="currency-vnd">~38 tr/tháng (chào)</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td><span class="status-badge status-empty">Trống</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: BILLING ===================== -->
+    <div class="view" id="view-billing">
+      <div class="section-title">Hóa đơn & Thu chi</div>
+      <div class="section-sub">Chốt điện nước · Tổng hợp hóa đơn · Quản lý thu chi</div>
+
+      <div class="billing-actions">
+        <div class="action-card" onclick="openModal('modal-electric')">
+          <div class="action-icon">⚡</div>
+          <div class="action-title">Chốt số điện tháng</div>
+          <div class="action-desc">Nhập chỉ số công tơ phụ từng phòng → tự tính tiền</div>
+        </div>
+        <div class="action-card" onclick="openModal('modal-invoice')">
+          <div class="action-icon">🧾</div>
+          <div class="action-title">Tạo hóa đơn tổng hợp</div>
+          <div class="action-desc">Thuê + Điện + Nước + Xe → 1 thông báo PDF</div>
+        </div>
+        <div class="action-card">
+          <div class="action-icon">📊</div>
+          <div class="action-title">Báo cáo Thu chi tháng</div>
+          <div class="action-desc">Tổng hợp tất cả phiếu thu/chi trong kỳ</div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-header-left">
+            <h3>Chỉ số điện nước tháng 6/2026</h3>
+            <p>Cập nhật lần cuối: 20/06/2026</p>
+          </div>
+          <button class="btn btn-primary" style="font-size:12px" onclick="openModal('modal-electric')">⚡ Nhập chỉ số</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Phòng</th><th>Chỉ số cũ</th><th>Chỉ số mới</th><th>Số kWh</th><th>Đơn giá</th><th>Tiền điện</th><th>Tiền nước</th><th>Tổng DV</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>VP1</strong></td>
+              <td>12,450</td><td>13,120</td><td><strong>670</strong></td>
+              <td>3,500 đ</td><td class="currency-vnd">2,345,000 đ</td>
+              <td>180,000 đ</td><td><strong>2,525,000 đ</strong></td>
+            </tr>
+            <tr>
+              <td><strong>VP2</strong></td>
+              <td>8,200</td><td>8,730</td><td><strong>530</strong></td>
+              <td>3,500 đ</td><td class="currency-vnd">1,855,000 đ</td>
+              <td>120,000 đ</td><td><strong>1,975,000 đ</strong></td>
+            </tr>
+            <tr>
+              <td><strong>VP3</strong></td>
+              <td>15,600</td><td>16,520</td><td><strong>920</strong></td>
+              <td>3,500 đ</td><td class="currency-vnd">3,220,000 đ</td>
+              <td>250,000 đ</td><td><strong>3,470,000 đ</strong></td>
+            </tr>
+            <tr>
+              <td><strong>MT-01</strong></td>
+              <td>3,800</td><td>4,115</td><td><strong>315</strong></td>
+              <td>3,500 đ</td><td class="currency-vnd">1,102,500 đ</td>
+              <td>80,000 đ</td><td><strong>1,182,500 đ</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: PARKING ===================== -->
+    <div class="view" id="view-parking">
+      <div class="section-title">Quản lý Bãi xe</div>
+      <div class="section-sub">Hầm xe Thủy Sản 4 · 250m² · Giá thuê lại: 150,000đ/xe/tháng</div>
+
+      <div class="parking-summary">
+        <div class="p-stat">
+          <div class="p-stat-label">Tổng xe đang gửi</div>
+          <div class="p-stat-value">28 xe</div>
+          <div class="p-stat-sub">Xe máy: 24 · Ô tô: 4</div>
+        </div>
+        <div class="p-stat">
+          <div class="p-stat-label">Doanh thu bãi xe T6</div>
+          <div class="p-stat-value" style="color:var(--success)">4.2 tr</div>
+          <div class="p-stat-sub">28 xe × 150,000đ</div>
+        </div>
+        <div class="p-stat">
+          <div class="p-stat-label">Chi phí thuê TS4</div>
+          <div class="p-stat-value" style="color:var(--danger)">3.5 tr</div>
+          <div class="p-stat-sub">Cố định · Lãi ròng +0.7 tr/tháng</div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-header-left">
+            <h3>Danh sách xe theo công ty</h3>
+            <p>Phân bổ theo từng khách thuê văn phòng</p>
+          </div>
+          <button class="btn btn-primary" style="font-size:12px">+ Đăng ký xe mới</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Khách thuê (VP)</th><th>Xe máy</th><th>Ô tô</th><th>Tổng thẻ</th><th>Phí/tháng</th><th>Biển số</th><th>Trạng thái</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>VP1</strong> · ABC Korea</td>
+              <td>6</td><td>2</td><td><strong>8 thẻ</strong></td><td>1,200,000đ</td>
+              <td><a href="#" style="color:var(--info);font-size:12px">Xem 8 biển</a></td>
+              <td><span class="status-badge status-active">Đang gửi</span></td>
+            </tr>
+            <tr>
+              <td><strong>VP2</strong> · Thịnh Phát</td>
+              <td>5</td><td>1</td><td><strong>6 thẻ</strong></td><td>900,000đ</td>
+              <td><a href="#" style="color:var(--info);font-size:12px">Xem 6 biển</a></td>
+              <td><span class="status-badge status-active">Đang gửi</span></td>
+            </tr>
+            <tr>
+              <td><strong>VP3</strong> · Dịch vụ Hùng</td>
+              <td>9</td><td>1</td><td><strong>10 thẻ</strong></td><td>1,500,000đ</td>
+              <td><a href="#" style="color:var(--info);font-size:12px">Xem 10 biển</a></td>
+              <td><span class="status-badge status-active">Đang gửi</span></td>
+            </tr>
+            <tr>
+              <td><strong>MT-01</strong> · Đồ ăn</td>
+              <td>4</td><td>0</td><td><strong>4 thẻ</strong></td><td>600,000đ</td>
+              <td><a href="#" style="color:var(--info);font-size:12px">Xem 4 biển</a></td>
+              <td><span class="status-badge status-active">Đang gửi</span></td>
+            </tr>
+            <tr style="background:#F8FAFC">
+              <td style="font-weight:800">TỔNG CỘNG</td>
+              <td style="font-weight:800">24</td><td style="font-weight:800">4</td>
+              <td style="font-weight:800">28 thẻ</td><td style="font-weight:800;color:var(--success)">4,200,000đ</td>
+              <td>—</td><td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: TICKETS ===================== -->
+    <div class="view" id="view-tickets">
+      <div class="section-title">Sự cố & Bảo trì</div>
+      <div class="section-sub">Ticket hệ thống · 3 đang mở</div>
+
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <button class="btn btn-primary">+ Tạo Ticket</button>
+        <button class="btn btn-outline">Xem lịch sử</button>
+      </div>
+
+      <div class="ticket-list">
+        <!-- Ticket 1 -->
+        <div class="ticket-card">
+          <div class="ticket-header">
+            <span class="ticket-id">#TK-0023</span>
+            <span class="ticket-title">⚡ Máy lạnh VP2 Phòng B không mát — Daikin 2HP</span>
+            <span class="status-badge status-inprogress">Đang xử lý</span>
+          </div>
+          <div class="ticket-meta">
+            <span>📍 VP2 · Phòng B</span>
+            <span>👤 Cty Thịnh Phát báo</span>
+            <span>📅 20/06/2026 · 09:15</span>
+            <span>💰 Dự kiến: ~1,200,000đ</span>
+          </div>
+          <div class="ticket-progress">
+            <ul class="checklist" style="margin-top:10px">
+              <li class="done" onclick="toggleCheck(this)"><span class="check-icon checked">✓</span> Kiểm tra hiện trạng thiết bị (trong 15–30 phút từ khi nhận tin)</li>
+              <li class="done" onclick="toggleCheck(this)"><span class="check-icon checked">✓</span> Xác định lỗi: hao mòn tự nhiên (→ Tòa nhà chịu chi phí)</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Đề xuất vật tư thay thế & cập nhật báo giá để BQL duyệt chi</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Tiến hành sửa chữa / thay thế</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Chụp ảnh nghiệm thu · Đóng Ticket · Cập nhật Drive</li>
+            </ul>
+          </div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+            <button class="btn btn-outline" style="font-size:12px">📎 Drive link</button>
+            <button class="btn btn-outline" style="font-size:12px">💬 Ghi chú</button>
+            <button class="btn btn-primary" style="font-size:12px;margin-left:auto">✓ Duyệt chi</button>
+          </div>
+        </div>
+
+        <!-- Ticket 2 -->
+        <div class="ticket-card">
+          <div class="ticket-header">
+            <span class="ticket-id">#TK-0024</span>
+            <span class="ticket-title">🚿 Rò rỉ nước nhà vệ sinh VP3</span>
+            <span class="status-badge status-pending">Chờ xử lý</span>
+          </div>
+          <div class="ticket-meta">
+            <span>📍 VP3 · Tầng 1</span>
+            <span>👤 Cty Dịch vụ Hùng báo</span>
+            <span>📅 21/06/2026 · 14:30</span>
+            <span>💰 Chưa xác định</span>
+          </div>
+          <div class="ticket-progress">
+            <ul class="checklist" style="margin-top:10px">
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Kiểm tra hiện trạng thiết bị (trong 15–30 phút từ khi nhận tin)</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Xác định nguyên nhân & phân định trách nhiệm chi phí</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Đề xuất phương án xử lý & dự toán chi phí</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Tiến hành sửa chữa</li>
+              <li onclick="toggleCheck(this)"><span class="check-icon"></span> Nghiệm thu & đóng Ticket</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Ticket 3 -->
+        <div class="ticket-card">
+          <div class="ticket-header">
+            <span class="ticket-id">#TK-0025</span>
+            <span class="ticket-title">💡 Đèn hành lang tầng trệt bị tắt 2 bóng</span>
+            <span class="status-badge status-pending">Chờ xử lý</span>
+          </div>
+          <div class="ticket-meta">
+            <span>📍 Khu vực chung · Hành lang</span>
+            <span>👤 Bảo vệ báo</span>
+            <span>📅 22/06/2026 · 08:00</span>
+            <span>💰 ~200,000đ</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: ASSETS ===================== -->
+    <div class="view" id="view-assets">
+      <div class="section-title">Tài sản & Thiết bị</div>
+      <div class="section-sub">Danh mục thiết bị gắn liền theo vị trí</div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-header-left">
+            <h3>Danh mục thiết bị toàn tòa nhà</h3>
+            <p>12 thiết bị đang quản lý</p>
+          </div>
+          <button class="btn btn-primary" style="font-size:12px">+ Thêm thiết bị</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Mã TS</th><th>Tên thiết bị</th><th>Vị trí</th><th>Ngày lắp đặt</th><th>Trạng thái</th><th>Lịch sử</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="font-weight:700;color:var(--info)">AS-001</td>
+              <td>Máy lạnh Daikin 2HP</td>
+              <td>VP2 · Phòng B</td>
+              <td>15/06/2023</td>
+              <td><span class="status-badge status-inprogress">⚙️ Đang sửa</span></td>
+              <td><a href="#" style="color:var(--info);font-size:12px">📁 Drive</a></td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--info)">AS-002</td>
+              <td>Máy lạnh Daikin 2HP</td>
+              <td>VP1 · Phòng A</td>
+              <td>15/06/2023</td>
+              <td><span class="status-badge status-active">Bình thường</span></td>
+              <td><a href="#" style="color:var(--info);font-size:12px">📁 Drive</a></td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--info)">AS-003</td>
+              <td>Máy bơm nước ngưng</td>
+              <td>VP3 · Tầng 1</td>
+              <td>01/11/2024</td>
+              <td><span class="status-badge status-active">Bình thường</span></td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--info)">AS-004</td>
+              <td>Hệ thống đèn LED hành lang</td>
+              <td>Khu vực chung</td>
+              <td>01/01/2023</td>
+              <td><span class="status-badge status-overdue">Cần bảo trì</span></td>
+              <td><a href="#" style="color:var(--info);font-size:12px">📁 Drive</a></td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--info)">AS-005</td>
+              <td>Camera an ninh (bộ 8 cam)</td>
+              <td>Toàn tòa nhà</td>
+              <td>15/03/2023</td>
+              <td><span class="status-badge status-active">Bình thường</span></td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===================== VIEW: SETTINGS ===================== -->
+    <div class="view" id="view-settings">
+      <div class="section-title">Cài đặt hệ thống</div>
+      <div class="section-sub">Cấu hình tỷ giá, biểu giá dịch vụ và thông báo tự động</div>
+
+      <div class="settings-grid">
+        <div class="settings-card">
+          <h3>💱 Tỷ giá USD/VNĐ</h3>
+          <p>Dùng để hiển thị song song 2 loại tiền tệ</p>
+
+          <div class="toggle-row">
+            <span class="toggle-label">Tự động lấy từ Vietcombank</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+          </div>
+
+          <div class="form-group" style="margin-top:12px">
+            <label class="form-label">Tỷ giá thủ công (khi tắt tự động)</label>
+            <input class="form-input" type="number" value="25870" placeholder="VD: 25870">
+          </div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">
+            🏦 Vietcombank cập nhật lúc 08:00 · 22/06/2026: 1 USD = 25,870 VNĐ
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>⚡ Biểu giá điện nước</h3>
+          <p>Đơn giá áp dụng tính hóa đơn cho khách thuê</p>
+
+          <div class="form-group">
+            <label class="form-label">Đơn giá điện (đồng/kWh)</label>
+            <input class="form-input" type="number" value="3500">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Giá nước (đồng/m³)</label>
+            <input class="form-input" type="number" value="12000">
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>🔔 Cảnh báo tự động</h3>
+          <p>Nhắc nhở qua thông báo trong hệ thống</p>
+
+          <div class="toggle-row">
+            <span class="toggle-label">HĐ hết hạn trước 60 ngày</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">HĐ hết hạn trước 30 ngày</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Công nợ quá hạn 5 ngày</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Hóa đơn chưa gửi cuối tháng</span>
+            <div class="toggle" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>🚗 Phí gửi xe</h3>
+          <p>Giá thu lại từ khách thuê văn phòng</p>
+
+          <div class="form-group">
+            <label class="form-label">Phí xe máy (đồng/xe/tháng)</label>
+            <input class="form-input" type="number" value="150000">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phí ô tô (đồng/xe/tháng)</label>
+            <input class="form-input" type="number" value="150000">
+          </div>
+          <div style="font-size:12px;color:var(--text-secondary)">
+            Phí thuê bãi TS4 từ TTV: 3,500,000đ/tháng cố định
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;display:flex;justify-content:flex-end">
+        <button class="btn btn-primary">💾 Lưu cài đặt</button>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- ====== MODALS ====== -->
+
+<!-- Modal: Thêm phòng -->
+<div class="modal-overlay" id="modal-room">
+  <div class="modal">
+    <div class="modal-title">🏢 Thêm phòng / Chia nhỏ mặt bằng</div>
+    <div class="modal-sub">Khai báo đơn vị phòng mới từ mặt bằng gốc</div>
+    <div class="form-group">
+      <label class="form-label">Mặt bằng gốc (CĐT)</label>
+      <select class="form-select">
+        <option>1.05 · Tầng Trệt · Minh Bảo Tín</option>
+        <option>2.01 · Tầng 1 · Minh Bảo Tín</option>
+        <option>Mặt trước · Thủy Sản 4</option>
+        <option>Hầm xe · Thủy Sản 4</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Tên phòng</label>
+        <input class="form-input" placeholder="VD: VP4, MT-02...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Diện tích (m²)</label>
+        <input class="form-input" type="number" placeholder="150">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Mô tả vị trí</label>
+      <input class="form-input" placeholder="VD: Cánh trái, gần cầu thang...">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-room')">Hủy</button>
+      <button class="btn btn-primary">Tạo phòng</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Nhập điện -->
+<div class="modal-overlay" id="modal-electric">
+  <div class="modal">
+    <div class="modal-title">⚡ Chốt số điện tháng 6/2026</div>
+    <div class="modal-sub">Nhập chỉ số công tơ phụ · Đơn giá: 3,500 đ/kWh</div>
+    <table style="width:100%;margin-bottom:16px">
+      <thead>
+        <tr style="background:#F8FAFC">
+          <th style="padding:8px;font-size:12px;text-align:left;color:var(--text-secondary)">Phòng</th>
+          <th style="padding:8px;font-size:12px;color:var(--text-secondary)">Chỉ số cũ</th>
+          <th style="padding:8px;font-size:12px;color:var(--text-secondary)">Chỉ số mới</th>
+          <th style="padding:8px;font-size:12px;color:var(--text-secondary)">Thành tiền</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px;font-size:13px;font-weight:600">VP1</td>
+          <td style="padding:8px;font-size:13px;color:var(--text-secondary)">12,450</td>
+          <td style="padding:4px 8px"><input class="form-input" type="number" value="13120" style="width:90px" oninput="calcElec(this, 12450, 'r1')"></td>
+          <td style="padding:8px;font-size:13px;font-weight:700;color:var(--info)" id="r1">2,345,000đ</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;font-size:13px;font-weight:600">VP2</td>
+          <td style="padding:8px;font-size:13px;color:var(--text-secondary)">8,200</td>
+          <td style="padding:4px 8px"><input class="form-input" type="number" value="8730" style="width:90px" oninput="calcElec(this, 8200, 'r2')"></td>
+          <td style="padding:8px;font-size:13px;font-weight:700;color:var(--info)" id="r2">1,855,000đ</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;font-size:13px;font-weight:600">VP3</td>
+          <td style="padding:8px;font-size:13px;color:var(--text-secondary)">15,600</td>
+          <td style="padding:4px 8px"><input class="form-input" type="number" value="16520" style="width:90px" oninput="calcElec(this, 15600, 'r3')"></td>
+          <td style="padding:8px;font-size:13px;font-weight:700;color:var(--info)" id="r3">3,220,000đ</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;font-size:13px;font-weight:600">MT-01</td>
+          <td style="padding:8px;font-size:13px;color:var(--text-secondary)">3,800</td>
+          <td style="padding:4px 8px"><input class="form-input" type="number" value="4115" style="width:90px" oninput="calcElec(this, 3800, 'r4')"></td>
+          <td style="padding:8px;font-size:13px;font-weight:700;color:var(--info)" id="r4">1,102,500đ</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-electric')">Hủy</button>
+      <button class="btn btn-primary">💾 Lưu chỉ số</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Invoice Preview -->
+<div class="modal-overlay" id="modal-invoice">
+  <div class="modal">
+    <div class="modal-title">🧾 Tạo hóa đơn tổng hợp</div>
+    <div class="modal-sub">Hệ thống tự tổng hợp tất cả khoản thu thành 1 thông báo</div>
+    <div class="form-group">
+      <label class="form-label">Chọn khách thuê</label>
+      <select class="form-select" onchange="showInvoice()">
+        <option value="">-- Chọn phòng / khách thuê --</option>
+        <option value="vp1">VP1 · Cty TNHH ABC Korea</option>
+        <option value="vp2">VP2 · Cty CP Thịnh Phát</option>
+        <option value="vp3">VP3 · Cty TM Dịch vụ Hùng</option>
+      </select>
+    </div>
+    <div id="invoice-preview" style="display:none">
+      <div class="invoice-box">
+        <div class="invoice-header">
+          <div>
+            <div class="invoice-brand">TTV HR GROUP</div>
+            <div class="invoice-month">Thông báo thanh toán · Tháng 6/2026</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;color:var(--text-secondary)">Khách thuê</div>
+            <div style="font-weight:700;font-size:13px">Cty TNHH ABC Korea</div>
+            <div style="font-size:11px;color:var(--text-secondary)">VP1 · 230m²</div>
+          </div>
+        </div>
+        <div class="invoice-line"><span>Tiền thuê văn phòng (230m² × $16)</span><span class="currency-usd">$3,680 = 95,201,600đ</span></div>
+        <div class="invoice-line"><span>Tiền điện (670 kWh × 3,500đ)</span><span>2,345,000đ</span></div>
+        <div class="invoice-line"><span>Tiền nước</span><span>180,000đ</span></div>
+        <div class="invoice-line"><span>Phí gửi xe (8 thẻ × 150,000đ)</span><span>1,200,000đ</span></div>
+        <div class="invoice-total"><span>TỔNG CỘNG</span><span style="color:var(--info)">98,926,600đ</span></div>
+        <div class="invoice-note">
+          * Tỷ giá áp dụng: 1 USD = 25,870 VNĐ (Vietcombank 22/06/2026)<br>
+          * Hạn thanh toán: 30/06/2026 · TK: 1234567890 · Ngân hàng XYZ
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary" style="flex:1">📄 Xuất PDF</button>
+        <button class="btn btn-outline" style="flex:1">💬 Gửi Zalo/Email</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-invoice')">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Navigation
+function showView(name, el) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  if (el) el.classList.add('active');
+
+  const titles = {
+    dashboard: ['Dashboard tổng quan', 'Dữ liệu tháng 6/2026'],
+    rooms: ['Mặt bằng & Phòng', 'Orient Apartment · Sơ đồ phân bổ'],
+    leases: ['Quản lý Hợp đồng', 'Inbound & Outbound Leases'],
+    billing: ['Hóa đơn & Thu chi', 'Chốt điện nước · Hóa đơn tổng hợp'],
+    parking: ['Bãi xe · Thủy Sản 4', '250m² hầm xe · 28 xe đang gửi'],
+    tickets: ['Sự cố & Bảo trì', '3 ticket đang mở'],
+    assets: ['Tài sản & Thiết bị', 'Danh mục gắn liền theo vị trí'],
+    settings: ['Cài đặt hệ thống', 'Tỷ giá · Biểu giá · Cảnh báo'],
+  };
+  document.getElementById('topbar-title').textContent = titles[name][0];
+  document.getElementById('topbar-sub').innerHTML = '<span class="live-dot"></span>' + titles[name][1];
+}
+
+// Modal
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
+});
+
+// Ticket checklist
+function toggleCheck(li) {
+  li.classList.toggle('done');
+  const icon = li.querySelector('.check-icon');
+  if (li.classList.contains('done')) {
+    icon.classList.add('checked');
+    icon.textContent = '✓';
+  } else {
+    icon.classList.remove('checked');
+    icon.textContent = '';
+  }
+}
+
+// Electric calc
+function calcElec(input, oldVal, resultId) {
+  const diff = Math.max(0, parseInt(input.value) - oldVal);
+  const total = diff * 3500;
+  document.getElementById(resultId).textContent = total.toLocaleString('vi-VN') + 'đ';
+}
+
+// Invoice preview
+function showInvoice() {
+  document.getElementById('invoice-preview').style.display = 'block';
+}
+
+// Charts
+window.addEventListener('load', () => {
+  // Main bar chart
+  const ctx = document.getElementById('chart-main').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6/26'],
+      datasets: [
+        {
+          label: 'Chi phí',
+          data: [162, 165, 158, 170, 163, 168],
+          backgroundColor: '#EF4444CC',
+          borderRadius: { bottomLeft: 5, bottomRight: 5 },
+        },
+        {
+          label: 'Lợi nhuận',
+          data: [36, 45, 67, 65, 65, 79],
+          backgroundColor: '#3B82F6CC',
+          borderRadius: { topLeft: 5, topRight: 5 },
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { font: { family: 'Inter', size: 12 }, boxWidth: 12 } },
+        tooltip: {
+          callbacks: {
+            footer: (items) => 'Doanh thu: ' + items.reduce((a, i) => a + i.parsed.y, 0) + ' tr'
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { family: 'Inter', size: 12 } } },
+        y: { stacked: true, grid: { color: '#F1F5F9' }, ticks: { font: { family: 'Inter', size: 11 }, callback: v => v + ' tr' } }
+      }
+    }
+  });
+
+  // Pie chart
+  const ctx2 = document.getElementById('chart-pie').getContext('2d');
+  new Chart(ctx2, {
+    type: 'doughnut',
+    data: {
+      labels: ['Thuê mặt bằng gốc (sàn + hầm)', 'Lương nhân sự', 'Điện nước chung', 'Sửa chữa', 'Đối ngoại'],
+      datasets: [{
+        data: [142, 15, 4.5, 4, 2.9],
+        backgroundColor: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'],
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { family: 'Inter', size: 11 }, boxWidth: 10, padding: 10 }
+        }
+      }
+    }
+  });
+});
+
+// Tabs (UI only)
+document.querySelectorAll('.tabs').forEach(tabs => {
+  tabs.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+    });
+  });
+});
+</script>
+</body>
+</html>
