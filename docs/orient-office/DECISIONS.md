@@ -42,3 +42,14 @@
 20. **Kiểm thử giao diện không đụng production**: dựng API giả lập PostgREST tối giản trên PGlite (chạy migration 164+165 thật, RLS thật) + chạy Vite với `VITE_SUPABASE_URL` trỏ vào đó; đăng nhập bằng tài khoản test chỉ tồn tại trong API giả lập. File giả lập để ở thư mục tạm, không đưa vào repo.
 21. **Mobile**: lưới nhập theo tháng giữ dạng bảng cuộn ngang (cột Tháng cố định); bảng cấu hình khách chuyển sang thẻ trên điện thoại; 8 mục Văn phòng Orient có trong menu "Thêm" của MobileNav.
 22. **Số hoá đơn** tự sinh `TB-YYYYMM-NN` khi lập; hạn thanh toán mặc định = ngày `invoice_due_day` của chính tháng đó.
+
+## Nâng cấp 18/10/2026 — Dashboard, Báo cáo, Thông báo
+
+23. **Engine sự kiện** (`lib/events.ts`): mọi việc cần chú ý gom thành 1 danh sách có mức độ + ngày. Hợp đồng khách & mốc tăng giá mặt bằng nhắc theo 3 mức: đỏ ≤ 30 ngày, vàng ≤ 60 ngày, xanh ≤ `alert_days` (mặc định 90 = 3 tháng; migration 166 đổi mặc định 60 → 90). Khoá sự kiện có kèm ngày → gia hạn HĐ (đổi ngày) thì nhắc lại từ đầu.
+24. **Trạng thái "Đã xử lý / Nhắc lại sau"** lưu ở bảng `bds_notification_states` (migration 166) để điện thoại và máy tính thấy giống nhau. Chưa chạy 166 → tạm lưu trên trình duyệt (localStorage) và module vẫn chạy.
+25. **Nhắc nhập liệu thông minh**: "chưa lập thông báo thanh toán" chỉ nhắc khi anh đã dùng tính năng hoá đơn (có ít nhất 1 thông báo); "chốt chỉ số điện" chỉ nhắc từ ngày 25 và khi đã từng nhập chỉ số; "chưa nhập tiền thuê" chỉ tính khách có hợp đồng phủ tháng đó.
+26. **Dự báo** (`lib/forecast.ts`): tháng đã có doanh thu = thực tế; các tháng sau giữ tiền thuê gần nhất từng khách, dừng sau tháng hết HĐ; phụ phí & vận hành = trung bình 3 tháng gần nhất; chi phí thuê tính đúng theo mốc tăng. Không tự giả định gia hạn → dự báo cho thấy rủi ro khi HĐ hết hạn.
+27. **Nhận định tự động** (`lib/insights.ts`): so tháng trước, lũy kế năm, rủi ro tập trung khách (≥ 50%), mặt bằng không doanh thu (phân biệt "chưa có khách" và "có khách nhưng chưa nhập tiền thuê"), bãi xe lỗ + số xe cần thêm, tổng chi phí tăng do mốc tăng 12 tháng tới, tháng dự báo bắt đầu lỗ, tháng thiếu số liệu, công nợ, lấp đầy.
+28. **Dashboard**: kỳ xem (6/12 tháng, năm, toàn bộ) không lùi trước "tháng bắt đầu theo dõi" trong Cài đặt. Biểu đồ dự báo vẽ nhạt / nét đứt. Bảng màu theo bộ đã kiểm (dataviz).
+29. **Báo cáo** in bằng CSS print (portal vào body), không thêm thư viện PDF; mỗi báo cáo có CSV (BOM UTF-8).
+30. **"Chép tháng trước"** (tiền thuê, chi phí vận hành, số xe) chỉ điền ô đang trống, không ghi đè.

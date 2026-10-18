@@ -3,12 +3,13 @@ import { ChevronDown, ChevronRight, Download, Plus, Trash2, Upload } from 'lucid
 import { cellKey, useOffice, patchKey } from '../../data/OfficeDataProvider';
 import { LANDLORD_SHORT, nextSortOrder, sortLeases, sortTenants } from '../../data/selectors';
 import { buildFeeCsvTemplate, parseFeeCsv, type FeeCsvResult } from '../../lib/calc/csv';
-import { monthLabel } from '../../lib/calc/months';
+import { addMonths, monthLabel } from '../../lib/calc/months';
 import { fmtVND } from '../../lib/calc/money';
 import { tenantMonth } from '../../lib/calc/pl';
 import type { Currency, MonthKey } from '../../lib/calc/types';
 import { downloadText } from '../../lib/download';
 import { CountInput, DecimalInput, MoneyInput } from '../MoneyInput';
+import CopyPrevMonth from '../CopyPrevMonth';
 import { Banner, Card, CurrencyBadge, CurrencySelect, MonthSelect, Modal, TextInput, Toggle, VatBadge, VatSelect, cls } from '../ui';
 
 function TenantConfig() {
@@ -118,7 +119,23 @@ function RentGrid({ showInactive }: { showInactive: boolean }) {
   const tenants = sortTenants(rows.bds_tenants).filter(t => showInactive || t.active);
   const calcTenant = new Map(calc.tenants.map(t => [t.id, t]));
   return (
-    <Card pad={false} title="Bảng nhập tiền thuê theo tháng" desc="Gõ số đầy đủ, tự thêm dấu phẩy (5997000 → 5,997,000). Ô trống = chưa thu / chưa nhập. Tự lưu sau khi ngừng gõ.">
+    <Card
+      pad={false} title="Bảng nhập tiền thuê theo tháng"
+      desc="Gõ số đầy đủ, tự thêm dấu phẩy (5997000 → 5,997,000). Ô trống = chưa thu / chưa nhập. Tự lưu sau khi ngừng gõ."
+      actions={
+        <CopyPrevMonth
+          months={months} defaultMonth={months.includes(currentMonth) ? currentMonth : months[months.length - 1]} what="tiền thuê"
+          onCopy={(target, source) => {
+            let n = 0;
+            for (const t of tenants) {
+              const v = calc.rent[source]?.[t.id] || 0;
+              if (v > 0 && !(calc.rent[target]?.[t.id] > 0)) { setRent(t.id, target, v); n++; }
+            }
+            return n;
+          }}
+        />
+      }
+    >
       <div className="overflow-x-auto max-h-[70vh]">
         <table className="w-full text-[12px]">
           <thead className="bg-gray-50 sticky top-0 z-10">
@@ -221,6 +238,22 @@ function FeePanel({ showInactive }: { showInactive: boolean }) {
               </label>
               <div className="flex flex-wrap items-center gap-2 ml-auto">
                 <MonthSelect months={months} value={tplMonth} onChange={setTplMonth} />
+                <button
+                  className={`${cls.btn} ${cls.secondary}`}
+                  title="Chép số xe máy / ô tô của tháng trước sang tháng đang chọn (chỉ khách chưa có số xe)"
+                  onClick={() => {
+                    const src = addMonths(tplMonth, -1);
+                    let n = 0;
+                    for (const t of tenants) {
+                      const f = calc.fees[src]?.[t.id];
+                      const cur = calc.fees[tplMonth]?.[t.id];
+                      if (f && (f.moto || f.car) && !(cur && (cur.moto || cur.car))) { setFee(t.id, tplMonth, { motorbike_count: f.moto, car_count: f.car }); n++; }
+                    }
+                    toast(n ? `Đã chép số xe ${monthLabel(src)} → ${monthLabel(tplMonth)} cho ${n} khách` : 'Không có khách nào cần chép số xe');
+                  }}
+                >
+                  Chép số xe tháng trước
+                </button>
                 <button className={`${cls.btn} ${cls.secondary}`} onClick={downloadTemplate}><Download size={13} /> Tải mẫu CSV</button>
                 <button className={`${cls.btn} ${cls.primary}`} onClick={() => fileRef.current?.click()}><Upload size={13} /> Nhập CSV</button>
                 <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e => onFile(e.target.files?.[0])} />

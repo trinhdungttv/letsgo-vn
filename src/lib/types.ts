@@ -658,7 +658,7 @@ export interface Quote {
 
 export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans'
   // Văn phòng Orient (module office_rental — tách biệt dữ liệu, chỉ admin)
-  | 'office' | 'office-pl' | 'office-rooms' | 'office-billing' | 'office-parking' | 'office-tickets' | 'office-assets' | 'office-settings';
+  | 'office' | 'office-dashboard' | 'office-reports' | 'office-pl' | 'office-rooms' | 'office-billing' | 'office-parking' | 'office-tickets' | 'office-assets' | 'office-settings';
 
 export type AuditAction = 'insert' | 'update' | 'delete';
 

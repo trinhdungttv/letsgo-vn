@@ -26,6 +26,7 @@ export function ContractBadge({ c }: { c: { state: ContractState; days: number |
     case 'expired': return <Badge tone="red">Đã hết hạn {-(c.days || 0)} ngày</Badge>;
     case 'urgent': return <Badge tone="red">⚠ Còn {c.days} ngày</Badge>;
     case 'soon': return <Badge tone="amber">Còn {c.days} ngày</Badge>;
+    case 'notice': return <Badge tone="blue">Còn {c.days} ngày</Badge>;
     case 'active': return <Badge tone="green">Hiệu lực{c.days !== null && c.days < 400 ? ` · còn ${Math.round(c.days / 30)} th` : ''}</Badge>;
     case 'ended': return <Badge>Đã ngừng thuê</Badge>;
     default: return <Badge>Chưa nhập HĐ</Badge>;

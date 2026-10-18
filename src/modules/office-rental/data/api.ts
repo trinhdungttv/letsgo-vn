@@ -1,7 +1,7 @@
 // Truy cập bảng bds_* qua client Supabase dùng chung của app.
 // Mọi request gắn header `x-letsgo-token` → RLS (bds_is_admin) chỉ mở cho admin.
 import { supabase } from '../../../lib/supabase';
-import type { BdsTables, CellTable, IdTable, TableName } from '../lib/types';
+import type { BdsNotificationState, BdsTables, CellTable, IdTable, TableName } from '../lib/types';
 
 const TOKEN_HEADER = 'x-letsgo-token';
 let token = '';
@@ -114,6 +114,19 @@ export async function deleteAll(table: TableName): Promise<void> {
   // PostgREST bắt buộc có điều kiện cho DELETE → dùng cột luôn có giá trị.
   const col = table === 'bds_tenant_rent' || table === 'bds_tenant_fees' || table === 'bds_opex_monthly' ? 'month' : 'id';
   const { error } = await auth(supabase.from(table).delete().not(col, 'is', null));
+  if (error) throw error;
+}
+
+export async function upsertNotificationState(row: BdsNotificationState): Promise<void> {
+  const { error } = await auth(supabase.from('bds_notification_states').upsert(
+    { event_key: row.event_key, status: row.status, snooze_until: row.snooze_until, note: row.note ?? null } as never,
+    { onConflict: 'event_key' },
+  ));
+  if (error) throw error;
+}
+
+export async function deleteNotificationState(eventKey: string): Promise<void> {
+  const { error } = await auth(supabase.from('bds_notification_states').delete().eq('event_key', eventKey));
   if (error) throw error;
 }
 
