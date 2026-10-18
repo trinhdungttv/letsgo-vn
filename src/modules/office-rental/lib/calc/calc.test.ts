@@ -44,7 +44,7 @@ describe('Tháng', () => {
     expect(addMonths('2026-12', 1)).toBe('2027-01');
     expect(addMonths('2026-01', -1)).toBe('2025-12');
     expect(monthRange('2026-01', 3)).toEqual(['2026-01', '2026-02', '2026-03']);
-    expect(monthRange('2026-01', 24).at(-1)).toBe('2027-12');
+    expect(monthRange('2026-01', 24)[23]).toBe('2027-12');
     expect(monthLabel('2026-01')).toBe('T1/2026');
   });
 });

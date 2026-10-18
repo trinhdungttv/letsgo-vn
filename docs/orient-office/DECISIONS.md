@@ -11,7 +11,7 @@
 | Supabase client | `src/lib/supabase.ts` (anon key). Data layer: hook tự viết (`useLoanData`, `useAppData`…), không có react-query. |
 | Migrations | `supabase/migrations/<timestamp>_<số>_<tên>.sql`, số cuối 163. Tony chạy tay bằng SQL Editor. |
 | UI | Tailwind thuần, icon `lucide-react`, chart **chart.js + react-chartjs-2** (không có recharts). `MoneyInput` có sẵn trong costplan nhưng chỉ VND → viết riêng trong module (hỗ trợ USD). |
-| Lệnh kiểm tra | `npm run typecheck`, `npx vitest run`, `npx eslint <path>`, `npm run build`. Baseline: typecheck xanh, 567 test xanh, **lint toàn repo đã có 309 lỗi cũ** → chỉ lint thư mục module. |
+| Lệnh kiểm tra | `npm run typecheck`, `npx vitest run`, `npx eslint <path>`, `npm run build`. Baseline trên main: **typecheck có sẵn 15 lỗi cũ** (AdminSettings, Branches, BranchFinance, market/*) và **lint toàn repo 309 lỗi cũ** → chỉ yêu cầu module không thêm lỗi nào; 567 test xanh. |
 
 ### File tham chiếu
 - `reference/orient_pl_tracker.html` = bản **`orient_pl_tracker_1.html`** (state v3, 03/08, có Dự đoán phát sinh + phụ phí điện/xe). Bản `orient_pl_tracker.html` cũ hơn (v1) nên không dùng.
