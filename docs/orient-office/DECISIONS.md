@@ -39,3 +39,6 @@
 17. **Git**: làm trên nhánh `feat/office-rental`, commit từng phase, **không push** (Tony push bằng GitHub Desktop).
 18. **Bundle**: build xác nhận toàn bộ module nằm trong chunk riêng (~121 kB, chứa `bds_access_check`), bundle chính không có. App chỉ import `modules/office-rental/pages.ts` (danh sách trang + icon).
 19. **Mở URL trực tiếp** `#/office…` khi không phải admin → App đưa về Dashboard + toast "Chỉ tài khoản admin…"; Sidebar/MobileNav ẩn mục.
+20. **Kiểm thử giao diện không đụng production**: dựng API giả lập PostgREST tối giản trên PGlite (chạy migration 164+165 thật, RLS thật) + chạy Vite với `VITE_SUPABASE_URL` trỏ vào đó; đăng nhập bằng tài khoản test chỉ tồn tại trong API giả lập. File giả lập để ở thư mục tạm, không đưa vào repo.
+21. **Mobile**: lưới nhập theo tháng giữ dạng bảng cuộn ngang (cột Tháng cố định); bảng cấu hình khách chuyển sang thẻ trên điện thoại; 8 mục Văn phòng Orient có trong menu "Thêm" của MobileNav.
+22. **Số hoá đơn** tự sinh `TB-YYYYMM-NN` khi lập; hạn thanh toán mặc định = ngày `invoice_due_day` của chính tháng đó.
