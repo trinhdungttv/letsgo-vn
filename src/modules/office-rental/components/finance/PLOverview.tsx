@@ -105,7 +105,7 @@ export default function PLOverview() {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 md:gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2 md:gap-3">
         <Kpi label="Doanh thu (thuê + phụ phí)" value={fmtVND(k.revenue)} sub={`≈ ${fmtUSD(Math.round(k.revenue / rate))}`} accent="#1baf7a" />
         <Kpi label="Thuê MBT + TS4" value={fmtVND(k.mbt + k.ts4)} sub={`MBT ${fmtTr(k.mbt)} tr · TS4 ${fmtTr(k.ts4)} tr`} accent="#6250d6" />
         <Kpi label="Chi phí vận hành" value={fmtVND(k.opex)} sub={`≈ ${fmtUSD(Math.round(k.opex / rate))}`} accent="#eda100" />

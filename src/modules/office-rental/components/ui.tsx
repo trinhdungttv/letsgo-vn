@@ -46,7 +46,7 @@ export function Kpi({ label, value, sub, tone = 'default', accent }: {
     <div className="bg-white rounded-xl border border-[#E8E7E2] p-3 md:p-4 relative overflow-hidden min-w-0">
       {accent && <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: accent }} />}
       <div className="text-[10.5px] font-semibold text-gray-400 uppercase tracking-wide truncate">{label}</div>
-      <div className={`text-[17px] md:text-[19px] font-semibold leading-tight mt-1 tabular-nums break-words ${color}`}>{value}</div>
+      <div className={`text-[16px] md:text-[18px] font-semibold leading-tight mt-1 tabular-nums whitespace-nowrap ${color}`}>{value}</div>
       {sub && <div className="text-[11px] text-gray-400 mt-1">{sub}</div>}
     </div>
   );

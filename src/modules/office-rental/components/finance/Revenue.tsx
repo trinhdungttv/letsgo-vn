@@ -33,7 +33,34 @@ function TenantConfig() {
 
   return (
     <Card pad={false} title="Khách hàng & cấu hình" desc="Tiền tệ, mặt bằng đang thuê và cách tính VAT riêng từng khách. Khách đã ngừng: tắt 'Đang thuê' để giữ lịch sử doanh thu.">
-      <div className="overflow-x-auto">
+      {/* Điện thoại: mỗi khách một thẻ */}
+      <div className="md:hidden divide-y divide-gray-100 border-t border-gray-100">
+        {tenants.map(t => (
+          <div key={t.id} className={`p-3 space-y-2 ${t.active ? '' : 'opacity-60'}`}>
+            <div className="flex gap-2 items-center">
+              <TextInput className="flex-1" value={t.name} onChange={v => patch('bds_tenants', t.id, { name: v })} />
+              <button className="p-1 text-gray-300 hover:text-red-500" title="Xoá khách" onClick={() => del(t.id, t.name)}><Trash2 size={14} /></button>
+            </div>
+            <select
+              className={`${cls.inputSm} w-full ${!t.head_lease_id ? 'border-amber-300 bg-amber-50' : ''}`}
+              value={t.head_lease_id || ''}
+              onChange={e => patch('bds_tenants', t.id, { head_lease_id: e.target.value || null }, true)}
+            >
+              <option value="">⚠ Chưa gán mặt bằng</option>
+              {leases.map(l => <option key={l.id} value={l.id}>{LANDLORD_SHORT[l.landlord]} · {l.name}</option>)}
+            </select>
+            <div className="flex gap-2 items-center">
+              <CurrencySelect value={t.currency} onChange={v => patch('bds_tenants', t.id, { currency: v })} />
+              <VatSelect className="flex-1 min-w-0" value={t.vat_mode} onChange={v => patch('bds_tenants', t.id, { vat_mode: v })} />
+            </div>
+            <div className="flex gap-2 items-center text-[12px] text-gray-500">
+              <span className="w-[90px]"><DecimalInput value={t.area_m2} placeholder="m²" onChange={v => patch('bds_tenants', t.id, { area_m2: v })} /></span>m²
+              <span className="ml-auto"><Toggle checked={t.active} onChange={v => patch('bds_tenants', t.id, { active: v }, true)} label="Đang thuê" /></span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto hidden md:block">
         <table className="w-full text-[12px]">
           <thead className="bg-gray-50/70">
             <tr>
