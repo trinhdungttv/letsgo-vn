@@ -217,6 +217,16 @@ export interface BdsMaintenanceLog {
   created_at: string;
 }
 
+// ── Thông báo (migration 166) ─────────────────────────────────────────────
+
+export interface BdsNotificationState {
+  event_key: string;
+  status: 'dismissed' | 'snoozed';
+  snooze_until: string | null;
+  note?: string | null;
+  updated_at?: string;
+}
+
 export interface BdsTables {
   bds_settings: BdsSettings;
   bds_head_leases: BdsHeadLease;
@@ -235,10 +245,11 @@ export interface BdsTables {
   bds_assets: BdsAsset;
   bds_tickets: BdsTicket;
   bds_maintenance_logs: BdsMaintenanceLog;
+  bds_notification_states: BdsNotificationState;
 }
 
 export type TableName = keyof BdsTables;
-export type IdTable = Exclude<TableName, 'bds_tenant_rent' | 'bds_tenant_fees' | 'bds_opex_monthly'>;
+export type IdTable = Exclude<TableName, 'bds_tenant_rent' | 'bds_tenant_fees' | 'bds_opex_monthly' | 'bds_notification_states'>;
 export type CellTable = 'bds_tenant_rent' | 'bds_tenant_fees' | 'bds_opex_monthly';
 
 export const CORE_TABLES = [
@@ -250,3 +261,5 @@ export const CORE_TABLES = [
 export const OPS_TABLES = [
   'bds_rooms', 'bds_meter_readings', 'bds_invoices', 'bds_assets', 'bds_tickets', 'bds_maintenance_logs',
 ] as const satisfies readonly TableName[];
+
+export const NOTIFY_TABLES = ['bds_notification_states'] as const satisfies readonly TableName[];

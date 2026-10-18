@@ -7,6 +7,7 @@ import { fmtVND } from '../../lib/calc/money';
 import { opexAt } from '../../lib/calc/pl';
 import { vatRateFor } from '../../lib/calc/vat';
 import { MoneyInput } from '../MoneyInput';
+import CopyPrevMonth from '../CopyPrevMonth';
 import { Card, TextInput, Toggle, VatBadge, VatCategorySelect, VatSelect, cls } from '../ui';
 
 export default function Opex() {
@@ -62,7 +63,23 @@ export default function Opex() {
         </div>
       </Card>
 
-      <Card pad={false} title="Bảng nhập chi phí vận hành theo tháng" desc="Gõ số đầy đủ VNĐ. Tự lưu sau khi ngừng gõ. Cột tổng đã gồm VAT (theo cấu hình từng hạng mục).">
+      <Card
+        pad={false} title="Bảng nhập chi phí vận hành theo tháng"
+        desc="Gõ số đầy đủ VNĐ. Tự lưu sau khi ngừng gõ. Cột tổng đã gồm VAT (theo cấu hình từng hạng mục)."
+        actions={
+          <CopyPrevMonth
+            months={months} defaultMonth={months.includes(currentMonth) ? currentMonth : months[months.length - 1]} what="chi phí cố định"
+            onCopy={(target, source) => {
+              let n = 0;
+              for (const c of gridCats) {
+                const v = calc.opex[source]?.[c.id] || 0;
+                if (v > 0 && !(calc.opex[target]?.[c.id] > 0)) { setOpex(c.id, target, v); n++; }
+              }
+              return n;
+            }}
+          />
+        }
+      >
         <div className="overflow-x-auto max-h-[70vh]">
           <table className="w-full text-[12px]">
             <thead className="bg-gray-50 sticky top-0 z-10">

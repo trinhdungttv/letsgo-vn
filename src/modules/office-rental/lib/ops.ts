@@ -52,15 +52,19 @@ export function occupancy(rooms: BdsRoom[], tenants: BdsTenant[]): { total: numb
 
 // ── Hợp đồng ──────────────────────────────────────────────────────────────
 
-export type ContractState = 'none' | 'active' | 'soon' | 'urgent' | 'expired' | 'ended';
+export type ContractState = 'none' | 'active' | 'notice' | 'soon' | 'urgent' | 'expired' | 'ended';
 
-export function contractState(t: Pick<BdsTenant, 'active' | 'contract_end'>, today: string, alertDays: number): { state: ContractState; days: number | null } {
+/** Mức nhắc hợp đồng: ≤ 30 ngày (khẩn) · ≤ 60 ngày (2 tháng) · ≤ horizon (mặc định 90 ngày = 3 tháng). */
+export const CONTRACT_TIERS = { urgent: 30, soon: 60 } as const;
+
+export function contractState(t: Pick<BdsTenant, 'active' | 'contract_end'>, today: string, horizonDays: number): { state: ContractState; days: number | null } {
   if (!t.active) return { state: 'ended', days: null };
   if (!t.contract_end) return { state: 'none', days: null };
   const days = daysBetween(today, t.contract_end);
   if (days < 0) return { state: 'expired', days };
-  if (days <= 30) return { state: 'urgent', days };
-  if (days <= alertDays) return { state: 'soon', days };
+  if (days <= CONTRACT_TIERS.urgent) return { state: 'urgent', days };
+  if (days <= CONTRACT_TIERS.soon) return { state: 'soon', days };
+  if (days <= Math.max(horizonDays, CONTRACT_TIERS.soon)) return { state: 'notice', days };
   return { state: 'active', days };
 }
 
@@ -113,61 +117,6 @@ export function invoiceState(inv: Pick<BdsInvoice, 'status' | 'due_date'> | unde
   if (inv.status === 'paid') return { state: 'paid', overdueDays: 0 };
   if (inv.due_date && inv.due_date < today) return { state: 'overdue', overdueDays: daysBetween(inv.due_date, today) };
   return { state: 'unpaid', overdueDays: 0 };
-}
-
-// ── Cảnh báo tổng quan ────────────────────────────────────────────────────
-
-export interface OpsAlert {
-  key: string;
-  tone: 'red' | 'amber' | 'blue';
-  text: string;
-  target: 'contracts' | 'invoices' | 'rooms' | 'revenue' | 'tickets';
-}
-
-export function buildAlerts(input: {
-  tenants: BdsTenant[];
-  rooms: BdsRoom[];
-  invoices: BdsInvoice[];
-  openTickets: number;
-  today: string;
-  alertDays: number;
-  exchangeRate: number;
-  opsReady: boolean;
-}): OpsAlert[] {
-  const out: OpsAlert[] = [];
-  const { today } = input;
-  const nameOf = new Map(input.tenants.map(t => [t.id, t.name]));
-
-  if (input.opsReady) {
-    for (const t of input.tenants) {
-      const c = contractState(t, today, input.alertDays);
-      if (c.state === 'expired') out.push({ key: `c-${t.id}`, tone: 'red', target: 'contracts', text: `${t.name}: hợp đồng đã hết hạn ${-c.days!} ngày (vẫn đang thuê)` });
-      else if (c.state === 'urgent') out.push({ key: `c-${t.id}`, tone: 'red', target: 'contracts', text: `${t.name}: hết hợp đồng sau ${c.days} ngày` });
-      else if (c.state === 'soon') out.push({ key: `c-${t.id}`, tone: 'amber', target: 'contracts', text: `${t.name}: hết hợp đồng sau ${c.days} ngày` });
-    }
-    for (const inv of input.invoices) {
-      const st = invoiceState(inv, today);
-      if (st.state === 'overdue') {
-        out.push({ key: `i-${inv.id}`, tone: 'red', target: 'invoices', text: `${nameOf.get(inv.tenant_id) || 'Khách'}: hoá đơn T${Number(inv.month.slice(5, 7))}/${inv.month.slice(0, 4)} quá hạn ${st.overdueDays} ngày` });
-      }
-    }
-    for (const r of input.rooms) {
-      if (effectiveRoomStatus(r, input.tenants) !== 'vacant') continue;
-      const price = Number(r.list_price) || 0;
-      const vnd = r.list_currency === 'USD' ? price * input.exchangeRate : price;
-      out.push({
-        key: `r-${r.id}`, tone: 'amber', target: 'rooms',
-        text: `${r.code}${r.name ? ` (${r.name})` : ''} đang trống${vnd > 0 ? ` — bỏ phí ~${(vnd / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })} tr/tháng` : ''}`,
-      });
-    }
-    if (input.openTickets > 0) out.push({ key: 'tickets', tone: 'blue', target: 'tickets', text: `${input.openTickets} sự cố đang mở` });
-  }
-  const unassigned = input.tenants.filter(t => t.active && !t.head_lease_id);
-  if (unassigned.length) {
-    out.push({ key: 'unassigned', tone: 'amber', target: 'revenue', text: `${unassigned.length} khách chưa gán mặt bằng: ${unassigned.map(t => t.name).join(', ')}` });
-  }
-  const rank = { red: 0, amber: 1, blue: 2 } as const;
-  return out.sort((a, b) => rank[a.tone] - rank[b.tone]);
 }
 
 export const TICKET_STEPS = [

@@ -206,14 +206,14 @@ export default function Settings() {
       </Card>
 
       {opsReady && (
-        <Card title="⚡ Vận hành" desc="Dùng cho chốt chỉ số điện, hoá đơn và cảnh báo.">
+        <Card title="⚡ Vận hành & thông báo" desc="Dùng cho chốt chỉ số điện, hoá đơn và chuông thông báo.">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Đơn giá điện mặc định (đ/kWh)"><MoneyInput value={settings.electricity_unit_price ?? 0} onChange={v => set({ electricity_unit_price: v })} /></Field>
             <Field label="Hạn thanh toán (ngày trong tháng)">
               <DecimalInput value={settings.invoice_due_day ?? 10} onChange={v => v !== null && v >= 1 && v <= 28 && set({ invoice_due_day: Math.round(v) })} />
             </Field>
-            <Field label="Cảnh báo HĐ hết hạn trước (ngày)" hint="Hiện 2 mức: ≤ 30 ngày (đỏ) và ≤ mốc này (vàng)">
-              <DecimalInput value={settings.alert_days ?? 60} onChange={v => v !== null && v >= 1 && v <= 365 && set({ alert_days: Math.round(v) })} />
+            <Field label="Nhắc trước tối đa (ngày)" hint="Áp cho hợp đồng khách & mốc tăng giá mặt bằng: xanh ≤ mốc này (mặc định 90 = 3 tháng), vàng ≤ 60 ngày, đỏ ≤ 30 ngày">
+              <DecimalInput value={settings.alert_days ?? 90} onChange={v => v !== null && v >= 1 && v <= 365 && set({ alert_days: Math.round(v) })} />
             </Field>
             <Field label="Thông tin chuyển khoản (in cuối hoá đơn)" className="sm:col-span-2">
               <textarea

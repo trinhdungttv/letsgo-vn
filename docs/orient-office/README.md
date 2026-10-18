@@ -5,7 +5,7 @@ Module quản lý mảng **cho thuê lại văn phòng** tại Orient Apartment 
 ## Cài đặt (1 lần)
 
 1. Supabase → **SQL Editor** → dán toàn bộ `supabase/migrations/20261018100000_164_bds_office_rental_core.sql` → **Run**.
-2. Dán tiếp `supabase/migrations/20261018110000_165_bds_office_rental_ops.sql` → **Run**.
+2. Dán tiếp `supabase/migrations/20261018110000_165_bds_office_rental_ops.sql` → **Run**, rồi `supabase/migrations/20261019100000_166_bds_notifications.sql` → **Run**.
 3. (Tuỳ chọn) dán `docs/orient-office/rls-check.sql` → Run → cột **Đạt** phải là ✓ ở mọi dòng.
 4. Vào app → **Văn phòng Orient → Cài đặt & Dữ liệu → Import JSON tracker** → chọn `orient_pl_2026-08.json` → xem trước → **Xác nhận nhập**.
 5. **Lời/Lỗ → Doanh thu khách hàng**: gán từng khách vào mặt bằng, rồi kiểm tra tab **Theo mặt bằng** hiện dòng đối chiếu ✓.
@@ -30,7 +30,13 @@ src/modules/office-rental/
 
 **Bảo mật 3 lớp**: (1) menu chỉ hiện với admin (`canAccess` trong `src/lib/auth.tsx`); (2) mở thẳng URL `#/office…` khi không phải admin → về Dashboard + thông báo, và bundle module không được tải; (3) **RLS** trên mọi bảng `bds_*`: app không dùng Supabase Auth nên module gửi session token trong header `x-letsgo-token`, hàm `bds_is_admin()` kiểm tra `session_role(token) = 'admin'`.
 
-**Trang**: `office` (Tổng quan), `office-pl` (7 tab Lời/Lỗ), `office-rooms`, `office-billing`, `office-parking`, `office-tickets`, `office-assets`, `office-settings`. Tab con nằm ở hash: `#/office-pl/hoa-von`.
+**Trang**: `office` (Tổng quan — việc cần xử lý, lịch 90 ngày, nhận định nhanh), `office-dashboard` (KPI + 6 biểu đồ + dự báo), `office-reports` (5 báo cáo in/CSV), `office-pl` (7 tab Lời/Lỗ), `office-rooms`, `office-billing`, `office-parking`, `office-tickets`, `office-assets`, `office-settings`. Tab con nằm ở hash: `#/office-pl/hoa-von`.
+
+## Thông báo & phần "thông minh"
+
+- **Chuông thông báo** ở đầu mọi màn: Cần xử lý / Sắp tới / Đã ẩn. Mỗi mục có Mở · Nhắc lại sau · Đã xử lý (lưu `bds_notification_states`).
+- Nguồn sự kiện (`lib/events.ts`): HĐ khách sắp hết hạn (3/2/1 tháng, đã quá hạn), khách mới sắp vào, mặt bằng tăng giá (kèm số tiền tăng/tháng), trả mặt bằng, hoá đơn quá hạn / sắp đến hạn, tháng trước chưa lập thông báo / chưa nhập doanh thu / chưa nhập vận hành, kỳ chốt điện, khoản chi dự kiến 2 tháng tới, phòng trống (thất thu theo giá chào), khách chưa gán mặt bằng, sự cố đang mở, thiết bị hỏng.
+- **Dự báo** (`lib/forecast.ts`) và **nhận định** (`lib/insights.ts`) dùng chung calc engine — xem giả định trong `DECISIONS.md` mục 26–27.
 
 ## Bảng dữ liệu
 
@@ -44,6 +50,7 @@ src/modules/office-rental/
 | `bds_forecast_expenses` | Dự đoán phát sinh |
 | `bds_breakeven_scenarios` / `bds_breakeven_rooms` | Kịch bản hòa vốn (không ảnh hưởng P&L) |
 | `bds_rooms`, `bds_meter_readings`, `bds_invoices`, `bds_assets`, `bds_tickets`, `bds_maintenance_logs` | Vận hành (165) |
+| `bds_notification_states` | Thông báo đã xử lý / nhắc lại sau (166) |
 
 Hoá đơn **không lưu số tiền**: luôn tính lại từ tiền thuê + phụ phí. Nút **Áp dụng** ở Chốt chỉ số điện là cầu nối duy nhất từ chỉ số điện sang P&L. Bãi xe là màn dẫn xuất từ `bds_tenant_fees`.
 
@@ -58,7 +65,7 @@ Hoá đơn **không lưu số tiền**: luôn tính lại từ tiền thuê + ph
 
 ## Kiểm thử
 
-- `npx vitest run src/modules/office-rental` — 45 test, gồm toàn bộ số liệu kiểm chứng mục 7 của đặc tả.
+- `npx vitest run src/modules/office-rental` — 51 test, gồm toàn bộ số liệu kiểm chứng mục 7 của đặc tả + engine sự kiện, dự báo, nhận định.
 - SQL migration + RLS đã chạy thử trên PGlite (Postgres 16 dạng WASM) với stub `app_sessions`/`session_role` giống production.
 - Giao diện đã bấm thử end-to-end trên máy với API giả lập (PGlite + RLS thật): import JSON, nhập doanh thu USD, theo mặt bằng ✓, hòa vốn, tạo phòng, đã thu + in hoá đơn, ticket, CSV có dòng lỗi, bãi xe, tài khoản nhân viên bị chặn, khổ 375px.
 

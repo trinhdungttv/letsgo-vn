@@ -1,93 +1,142 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, Info } from 'lucide-react';
+import {
+  ArrowRight, BarChart3, CalendarDays, CheckCircle2, FileBarChart, Lightbulb, PenLine, Receipt, Wrench, Zap,
+} from 'lucide-react';
 import { useOffice } from '../../data/OfficeDataProvider';
 import { sortTenants } from '../../data/selectors';
+import { useInsights, useOfficeEvents, useReceivables, useReferenceMonth } from '../../data/useSmart';
 import { computeMonth } from '../../lib/calc/pl';
-import { monthLabel, monthToDate } from '../../lib/calc/months';
+import { addMonths, monthLabel, monthToDate } from '../../lib/calc/months';
 import { fmtTr, fmtUSD, fmtVND } from '../../lib/calc/money';
 import type { MonthKey } from '../../lib/calc/types';
-import { buildAlerts, invoiceBreakdown, invoiceState, occupancy, todayStr, type OpsAlert } from '../../lib/ops';
+import { groupByMonth } from '../../lib/events';
+import { invoiceBreakdown, invoiceState, occupancy } from '../../lib/ops';
+import EventItem, { SEV_STYLE, whenLabel } from '../EventItem';
 import { Banner, Card, Kpi, MonthSelect, cls, pnlTone, signed } from '../ui';
 import { InvoiceStateBadge } from './shared';
 
-const TARGET_HASH: Record<OpsAlert['target'], string> = {
-  contracts: '#/office-rooms/hop-dong',
-  invoices: '#/office-billing/hoa-don',
-  rooms: '#/office-rooms/phong',
-  revenue: '#/office-pl/doanh-thu',
-  tickets: '#/office-tickets',
-};
+const WEEKDAY = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+
+const QUICK = [
+  { label: 'Nhập doanh thu', href: '#/office-pl/doanh-thu', icon: <PenLine size={13} /> },
+  { label: 'Chốt chỉ số điện', href: '#/office-billing/chi-so-dien', icon: <Zap size={13} /> },
+  { label: 'Lập thông báo TT', href: '#/office-billing/hoa-don', icon: <Receipt size={13} /> },
+  { label: 'Báo sự cố', href: '#/office-tickets', icon: <Wrench size={13} /> },
+  { label: 'Dashboard', href: '#/office-dashboard', icon: <BarChart3 size={13} /> },
+  { label: 'Báo cáo tháng', href: '#/office-reports/thang', icon: <FileBarChart size={13} /> },
+];
+
+const TONE_DOT = { bad: 'bg-red-500', warn: 'bg-amber-400', good: 'bg-emerald-500', info: 'bg-blue-400' } as const;
 
 export default function OpsOverview() {
-  const { rows, calc, months, currentMonth, settings, opsReady } = useOffice();
-  const [sel, setSel] = useState<MonthKey>(() => (months.includes(currentMonth) ? currentMonth : months[0]));
-  const month = months.includes(sel) ? sel : months[0];
-  const today = todayStr();
+  const { rows, calc, months, settings, opsReady } = useOffice();
+  const ref = useReferenceMonth();
+  const [sel, setSel] = useState<MonthKey | null>(null);
+  const month = sel && months.includes(sel) ? sel : ref;
+  const { visible, today } = useOfficeEvents();
+  const insights = useInsights();
+  const receivable = useReceivables();
   const k = computeMonth(calc, month);
-  const prev = months.indexOf(month) > 0 ? computeMonth(calc, months[months.indexOf(month) - 1]) : null;
+  const prevK = computeMonth(calc, addMonths(month, -1));
   const rate = calc.settings.exchangeRate || 1;
   const occ = occupancy(rows.bds_rooms, rows.bds_tenants);
 
-  const alerts = useMemo(() => buildAlerts({
-    tenants: rows.bds_tenants, rooms: rows.bds_rooms, invoices: rows.bds_invoices,
-    openTickets: rows.bds_tickets.filter(t => t.status === 'open' || t.status === 'in_progress').length,
-    today, alertDays: settings.alert_days ?? 60, exchangeRate: rate, opsReady,
-  }), [rows, today, settings.alert_days, rate, opsReady]);
+  const urgent = visible.filter(e => e.severity !== 'info');
+  const timeline = useMemo(() => groupByMonth(visible.filter(e => e.date && e.kind !== 'ticket' && (e.daysLeft ?? 0) >= 0)), [visible]);
+  const nCrit = urgent.filter(e => e.severity === 'critical').length;
+  const d = new Date();
 
   const roomOf = new Map(rows.bds_rooms.map(r => [r.id, r]));
   const invOf = new Map(rows.bds_invoices.filter(i => i.month === monthToDate(month)).map(i => [i.tenant_id, i]));
-  const calcTenant = new Map(calc.tenants.map(t => [t.id, t]));
+  const ctOf = new Map(calc.tenants.map(t => [t.id, t]));
   const billing = sortTenants(rows.bds_tenants)
-    .map(t => ({ t, b: invoiceBreakdown(calc, month, calcTenant.get(t.id)!) }))
+    .map(t => ({ t, b: invoiceBreakdown(calc, month, ctOf.get(t.id)!) }))
     .filter(x => x.t.active || !x.b.isEmpty);
   const collected = billing.reduce((a, x) => {
     const inv = invOf.get(x.t.id);
     return a + (inv?.status === 'paid' ? (inv.paid_amount ?? x.b.total) : 0);
   }, 0);
-
-  const delta = (cur: number, p: number | undefined) => {
-    if (p === undefined || !p) return null;
-    const d = (cur - p) / Math.abs(p) * 100;
-    return `${d >= 0 ? '↑' : '↓'} ${Math.abs(d).toFixed(1)}% so với ${monthLabel(months[months.indexOf(month) - 1])}`;
-  };
+  const delta = (cur: number, p: number) => (p ? `${cur >= p ? '↑' : '↓'} ${Math.abs((cur - p) / Math.abs(p) * 100).toFixed(1)}% so với ${monthLabel(addMonths(month, -1))}` : null);
 
   return (
     <div className="space-y-3 md:space-y-4">
-      {!opsReady && (
-        <Banner tone="amber">Cảnh báo hợp đồng, hoá đơn, phòng trống cần chạy migration <code>165_bds_office_rental_ops.sql</code>. Phần lời/lỗ bên dưới vẫn dùng được.</Banner>
-      )}
-
-      {alerts.length > 0 ? (
-        <div className={`rounded-xl border p-3 ${alerts[0].tone === 'red' ? 'border-red-200 bg-gradient-to-r from-red-50 to-amber-50' : alerts[0].tone === 'amber' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}`}>
-          <div className={`flex items-center gap-2 text-[13px] font-semibold mb-2 ${alerts[0].tone === 'red' ? 'text-red-800' : alerts[0].tone === 'amber' ? 'text-amber-900' : 'text-blue-900'}`}>
-            <AlertTriangle size={15} /> {alerts.length} việc cần xử lý
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-            {alerts.map(a => (
-              <a key={a.key} href={TARGET_HASH[a.target]} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] bg-white/70 hover:bg-white border ${a.tone === 'red' ? 'border-red-200 text-red-800' : a.tone === 'amber' ? 'border-amber-200 text-amber-900' : 'border-blue-200 text-blue-800'}`}>
-                {a.tone === 'blue' ? <Info size={13} className="shrink-0" /> : <AlertTriangle size={13} className="shrink-0" />}
-                <span className="flex-1">{a.text}</span>
-                <ArrowRight size={12} className="shrink-0 opacity-50" />
-              </a>
-            ))}
-          </div>
+      {/* Lời chào + tóm tắt */}
+      <div className="rounded-xl bg-gradient-to-r from-[#0c2340] to-[#1d4e89] text-white p-4 md:p-5">
+        <div className="text-[12px] text-white/60">{WEEKDAY[d.getDay()]}, {today.split('-').reverse().join('/')}</div>
+        <div className="text-[17px] md:text-[19px] font-semibold mt-0.5">
+          {nCrit ? `${nCrit} việc khẩn cần xử lý hôm nay` : urgent.length ? `${urgent.length} việc cần chú ý` : 'Mọi thứ đang ổn ✓'}
         </div>
-      ) : (
-        <Banner tone="green">✓ Không có việc gì cần xử lý gấp.</Banner>
-      )}
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
+          {(['critical', 'warning', 'info'] as const).map(s => {
+            const n = visible.filter(e => e.severity === s).length;
+            return <span key={s} className="text-[11px] px-2 py-0.5 rounded-full bg-white/10">{SEV_STYLE[s].label}: <b>{n}</b></span>;
+          })}
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/10">Nhắc trước {settings.alert_days ?? 90} ngày</span>
+        </div>
+        <div className="flex gap-1.5 mt-3 overflow-x-auto no-scrollbar">
+          {QUICK.map(q => (
+            <a key={q.href} href={q.href} className="shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1.5 rounded-lg bg-white text-[#0c2340] font-medium hover:bg-blue-50">
+              {q.icon}{q.label}
+            </a>
+          ))}
+        </div>
+      </div>
 
-      <div className="flex items-center gap-2 text-[12px] text-gray-500">Dữ liệu tháng <MonthSelect months={months} value={month} onChange={setSel} /></div>
+      {!opsReady && <Banner tone="amber">Nhắc hợp đồng, hoá đơn, phòng trống cần chạy migration <code>165</code>. Phần tài chính vẫn dùng được.</Banner>}
 
+      <div className="flex items-center gap-2 text-[12px] text-gray-500">Số liệu tháng <MonthSelect months={months} value={month} onChange={setSel} /></div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
-        <Kpi label={`Doanh thu ${monthLabel(month)}`} value={`${fmtTr(k.revenue)} tr`} sub={<>≈ {fmtUSD(Math.round(k.revenue / rate))}{opsReady && <> · Đã thu {fmtTr(collected)} tr</>}<br />{delta(k.revenue, prev?.revenue)}</>} accent="#1baf7a" />
-        <Kpi label="Tổng chi phí" value={`${fmtTr(k.cost)} tr`} sub={<>Thuê {fmtTr(k.mbt + k.ts4)} tr · Vận hành {fmtTr(k.opex)} tr<br />{delta(k.cost, prev?.cost)}</>} accent="#eb6834" />
-        <Kpi label={k.profit >= 0 ? 'Lợi nhuận (lời)' : 'Lợi nhuận (lỗ)'} tone={pnlTone(k.profit)} value={`${signed(fmtTr(k.profit), k.profit)} tr`} sub={k.revenue > 0 ? `Biên ${(k.margin * 100).toFixed(1)}%` : 'Chưa có doanh thu'} accent={k.profit >= 0 ? '#2a78d6' : '#e34948'} />
-        <Kpi
-          label="Tỷ lệ lấp đầy"
-          value={occ.rate === null ? '—' : `${Math.round(occ.rate * 100)}%`}
-          sub={occ.rate === null ? 'Khai báo phòng ở "Phòng & Hợp đồng"' : `${occ.occupied.toLocaleString('en-US')}/${occ.total.toLocaleString('en-US')} m² có khách`}
-          accent="#6250d6"
-        />
+        <Kpi label={`Doanh thu ${monthLabel(month)}`} value={`${fmtTr(k.revenue)} tr`} sub={<>≈ {fmtUSD(Math.round(k.revenue / rate))}{delta(k.revenue, prevK.revenue) && <><br />{delta(k.revenue, prevK.revenue)}</>}</>} accent="#1baf7a" />
+        <Kpi label={k.profit >= 0 ? 'Lợi nhuận (lời)' : 'Lợi nhuận (lỗ)'} tone={pnlTone(k.profit)} value={`${signed(fmtTr(k.profit), k.profit)} tr`} sub={k.revenue > 0 ? `Biên ${(k.margin * 100).toFixed(1)}% · chi phí ${fmtTr(k.cost)} tr` : `Chi phí ${fmtTr(k.cost)} tr`} accent={k.profit >= 0 ? '#2a78d6' : '#e34948'} />
+        <Kpi label="Tỷ lệ lấp đầy" value={occ.rate === null ? '—' : `${Math.round(occ.rate * 100)}%`} sub={occ.rate === null ? 'Khai báo phòng để theo dõi' : `${occ.occupied.toLocaleString('en-US')}/${occ.total.toLocaleString('en-US')} m²`} accent="#6250d6" />
+        <Kpi label="Còn phải thu" tone={receivable.overdue > 0 ? 'neg' : 'default'} value={`${fmtTr(receivable.total)} tr`} sub={receivable.overdue > 0 ? `Quá hạn ${fmtVND(receivable.overdue)}` : `${receivable.count} thông báo chưa thu`} accent="#eb6834" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4 items-start">
+        <Card className="lg:col-span-2" title={<>Cần xử lý <span className="text-[11px] font-normal text-gray-400">({urgent.length})</span></>} desc="Bấm 'Đã xử lý' khi xong, hoặc 'Nhắc lại sau' để tạm ẩn">
+          <div className="space-y-2">
+            {urgent.map(e => <EventItem key={e.key} e={e} />)}
+            {!urgent.length && <div className="flex items-center gap-2 text-[12.5px] text-emerald-700 py-4 justify-center"><CheckCircle2 size={16} /> Không có việc gấp</div>}
+          </div>
+        </Card>
+
+        <div className="space-y-3 md:space-y-4">
+          <Card title={<><CalendarDays size={14} /> Lịch sắp tới</>} desc={`Các mốc trong ${settings.alert_days ?? 90} ngày tới`}>
+            <div className="space-y-3">
+              {timeline.map(g => (
+                <div key={g.month}>
+                  <div className="text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 mb-1">{monthLabel(g.month)}</div>
+                  <div className="space-y-1">
+                    {g.events.map(e => (
+                      <a key={e.key} href={e.href} className="flex items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-gray-50">
+                        <span className="w-10 shrink-0 text-center rounded-md border border-gray-200 bg-white leading-tight py-0.5">
+                          <span className="block text-[13px] font-semibold text-[#111]">{e.date!.slice(8, 10)}</span>
+                          <span className="block text-[9px] text-gray-400">th {Number(e.date!.slice(5, 7))}</span>
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[12px] text-[#111] leading-snug">{e.title}</span>
+                          <span className={`inline-block text-[10px] font-semibold px-1.5 rounded mt-0.5 ${SEV_STYLE[e.severity].chip}`}>{whenLabel(e)}</span>
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {!timeline.length && <div className="text-[12px] text-gray-400 py-3 text-center">Không có mốc nào sắp tới. Nhập ngày hết hạn hợp đồng để được nhắc.</div>}
+            </div>
+          </Card>
+
+          <Card title={<><Lightbulb size={14} /> Nhận định nhanh</>} actions={<a href="#/office-dashboard" className="text-[11.5px] text-blue-600 hover:underline inline-flex items-center gap-0.5">Dashboard <ArrowRight size={12} /></a>}>
+            <ul className="space-y-1.5">
+              {insights.slice(0, 5).map(i => (
+                <li key={i.key} className="flex gap-2 text-[12px] text-gray-700 leading-snug">
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${TONE_DOT[i.tone]}`} />
+                  {i.href ? <a href={i.href} className="hover:text-blue-700">{i.text}</a> : <span>{i.text}</span>}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
       </div>
 
       <Card pad={false} title={`Tình trạng thu tiền ${monthLabel(month)}`} desc="Số tiền tính trực tiếp từ tiền thuê + điện + xe đã nhập (đã gồm VAT).">

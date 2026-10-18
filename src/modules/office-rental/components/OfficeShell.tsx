@@ -21,6 +21,9 @@ import Meters from './ops/Meters';
 import Parking from './ops/Parking';
 import Tickets from './ops/Tickets';
 import Assets from './ops/Assets';
+import Dashboard from './dashboard/Dashboard';
+import Reports from './reports/Reports';
+import NotificationBell from './NotificationBell';
 
 const PL_TABS = [
   { key: 'tong-quan', label: '📊 Tổng quan Lời/Lỗ' },
@@ -39,7 +42,9 @@ const BILL_TABS = [{ key: 'hoa-don', label: 'Hoá đơn & Thu tiền' }, { key: 
 type BillTab = (typeof BILL_TABS)[number]['key'];
 
 const SUBTITLE: Record<OfficePage, string> = {
-  office: 'Orient Apartment · 331 Bến Vân Đồn, Q.4 — việc cần xử lý & bức tranh tháng này',
+  office: 'Orient Apartment · 331 Bến Vân Đồn, Q.4 — việc cần xử lý, lịch sắp tới, bức tranh tháng này',
+  'office-dashboard': 'Biểu đồ trực quan, nhận định tự động và dự báo 12 tháng tới',
+  'office-reports': 'Báo cáo tháng, năm/quý, công nợ, hợp đồng, dòng tiền dự báo — in & xuất CSV',
   'office-pl': 'Thuê MBT + TS4 → cho thuê lại · lời/lỗ theo tháng, theo mặt bằng, hòa vốn',
   'office-rooms': 'Sơ đồ phòng theo mặt bằng gốc · hợp đồng khách thuê lại',
   'office-billing': 'Thông báo thanh toán = tiền thuê + điện + xe · trạng thái thu tiền',
@@ -149,6 +154,24 @@ function BillingSection() {
   );
 }
 
+const REPORT_TABS = [
+  { key: 'thang', label: 'Báo cáo tháng' },
+  { key: 'nam', label: 'Năm / Quý' },
+  { key: 'cong-no', label: 'Công nợ' },
+  { key: 'hop-dong', label: 'Hợp đồng' },
+  { key: 'du-bao', label: 'Dòng tiền dự báo' },
+] as const;
+type ReportTab = (typeof REPORT_TABS)[number]['key'];
+
+function ReportsSection() {
+  const [tab, setTab] = useHashTab<ReportTab>('office-reports', REPORT_TABS.map(t => t.key), 'thang');
+  return (
+    <Section tabs={<SubTabs tabs={[...REPORT_TABS]} value={tab} onChange={setTab} />}>
+      <Reports tab={tab} />
+    </Section>
+  );
+}
+
 function Section({ tabs, children }: { tabs?: ReactNode; children: ReactNode }) {
   return (
     <>
@@ -173,6 +196,7 @@ export default function OfficeShell({ page }: { page: OfficePage }) {
         </div>
         <div className="flex items-center gap-3">
           <SaveIndicator />
+          {status === 'ready' && <NotificationBell />}
           <button className={`${cls.btn} ${cls.ghost} !px-2`} title="Tải lại dữ liệu" onClick={() => reload()}><RefreshCw size={13} /></button>
         </div>
       </div>
@@ -184,6 +208,8 @@ export default function OfficeShell({ page }: { page: OfficePage }) {
       {status === 'ready' && (
         <>
           {page === 'office' && <Section><OpsOverview /></Section>}
+          {page === 'office-dashboard' && <Section><Dashboard /></Section>}
+          {page === 'office-reports' && <ReportsSection key={page} />}
           {page === 'office-pl' && <PLSection key={page} />}
           {page === 'office-rooms' && <RoomsSection key={page} />}
           {page === 'office-billing' && <BillingSection key={page} />}

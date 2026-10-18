@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildAlerts, contractState, daysBetween, defaultDueDate, effectiveRoomStatus, invoiceBreakdown, invoiceState, occupancy,
+  contractState, daysBetween, defaultDueDate, effectiveRoomStatus, invoiceBreakdown, invoiceState, occupancy,
 } from './ops';
 import type { CalcData } from './calc/types';
 import { DEFAULT_CALC_SETTINGS } from './import/tracker';
@@ -22,7 +22,7 @@ describe('Ngày & hợp đồng', () => {
     expect(defaultDueDate('2026-06', 30)).toBe('2026-06-28');
     expect(defaultDueDate('2026-06', 10)).toBe('2026-06-10');
   });
-  it('trạng thái hợp đồng 30/60 ngày', () => {
+  it('trạng thái hợp đồng 30 / 60 / 90 ngày', () => {
     const today = '2026-10-18';
     expect(contractState(tenant({ contract_end: '2026-11-10' }), today, 60)).toEqual({ state: 'urgent', days: 23 });
     expect(contractState(tenant({ contract_end: '2026-12-10' }), today, 60)).toEqual({ state: 'soon', days: 53 });
@@ -30,6 +30,8 @@ describe('Ngày & hợp đồng', () => {
     expect(contractState(tenant({ contract_end: '2026-10-01' }), today, 60)).toEqual({ state: 'expired', days: -17 });
     expect(contractState(tenant({ active: false, contract_end: '2026-10-01' }), today, 60).state).toBe('ended');
     expect(contractState(tenant({}), today, 60).state).toBe('none');
+    expect(contractState(tenant({ contract_end: '2027-01-01' }), today, 90)).toEqual({ state: 'notice', days: 75 });
+    expect(contractState(tenant({ contract_end: '2027-01-20' }), today, 90).state).toBe('active');
   });
 });
 
@@ -75,33 +77,5 @@ describe('Hoá đơn', () => {
     expect(invoiceState({ status: 'unpaid', due_date: '2026-06-30' }, '2026-07-05')).toEqual({ state: 'overdue', overdueDays: 5 });
     expect(invoiceState({ status: 'unpaid', due_date: '2026-07-10' }, '2026-07-05').state).toBe('unpaid');
     expect(invoiceState({ status: 'paid', due_date: '2026-06-30' }, '2026-07-05').state).toBe('paid');
-  });
-});
-
-describe('Cảnh báo', () => {
-  it('HĐ sắp hết, HĐ quá hạn, hoá đơn quá hạn, phòng trống, khách chưa gán', () => {
-    const alerts = buildAlerts({
-      tenants: [
-        tenant({ id: 'a', name: 'Thịnh Phát', contract_end: '2026-11-09' }),
-        tenant({ id: 'b', name: 'Hùng', contract_end: '2026-12-01', head_lease_id: null }),
-      ],
-      rooms: [room({ id: 'r4', code: 'VP4', list_price: 38_000_000 })],
-      invoices: [{ id: 'i', tenant_id: 'a', month: '2026-09-01', invoice_no: null, status: 'unpaid', due_date: '2026-10-13', paid_at: null, paid_amount: null, note: null }],
-      openTickets: 3, today: '2026-10-18', alertDays: 60, exchangeRate: 26_000, opsReady: true,
-    });
-    expect(alerts.map(a => a.tone)).toEqual(['red', 'red', 'amber', 'amber', 'amber', 'blue']);
-    expect(alerts.map(a => a.text)).toEqual(expect.arrayContaining([
-      'Thịnh Phát: hết hợp đồng sau 22 ngày',
-      'Thịnh Phát: hoá đơn T9/2026 quá hạn 5 ngày',
-      'VP4 đang trống — bỏ phí ~38 tr/tháng',
-      '1 khách chưa gán mặt bằng: Hùng',
-    ]));
-  });
-  it('chưa chạy migration vận hành → chỉ còn cảnh báo khách chưa gán', () => {
-    const alerts = buildAlerts({
-      tenants: [tenant({ head_lease_id: null, name: 'XHOME', contract_end: '2026-10-20' })], rooms: [], invoices: [],
-      openTickets: 0, today: '2026-10-18', alertDays: 60, exchangeRate: 26_000, opsReady: false,
-    });
-    expect(alerts).toEqual([expect.objectContaining({ key: 'unassigned' })]);
   });
 });

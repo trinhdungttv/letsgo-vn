@@ -1,8 +1,8 @@
 // Danh sách trang của module — file nhỏ, được App/Sidebar import trực tiếp (không kéo theo bundle module).
-import { Building, Car, DoorOpen, MonitorSmartphone, Receipt, Settings2, TrendingUp, Wrench, type LucideIcon } from 'lucide-react';
+import { Building, Car, DoorOpen, FileBarChart, LayoutDashboard, MonitorSmartphone, Receipt, Settings2, TrendingUp, Wrench, type LucideIcon } from 'lucide-react';
 
 export const OFFICE_PAGES = [
-  'office', 'office-pl', 'office-rooms', 'office-billing', 'office-parking', 'office-tickets', 'office-assets', 'office-settings',
+  'office', 'office-dashboard', 'office-reports', 'office-pl', 'office-rooms', 'office-billing', 'office-parking', 'office-tickets', 'office-assets', 'office-settings',
 ] as const;
 
 export type OfficePage = (typeof OFFICE_PAGES)[number];
@@ -16,6 +16,8 @@ export const OFFICE_PERMISSION_MODULE = 'Văn phòng Orient';
 
 export const OFFICE_NAV: { page: OfficePage; label: string; short: string }[] = [
   { page: 'office', label: 'Tổng quan', short: 'VP Orient' },
+  { page: 'office-dashboard', label: 'Dashboard', short: 'Dashboard VP' },
+  { page: 'office-reports', label: 'Báo cáo', short: 'Báo cáo VP' },
   { page: 'office-pl', label: 'Lời / Lỗ', short: 'Lời/Lỗ VP' },
   { page: 'office-rooms', label: 'Phòng & Hợp đồng', short: 'Phòng VP' },
   { page: 'office-billing', label: 'Hoá đơn & Điện', short: 'Hoá đơn VP' },
@@ -27,6 +29,8 @@ export const OFFICE_NAV: { page: OfficePage; label: string; short: string }[] = 
 
 export const OFFICE_ICON: Record<OfficePage, LucideIcon> = {
   office: Building,
+  'office-dashboard': LayoutDashboard,
+  'office-reports': FileBarChart,
   'office-pl': TrendingUp,
   'office-rooms': DoorOpen,
   'office-billing': Receipt,

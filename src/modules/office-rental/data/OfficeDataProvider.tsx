@@ -6,11 +6,12 @@ import { useBeforeUnloadWarning } from '../../../hooks/useBeforeUnloadWarning';
 import type { CalcData, CalcFee, MonthKey } from '../lib/calc/types';
 import { currentMonthKey, monthRange, monthToDate, toMonthKey } from '../lib/calc/months';
 import {
-  CORE_TABLES, OPS_TABLES,
-  type BdsSettings, type BdsTables, type BdsTenantFee, type CellTable, type IdTable, type TableName,
+  CORE_TABLES, NOTIFY_TABLES, OPS_TABLES,
+  type BdsNotificationState, type BdsSettings, type BdsTables, type BdsTenantFee, type CellTable, type IdTable, type TableName,
 } from '../lib/types';
 import {
-  accessCheck, deleteCell, deleteRow, errMsg, fetchAll, insertRow, isMissingTable, setBdsToken, updateRow, upsertCells,
+  accessCheck, deleteCell, deleteNotificationState, deleteRow, errMsg, fetchAll, insertRow, isMissingTable, setBdsToken,
+  updateRow, upsertCells, upsertNotificationState,
   type AccessState,
 } from './api';
 import { sortCategories, sortLeases, sortTenants } from './selectors';
@@ -22,12 +23,20 @@ export const DEFAULT_SETTINGS: BdsSettings = {
   id: 1, exchange_rate: 26000, vat_rate_rent: 10, vat_rate_util: 8, parking_price_moto: 150000,
   parking_price_car: 1500000, start_month: '2026-01-01', range_months: 24, include_forecast_in_cost: false,
   hide_empty_months: true, show_fee_panel: false, electricity_unit_price: 3500, invoice_due_day: 10,
-  invoice_footer: null, alert_days: 60,
+  invoice_footer: null, alert_days: 90,
 };
+
+const LS_NOTIFY = 'bds_notification_states';
+function readLocalStates(): BdsNotificationState[] {
+  try { return JSON.parse(localStorage.getItem(LS_NOTIFY) || '[]') as BdsNotificationState[]; } catch { return []; }
+}
+function writeLocalStates(rows: BdsNotificationState[]) {
+  try { localStorage.setItem(LS_NOTIFY, JSON.stringify(rows)); } catch { /* bộ nhớ trình duyệt bị chặn — bỏ qua */ }
+}
 
 const emptyRows = (): Rows => {
   const r = {} as Rows;
-  for (const t of [...CORE_TABLES, ...OPS_TABLES]) (r as Record<string, unknown[]>)[t] = [];
+  for (const t of [...CORE_TABLES, ...OPS_TABLES, ...NOTIFY_TABLES]) (r as Record<string, unknown[]>)[t] = [];
   return r;
 };
 
@@ -63,6 +72,8 @@ export interface OfficeContextValue {
   access: AccessState;
   loadError: string | null;
   opsReady: boolean;
+  /** Đã chạy migration 166 (trạng thái thông báo lưu trên DB, đồng bộ giữa các thiết bị) */
+  notifyReady: boolean;
   rows: Rows;
   settings: BdsSettings;
   calc: CalcData;
@@ -77,6 +88,8 @@ export interface OfficeContextValue {
   setOpex: (categoryId: string, month: MonthKey, amount: number) => void;
   /** Ghi hàng loạt phụ phí (CSV) — 1 lệnh upsert, dòng toàn 0 thì xoá. */
   bulkFees: (items: { tenantId: string; month: MonthKey; fee: CalcFee }[]) => Promise<boolean>;
+  /** Đánh dấu thông báo: 'dismissed' (đã xử lý), 'snoozed' (nhắc lại sau), null (hiện lại) */
+  setNotification: (eventKey: string, status: 'dismissed' | 'snoozed' | null, snoozeUntil?: string | null) => void;
   saveState: Record<string, SaveState>;
   saveErrors: Record<string, string>;
   retry: (key?: string) => void;
@@ -138,6 +151,7 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
   const [access, setAccess] = useState<AccessState>('ok');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [opsReady, setOpsReady] = useState(false);
+  const [notifyReady, setNotifyReady] = useState(false);
   const [rows, setRowsState] = useState<Rows>(emptyRows);
   const rowsRef = useRef(rows);
   const toastRef = useRef(toast);
@@ -249,6 +263,16 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
         ready = false;
       }
       setOpsReady(ready);
+      let nReady = true;
+      try {
+        const n = await fetchAll('bds_notification_states');
+        next.bds_notification_states = n;
+      } catch (e) {
+        if (!isMissingTable(e)) throw e;
+        nReady = false;
+        next.bds_notification_states = readLocalStates();
+      }
+      setNotifyReady(nReady);
       setRows(() => next);
       setStatus('ready');
     } catch (e) {
@@ -418,6 +442,22 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
     return true;
   }, [setRows]);
 
+  const notifyReadyRef = useRef(notifyReady);
+  notifyReadyRef.current = notifyReady;
+  const setNotification = useCallback((eventKey: string, status: 'dismissed' | 'snoozed' | null, snoozeUntil: string | null = null) => {
+    const row: BdsNotificationState | null = status ? { event_key: eventKey, status, snooze_until: status === 'snoozed' ? snoozeUntil : null } : null;
+    setRows(r => {
+      const list = [...r.bds_notification_states.filter(x => x.event_key !== eventKey), ...(row ? [row] : [])];
+      if (!notifyReadyRef.current) writeLocalStates(list);
+      return { ...r, bds_notification_states: list };
+    });
+    if (!notifyReadyRef.current) return;
+    schedule(`bds_notification_states:${eventKey}`, async () => {
+      if (row) await upsertNotificationState(row);
+      else await deleteNotificationState(eventKey);
+    }, 0);
+  }, [schedule, setRows]);
+
   // ── Dẫn xuất ──────────────────────────────────────────────────────────
   const settings = rows.bds_settings[0] || DEFAULT_SETTINGS;
   const calc = useMemo(() => buildCalcData(rows, settings), [rows, settings]);
@@ -428,8 +468,8 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
   const currentMonth = currentMonthKey();
 
   const value: OfficeContextValue = {
-    status, access, loadError, opsReady, rows, settings, calc, months, currentMonth,
-    reload, insert, patch, remove, setRent, setFee, setOpex, bulkFees, saveState, saveErrors, retry, flush, toast,
+    status, access, loadError, opsReady, notifyReady, rows, settings, calc, months, currentMonth,
+    reload, insert, patch, remove, setRent, setFee, setOpex, bulkFees, setNotification, saveState, saveErrors, retry, flush, toast,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

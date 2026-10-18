@@ -15,7 +15,7 @@ const empty = (): AllRows => ({
   bds_settings: [SETTINGS], bds_head_leases: [], bds_head_lease_increases: [], bds_tenants: [], bds_tenant_rent: [],
   bds_tenant_fees: [], bds_opex_categories: [], bds_opex_monthly: [], bds_forecast_expenses: [], bds_breakeven_scenarios: [],
   bds_breakeven_rooms: [], bds_rooms: [], bds_meter_readings: [], bds_invoices: [], bds_assets: [], bds_tickets: [],
-  bds_maintenance_logs: [],
+  bds_maintenance_logs: [], bds_notification_states: [],
 });
 
 const snap = () => {
