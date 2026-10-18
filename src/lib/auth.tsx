@@ -2,11 +2,16 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { supabase } from './supabase';
 import type { AppUser, RolePermission } from './types';
 import { OFFICE_PAGES, OFFICE_PERMISSION_MODULE, isOfficePage } from '../modules/office-rental/pages';
+import { startGoogleLogin, completeGoogleLogin, hasGoogleRedirect } from './googleLogin';
 
 interface AuthContextValue {
   user: AppUser | null;
   token: string | null;
   login: (username: string, password: string) => Promise<string | null>;
+  /** Chuyển sang trang Google; chỉ trả về khi có lỗi (câu tiếng Việt) */
+  loginWithGoogle: () => Promise<string | null>;
+  /** Lỗi của lần đăng nhập Google vừa quay về (vd email chưa được cấp quyền) */
+  googleError: string | null;
   logout: () => void;
   loading: boolean;
   rolePermissions: RolePermission[];
@@ -17,6 +22,8 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   token: null,
   login: async () => 'Not initialized',
+  loginWithGoogle: async () => 'Not initialized',
+  googleError: null,
   logout: () => {},
   loading: true,
   rolePermissions: [],
@@ -31,6 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
+  // Vừa quay về từ Google → giữ màn chờ tới khi đổi xong sang token của app
+  const [googlePending, setGooglePending] = useState(hasGoogleRedirect);
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   const refreshRolePermissions = useCallback(async () => {
     const { data, error } = await supabase.from('role_permissions').select('*');
@@ -48,6 +58,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshRolePermissions();
   }, [refreshRolePermissions]);
 
+  // Lưu phiên giống nhau cho đăng nhập mật khẩu và Google → RPC admin_*, header x-letsgo-token chạy như cũ.
+  const saveSession = useCallback((userFields: AppUser, newToken?: string) => {
+    setGoogleError(null);
+    setUser(userFields);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(userFields));
+    if (newToken) {
+      setToken(newToken);
+      localStorage.setItem(TOKEN_KEY, newToken);
+    }
+  }, []);
+
+  useEffect(() => {
+    const pending = completeGoogleLogin();
+    if (!pending) return;
+    let alive = true;
+    pending.then(res => {
+      if (!alive) return;
+      if ('error' in res) setGoogleError(res.error);
+      else saveSession(res.user, res.token);
+      setGooglePending(false);
+    });
+    return () => { alive = false; };
+  }, [saveSession]);
+
+  const loginWithGoogle = async (): Promise<string | null> => {
+    setGoogleError(null);
+    return startGoogleLogin();
+  };
+
   const login = async (username: string, password: string): Promise<string | null> => {
     // Xac thuc qua RPC verify_login: so khop mat khau da hash, kiem tra is_active, cap session token.
     const { data, error } = await supabase.rpc('verify_login', {
@@ -58,12 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const row = (Array.isArray(data) ? data[0] : data) as (AppUser & { token?: string }) | undefined;
     if (!row) return 'Sai tên đăng nhập hoặc mật khẩu';
     const { token: newToken, ...userFields } = row;
-    setUser(userFields);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(userFields));
-    if (newToken) {
-      setToken(newToken);
-      localStorage.setItem(TOKEN_KEY, newToken);
-    }
+    saveSession(userFields, newToken);
     return null;
   };
 
@@ -77,7 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading, rolePermissions, refreshRolePermissions }}>
+    <AuthContext.Provider value={{
+      user, token, login, loginWithGoogle, googleError, logout,
+      loading: loading || googlePending, rolePermissions, refreshRolePermissions,
+    }}>
       {children}
     </AuthContext.Provider>
   );
