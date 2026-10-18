@@ -3,7 +3,7 @@
 // sửa → cập nhật giao diện ngay → debounce 400ms → upsert/xoá. Lỗi mạng giữ nguyên giá trị để Thử lại.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useBeforeUnloadWarning } from '../../../hooks/useBeforeUnloadWarning';
-import type { CalcData, MonthKey } from '../lib/calc/types';
+import type { CalcData, CalcFee, MonthKey } from '../lib/calc/types';
 import { currentMonthKey, monthRange, monthToDate, toMonthKey } from '../lib/calc/months';
 import {
   CORE_TABLES, OPS_TABLES,
@@ -13,6 +13,7 @@ import {
   accessCheck, deleteCell, deleteRow, errMsg, fetchAll, insertRow, isMissingTable, setBdsToken, updateRow, upsertCells,
   type AccessState,
 } from './api';
+import { sortCategories, sortLeases, sortTenants } from './selectors';
 
 export type SaveState = 'pending' | 'saving' | 'saved' | 'error';
 export type Rows = { [K in TableName]: BdsTables[K][] };
@@ -74,6 +75,8 @@ export interface OfficeContextValue {
   setRent: (tenantId: string, month: MonthKey, amount: number) => void;
   setFee: (tenantId: string, month: MonthKey, patch: FeePatch) => void;
   setOpex: (categoryId: string, month: MonthKey, amount: number) => void;
+  /** Ghi hàng loạt phụ phí (CSV) — 1 lệnh upsert, dòng toàn 0 thì xoá. */
+  bulkFees: (items: { tenantId: string; month: MonthKey; fee: CalcFee }[]) => Promise<boolean>;
   saveState: Record<string, SaveState>;
   saveErrors: Record<string, string>;
   retry: (key?: string) => void;
@@ -108,13 +111,13 @@ export function buildCalcData(rows: Rows, settings: BdsSettings): CalcData {
       parkingPriceCar: Number(settings.parking_price_car) || 0,
       includeForecastInCost: !!settings.include_forecast_in_cost,
     },
-    headLeases: rows.bds_head_leases.map(l => ({
+    headLeases: sortLeases(rows.bds_head_leases).map(l => ({
       id: l.id, landlord: l.landlord, name: l.name, currency: l.currency, basePrice: Number(l.base_price) || 0,
       baseMonth: toMonthKey(l.base_month), endMonth: l.end_month ? toMonthKey(l.end_month) : null,
       vatMode: l.vat_mode, vatCategory: l.vat_category, isParking: l.is_parking, increases: incByLease.get(l.id) || [],
     })),
-    tenants: rows.bds_tenants.map(t => ({ id: t.id, name: t.name, currency: t.currency, vatMode: t.vat_mode, headLeaseId: t.head_lease_id })),
-    opexCategories: rows.bds_opex_categories.map(c => ({ id: c.id, name: c.name, vatMode: c.vat_mode, vatCategory: c.vat_category })),
+    tenants: sortTenants(rows.bds_tenants).map(t => ({ id: t.id, name: t.name, currency: t.currency, vatMode: t.vat_mode, headLeaseId: t.head_lease_id })),
+    opexCategories: sortCategories(rows.bds_opex_categories).map(c => ({ id: c.id, name: c.name, vatMode: c.vat_mode, vatCategory: c.vat_category })),
     forecasts: rows.bds_forecast_expenses.map(f => ({ month: toMonthKey(f.month), amount: Number(f.amount) || 0 })),
     rent: {},
     fees: {},
@@ -393,6 +396,28 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
     });
   }, [schedule, setRows]);
 
+  const bulkFees = useCallback(async (items: { tenantId: string; month: MonthKey; fee: CalcFee }[]) => {
+    const rowsOut: BdsTenantFee[] = items.map(i => ({
+      tenant_id: i.tenantId, month: monthToDate(i.month),
+      electricity_amount: i.fee.electricity, motorbike_count: i.fee.moto, car_count: i.fee.car,
+    }));
+    const keep = rowsOut.filter(r => r.electricity_amount || r.motorbike_count || r.car_count);
+    const drop = rowsOut.filter(r => !(r.electricity_amount || r.motorbike_count || r.car_count));
+    try {
+      await upsertCells('bds_tenant_fees', keep);
+      for (const d of drop) await deleteCell('bds_tenant_fees', d.tenant_id, d.month);
+    } catch (e) {
+      toastRef.current('Lỗi nhập phụ phí: ' + errMsg(e));
+      return false;
+    }
+    const touched = new Set(rowsOut.map(r => `${r.tenant_id}|${r.month}`));
+    setRows(r => ({
+      ...r,
+      bds_tenant_fees: [...r.bds_tenant_fees.filter(x => !touched.has(`${x.tenant_id}|${x.month}`)), ...keep],
+    }));
+    return true;
+  }, [setRows]);
+
   // ── Dẫn xuất ──────────────────────────────────────────────────────────
   const settings = rows.bds_settings[0] || DEFAULT_SETTINGS;
   const calc = useMemo(() => buildCalcData(rows, settings), [rows, settings]);
@@ -404,7 +429,7 @@ export function OfficeDataProvider({ token, toast, children }: { token: string |
 
   const value: OfficeContextValue = {
     status, access, loadError, opsReady, rows, settings, calc, months, currentMonth,
-    reload, insert, patch, remove, setRent, setFee, setOpex, saveState, saveErrors, retry, flush, toast,
+    reload, insert, patch, remove, setRent, setFee, setOpex, bulkFees, saveState, saveErrors, retry, flush, toast,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

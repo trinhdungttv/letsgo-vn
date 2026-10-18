@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from './supabase';
 import type { AppUser, RolePermission } from './types';
+import { OFFICE_PAGES, OFFICE_PERMISSION_MODULE, isOfficePage } from '../modules/office-rental/pages';
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -106,17 +107,27 @@ export const PAGE_MODULE: Record<string, string> = {
   history: 'Lịch sử',
   'admin-settings': 'Admin',
   loans: 'Khoan vay',
+  // Văn phòng Orient — một quyền chung cho cả module (migration 164 cấp cho admin)
+  ...Object.fromEntries(OFFICE_PAGES.map(p => [p, OFFICE_PERMISSION_MODULE])),
 };
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', ...crm],
+  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', ...crm, ...OFFICE_PAGES],
   ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace'],
   kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', ...crm],
   bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', ...crm],
 };
 
 export function canAccess(role: string, page: string, rolePermissions?: RolePermission[]): boolean {
+  // Văn phòng Orient: chốt cứng chỉ admin (RLS bds_* cũng chỉ mở cho admin). Muốn cấp quyền hẹp sau này:
+  // bỏ dòng này + thêm module vào ma trận phân quyền + đổi bds_is_admin() trong DB.
+  if (isOfficePage(page)) {
+    if (role !== 'admin') return false;
+    // Chưa có dòng quyền (chưa chạy migration 164) → vẫn cho admin vào để thấy hướng dẫn cài đặt
+    const perm = rolePermissions?.find(p => p.role === role && p.module === OFFICE_PERMISSION_MODULE);
+    return perm ? perm.level !== 'none' : true;
+  }
   if (rolePermissions && rolePermissions.length) {
     const module = PAGE_MODULE[page];
     if (!module) return false;

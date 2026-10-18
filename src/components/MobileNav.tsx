@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
+import { OFFICE_ICON, OFFICE_NAV } from '../modules/office-rental/pages';
 
 interface MobileNavProps {
   currentPage: Page;
@@ -27,6 +28,11 @@ const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'crm-pipeline',   label: 'Pipeline',   icon: <Network size={21} /> },
   { page: 'crm-leads',      label: 'CSKH',       icon: <UserCircle2 size={21} /> },
   { page: 'crm-prods',      label: 'Sản phẩm',   icon: <Package size={21} /> },
+  // Văn phòng Orient (chỉ admin)
+  ...OFFICE_NAV.map(n => {
+    const Icon = OFFICE_ICON[n.page];
+    return { page: n.page as Page, label: n.short, icon: <Icon size={21} /> };
+  }),
   { page: 'admin-settings', label: 'Phân quyền', icon: <Settings size={21} /> },
   { page: 'users',          label: 'Users',      icon: <Users size={21} /> },
 ];
