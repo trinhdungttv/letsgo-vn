@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTV — Theo dõi Lời/Lỗ Văn phòng Orient</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  :root{
+    --navy:#0F172A; --navy2:#1E293B; --amber:#F59E0B; --amber-dark:#D97706;
+    --bg:#F1F5F9; --surface:#fff; --text:#0F172A; --muted:#64748B; --border:#E2E8F0;
+    --green:#10B981; --red:#EF4444; --blue:#3B82F6; --purple:#8B5CF6;
+    --mbt:#3B82F6; --ts4:#8B5CF6; --opex:#F59E0B; --fc:#8B5CF6;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+
+  header{background:var(--navy);color:#fff;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  header .brand b{color:var(--amber);font-size:15px;letter-spacing:.3px}
+  header .brand div{font-size:11px;color:rgba(255,255,255,.5);margin-top:2px}
+  header .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .rate-pill{background:rgba(255,255,255,.08);border-radius:8px;padding:6px 12px;font-size:12px}
+  .rate-pill b{color:var(--amber)}
+
+  .btn{padding:7px 13px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;border:none;transition:.15s;white-space:nowrap}
+  .btn-amber{background:var(--amber);color:#0F172A}.btn-amber:hover{background:var(--amber-dark)}
+  .btn-line{background:transparent;border:1.5px solid var(--border);color:var(--muted)}.btn-line:hover{border-color:var(--muted);color:var(--text)}
+  .btn-ghost{background:rgba(255,255,255,.1);color:#fff}.btn-ghost:hover{background:rgba(255,255,255,.18)}
+  .btn-sm{padding:4px 9px;font-size:11px;border-radius:6px}
+  .btn-danger{background:#FEE2E2;color:#991B1B}.btn-danger:hover{background:#FECACA}
+  .btn-purple{background:#EDE9FE;color:#6D28D9}.btn-purple:hover{background:#DDD6FE}
+
+  nav.tabs{background:var(--surface);border-bottom:1px solid var(--border);padding:0 22px;display:flex;gap:2px;overflow-x:auto}
+  nav.tabs .tab{padding:13px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;white-space:nowrap;transition:.15s}
+  nav.tabs .tab:hover{color:var(--text)}
+  nav.tabs .tab.active{color:var(--amber-dark);border-bottom-color:var(--amber)}
+
+  main{padding:22px;max-width:1580px;margin:0 auto}
+  .view{display:none}.view.active{display:block}
+  .sec-title{font-size:19px;font-weight:800}
+  .sec-sub{font-size:13px;color:var(--muted);margin:2px 0 18px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:14px;font-weight:700;margin-bottom:2px}
+  .card h3 .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;margin-left:8px;vertical-align:middle}
+  .tag-mbt{background:#DBEAFE;color:#1E40AF}.tag-ts4{background:#EDE9FE;color:#6D28D9}
+  .card .desc{font-size:12px;color:var(--muted);margin-bottom:14px}
+
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;overflow:hidden}
+  .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+  .kpi.rev::before{background:var(--green)}.kpi.rent::before{background:var(--mbt)}
+  .kpi.op::before{background:var(--amber)}.kpi.pf::before{background:var(--blue)}.kpi.fc::before{background:var(--fc)}
+  .kpi .lbl{font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .kpi .val{font-size:18px;font-weight:800;margin-top:6px}
+  .kpi .usd{font-size:11.5px;color:var(--muted);margin-top:3px}
+
+  table{width:100%;border-collapse:collapse}
+  th{padding:9px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;background:#F8FAFC;border-bottom:1px solid var(--border)}
+  th.l,td.l{text-align:left}
+  td{padding:8px 10px;font-size:13px;border-bottom:1px solid var(--border);text-align:right}
+  tr:hover td{background:#FAFBFC}
+  tbody tr.now td{background:#FFFBEB}
+  tfoot td{font-weight:800;border-top:2px solid var(--border);background:#F8FAFC}
+  .pf-pos{color:var(--green);font-weight:700}.pf-neg{color:var(--red);font-weight:700}
+  .st{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:20px}
+  .st-actual{background:#D1FAE5;color:#065F46}.st-future{background:#EFF6FF;color:#1D4ED8}.st-miss{background:#FEF3C7;color:#92400E}
+
+  .scroll{overflow-x:auto}
+  .grid-input{width:112px;padding:5px 7px;border:1.5px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right;font-family:inherit;font-variant-numeric:tabular-nums}
+  .grid-input:focus{outline:none;border-color:var(--amber)}
+  .grid-input.usd-in{border-color:#BFDBFE;background:#EFF6FF}
+  .grid-input.count-in{width:56px}
+  .grid-input.fee-in{border-color:#DDD6FE;background:#F5F3FF}
+
+  .field{margin-bottom:12px}
+  .field label{font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:5px}
+  .inp{width:100%;padding:8px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;font-variant-numeric:tabular-nums}
+  .inp:focus{outline:none;border-color:var(--amber)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row4{display:grid;grid-template-columns:1.3fr 1.1fr 0.9fr 1.3fr;gap:10px;align-items:end}
+
+  .unit-card{border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;background:#FCFCFD}
+  .unit-card .uc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px}
+  .unit-card .uc-name{font-weight:700;font-size:13.5px}
+  .unit-price{font-size:12px;color:var(--muted);line-height:1.5}.unit-price b{color:var(--text);font-size:13px}
+  .mile{display:flex;gap:8px;align-items:center;background:#fff;border:1px dashed var(--border);border-radius:8px;padding:7px 10px;margin-top:7px;font-size:12.5px}
+  .mile .del{color:var(--red);cursor:pointer;font-weight:700;margin-left:auto;background:none;border:none;font-size:14px}
+
+  .cur-badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px}
+  .cur-usd{background:#DBEAFE;color:#1D4ED8}.cur-vnd{background:#F1F5F9;color:#475569}
+  .vat-badge{font-size:9.5px;font-weight:600;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:2px}
+  .vat-none{color:#94A3B8}.vat-incl{color:#059669}.vat-excl{color:#DC2626}
+
+  .banner{background:linear-gradient(135deg,#FEF3C7,#FFFBEB);border:1px solid #FDE68A;border-radius:10px;padding:11px 15px;font-size:12.5px;color:#92400E;margin-bottom:16px;display:flex;gap:10px;align-items:center}
+  .banner.purple{background:linear-gradient(135deg,#EDE9FE,#F5F3FF);border-color:#DDD6FE;color:#5B21B6}
+  .toggle-row{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;margin-bottom:14px}
+  .sw{width:40px;height:22px;background:var(--border);border-radius:11px;position:relative;cursor:pointer;transition:.15s;flex-shrink:0}
+  .sw.on{background:var(--green)}
+  .sw::after{content:'';position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .sw.on::after{transform:translateX(18px)}
+  .mono{font-variant-numeric:tabular-nums}
+  .add-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .note{font-size:11.5px;color:var(--muted);margin-top:6px}
+  select.inp{cursor:pointer}
+  .chart-wrap{position:relative;height:300px}
+  .cfg-wrap{margin-bottom:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+
+  .fee-panel-head{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+  .fee-panel-head:hover .fee-toggle-txt{color:var(--amber-dark)}
+  .fee-toggle-txt{font-size:12.5px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .fee-price-inline{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 12px;background:#F5F3FF;border-radius:8px;border:1px solid #DDD6FE}
+  .fee-price-inline .fp-field{display:flex;align-items:center;gap:6px;font-size:12.5px}
+  .fee-price-inline input{width:110px}
+
+  @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.row4{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <b>TTV — Lời / Lỗ Văn phòng Orient</b>
+    <div>Minh Bảo Tín (1.05 + 2.01) · Thủy Sản 4 (mặt tiền + bãi xe)</div>
+  </div>
+  <div class="tools">
+    <span class="rate-pill">Tỷ giá: <b id="rate-disp">25,870</b> đ/$</span>
+    <span class="rate-pill">VAT mặc định: <b id="vat-disp">8</b>%</span>
+    <button class="btn btn-ghost" onclick="exportJSON()">⬇ Lưu file</button>
+    <button class="btn btn-ghost" onclick="document.getElementById('imp').click()">⬆ Nạp file</button>
+    <button class="btn btn-ghost" onclick="exportCSV()">📊 Xuất CSV</button>
+    <input type="file" id="imp" accept=".json" style="display:none" onchange="importJSON(event)">
+  </div>
+</header>
+
+<nav class="tabs">
+  <div class="tab active" data-tab="dash" onclick="showTab('dash',this)">📊 Tổng quan Lời/Lỗ</div>
+  <div class="tab" data-tab="pay" onclick="showTab('pay',this)">🏦 Chi phí thuê (đầu vào)</div>
+  <div class="tab" data-tab="rev" onclick="showTab('rev',this)">💰 Doanh thu khách hàng</div>
+  <div class="tab" data-tab="op" onclick="showTab('op',this)">🔧 Chi phí vận hành</div>
+  <div class="tab" data-tab="fc" onclick="showTab('fc',this)">🔮 Dự đoán phát sinh</div>
+  <div class="tab" data-tab="set" onclick="showTab('set',this)">⚙️ Cài đặt</div>
+</nav>
+
+<main>
+  <!-- ============ DASHBOARD ============ -->
+  <div class="view active" id="v-dash">
+    <div class="sec-title">Bức tranh Lời / Lỗ theo tháng</div>
+    <div class="sec-sub">Tự tính từ tiền thuê (có mốc tăng giá + VAT) + phụ phí điện/xe − doanh thu − chi phí vận hành</div>
+
+    <div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:16px">
+      <div class="field" style="margin:0">
+        <label>Xem KPI tháng</label>
+        <select class="inp" id="kpi-month" style="width:170px" onchange="renderDash()"></select>
+      </div>
+      <div class="toggle-row" style="margin:0 0 4px">
+        <div class="sw on" id="sw-hide" onclick="toggleHide()"></div>
+        <span>Chỉ hiện tháng đã nhập doanh thu</span>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpi-cards"></div>
+
+    <div class="card">
+      <h3>Biểu đồ Lời/Lỗ theo tháng</h3>
+      <div class="desc" id="chart-note">Cột = Lợi nhuận (xanh = lời, đỏ = lỗ) · Đường = Doanh thu & Tổng chi phí</div>
+      <div class="chart-wrap"><canvas id="chart-pl"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div><h3>Bảng chi tiết Lời/Lỗ</h3><div class="desc" style="margin:0" id="table-note">Đơn vị: triệu VNĐ (đã gồm VAT + phụ phí) · MBT & TS4 tách riêng</div></div>
+        <div id="cumsum" style="font-size:12.5px;color:var(--muted)"></div>
+      </div>
+      <div class="scroll">
+        <table id="pl-table"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PAYABLES ============ -->
+  <div class="view" id="v-pay">
+    <div class="sec-title">Chi phí thuê mặt bằng (trả cho chủ đầu tư)</div>
+    <div class="sec-sub">Nhập giá gốc chính xác từng đồng + mốc tăng giá theo %. Có thể bật VAT riêng cho từng khoản.</div>
+    <div class="banner">💡 Mốc tăng giá cộng dồn: đặt "từ T1/2027 tăng 5%" → giá từ tháng đó × 1.05. VAT: chọn "giá đã gồm VAT" nếu số anh nhập là số cuối cùng phải trả; chọn "giá chưa gồm VAT" nếu số anh nhập là giá gốc và muốn hệ thống tự cộng thêm VAT.</div>
+
+    <div class="card">
+      <h3>Minh Bảo Tín <span class="tag tag-mbt">2 hóa đơn · trả chung</span></h3>
+      <div class="desc">Mặt bằng 1.05 + Mặt bằng 2.01</div>
+      <div id="pay-mbt"></div>
+    </div>
+
+    <div class="card">
+      <h3>Thủy Sản 4 <span class="tag tag-ts4">2 khoản</span></h3>
+      <div class="desc">Mặt tiền phía trước + Bãi giữ xe</div>
+      <div id="pay-ts4"></div>
+    </div>
+  </div>
+
+  <!-- ============ REVENUE ============ -->
+  <div class="view" id="v-rev">
+    <div class="sec-title">Doanh thu khách hàng</div>
+    <div class="sec-sub">Nhập số tiền thu thực tế của từng khách theo từng tháng — số đầy đủ, không rút gọn</div>
+
+    <div class="card">
+      <h3>Danh sách khách hàng & cấu hình VAT</h3>
+      <div class="desc">Chọn cách tính VAT riêng cho từng khách. Số anh nhập ở bảng dưới sẽ được hệ thống tự cộng/trừ VAT theo lựa chọn này.</div>
+      <div class="scroll cfg-wrap"><table id="cust-cfg"></table></div>
+      <div class="add-row">
+        <input class="inp" id="new-cust-name" placeholder="Tên khách hàng mới" style="max-width:240px;flex:1">
+        <select class="inp" id="new-cust-cur" style="max-width:100px"><option value="VND">VNĐ</option><option value="USD">USD</option></select>
+        <button class="btn btn-amber" onclick="addCustomer()">+ Thêm khách</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Bảng nhập tiền thuê theo tháng</h3>
+      <div class="desc">Gõ số đầy đủ, hệ thống tự thêm dấu phẩy (VD: 5997000 → 5,997,000). Ô trống = chưa thu / chưa nhập.</div>
+      <div class="scroll"><table id="rev-table"></table></div>
+    </div>
+
+    <div class="card">
+      <div class="fee-panel-head" onclick="toggleCustFees()">
+        <h3 style="margin:0">🔌🅿️ Phụ phí Điện & Bãi xe theo khách hàng <span class="tag" style="background:#EDE9FE;color:#6D28D9">Điện · Xe máy · Ô tô</span></h3>
+        <span class="fee-toggle-txt" id="fee-toggle-txt">▸ Bấm để hiện</span>
+      </div>
+      <div class="desc" style="margin-top:6px">Mỗi khách hàng trả thêm tiền điện + phí gửi xe hàng tháng, cộng chung vào doanh thu để tính lời/lỗ. Mặc định ẩn — bấm tiêu đề để hiện khi cần nhập hoặc xem.</div>
+      <div id="fee-panel-body" style="display:none">
+        <div class="fee-price-inline">
+          <div class="fp-field">🏍️ Đơn giá xe máy:
+            <input class="inp grid-input fee-in" id="fee-price-moto" data-money="vnd" data-field="moto" type="text" inputmode="decimal">
+            đ/xe/tháng
+          </div>
+          <div class="fp-field">🚗 Đơn giá ô tô:
+            <input class="inp grid-input fee-in" id="fee-price-car" data-money="vnd" data-field="car" type="text" inputmode="decimal">
+            đ/xe/tháng
+          </div>
+          <div class="note" style="margin:0">Điện nhập trực tiếp số tiền (biến động theo chỉ số). Xe máy/Ô tô nhập số lượng — hệ thống tự nhân đơn giá.</div>
+        </div>
+        <div class="scroll"><table id="fee-table"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ OPEX ============ -->
+  <div class="view" id="v-op">
+    <div class="sec-title">Chi phí vận hành</div>
+    <div class="sec-sub">Phí quản lý, bảo trì, sửa chữa, lương NV, đối ngoại... — nhập tay số đầy đủ (VNĐ) từng tháng</div>
+
+    <div class="card">
+      <h3>Hạng mục chi phí & cấu hình VAT</h3>
+      <div class="scroll cfg-wrap"><table id="op-cfg"></table></div>
+      <div class="add-row">
+        <input class="inp" id="new-op-name" placeholder="Tên hạng mục mới" style="max-width:260px;flex:1">
+        <button class="btn btn-amber" onclick="addOpCat()">+ Thêm hạng mục</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Bảng nhập chi phí vận hành theo tháng</h3>
+      <div class="desc">Gõ số đầy đủ VNĐ, tự thêm dấu phẩy khi gõ.</div>
+      <div class="scroll"><table id="op-table"></table></div>
+    </div>
+  </div>
+
+  <!-- ============ FORECAST ============ -->
+  <div class="view" id="v-fc">
+    <div class="sec-title">Dự đoán chi phí phát sinh sắp tới</div>
+    <div class="sec-sub">Ghi trước các khoản chi dự kiến trong tương lai (sửa chữa lớn, bảo trì định kỳ, đầu tư...) — tách biệt với chi phí thực tế đã phát sinh ở tab "Chi phí vận hành"</div>
+    <div class="banner purple">🔮 Đây là danh sách <b>dự kiến</b>, chưa phải chi phí thực tế. Khi khoản nào xảy ra thật, hãy nhập nó vào tab "Chi phí vận hành" như bình thường, rồi có thể xóa khỏi danh sách dự kiến này để tránh trùng.</div>
+
+    <div class="card">
+      <h3>Thêm khoản dự kiến mới</h3>
+      <div class="row4">
+        <div class="field" style="margin:0"><label>Tên khoản</label>
+          <input class="inp" id="new-fc-name" placeholder="VD: Sơn lại mặt tiền"></div>
+        <div class="field" style="margin:0"><label>Tháng dự kiến</label>
+          <input class="inp" id="new-fc-month" type="month"></div>
+        <div class="field" style="margin:0"><label>Số tiền dự kiến (VNĐ)</label>
+          <input class="inp grid-input" style="width:100%" id="new-fc-amount" data-money="vnd" type="text" inputmode="decimal" placeholder="0"></div>
+        <button class="btn btn-purple" onclick="addForecastItem()">+ Thêm khoản dự kiến</button>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Ghi chú (tùy chọn)</label>
+        <input class="inp" id="new-fc-note" placeholder="VD: Chưa báo giá chính thức, ước tính"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h3 style="margin:0">Danh sách khoản đang theo dõi</h3>
+        <span id="fc-total" style="font-size:12.5px;color:var(--muted)"></span>
+      </div>
+      <div class="scroll"><table id="fc-table"></table></div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div class="view" id="v-set">
+    <div class="sec-title">Cài đặt</div>
+    <div class="sec-sub">Tỷ giá, VAT mặc định, dự đoán phát sinh, khoảng thời gian, dữ liệu</div>
+
+    <div class="card" style="max-width:520px">
+      <h3>💱 Tỷ giá USD → VNĐ</h3>
+      <div class="desc">Dùng để quy đổi doanh thu / chi phí USD sang VNĐ</div>
+      <div class="field">
+        <label>Tỷ giá (đồng / 1 USD)</label>
+        <input class="inp" id="set-rate" data-money="vnd">
+      </div>
+      <div class="note">Vietcombank tham khảo ~25,870 (T6/2026). Nhập tay tỷ giá anh muốn áp dụng.</div>
+    </div>
+
+    <div class="card" style="max-width:520px">
+      <h3>🧾 Thuế VAT mặc định</h3>
+      <div class="desc">Áp dụng cho mọi khoản đang bật "Có VAT" (trừ khi khoản đó có ghi đè riêng)</div>
+      <div class="field">
+        <label>Thuế suất VAT (%)</label>
+        <input class="inp" id="set-vat" type="number" step="0.1" min="0" max="30" oninput="setVatRate(this.value)">
+      </div>
+      <div class="note">Phổ biến hiện nay: 8% hoặc 10% tùy loại hàng hóa/dịch vụ.</div>
+    </div>
+
+    <div class="card" style="max-width:520px">
+      <h3>🔮 Dự đoán chi phí phát sinh</h3>
+      <div class="desc">Có cộng các khoản dự kiến (tab Dự đoán phát sinh) vào Tổng chi phí trên Dashboard không?</div>
+      <div class="toggle-row" style="margin:0">
+        <div class="sw" id="sw-fc" onclick="toggleForecastInclude()"></div>
+        <span>Cộng khoản dự kiến vào Tổng chi phí dự phóng</span>
+      </div>
+      <div class="note">Tắt (mặc định): chỉ hiện tham khảo ở cột riêng, không ảnh hưởng lợi nhuận. Bật: cộng thẳng vào Tổng CP của đúng tháng dự kiến.</div>
+    </div>
+
+    <div class="card" style="max-width:520px">
+      <h3>📅 Khoảng thời gian</h3>
+      <div class="desc">Bắt đầu từ T1/2026</div>
+      <div class="field">
+        <label>Số tháng theo dõi (gồm quá khứ + tương lai)</label>
+        <select class="inp" id="set-range" onchange="setRange(this.value)">
+          <option value="12">12 tháng (hết 2026)</option>
+          <option value="18">18 tháng (đến T6/2027)</option>
+          <option value="24">24 tháng (đến hết 2027)</option>
+          <option value="36">36 tháng (đến hết 2028)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:520px">
+      <h3>🗂️ Dữ liệu</h3>
+      <div class="desc">Dữ liệu tự lưu trong trình duyệt này. Bấm "Lưu file" ở góc trên để sao lưu ra máy.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-line" onclick="exportJSON()">⬇ Lưu ra file .json</button>
+        <button class="btn btn-line" onclick="document.getElementById('imp').click()">⬆ Nạp từ file</button>
+        <button class="btn btn-danger" onclick="resetAll()">🗑 Xóa hết, nhập lại từ đầu</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ---------------- STATE ---------------- */
+const KEY='ttv_orient_pl_v3';
+const now=new Date();
+const CUR_MK=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+
+function defaults(){
+  return {
+    version:3, exchangeRate:25870, vatRate:8, startMonth:'2026-01', range:24, hideEmpty:true,
+    parkingPriceMoto:150000, parkingPriceCar:150000, showCustFees:false, includeForecastInCost:false,
+    payables:{
+      mbt:{name:'Minh Bảo Tín', units:[
+        {id:'u_105', name:'Mặt bằng 1.05', currency:'VND', basePrice:60000000, baseMonth:'2026-01', vatMode:'none', increases:[{month:'2027-01',percent:5}]},
+        {id:'u_201', name:'Mặt bằng 2.01', currency:'VND', basePrice:45000000, baseMonth:'2026-01', vatMode:'none', increases:[{month:'2027-01',percent:5}]}
+      ]},
+      ts4:{name:'Thủy Sản 4', units:[
+        {id:'u_mt', name:'Mặt tiền phía trước', currency:'VND', basePrice:15000000, baseMonth:'2026-01', vatMode:'none', increases:[]},
+        {id:'u_xe', name:'Bãi giữ xe', currency:'VND', basePrice:3500000, baseMonth:'2026-01', vatMode:'none', increases:[]}
+      ]}
+    },
+    customers:[
+      {id:'c_abc', name:'ABC Korea', currency:'USD', vatMode:'none'},
+      {id:'c_tp',  name:'Thịnh Phát', currency:'VND', vatMode:'none'},
+      {id:'c_dvh', name:'Dịch vụ Hùng', currency:'VND', vatMode:'none'},
+      {id:'c_da',  name:'Cửa hàng đồ ăn', currency:'VND', vatMode:'none'}
+    ],
+    opexCats:[
+      {id:'o_ql', name:'Phí quản lý', vatMode:'none'}, {id:'o_bt', name:'Bảo trì', vatMode:'none'},
+      {id:'o_sc', name:'Sửa chữa', vatMode:'none'}, {id:'o_lg', name:'Lương NV (bảo vệ/vệ sinh)', vatMode:'none'},
+      {id:'o_dn', name:'Đối ngoại', vatMode:'none'}
+    ],
+    revenue:{}, opex:{}, custFees:{}, forecastExpenses:[]
+  };
+}
+function seed(s){
+  const revSeed={c_abc:3680, c_tp:56000000, c_dvh:65000000, c_da:18000000};
+  const opSeed={o_ql:5000000, o_bt:2000000, o_sc:0, o_lg:15000000, o_dn:3000000};
+  const feeSeed={
+    c_abc:{dien:2345000, moto:6, car:2}, c_tp:{dien:1975000, moto:5, car:1},
+    c_dvh:{dien:3470000, moto:9, car:1}, c_da:{dien:1182500, moto:4, car:0}
+  };
+  ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07'].forEach(mk=>{
+    s.revenue[mk]={...revSeed};
+    s.opex[mk]={...opSeed, o_sc:(mk==='2026-04'?8000000:mk==='2026-06'?4000000:0)};
+    s.custFees[mk]=JSON.parse(JSON.stringify(feeSeed));
+  });
+  s.forecastExpenses=[
+    {id:'f_seed1', name:'Sơn lại mặt tiền', month:'2026-09', amount:12000000, note:'Chưa báo giá chính thức, ước tính'},
+    {id:'f_seed2', name:'Bảo trì thang máy định kỳ', month:'2026-12', amount:8000000, note:''}
+  ];
+  return s;
+}
+let state = (function(){
+  try{const raw=localStorage.getItem(KEY); if(raw){const p=JSON.parse(raw); if(p&&p.version===3) return p;}}catch(e){}
+  return seed(defaults());
+})();
+function persist(){ try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){} }
+let pt; function persistDeb(){clearTimeout(pt); pt=setTimeout(persist,300);}
+
+/* ---------------- MONEY FORMAT / PARSE ---------------- */
+function fmtVNDNum(n){ n=Math.round(n||0); return n.toLocaleString('en-US'); }
+function fmtUSDNum(n){ n=n||0; return n.toLocaleString('en-US',{maximumFractionDigits:2}); }
+function fmtMoney(n,currency){ return currency==='USD' ? ('$'+fmtUSDNum(n)) : (fmtVNDNum(n)+'đ'); }
+function dispVND(n){ return n?fmtVNDNum(n):''; }
+function dispUSD(n){ return n?fmtUSDNum(n):''; }
+
+function formatMoneyEl(el){
+  const isUSD = el.dataset.money==='usd';
+  if(isUSD){
+    let clean = el.value.replace(/[^\d.]/g,'');
+    const firstDot = clean.indexOf('.');
+    if(firstDot!==-1) clean = clean.slice(0,firstDot+1)+clean.slice(firstDot+1).replace(/\./g,'');
+    let [ip,dp] = clean.split('.');
+    const ipNum = ip? parseInt(ip,10):0;
+    el.value = (ip? ipNum.toLocaleString('en-US'):'') + (dp!==undefined? '.'+dp : '');
+    el.dataset.rawvalue = clean? (parseFloat(clean)||0) : 0;
+  } else {
+    let clean = el.value.replace(/[^\d]/g,'');
+    const num = clean? parseInt(clean,10):0;
+    el.value = clean? num.toLocaleString('en-US'):'';
+    el.dataset.rawvalue = num;
+  }
+}
+function rawOf(el){ return parseFloat(el.dataset.rawvalue!==undefined?el.dataset.rawvalue:(el.value||'').replace(/,/g,''))||0; }
+
+/* ---------------- VAT HELPERS ---------------- */
+function vatFrac(){ return (state.vatRate||0)/100; }
+function grossOf(raw, vatMode){ if(vatMode==='excl') return raw*(1+vatFrac()); return raw; }
+function netOf(raw, vatMode){ if(vatMode==='excl') return raw; if(vatMode==='incl') return raw/(1+vatFrac()); return raw; }
+function vatAmtOf(raw, vatMode){ if(vatMode==='none') return 0; if(vatMode==='excl') return raw*vatFrac(); return raw-raw/(1+vatFrac()); }
+function vatBadge(mode){
+  if(mode==='incl') return `<span class="vat-badge vat-incl">Đã gồm VAT</span>`;
+  if(mode==='excl') return `<span class="vat-badge vat-excl">+VAT ${state.vatRate}%</span>`;
+  return `<span class="vat-badge vat-none">Không VAT</span>`;
+}
+function vatSelectHTML(mode,cls,dataAttrs){
+  const opts=[['none','Không tính VAT'],['incl','Giá đã gồm VAT'],['excl','Giá chưa gồm VAT (+VAT)']];
+  return `<select class="inp ${cls}" ${dataAttrs} style="max-width:210px">
+    ${opts.map(([v,l])=>`<option value="${v}" ${mode===v?'selected':''}>${l}</option>`).join('')}
+  </select>`;
+}
+
+/* ---------------- HELPERS ---------------- */
+function addMonths(k,n){const[y,m]=k.split('-').map(Number);const d=new Date(y,m-1+n,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function monthRange(){const a=[];for(let i=0;i<state.range;i++)a.push(addMonths(state.startMonth,i));return a;}
+function mLabel(k){const[y,m]=k.split('-');return 'T'+Number(m)+'/'+y;}
+function toVND(v,cur){return cur==='USD'? v*state.exchangeRate : v;}
+function priceAt(u,mk){
+  if(mk<u.baseMonth) return 0;
+  let p=u.basePrice||0;
+  (u.increases||[]).slice().sort((a,b)=>a.month.localeCompare(b.month)).forEach(inc=>{ if(inc.month<=mk) p=p*(1+(inc.percent||0)/100); });
+  return p;
+}
+function fmtTr(v){return (v/1e6).toLocaleString('en-US',{maximumFractionDigits:1});}
+function allUnits(){return [...state.payables.mbt.units.map(u=>({...u,grp:'mbt'})), ...state.payables.ts4.units.map(u=>({...u,grp:'ts4'}))];}
+function feesRawFor(mk,cid){
+  const cf=(state.custFees[mk]||{})[cid]||{};
+  return (cf.dien||0) + (cf.moto||0)*state.parkingPriceMoto + (cf.car||0)*state.parkingPriceCar;
+}
+function forecastAt(mk){ return (state.forecastExpenses||[]).filter(f=>f.month===mk).reduce((a,f)=>a+(f.amount||0),0); }
+
+function compute(mk){
+  let mbt=0; state.payables.mbt.units.forEach(u=>{ const g=grossOf(priceAt(u,mk),u.vatMode); mbt+=toVND(g,u.currency); });
+  let ts4=0; state.payables.ts4.units.forEach(u=>{ const g=grossOf(priceAt(u,mk),u.vatMode); ts4+=toVND(g,u.currency); });
+  let rev=0; const rm=state.revenue[mk]||{};
+  state.customers.forEach(c=>{
+    const rentGross = toVND(grossOf(rm[c.id]||0,c.vatMode), c.currency);
+    const feesGross = grossOf(feesRawFor(mk,c.id), c.vatMode);
+    rev += rentGross + feesGross;
+  });
+  let op=0; const om=state.opex[mk]||{}; state.opexCats.forEach(c=>{ op+=grossOf(om[c.id]||0,c.vatMode); });
+  const forecast=forecastAt(mk);
+  const cost=mbt+ts4+op+(state.includeForecastInCost?forecast:0);
+  const profit=rev-cost, margin=rev>0?profit/rev*100:0;
+  return {mbt,ts4,op,rev,cost,profit,margin,forecast};
+}
+function hasRev(mk){const rm=state.revenue[mk]||{};return state.customers.some(c=>(rm[c.id]||0)>0);}
+function status(mk){ if(hasRev(mk))return 'actual'; return mk>CUR_MK?'future':'miss'; }
+
+/* ---------------- TABS ---------------- */
+function showTab(t,el){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('nav.tabs .tab').forEach(x=>x.classList.remove('active'));
+  document.getElementById('v-'+t).classList.add('active'); el.classList.add('active');
+  if(t==='dash')renderDash(); if(t==='pay')renderPay(); if(t==='rev')renderRev();
+  if(t==='op')renderOp(); if(t==='fc')renderForecast(); if(t==='set')renderSet();
+}
+
+/* ---------------- DASHBOARD ---------------- */
+let plChart=null;
+function toggleHide(){state.hideEmpty=!state.hideEmpty;document.getElementById('sw-hide').classList.toggle('on',state.hideEmpty);persist();renderDash();}
+function visibleMonths(){ return monthRange().filter(mk=> !state.hideEmpty || hasRev(mk) ); }
+
+function renderDash(){
+  const sel=document.getElementById('kpi-month');
+  if(sel.options.length!==state.range){
+    sel.innerHTML=monthRange().map(mk=>`<option value="${mk}">${mLabel(mk)}</option>`).join('');
+    sel.value = monthRange().includes(CUR_MK)?CUR_MK:monthRange()[0];
+  }
+  const mk=sel.value||monthRange()[0];
+  const c=compute(mk);
+  const cards=[
+    ['rev','Doanh thu (thuê + phụ phí)',c.rev],
+    ['rent','Thuê MBT + TS4',c.mbt+c.ts4],
+    ['op','Chi phí vận hành',c.op],
+    ['pf','Lợi nhuận '+(c.profit>=0?'(lời)':'(lỗ)'),c.profit],
+    ['fc','Dự kiến phát sinh',c.forecast]
+  ];
+  document.getElementById('kpi-cards').innerHTML=cards.map(([cls,lbl,val])=>`
+    <div class="kpi ${cls}">
+      <div class="lbl">${lbl}</div>
+      <div class="val" style="${cls==='pf'?('color:'+(val>=0?'var(--green)':'var(--red)')):cls==='fc'?'color:var(--fc)':''}">${fmtVNDNum(val)}đ</div>
+      <div class="usd">≈ $${(val/state.exchangeRate).toLocaleString('en-US',{maximumFractionDigits:0})}${cls==='pf'?' · Biên '+c.margin.toFixed(1)+'%':''}${cls==='fc'?(state.includeForecastInCost?' · đã cộng vào CP':' · chưa cộng vào CP'):''}</div>
+    </div>`).join('');
+
+  const months=visibleMonths();
+  let rows=months.map(m=>{
+    const x=compute(m), st=status(m);
+    const stTxt={actual:'Thực tế',future:'Dự kiến',miss:'Thiếu DT'}[st];
+    return `<tr class="${m===CUR_MK?'now':''}">
+      <td class="l"><b>${mLabel(m)}</b></td>
+      <td class="l"><span class="st st-${st==='actual'?'actual':st==='future'?'future':'miss'}">${stTxt}</span></td>
+      <td class="mono">${fmtTr(x.rev)}</td>
+      <td class="mono" style="color:var(--mbt)">${fmtTr(x.mbt)}</td>
+      <td class="mono" style="color:var(--ts4)">${fmtTr(x.ts4)}</td>
+      <td class="mono" style="color:var(--amber-dark)">${fmtTr(x.op)}</td>
+      <td class="mono" style="color:var(--fc)">${x.forecast>0?fmtTr(x.forecast):'—'}</td>
+      <td class="mono">${fmtTr(x.cost)}</td>
+      <td class="mono ${x.profit>=0?'pf-pos':'pf-neg'}">${x.profit>=0?'+':''}${fmtTr(x.profit)}</td>
+      <td class="mono">${x.rev>0?x.margin.toFixed(1)+'%':'—'}</td>
+    </tr>`;
+  }).join('');
+  const tot=months.reduce((a,m)=>{const x=compute(m);a.rev+=x.rev;a.mbt+=x.mbt;a.ts4+=x.ts4;a.op+=x.op;a.forecast+=x.forecast;a.cost+=x.cost;a.profit+=x.profit;return a;},{rev:0,mbt:0,ts4:0,op:0,forecast:0,cost:0,profit:0});
+  document.getElementById('pl-table').innerHTML=`
+    <thead><tr>
+      <th class="l">Tháng</th><th class="l">Trạng thái</th><th>Doanh thu</th>
+      <th>Thuê MBT</th><th>Thuê TS4</th><th>Vận hành</th><th>Dự kiến PS</th><th>Tổng CP</th><th>Lợi nhuận</th><th>Biên</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Chưa có tháng nào có doanh thu. Tắt công tắc lọc hoặc nhập doanh thu.</td></tr>'}</tbody>
+    <tfoot><tr>
+      <td class="l" colspan="2">TỔNG (${months.length} tháng)</td>
+      <td class="mono">${fmtTr(tot.rev)}</td><td class="mono">${fmtTr(tot.mbt)}</td><td class="mono">${fmtTr(tot.ts4)}</td>
+      <td class="mono">${fmtTr(tot.op)}</td><td class="mono" style="color:var(--fc)">${fmtTr(tot.forecast)}</td><td class="mono">${fmtTr(tot.cost)}</td>
+      <td class="mono ${tot.profit>=0?'pf-pos':'pf-neg'}">${tot.profit>=0?'+':''}${fmtTr(tot.profit)}</td><td>—</td>
+    </tr></tfoot>`;
+  document.getElementById('cumsum').innerHTML=`Lũy kế lợi nhuận: <b style="color:${tot.profit>=0?'var(--green)':'var(--red)'}">${tot.profit>=0?'+':''}${fmtVNDNum(tot.profit)}đ</b> · ≈ $${(tot.profit/state.exchangeRate).toLocaleString('en-US',{maximumFractionDigits:0})}`;
+  document.getElementById('table-note').innerHTML = `Đơn vị: triệu VNĐ · Cột "Dự kiến PS" ${state.includeForecastInCost?'<b style="color:var(--fc)">đã được cộng</b> vào Tổng CP':'<b>chưa</b> được cộng vào Tổng CP (chỉ tham khảo — bật ở Cài đặt nếu muốn cộng)'}`;
+
+  const labels=months.map(mLabel);
+  const rev=months.map(m=>compute(m).rev/1e6);
+  const cost=months.map(m=>compute(m).cost/1e6);
+  const pf=months.map(m=>compute(m).profit/1e6);
+  if(plChart)plChart.destroy();
+  plChart=new Chart(document.getElementById('chart-pl'),{
+    data:{labels,datasets:[
+      {type:'bar',label:'Lợi nhuận',data:pf,order:3,
+       backgroundColor:pf.map(p=>p>=0?'rgba(16,185,129,.85)':'rgba(239,68,68,.85)'),borderRadius:4},
+      {type:'line',label:'Doanh thu',data:rev,order:1,borderColor:'#059669',backgroundColor:'#059669',tension:.3,pointRadius:2,borderWidth:2},
+      {type:'line',label:'Tổng chi phí',data:cost,order:2,borderColor:'#DC2626',backgroundColor:'#DC2626',tension:.3,pointRadius:2,borderWidth:2,borderDash:[5,4]}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{font:{family:'Inter',size:12},boxWidth:12}},
+        tooltip:{callbacks:{label:c=>c.dataset.label+': '+c.parsed.y.toLocaleString('en-US',{maximumFractionDigits:1})+' tr'}}},
+      scales:{x:{grid:{display:false},ticks:{font:{family:'Inter',size:11}}},
+        y:{grid:{color:'#F1F5F9'},ticks:{font:{family:'Inter',size:11},callback:v=>v+' tr'}}}}
+  });
+  const ms=[]; allUnits().forEach(u=>(u.increases||[]).forEach(i=>ms.push(`${mLabel(i.month)}: ${u.name} +${i.percent}%`)));
+  document.getElementById('chart-note').innerHTML='Cột = Lợi nhuận (xanh lời / đỏ lỗ) · Đường = Doanh thu & Tổng chi phí'+(ms.length?' · <b>Mốc tăng giá:</b> '+ms.join(' · '):'');
+}
+
+/* ---------------- PAYABLES ---------------- */
+function renderPay(){ ['mbt','ts4'].forEach(g=>document.getElementById('pay-'+g).innerHTML=state.payables[g].units.map(u=>unitCard(g,u)).join('')+addUnitBtn(g)); }
+function renderPriceLine(u,mk){
+  const raw=priceAt(u,mk), gross=grossOf(raw,u.vatMode), net=netOf(raw,u.vatMode), vatAmt=vatAmtOf(raw,u.vatMode);
+  let s=`Giá tháng này (${mLabel(mk)}): <b>${fmtMoney(gross,u.currency)}</b>`;
+  if(u.vatMode!=='none') s+=` <span style="color:var(--muted)">(trước VAT: ${fmtMoney(net,u.currency)} · thuế VAT: ${fmtMoney(vatAmt,u.currency)})</span>`;
+  return s;
+}
+function unitCard(g,u){
+  return `<div class="unit-card">
+    <div class="uc-head">
+      <div>
+        <div class="uc-name">${u.name} <span class="cur-badge ${u.currency==='USD'?'cur-usd':'cur-vnd'}">${u.currency}</span> ${vatBadge(u.vatMode)}</div>
+        <div class="unit-price" id="up-${g}-${u.id}">${renderPriceLine(u,CUR_MK)}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="delUnit('${g}','${u.id}')">Xóa</button>
+    </div>
+    <div class="row4">
+      <div class="field" style="margin:0"><label>Tên khoản</label>
+        <input class="inp unit-field" data-g="${g}" data-u="${u.id}" data-f="name" value="${u.name}"></div>
+      <div class="field" style="margin:0"><label>Giá gốc (${u.currency==='USD'?'USD':'VNĐ — số đầy đủ'})</label>
+        <input class="inp unit-field grid-input" style="width:100%" data-g="${g}" data-u="${u.id}" data-f="basePrice"
+          data-money="${u.currency==='USD'?'usd':'vnd'}" type="text" inputmode="decimal"
+          value="${u.currency==='USD'?dispUSD(u.basePrice):dispVND(u.basePrice)}"></div>
+      <div class="field" style="margin:0"><label>Áp dụng từ</label>
+        <input class="inp unit-field" data-g="${g}" data-u="${u.id}" data-f="baseMonth" type="month" value="${u.baseMonth}"></div>
+      <div class="field" style="margin:0"><label>VAT</label>
+        ${vatSelectHTML(u.vatMode,'unit-field',`data-g="${g}" data-u="${u.id}" data-f="vatMode"`)}</div>
+    </div>
+    <div style="margin-top:6px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase">Mốc tăng giá</div>
+      ${(u.increases||[]).map((inc,i)=>`
+        <div class="mile">
+          <span>Từ</span>
+          <input class="inp" style="width:110px;padding:5px 8px" type="month" value="${inc.month}" onchange="editMile('${g}','${u.id}',${i},'month',this.value)">
+          <span>tăng</span>
+          <input class="inp" style="width:75px;padding:5px 8px;text-align:right" type="number" step="0.01" value="${inc.percent}" onchange="editMile('${g}','${u.id}',${i},'percent',this.value)">
+          <span>%</span>
+          <button class="del" onclick="delMile('${g}','${u.id}',${i})">✕</button>
+        </div>`).join('') || '<div class="note">Chưa có mốc tăng giá.</div>'}
+      <button class="btn btn-line btn-sm" style="margin-top:8px" onclick="addMile('${g}','${u.id}')">+ Thêm mốc tăng</button>
+    </div>
+  </div>`;
+}
+function addUnitBtn(g){return `<button class="btn btn-line btn-sm" onclick="addUnit('${g}')">+ Thêm khoản thuê</button>`;}
+function findUnit(g,id){return state.payables[g].units.find(u=>u.id===id);}
+function addUnit(g){state.payables[g].units.push({id:'u_'+Date.now(),name:'Khoản mới',currency:'VND',basePrice:0,baseMonth:state.startMonth,vatMode:'none',increases:[]});persist();renderPay();}
+function delUnit(g,id){if(!confirm('Xóa khoản thuê này?'))return;state.payables[g].units=state.payables[g].units.filter(u=>u.id!==id);persist();renderPay();}
+function addMile(g,id){findUnit(g,id).increases.push({month:addMonths(state.startMonth,12),percent:5});persist();renderPay();}
+function editMile(g,id,i,f,v){const m=findUnit(g,id).increases[i];m[f]=f==='percent'?parseFloat(v)||0:v;persist();renderPay();}
+function delMile(g,id,i){findUnit(g,id).increases.splice(i,1);persist();renderPay();}
+
+/* ---------------- REVENUE ---------------- */
+function renderRev(){
+  document.getElementById('cust-cfg').innerHTML = `
+    <thead><tr><th class="l">Khách hàng</th><th class="l">Tiền tệ</th><th class="l">Cấu hình VAT</th><th class="l"></th></tr></thead>
+    <tbody>${state.customers.map(c=>`
+      <tr>
+        <td class="l"><b>${c.name}</b></td>
+        <td class="l"><span class="cur-badge ${c.currency==='USD'?'cur-usd':'cur-vnd'}">${c.currency}</span></td>
+        <td class="l">${vatSelectHTML(c.vatMode,'cust-field',`data-c="${c.id}" data-f="vatMode"`)}</td>
+        <td class="l"><button class="btn btn-danger btn-sm" onclick="delCustomer('${c.id}')">Xóa</button></td>
+      </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">Chưa có khách hàng.</td></tr>'}</tbody>`;
+
+  const months=monthRange();
+  let head=`<thead><tr><th class="l">Tháng</th>${state.customers.map(c=>`<th>${c.name}<br><span style="font-weight:400;text-transform:none;color:#94A3B8">${c.currency==='USD'?'USD':'VNĐ'}</span><br>${vatBadge(c.vatMode)}</th>`).join('')}<th>Tổng tiền thuê (VNĐ)</th></tr></thead>`;
+  let body=months.map(mk=>{
+    const rm=state.revenue[mk]||{};
+    const cells=state.customers.map(c=>`<td><input class="grid-input ${c.currency==='USD'?'usd-in':''} rev-input" data-money="${c.currency==='USD'?'usd':'vnd'}" data-mk="${mk}" data-c="${c.id}" value="${c.currency==='USD'?dispUSD(rm[c.id]||0):dispVND(rm[c.id]||0)}"></td>`).join('');
+    let tot=0; state.customers.forEach(c=>tot+=toVND(grossOf(rm[c.id]||0,c.vatMode),c.currency));
+    return `<tr class="${mk===CUR_MK?'now':''}"><td class="l"><b>${mLabel(mk)}</b></td>${cells}<td class="mono" id="revtot-${mk}"><b>${fmtVNDNum(tot)}đ</b></td></tr>`;
+  }).join('');
+  document.getElementById('rev-table').innerHTML=head+'<tbody>'+body+'</tbody>';
+
+  // fee panel
+  document.getElementById('fee-panel-body').style.display = state.showCustFees? 'block':'none';
+  document.getElementById('fee-toggle-txt').textContent = state.showCustFees? '▾ Bấm để ẩn' : '▸ Bấm để hiện';
+  const priceMotoEl=document.getElementById('fee-price-moto'), priceCarEl=document.getElementById('fee-price-car');
+  priceMotoEl.value=dispVND(state.parkingPriceMoto); priceMotoEl.dataset.rawvalue=state.parkingPriceMoto;
+  priceCarEl.value=dispVND(state.parkingPriceCar); priceCarEl.dataset.rawvalue=state.parkingPriceCar;
+  renderFeeTable();
+}
+function renderFeeTable(){
+  const months=monthRange();
+  let head=`<thead><tr><th class="l" rowspan="2" style="vertical-align:bottom">Tháng</th>${state.customers.map(c=>`<th colspan="3">${c.name}</th>`).join('')}<th rowspan="2" style="vertical-align:bottom">Tổng phụ phí (VNĐ)</th></tr>
+    <tr>${state.customers.map(()=>`<th>Điện (đ)</th><th>Xe máy (SL)</th><th>Ô tô (SL)</th>`).join('')}</tr></thead>`;
+  let body=months.map(mk=>{
+    const fm=state.custFees[mk]||{};
+    const cells=state.customers.map(c=>{
+      const cf=fm[c.id]||{};
+      return `<td><input class="grid-input fee-in fee-dien-input" data-money="vnd" data-mk="${mk}" data-c="${c.id}" value="${dispVND(cf.dien||0)}"></td>
+              <td><input class="grid-input fee-in count-in fee-moto-input" type="number" min="0" step="1" data-mk="${mk}" data-c="${c.id}" value="${cf.moto||''}"></td>
+              <td><input class="grid-input fee-in count-in fee-car-input" type="number" min="0" step="1" data-mk="${mk}" data-c="${c.id}" value="${cf.car||''}"></td>`;
+    }).join('');
+    let tot=0; state.customers.forEach(c=>tot+=grossOf(feesRawFor(mk,c.id),c.vatMode));
+    return `<tr class="${mk===CUR_MK?'now':''}"><td class="l"><b>${mLabel(mk)}</b></td>${cells}<td class="mono" id="feetot-${mk}"><b>${fmtVNDNum(tot)}đ</b></td></tr>`;
+  }).join('');
+  document.getElementById('fee-table').innerHTML=head+'<tbody>'+body+'</tbody>';
+}
+function toggleCustFees(){ state.showCustFees=!state.showCustFees; persist();
+  document.getElementById('fee-panel-body').style.display = state.showCustFees? 'block':'none';
+  document.getElementById('fee-toggle-txt').textContent = state.showCustFees? '▾ Bấm để ẩn' : '▸ Bấm để hiện';
+  if(state.showCustFees) renderFeeTable();
+}
+function addCustomer(){const n=document.getElementById('new-cust-name').value.trim();if(!n)return;
+  state.customers.push({id:'c_'+Date.now(),name:n,currency:document.getElementById('new-cust-cur').value,vatMode:'none'});
+  document.getElementById('new-cust-name').value='';persist();renderRev();}
+function delCustomer(id){if(!confirm('Xóa khách hàng này? (dữ liệu doanh thu & phụ phí của khách cũng mất)'))return;
+  state.customers=state.customers.filter(c=>c.id!==id);
+  Object.values(state.revenue).forEach(m=>delete m[id]);
+  Object.values(state.custFees).forEach(m=>delete m[id]);
+  persist();renderRev();}
+function updateRevTot(mk){const rm=state.revenue[mk]||{};let t=0;state.customers.forEach(c=>t+=toVND(grossOf(rm[c.id]||0,c.vatMode),c.currency));
+  const el=document.getElementById('revtot-'+mk);if(el)el.innerHTML='<b>'+fmtVNDNum(t)+'đ</b>';}
+function updateFeeTot(mk){let t=0;state.customers.forEach(c=>t+=grossOf(feesRawFor(mk,c.id),c.vatMode));
+  const el=document.getElementById('feetot-'+mk);if(el)el.innerHTML='<b>'+fmtVNDNum(t)+'đ</b>';}
+
+/* ---------------- OPEX ---------------- */
+function renderOp(){
+  document.getElementById('op-cfg').innerHTML = `
+    <thead><tr><th class="l">Hạng mục</th><th class="l">Cấu hình VAT</th><th class="l"></th></tr></thead>
+    <tbody>${state.opexCats.map(c=>`
+      <tr>
+        <td class="l"><b>${c.name}</b></td>
+        <td class="l">${vatSelectHTML(c.vatMode,'opcat-field',`data-c="${c.id}" data-f="vatMode"`)}</td>
+        <td class="l"><button class="btn btn-danger btn-sm" onclick="delOpCat('${c.id}')">Xóa</button></td>
+      </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--muted)">Chưa có hạng mục.</td></tr>'}</tbody>`;
+
+  const months=monthRange();
+  let head=`<thead><tr><th class="l">Tháng</th>${state.opexCats.map(c=>`<th>${c.name}<br>${vatBadge(c.vatMode)}</th>`).join('')}<th>Tổng (VNĐ, đã gồm VAT)</th></tr></thead>`;
+  let body=months.map(mk=>{
+    const om=state.opex[mk]||{};
+    const cells=state.opexCats.map(c=>`<td><input class="grid-input op-input" data-money="vnd" data-mk="${mk}" data-c="${c.id}" value="${dispVND(om[c.id]||0)}"></td>`).join('');
+    let tot=0;state.opexCats.forEach(c=>tot+=grossOf(om[c.id]||0,c.vatMode));
+    return `<tr class="${mk===CUR_MK?'now':''}"><td class="l"><b>${mLabel(mk)}</b></td>${cells}<td class="mono" id="optot-${mk}"><b>${fmtVNDNum(tot)}đ</b></td></tr>`;
+  }).join('');
+  document.getElementById('op-table').innerHTML=head+'<tbody>'+body+'</tbody>';
+}
+function addOpCat(){const n=document.getElementById('new-op-name').value.trim();if(!n)return;
+  state.opexCats.push({id:'o_'+Date.now(),name:n,vatMode:'none'});document.getElementById('new-op-name').value='';persist();renderOp();}
+function delOpCat(id){if(!confirm('Xóa hạng mục này?'))return;state.opexCats=state.opexCats.filter(c=>c.id!==id);
+  Object.values(state.opex).forEach(m=>delete m[id]);persist();renderOp();}
+function updateOpTot(mk){const om=state.opex[mk]||{};let t=0;state.opexCats.forEach(c=>t+=grossOf(om[c.id]||0,c.vatMode));
+  const el=document.getElementById('optot-'+mk);if(el)el.innerHTML='<b>'+fmtVNDNum(t)+'đ</b>';}
+
+/* ---------------- FORECAST ---------------- */
+function renderForecast(){
+  const monthEl=document.getElementById('new-fc-month'); if(!monthEl.value) monthEl.value=CUR_MK;
+  const list=(state.forecastExpenses||[]).slice().sort((a,b)=>a.month.localeCompare(b.month));
+  document.getElementById('fc-table').innerHTML = `
+    <thead><tr><th class="l">Tháng dự kiến</th><th class="l">Tên khoản</th><th>Số tiền</th><th class="l">Ghi chú</th><th class="l"></th></tr></thead>
+    <tbody>${list.map(f=>`
+      <tr class="${f.month===CUR_MK?'now':''}">
+        <td class="l">${f.month<CUR_MK?'<span class="st st-miss">Đã qua</span> ':''}<b>${mLabel(f.month)}</b></td>
+        <td class="l">${f.name}</td>
+        <td class="mono">${fmtVNDNum(f.amount)}đ</td>
+        <td class="l" style="color:var(--muted)">${f.note||'—'}</td>
+        <td class="l"><button class="btn btn-danger btn-sm" onclick="delForecastItem('${f.id}')">Xóa</button></td>
+      </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Chưa có khoản dự kiến nào.</td></tr>'}</tbody>`;
+  const total=list.reduce((a,f)=>a+(f.amount||0),0);
+  document.getElementById('fc-total').innerHTML = `${list.length} khoản · Tổng: <b>${fmtVNDNum(total)}đ</b>`;
+}
+function addForecastItem(){
+  const name=document.getElementById('new-fc-name').value.trim();
+  if(!name){ alert('Nhập tên khoản dự kiến'); return; }
+  const month=document.getElementById('new-fc-month').value || CUR_MK;
+  const amtEl=document.getElementById('new-fc-amount');
+  const amount=rawOf(amtEl);
+  const note=document.getElementById('new-fc-note').value.trim();
+  state.forecastExpenses.push({id:'f_'+Date.now(), name, month, amount, note});
+  document.getElementById('new-fc-name').value='';
+  amtEl.value=''; amtEl.dataset.rawvalue=0;
+  document.getElementById('new-fc-note').value='';
+  persist(); renderForecast();
+}
+function delForecastItem(id){ if(!confirm('Xóa khoản dự kiến này?'))return;
+  state.forecastExpenses=state.forecastExpenses.filter(f=>f.id!==id); persist(); renderForecast(); }
+function toggleForecastInclude(){ state.includeForecastInCost=!state.includeForecastInCost;
+  document.getElementById('sw-fc').classList.toggle('on',state.includeForecastInCost); persist(); }
+
+/* ---------------- DELEGATED FORM EVENTS ---------------- */
+function handleFormEvent(e){
+  const el=e.target;
+  if(el.hasAttribute && el.hasAttribute('data-money')) formatMoneyEl(el);
+
+  if(el.classList.contains('rev-input')){
+    const mk=el.dataset.mk,cid=el.dataset.c;
+    (state.revenue[mk]=state.revenue[mk]||{})[cid]=rawOf(el); updateRevTot(mk); persistDeb();
+  } else if(el.classList.contains('op-input')){
+    const mk=el.dataset.mk,cid=el.dataset.c;
+    (state.opex[mk]=state.opex[mk]||{})[cid]=rawOf(el); updateOpTot(mk); persistDeb();
+  } else if(el.classList.contains('fee-dien-input')){
+    const mk=el.dataset.mk,cid=el.dataset.c;
+    const cf=(state.custFees[mk]=state.custFees[mk]||{}); (cf[cid]=cf[cid]||{}).dien=rawOf(el);
+    updateFeeTot(mk); persistDeb();
+  } else if(el.classList.contains('fee-moto-input') || el.classList.contains('fee-car-input')){
+    const mk=el.dataset.mk,cid=el.dataset.c;
+    let v=parseInt(el.value,10); if(isNaN(v)||v<0) v=0;
+    const field=el.classList.contains('fee-moto-input')?'moto':'car';
+    const cf=(state.custFees[mk]=state.custFees[mk]||{}); (cf[cid]=cf[cid]||{})[field]=v;
+    updateFeeTot(mk); persistDeb();
+  } else if(el.id==='fee-price-moto' || el.id==='fee-price-car'){
+    if(el.id==='fee-price-moto') state.parkingPriceMoto=rawOf(el); else state.parkingPriceCar=rawOf(el);
+    monthRange().forEach(mk=>updateFeeTot(mk)); persistDeb();
+  } else if(el.classList.contains('unit-field')){
+    const u=findUnit(el.dataset.g,el.dataset.u), f=el.dataset.f;
+    if(f==='basePrice') u.basePrice=rawOf(el);
+    else u[f]=el.value;
+    const up=document.getElementById('up-'+el.dataset.g+'-'+el.dataset.u);
+    if(up) up.innerHTML = renderPriceLine(u, CUR_MK);
+    if(f==='vatMode'||f==='name') renderPay();
+    persistDeb();
+  } else if(el.classList.contains('cust-field')){
+    const c=state.customers.find(x=>x.id===el.dataset.c); c[el.dataset.f]=el.value; persist(); renderRev();
+  } else if(el.classList.contains('opcat-field')){
+    const c=state.opexCats.find(x=>x.id===el.dataset.c); c[el.dataset.f]=el.value; persist(); renderOp();
+  } else if(el.id==='set-rate'){
+    state.exchangeRate=rawOf(el)||0; document.getElementById('rate-disp').textContent=fmtVNDNum(state.exchangeRate); persistDeb();
+  }
+}
+document.addEventListener('input', handleFormEvent);
+document.addEventListener('change', handleFormEvent);
+
+/* ---------------- SETTINGS / DATA ---------------- */
+function renderSet(){
+  const rateEl=document.getElementById('set-rate'); rateEl.value=fmtVNDNum(state.exchangeRate); rateEl.dataset.rawvalue=state.exchangeRate;
+  document.getElementById('set-vat').value=state.vatRate;
+  document.getElementById('set-range').value=state.range;
+  document.getElementById('sw-fc').classList.toggle('on',state.includeForecastInCost);
+}
+function setVatRate(v){state.vatRate=parseFloat(v)||0;document.getElementById('vat-disp').textContent=state.vatRate;persist();}
+function setRange(v){state.range=parseInt(v);persist();}
+function resetAll(){if(!confirm('Xóa toàn bộ dữ liệu và bắt đầu lại với cấu trúc mặc định (số 0)?'))return;
+  const d=defaults(); d.payables.mbt.units.forEach(u=>{u.basePrice=0;u.increases=[];}); d.payables.ts4.units.forEach(u=>{u.basePrice=0;u.increases=[];});
+  d.revenue={};d.opex={};d.custFees={};d.forecastExpenses=[]; state=d; persist();
+  document.getElementById('rate-disp').textContent=fmtVNDNum(state.exchangeRate);
+  document.getElementById('vat-disp').textContent=state.vatRate;
+  renderSet(); alert('Đã xóa. Vào các tab để nhập số thật.');}
+function exportJSON(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='orient_pl_'+CUR_MK+'.json';a.click();}
+function importJSON(ev){const f=ev.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const p=JSON.parse(r.result);if(!p.version)throw 0;state=p;persist();
+    document.getElementById('rate-disp').textContent=fmtVNDNum(state.exchangeRate);
+    document.getElementById('vat-disp').textContent=state.vatRate;
+    document.querySelector('nav.tabs .tab.active').click();alert('Đã nạp dữ liệu.');}catch(e){alert('File không hợp lệ.');}};
+  r.readAsText(f);ev.target.value='';}
+function exportCSV(){
+  const months=monthRange();let csv='Thang,Doanh thu (VND),Thue MBT (VND),Thue TS4 (VND),Van hanh (VND),Du kien PS (VND),Tong CP (VND),Loi nhuan (VND),Bien %\n';
+  months.forEach(m=>{const x=compute(m);csv+=[mLabel(m),Math.round(x.rev),Math.round(x.mbt),Math.round(x.ts4),Math.round(x.op),Math.round(x.forecast),Math.round(x.cost),Math.round(x.profit),x.rev>0?x.margin.toFixed(1):'0'].join(',')+'\n';});
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='orient_pl_bao_cao.csv';a.click();}
+
+/* ---------------- INIT ---------------- */
+document.getElementById('rate-disp').textContent=fmtVNDNum(state.exchangeRate);
+document.getElementById('vat-disp').textContent=state.vatRate;
+document.getElementById('sw-hide').classList.toggle('on',state.hideEmpty);
+renderDash();
+</script>
+</body>
+</html>
