@@ -47,7 +47,7 @@ export function QuickGroupSelect({ contact, groups, groupById, cadence, disabled
   return (
     <span
       className={`relative inline-flex items-center gap-0.5 h-7 md:h-6 px-2 rounded-full text-[11px] font-medium whitespace-nowrap ${
-        unclassified ? 'border border-dashed border-[#C9C7BE] text-[#888]' : ''
+        unclassified ? 'border border-dashed border-black/[0.2] text-[#86868B]' : ''
       } ${disabled ? 'opacity-50' : 'hover:brightness-95'}`}
       style={unclassified ? undefined : chipStyle(d.color)}
     >

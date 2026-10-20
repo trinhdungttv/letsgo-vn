@@ -32,7 +32,9 @@ import Loans from './pages/Loans';
 import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
+import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
+import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme';
 
 // Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
 const OfficeRental = lazy(() => import('./modules/office-rental'));
@@ -42,7 +44,7 @@ const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'fin
 function Toast({ message }: { message: string }) {
   if (!message) return null;
   // Mobile: nằm giữa, phía trên thanh điều hướng dưới (không bị che/đè lên nút).
-  return <div className="fixed left-4 right-4 bottom-[calc(68px+env(safe-area-inset-bottom))] text-center md:text-left md:left-auto md:right-6 md:bottom-6 bg-[#111] text-white px-4 py-2.5 rounded-lg text-[13px] z-[90] shadow-lg">{message}</div>;
+  return <div className="fixed left-4 right-4 bottom-[calc(68px+env(safe-area-inset-bottom))] text-center md:text-left md:left-auto md:right-6 md:bottom-6 bg-[#1D1D1F]/90 backdrop-blur-xl text-white px-4 py-2.5 rounded-[12px] text-[13px] z-[90] shadow-[0_12px_32px_-6px_rgba(0,0,0,0.3)]">{message}</div>;
 }
 
 function AppInner() {
@@ -283,8 +285,8 @@ function AppInner() {
 
   if (authLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#F5F4EF]">
-        <div className="w-5 h-5 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
+      <div className="h-screen flex items-center justify-center bg-[#F5F5F7]">
+        <div className="w-5 h-5 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" />
       </div>
     );
   }
@@ -293,10 +295,10 @@ function AppInner() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#F5F4EF]">
+      <div className="h-screen flex items-center justify-center bg-[#F5F5F7]">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
-          <div className="text-[13px] text-[#888]">Đang tải dữ liệu...</div>
+          <div className="w-6 h-6 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" />
+          <div className="text-[13px] text-[#86868B]">Đang tải dữ liệu...</div>
         </div>
       </div>
     );
@@ -304,13 +306,13 @@ function AppInner() {
 
   if (error) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#F5F4EF]">
-        <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md text-center">
-          <div className="text-red-800 font-semibold mb-2">Lỗi kết nối</div>
-          <div className="text-red-700 text-[13px] mb-4">{error}</div>
+      <div className="h-screen flex items-center justify-center bg-[#F5F5F7] p-4">
+        <div className={`${CARD} p-6 max-w-md text-center`}>
+          <div className="text-[#D70015] text-[17px] font-semibold mb-1.5">Lỗi kết nối</div>
+          <div className="text-[#6E6E73] text-[13px] mb-5">{error}</div>
           <div className="flex gap-2 justify-center">
-            <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-lg text-[12px] font-medium bg-red-600 text-white hover:bg-red-700 transition">Thử lại</button>
-            <button onClick={logout} className="px-4 py-2 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition">Đăng xuất</button>
+            <button onClick={() => window.location.reload()} className={`${BTN_PRIMARY} px-4 py-2 text-[13px]`}>Thử lại</button>
+            <button onClick={logout} className={`${BTN_SECONDARY} px-4 py-2 text-[13px]`}>Đăng xuất</button>
           </div>
         </div>
       </div>
@@ -322,12 +324,12 @@ function AppInner() {
 
   return (
     // 100dvh: chiều cao viewport động — tự khớp khi thanh địa chỉ Safari ẩn/hiện; h-screen là fallback cho trình duyệt cũ
-    <div className="flex h-screen overflow-hidden bg-[#F1F0EA]" style={{ height: '100dvh' }}>
+    <div className="flex h-screen overflow-hidden bg-[#F5F5F7]" style={{ height: '100dvh' }}>
       <div className="hidden md:flex shrink-0">
         <Sidebar currentPage={page} onNavigate={navigate} />
       </div>
       <MobileNav currentPage={page} onNavigate={navigate} />
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F4EF] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F7] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
         {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} managerHistory={managerHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => setPage('workspace')} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
@@ -380,7 +382,7 @@ function AppInner() {
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'loans' && <Loans toast={toast} />}
         {isOfficePage(page) && user && canAccess(user.role, page, rolePermissions) && (
-          <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin" /></div>}>
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" /></div>}>
             <OfficeRental page={page} toast={toast} />
           </Suspense>
         )}
@@ -432,6 +434,8 @@ function AppInner() {
       </div>
       <Toast message={toastMsg} />
       {user && <UpcomingDatesReminder userId={user.id} />}
+      {/* Việc nhắc tự động CSKH: mỗi ngày 1 lần khi mở app, không cần mở trang CSKH */}
+      {user && <CareAutomationRunner clients={clients} toast={toast} />}
     </div>
   );
 }

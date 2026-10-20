@@ -37,7 +37,7 @@ export function FollowUpPicker({ value, onChange, today, placeholder }: {
       />
       {value.action.trim() !== '' && (
         <div className="flex flex-wrap gap-1.5 items-center">
-          <span className="text-[11.5px] text-[#888]">Hạn:</span>
+          <span className="text-[11.5px] text-[#86868B]">Hạn:</span>
           {PRESETS.map(p => (
             <ChoiceChip
               key={p.days}
@@ -55,7 +55,7 @@ export function FollowUpPicker({ value, onChange, today, placeholder }: {
               min={today}
               onChange={e => onChange({ ...value, due: e.target.value })}
               aria-label="Hạn xử lý"
-              className="text-[13px] px-2 py-1 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500"
+              className="text-[13px] px-2 py-1 rounded-[10px] border border-black/[0.12] bg-white outline-none focus:border-[#0071E3] focus:ring-4 focus:ring-[#0071E3]/15"
             />
           )}
         </div>

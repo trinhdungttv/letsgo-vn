@@ -32,11 +32,11 @@ const OUTCOMES: ReadonlyArray<{ id: string; label: string }> = [
 export function RememberList({ contact }: { contact: Pick<CskhContact, 'rememberNotes'> }) {
   if (!hasRememberNotes(contact.rememberNotes)) return null;
   return (
-    <dl className="mt-3 bg-[#FFFBEB] border border-[#FDE68A] rounded-[10px] px-3 py-2 space-y-1">
+    <dl className="mt-3 bg-[#FF9500]/[0.09] rounded-[12px] px-3.5 py-2.5 space-y-1">
       {REMEMBER_KEYS.filter(k => (contact.rememberNotes[k] ?? '').trim() !== '').map(k => (
-        <div key={k} className="text-[12.5px] leading-snug">
-          <dt className="inline font-semibold text-[#92400E]">{REMEMBER_LABEL[k]}: </dt>
-          <dd className="inline text-[#333]">{contact.rememberNotes[k]}</dd>
+        <div key={k} className="text-[13px] leading-snug">
+          <dt className="inline font-semibold text-[#B25000]">{REMEMBER_LABEL[k]}: </dt>
+          <dd className="inline text-[#1D1D1F]">{contact.rememberNotes[k]}</dd>
         </div>
       ))}
     </dl>
@@ -88,11 +88,11 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
 
   return (
     <Sheet label={`Ghi nhận liên hệ với ${contact.fullName}`} onClose={onSkip}>
-      <p className="text-[16px] md:text-[15px] font-semibold text-[#111] pr-6">
+      <p className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] pr-6">
         {channel ? 'Đã liên hệ với ' : 'Ghi nhận đã liên hệ với '}
-        <span className="text-[#1D4ED8]">{contact.fullName}</span>{via}?
+        <span className="text-[#0071E3]">{contact.fullName}</span>{via}?
       </p>
-      <p className="text-[12px] text-[#888] mt-0.5">
+      <p className="text-[13px] text-[#86868B] mt-1">
         {contact.organization ? `${contact.organization} · ` : ''}Một chạm là xong — chi tiết thêm nếu muốn.
       </p>
 
@@ -106,21 +106,21 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
         </div>
       )}
 
-      {error && <p className="mt-3 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
       <div className="flex gap-2 mt-4">
         <button type="button" onClick={onSkip} disabled={saving}
-          className="flex-1 h-12 md:h-10 rounded-[12px] border border-gray-300 bg-white text-[14px] md:text-[13px] font-medium text-gray-600 hover:bg-gray-50">
+          className="flex-1 h-12 md:h-10 rounded-full bg-[rgba(118,118,128,0.12)] text-[14px] md:text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">
           Chưa
         </button>
         <button type="button" onClick={handleSave} disabled={saving}
-          className="flex-[2] h-12 md:h-10 rounded-[12px] bg-[#1D4ED8] text-white text-[14px] md:text-[13px] font-semibold hover:bg-[#1E40AF] disabled:bg-gray-400 inline-flex items-center justify-center gap-1.5">
+          className="flex-[2] h-12 md:h-10 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[14px] md:text-[13px] font-semibold hover:bg-[#0077ED] disabled:opacity-40 inline-flex items-center justify-center gap-1.5">
           <Check size={17} strokeWidth={2.6} /> {saving ? 'Đang lưu…' : 'Đã liên hệ'}
         </button>
       </div>
 
       <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
-        className="mt-3 w-full flex items-center justify-center gap-1 text-[12.5px] text-[#666] py-1.5 hover:text-[#1D4ED8]">
+        className="mt-3 w-full flex items-center justify-center gap-1 text-[13px] font-medium text-[#0066CC] py-1.5 hover:opacity-70 transition">
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         {expanded ? 'Thu gọn' : 'Thêm ghi chú, việc tiếp theo'}
       </button>
@@ -134,12 +134,12 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
               <ChoiceChip key={o.id} active={outcome === o.id} onClick={() => setOutcome(outcome === o.id ? null : o.id)}>{o.label}</ChoiceChip>
             ))}
           </div>
-          <label className="flex items-center gap-2 text-[13px] text-[#444] cursor-pointer min-h-[40px] md:min-h-0">
-            <input type="checkbox" checked={theyInitiated} onChange={e => setTheyInitiated(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+          <label className="flex items-center gap-2 text-[13px] text-[#3A3A3C] cursor-pointer min-h-[40px] md:min-h-0">
+            <input type="checkbox" checked={theyInitiated} onChange={e => setTheyInitiated(e.target.checked)} className="w-4 h-4 accent-[#0071E3]" />
             Họ chủ động liên hệ mình
           </label>
           <div>
-            <p className="text-[11.5px] font-medium text-[#666] mb-1.5">Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace</p>
+            <p className="text-[11.5px] font-medium text-[#6E6E73] mb-1.5">Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace</p>
             <FollowUpPicker value={followUp} onChange={setFollowUp} today={today} />
           </div>
         </div>

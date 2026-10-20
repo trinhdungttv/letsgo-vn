@@ -19,7 +19,10 @@ import type { CskhInteraction } from '../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../lib/cskh/types';
 import { addInteraction, setFollowUpDone } from './data/api';
 import { useCskhData } from './data/useCskhData';
-import { CARE_STATUS_COLOR, chipStyle, groupDisplayOf, scoreColor } from './ui';
+import {
+  CARE_STATUS_COLOR, chipStyle, groupDisplayOf, LINK, PANEL, ROUND_ADD, scoreColor,
+} from './ui';
+import { ICON_TILE } from '../../components/workspace/wsTheme';
 import { ContactAvatar } from './components/ContactAvatar';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
@@ -27,9 +30,9 @@ import { LogInteractionModal } from './components/LogInteractionModal';
 function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-wide text-[#9CA3AF] font-semibold truncate">{label}</div>
-      <div className="text-[17px] font-bold leading-tight" style={{ color: color ?? '#111' }}>{value}</div>
-      {sub && <div className="text-[10.5px] text-[#999] truncate">{sub}</div>}
+      <div className="text-[11.5px] font-medium text-[#86868B] truncate">{label}</div>
+      <div className="text-[20px] font-semibold tracking-[-0.02em] leading-tight tabular-nums" style={{ color: color ?? '#1D1D1F' }}>{value}</div>
+      {sub && <div className="text-[11.5px] text-[#86868B] truncate">{sub}</div>}
     </div>
   );
 }
@@ -88,22 +91,22 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
   };
 
   if (!data || !view) {
-    return loading ? <div className="text-[12px] text-[#999] text-center py-4">Đang tải CSKH…</div> : null;
+    return loading ? <div className="text-[12px] text-[#86868B] text-center py-4">Đang tải CSKH…</div> : null;
   }
 
   return (
-    <section className="bg-white border border-[#E8E7E2] rounded-[10px]" aria-label="Sức khỏe CSKH">
-      <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
-        <h2 className="text-[13px] font-semibold text-[#111] flex items-center gap-1.5"><HeartPulse size={14} className="text-[#888]" /> Sức khỏe CSKH</h2>
-        <a href="#/crm-leads/matrix" className="text-[12px] text-[#1D4ED8] hover:underline inline-flex items-center gap-0.5">Mở CSKH <ChevronRight size={12} /></a>
+    <section className={PANEL} aria-label="Sức khỏe CSKH">
+      <div className="flex items-center justify-between gap-2 px-4 md:px-5 pt-4 pb-2.5">
+        <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[#1D1D1F] flex items-center gap-2"><span className={`w-7 h-7 rounded-[8px] ${ICON_TILE.red} text-white flex items-center justify-center`}><HeartPulse size={15} /></span> Sức khỏe CSKH</h2>
+        <a href="#/crm-leads/matrix" className={LINK}>Mở CSKH <ChevronRight size={14} /></a>
       </div>
       {!data.migrationReady && (
-        <p className="mx-4 mb-2 text-[11.5px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        <p className="mx-4 md:mx-5 mb-2 text-[12.5px] text-[#7A3E00] bg-[#FF9500]/[0.12] rounded-[12px] px-3.5 py-2.5">
           Chưa chạy migration CSKH 168–173 — chưa lưu được nhóm, nhật ký, việc đã hứa.
         </p>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 px-4 pb-3 border-b border-[#F0EFEB]">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mx-4 md:mx-5 mb-3 p-3 rounded-[14px] bg-[#F5F5F7]">
         <Stat label="Điểm TB" value={view.avg === null ? '–' : String(view.avg)} color={view.avg === null ? '#999' : scoreColor(view.avg)}
           sub={view.avg === null ? 'Chưa ai được chấm' : SCORE_GRADE_LABEL[scoreGrade(view.avg)]} />
         <Stat label="Đang chăm sóc" value={`${view.caredCount}/${view.people.length}`} sub="người liên hệ" />
@@ -113,35 +116,35 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
       </div>
 
       {view.people.length === 0 ? (
-        <p className="px-4 py-4 text-[12px] text-[#aaa]">Chưa có người liên hệ — thêm ở khối "Người liên hệ" bên dưới, rồi chọn người chăm sóc trong CSKH.</p>
+        <p className="px-4 md:px-5 py-4 text-[13px] text-[#86868B]">Chưa có người liên hệ — thêm ở khối "Người liên hệ" bên dưới, rồi chọn người chăm sóc trong CSKH.</p>
       ) : (
-        <div className="divide-y divide-[#F0EFEB]">
+        <div className="divide-y divide-black/[0.06]">
           {view.people.map(c => {
             const st = view.stats.get(c.id);
             const g = groupDisplayOf(c, view.groupById);
             return (
-              <div key={c.id} className={`flex items-center gap-2.5 px-4 py-2 ${c.isArchived ? 'opacity-60' : ''}`}>
+              <div key={c.id} className={`flex items-center gap-2.5 px-4 md:px-5 py-2.5 ${c.isArchived ? 'opacity-60' : ''}`}>
                 <button type="button" onClick={() => setProfileId(c.id)} className="flex items-center gap-2.5 min-w-0 flex-1 text-left group">
                   <ContactAvatar name={c.fullName} url={c.avatarUrl} tier={c.tier} size={32} />
                   <span className="min-w-0">
                     <span className="flex items-center gap-1.5">
-                      <b className="text-[12.5px] text-[#111] truncate group-hover:text-[#1D4ED8]">{c.fullName}</b>
-                      {g.key !== 'unclassified' && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium" style={chipStyle(g.color)}>{g.label}</span>}
-                      {c.isArchived && <span className="shrink-0 px-1.5 rounded-full text-[10px] bg-gray-100 text-gray-600">Đã nghỉ</span>}
+                      <b className="text-[14px] font-semibold text-[#1D1D1F] truncate group-hover:text-[#0066CC] transition-colors">{c.fullName}</b>
+                      {g.key !== 'unclassified' && <span className="shrink-0 px-2 py-px rounded-full text-[11px] font-medium" style={chipStyle(g.color)}>{g.label}</span>}
+                      {c.isArchived && <span className="shrink-0 px-2 rounded-full text-[11px] bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
                     </span>
-                    <span className="block text-[11px] text-[#999] truncate">
+                    <span className="block text-[12px] text-[#86868B] truncate">
                       {c.jobTitle || '—'}{c.lastInteractionAt ? ` · liên hệ ${relativeDayLabel(c.lastInteractionAt, today).toLowerCase()}` : ''}
                     </span>
                   </span>
                 </button>
                 {st && st.status !== 'unclassified' && (
-                  <span className="shrink-0 px-2 py-0.5 rounded-full text-[10.5px] font-medium whitespace-nowrap" style={chipStyle(CARE_STATUS_COLOR[st.status])}>{dueLabel(st)}</span>
+                  <span className="shrink-0 px-2.5 py-0.5 rounded-full text-[12px] font-medium whitespace-nowrap" style={chipStyle(CARE_STATUS_COLOR[st.status])}>{dueLabel(st)}</span>
                 )}
-                {st?.score && <b className="shrink-0 text-[12px] w-7 text-right" style={{ color: scoreColor(st.score.total) }}>{st.score.total}</b>}
+                {st?.score && <b className="shrink-0 text-[13px] font-semibold w-7 text-right tabular-nums" style={{ color: scoreColor(st.score.total) }}>{st.score.total}</b>}
                 {!c.isArchived && (
                   <button type="button" onClick={() => setLogFor(c.id)} title="Ghi tương tác" aria-label={`Ghi tương tác với ${c.fullName}`}
-                    className="shrink-0 w-9 h-9 md:w-7 md:h-7 rounded-lg border border-[#E8E7E2] bg-white text-[#666] hover:text-[#1D4ED8] flex items-center justify-center">
-                    <Plus size={14} />
+                    className={ROUND_ADD}>
+                    <Plus size={15} strokeWidth={2.4} />
                   </button>
                 )}
               </div>
@@ -151,27 +154,27 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
       )}
 
       {(view.openFollowUps.length > 0 || view.recent.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 px-4 py-3 border-t border-[#F0EFEB]">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mx-4 md:mx-5 py-3 border-t border-[#E5E5EA]">
           <div>
-            <p className="text-[10.5px] uppercase tracking-wide font-semibold text-[#999] mb-1">Việc đã hứa đang mở</p>
-            {view.openFollowUps.length === 0 ? <p className="text-[12px] text-[#bbb]">Không có</p> : view.openFollowUps.map(i => (
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">Việc đã hứa đang mở</p>
+            {view.openFollowUps.length === 0 ? <p className="text-[12px] text-[#C7C7CC]">Không có</p> : view.openFollowUps.map(i => (
               <div key={i.id} className="flex items-center gap-2 py-1">
-                <span className="flex-1 min-w-0 text-[12px] text-[#333]">
+                <span className="flex-1 min-w-0 text-[12px] text-[#1D1D1F]">
                   {i.followUpAction}
-                  <span className="text-[#999]"> — {i.contactPerson}{i.followUpDue ? `, hạn ${formatDateVN(i.followUpDue)}` : ''}</span>
+                  <span className="text-[#86868B]"> — {i.contactPerson}{i.followUpDue ? `, hạn ${formatDateVN(i.followUpDue)}` : ''}</span>
                 </span>
                 <button type="button" disabled={busyId === i.id} onClick={() => completeFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-8 md:h-6 px-2 rounded-md border border-emerald-200 text-emerald-700 text-[11px] disabled:opacity-50">
+                  className="shrink-0 inline-flex items-center gap-1 h-8 md:h-7 px-2.5 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[12px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
                   <CheckCheck size={12} /> Xong
                 </button>
               </div>
             ))}
           </div>
           <div>
-            <p className="text-[10.5px] uppercase tracking-wide font-semibold text-[#999] mb-1">Nhật ký CSKH gần đây</p>
-            {view.recent.length === 0 ? <p className="text-[12px] text-[#bbb]">Chưa có</p> : view.recent.map(i => (
-              <p key={i.id} className="text-[12px] text-[#333] py-0.5 truncate">
-                <span className="text-[#999]">{formatDateVN(i.occurredAt)} · {INTERACTION_LABEL[i.type]} · {i.contactPerson || '—'}</span>
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">Nhật ký CSKH gần đây</p>
+            {view.recent.length === 0 ? <p className="text-[12px] text-[#C7C7CC]">Chưa có</p> : view.recent.map(i => (
+              <p key={i.id} className="text-[12px] text-[#1D1D1F] py-0.5 truncate">
+                <span className="text-[#86868B]">{formatDateVN(i.occurredAt)} · {INTERACTION_LABEL[i.type]} · {i.contactPerson || '—'}</span>
                 {i.content ? ` — ${i.content}` : ''}
               </p>
             ))}

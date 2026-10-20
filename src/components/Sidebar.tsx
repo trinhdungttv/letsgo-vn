@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark } from 'lucide-react';
+import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
 import { OFFICE_ICON, OFFICE_NAV, isOfficePage } from '../modules/office-rental/pages';
+import { ICON_TILE } from './workspace/wsTheme';
 
 interface SidebarProps {
   currentPage: Page;
@@ -11,34 +12,75 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
-  { page: 'dashboard', label: 'Dashboard', icon: <Home size={15} /> },
-  { page: 'workspace', label: 'Workspace', icon: <Home size={15} /> },
-  { page: 'clients', label: 'Khách hàng', icon: <Building2 size={15} /> },
-  { page: 'branches', label: 'Chi Nhánh', icon: <Building size={15} /> },
-  { page: 'finance', label: 'Tài chính', icon: <DollarSign size={15} /> },
-  { page: 'market', label: 'Thị trường', icon: <MapPin size={15} /> },
-  { page: 'reports', label: 'Báo cáo', icon: <BarChart3 size={15} /> },
-  { page: 'loans', label: 'Khoan vay', icon: <Landmark size={15} /> },
-  { page: 'history', label: 'Lịch sử', icon: <History size={15} /> },
+  { page: 'dashboard', label: 'Dashboard', icon: <Home size={16} /> },
+  { page: 'workspace', label: 'Workspace', icon: <Briefcase size={16} /> },
+  { page: 'clients', label: 'Khách hàng', icon: <Building2 size={16} /> },
+  { page: 'branches', label: 'Chi Nhánh', icon: <Building size={16} /> },
+  { page: 'finance', label: 'Tài chính', icon: <DollarSign size={16} /> },
+  { page: 'market', label: 'Thị trường', icon: <MapPin size={16} /> },
+  { page: 'reports', label: 'Báo cáo', icon: <BarChart3 size={16} /> },
+  { page: 'loans', label: 'Khoan vay', icon: <Landmark size={16} /> },
+  { page: 'history', label: 'Lịch sử', icon: <History size={16} /> },
 ];
 
 const CRM_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
-  { page: 'crm-dash',     label: 'Dashboard',   icon: <LayoutDashboard size={13} /> },
-  { page: 'crm-pipeline', label: 'BD Pipeline', icon: <Network size={13} /> },
-  { page: 'crm-leads',    label: 'CSKH',        icon: <UserCircle2 size={13} /> },
-  { page: 'crm-prods',    label: 'Sản phẩm',   icon: <Package size={13} /> },
+  { page: 'crm-dash',     label: 'Dashboard',   icon: <LayoutDashboard size={16} /> },
+  { page: 'crm-pipeline', label: 'BD Pipeline', icon: <Network size={16} /> },
+  { page: 'crm-leads',    label: 'CSKH',        icon: <UserCircle2 size={16} /> },
+  { page: 'crm-prods',    label: 'Sản phẩm',   icon: <Package size={16} /> },
 ];
 
 const CRM_PAGES: Page[] = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
 
 const ADMIN_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
-  { page: 'admin-settings', label: 'Phân quyền & Tài khoản', icon: <Settings size={13} /> },
-  { page: 'users',          label: 'Quản lý Users',          icon: <Users size={13} /> },
+  { page: 'admin-settings', label: 'Phân quyền & Tài khoản', icon: <Settings size={16} /> },
+  { page: 'users',          label: 'Quản lý Users',          icon: <Users size={16} /> },
 ];
 
 const ADMIN_PAGES: Page[] = ['admin-settings', 'users'];
 
 const IDLE_TIMEOUT = 5_000; // auto-collapse sidebar after 5s of no interaction
+
+// Thanh bên kiểu macOS: nền sáng mờ, hàng bo 8px, mục đang chọn = nền xám nhạt + icon màu nhấn.
+const ROW = 'flex items-center gap-2.5 w-full rounded-[8px] text-left transition-colors';
+const ROW_ON = 'bg-black/[0.06] font-medium';
+const ROW_OFF = 'hover:bg-black/[0.04]';
+
+function NavRow({ label, icon, active, collapsed, title, accent = 'text-[#0071E3]', onClick }: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  collapsed: boolean;
+  title?: string;
+  /** Màu icon khi đang chọn (Văn phòng Orient dùng cam để tách khỏi mảng lao động) */
+  accent?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={collapsed ? (title ?? label) : undefined}
+      className={`${ROW} h-8 text-[13px] text-[#1D1D1F] ${active ? ROW_ON : ROW_OFF} ${collapsed ? 'justify-center px-0' : 'px-2.5'}`}
+    >
+      <span className={`shrink-0 ${active ? accent : 'text-[#86868B]'}`}>{icon}</span>
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
+    </button>
+  );
+}
+
+function SectionHeader({ label, open, collapsed, onToggle }: { label: string; open: boolean; collapsed: boolean; onToggle: () => void }) {
+  // Thu gọn: không có chỗ cho tiêu đề → chỉ một đường kẻ mảnh ngăn nhóm
+  if (collapsed) return <div className="mx-1.5 my-2 border-t border-black/[0.06]" />;
+  return (
+    <button
+      onClick={onToggle}
+      className="flex items-center gap-1 w-full px-2.5 pt-4 pb-1 text-left text-[11px] font-semibold text-[#86868B] hover:text-[#6E6E73] transition-colors"
+    >
+      <span className="flex-1 truncate">{label}</span>
+      <ChevronRight size={12} className={`text-[#AEAEB2] transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+    </button>
+  );
+}
 
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const { user, logout, rolePermissions } = useAuth();
@@ -91,122 +133,87 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const hasAdmin = ADMIN_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
   const hasOffice = OFFICE_NAV.some(item => canAccess(role, item.page, rolePermissions));
 
+  // Chữ cái đầu của tên gọi (từ cuối trong họ tên tiếng Việt) cho ô avatar
+  const initial = (user?.full_name || user?.username || '').trim().split(/\s+/).pop()?.charAt(0).toUpperCase() || '?';
+
   return (
     <aside
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={`${collapsed ? 'w-[52px]' : 'w-[190px]'} bg-[#0c2340] flex-shrink-0 flex flex-col h-screen transition-all duration-200`}
+      className={`${collapsed ? 'w-[52px]' : 'w-[220px]'} bg-white/70 backdrop-blur-xl border-r border-black/[0.06] flex-shrink-0 flex flex-col h-screen transition-[width] duration-200 ease-out`}
     >
-      <div className="px-4 py-4 border-b border-white/10 flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shrink-0 overflow-hidden">
+      <div className={`h-14 shrink-0 flex items-center gap-2.5 ${collapsed ? 'justify-center' : 'px-4'}`}>
+        <div className={`w-8 h-8 rounded-[9px] ${logoUrl ? 'bg-white' : ICON_TILE.blue} shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.08)] flex items-center justify-center shrink-0 overflow-hidden`}>
           {logoUrl ? (
             <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-white font-bold text-[12px]">LG</span>
+            <span className="text-white font-semibold text-[12px]">LG</span>
           )}
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-semibold text-white leading-tight">P. Kinh Doanh</div>
-            <div className="text-[10px] text-white/40 mt-0.5">Ops v5.0</div>
+            <div className="text-[13px] font-semibold text-[#1D1D1F] leading-tight truncate">P. Kinh Doanh</div>
+            <div className="text-[11px] text-[#86868B] mt-0.5">Ops v5.0</div>
           </div>
         )}
       </div>
 
-      <div className="px-2 py-1.5 border-b border-white/10">
+      <div className="px-2 pb-1 shrink-0">
         <button
           onClick={toggleCollapsed}
           title={collapsed ? 'Hiện menu' : 'Ẩn menu'}
-          className="flex items-center gap-2 px-2 py-1.5 w-full text-left text-white/40 hover:text-white/80 hover:bg-white/6 rounded-md transition"
+          className={`${ROW} h-7 text-[12px] text-[#86868B] hover:text-[#1D1D1F] hover:bg-black/[0.04] ${collapsed ? 'justify-center px-0' : 'px-2.5'}`}
         >
-          {collapsed ? <ChevronsRight size={14} /> : <><ChevronsLeft size={14} /><span className="text-[11px]">Ẩn menu</span></>}
+          {collapsed ? <ChevronsRight size={15} /> : <><ChevronsLeft size={15} /><span>Ẩn menu</span></>}
         </button>
       </div>
 
-      <nav className="flex-1 py-1.5 overflow-y-auto">
-        {NAV_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
-          const isActive = activeP === item.page;
-          return (
-            <button
-              key={item.page}
-              onClick={() => handleNavigate(item.page)}
-              title={collapsed ? item.label : undefined}
-              className={`flex items-center gap-2.5 px-4 py-2 text-[12px] w-full text-left transition-all border-l-[3px] ${
-                isActive
-                  ? 'bg-white/10 text-white border-l-blue-400'
-                  : 'text-white/50 border-l-transparent hover:bg-white/6 hover:text-white/80'
-              } ${collapsed ? 'justify-center px-0' : ''}`}
-            >
-              <span className={isActive ? 'text-white' : 'text-white/40'}>{item.icon}</span>
-              {!collapsed && <span className="flex-1">{item.label}</span>}
-            </button>
-          );
-        })}
+      <nav className="flex-1 px-2 pb-2 overflow-y-auto no-scrollbar space-y-px">
+        {NAV_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => (
+          <NavRow
+            key={item.page}
+            label={item.label}
+            icon={item.icon}
+            active={activeP === item.page}
+            collapsed={collapsed}
+            onClick={() => handleNavigate(item.page)}
+          />
+        ))}
 
         {/* CRM Module section */}
         {hasCRM && (
           <>
-            <div className="mx-4 my-2 border-t border-white/10" />
-            {!collapsed && (
-              <button
-                onClick={() => setCrmOpen(!crmOpen)}
-                className="flex items-center gap-2 px-4 py-1.5 w-full text-left text-[10.5px] font-semibold text-white/30 uppercase tracking-wider hover:text-white/50 transition"
-              >
-                <span className="flex-1">CRM Module</span>
-                {crmOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              </button>
-            )}
-            {(collapsed || crmOpen) && CRM_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
-              const isActive = activeP === item.page || (currentPage === 'crm-deal' && item.page === 'crm-board');
-              return (
-                <button
-                  key={item.page}
-                  onClick={() => handleNavigate(item.page)}
-                  title={collapsed ? item.label : undefined}
-                  className={`flex items-center gap-2 pl-6 pr-4 py-1.5 text-[12px] w-full text-left transition-all border-l-[3px] ${
-                    isActive
-                      ? 'bg-white/10 text-white border-l-blue-400'
-                      : 'text-white/50 border-l-transparent hover:bg-white/6 hover:text-white/80'
-                  } ${collapsed ? 'justify-center pl-0 pr-0' : ''}`}
-                >
-                  <span className={isActive ? 'text-white' : 'text-white/40'}>{item.icon}</span>
-                  {!collapsed && <span>{item.label}</span>}
-                </button>
-              );
-            })}
+            <SectionHeader label="CRM Module" open={crmOpen} collapsed={collapsed} onToggle={() => setCrmOpen(!crmOpen)} />
+            {(collapsed || crmOpen) && CRM_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => (
+              <NavRow
+                key={item.page}
+                label={item.label}
+                icon={item.icon}
+                active={activeP === item.page || (currentPage === 'crm-deal' && item.page === 'crm-board')}
+                collapsed={collapsed}
+                onClick={() => handleNavigate(item.page)}
+              />
+            ))}
           </>
         )}
 
         {/* Văn phòng Orient — mảng cho thuê văn phòng, tách biệt dữ liệu với cung ứng lao động (chỉ admin) */}
         {hasOffice && (
           <>
-            <div className="mx-4 my-2 border-t border-white/10" />
-            {!collapsed && (
-              <button
-                onClick={() => setOfficeOpen(!officeOpen)}
-                className="flex items-center gap-2 px-4 py-1.5 w-full text-left text-[10.5px] font-semibold text-white/30 uppercase tracking-wider hover:text-white/50 transition"
-              >
-                <span className="flex-1">Văn phòng Orient</span>
-                {officeOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              </button>
-            )}
+            <SectionHeader label="Văn phòng Orient" open={officeOpen} collapsed={collapsed} onToggle={() => setOfficeOpen(!officeOpen)} />
             {(collapsed || officeOpen) && OFFICE_NAV.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
-              const isActive = currentPage === item.page;
               const Icon = OFFICE_ICON[item.page];
               return (
-                <button
+                <NavRow
                   key={item.page}
+                  label={item.label}
+                  icon={<Icon size={16} />}
+                  active={currentPage === item.page}
+                  collapsed={collapsed}
+                  title={`Văn phòng Orient · ${item.label}`}
+                  accent="text-[#FF9500]"
                   onClick={() => handleNavigate(item.page)}
-                  title={collapsed ? `Văn phòng Orient · ${item.label}` : undefined}
-                  className={`flex items-center gap-2 pl-6 pr-4 py-1.5 text-[12px] w-full text-left transition-all border-l-[3px] ${
-                    isActive
-                      ? 'bg-white/10 text-white border-l-amber-400'
-                      : 'text-white/50 border-l-transparent hover:bg-white/6 hover:text-white/80'
-                  } ${collapsed ? 'justify-center pl-0 pr-0' : ''}`}
-                >
-                  <span className={isActive ? 'text-white' : 'text-white/40'}><Icon size={13} /></span>
-                  {!collapsed && <span>{item.label}</span>}
-                </button>
+                />
               );
             })}
           </>
@@ -215,51 +222,42 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         {/* Admin section */}
         {hasAdmin && (
           <>
-            <div className="mx-4 my-2 border-t border-white/10" />
-            {!collapsed && (
-              <button
-                onClick={() => setAdminOpen(!adminOpen)}
-                className="flex items-center gap-2 px-4 py-1.5 w-full text-left text-[10.5px] font-semibold text-white/30 uppercase tracking-wider hover:text-white/50 transition"
-              >
-                <span className="flex-1">Admin</span>
-                {adminOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              </button>
-            )}
-            {(collapsed || adminOpen) && ADMIN_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => {
-              const isActive = activeP === item.page;
-              return (
-                <button
-                  key={item.page}
-                  onClick={() => handleNavigate(item.page)}
-                  title={collapsed ? item.label : undefined}
-                  className={`flex items-center gap-2 pl-6 pr-4 py-1.5 text-[12px] w-full text-left transition-all border-l-[3px] ${
-                    isActive
-                      ? 'bg-white/10 text-white border-l-blue-400'
-                      : 'text-white/50 border-l-transparent hover:bg-white/6 hover:text-white/80'
-                  } ${collapsed ? 'justify-center pl-0 pr-0' : ''}`}
-                >
-                  <span className={isActive ? 'text-white' : 'text-white/40'}>{item.icon}</span>
-                  {!collapsed && <span>{item.label}</span>}
-                </button>
-              );
-            })}
+            <SectionHeader label="Admin" open={adminOpen} collapsed={collapsed} onToggle={() => setAdminOpen(!adminOpen)} />
+            {(collapsed || adminOpen) && ADMIN_ITEMS.filter(item => canAccess(role, item.page, rolePermissions)).map(item => (
+              <NavRow
+                key={item.page}
+                label={item.label}
+                icon={item.icon}
+                active={activeP === item.page}
+                collapsed={collapsed}
+                onClick={() => handleNavigate(item.page)}
+              />
+            ))}
           </>
         )}
       </nav>
 
-      <div className={`px-4 py-3 border-t border-white/10 ${collapsed ? 'px-2 flex flex-col items-center' : ''}`}>
-        {!collapsed && (
-          <>
-            <div className="text-[11.5px] text-white/70 font-medium truncate">{user?.full_name}</div>
-            <div className="text-[10px] text-white/35 mb-2 truncate">{user?.role}</div>
-          </>
-        )}
+      <div className="shrink-0 px-2 py-2 border-t border-black/[0.06]">
+        <div className={`flex items-center gap-2.5 py-1.5 ${collapsed ? 'justify-center' : 'px-2'}`}>
+          <span
+            title={collapsed ? `${user?.full_name ?? ''} · ${user?.role ?? ''}` : undefined}
+            className={`w-7 h-7 rounded-full ${ICON_TILE.gray} text-white text-[12px] font-semibold flex items-center justify-center shrink-0`}
+          >
+            {initial}
+          </span>
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] text-[#1D1D1F] font-medium leading-tight truncate">{user?.full_name}</div>
+              <div className="text-[11px] text-[#86868B] truncate">{user?.role}</div>
+            </div>
+          )}
+        </div>
         <button
           onClick={logout}
           title="Đăng xuất"
-          className="flex items-center gap-1.5 text-white/35 hover:text-white/70 transition text-[11px]"
+          className={`${ROW} h-7 text-[12px] text-[#86868B] hover:text-[#D70015] hover:bg-[#FF3B30]/[0.08] ${collapsed ? 'justify-center px-0' : 'px-2.5'}`}
         >
-          <LogOut size={11} /> {!collapsed && 'Đăng xuất'}
+          <LogOut size={14} /> {!collapsed && 'Đăng xuất'}
         </button>
       </div>
     </aside>

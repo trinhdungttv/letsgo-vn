@@ -37,43 +37,43 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
       <div className="flex items-center gap-3 pr-6">
         <ContactAvatar name={contact.fullName} url={contact.avatarUrl} tier={contact.tier} size={44} />
         <div className="min-w-0">
-          <p className="text-[16px] md:text-[15px] font-semibold text-[#111] truncate">{contact.fullName}</p>
-          <p className="text-[12px] text-[#888] truncate">
+          <p className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] truncate">{contact.fullName}</p>
+          <p className="text-[12px] text-[#86868B] truncate">
             {[contact.jobTitle, contact.organization].filter(Boolean).join(' · ')}
           </p>
-          <p className="text-[11.5px] text-[#999]">
+          <p className="text-[11.5px] text-[#86868B]">
             {groupLabel}{ownerName ? ` · Phụ trách: ${ownerName}` : ''}
             {' · '}
-            <button type="button" onClick={() => onOpenProfile(contact)} className="inline-flex items-center gap-0.5 text-[#1D4ED8] hover:underline">
+            <button type="button" onClick={() => onOpenProfile(contact)} className="inline-flex items-center gap-0.5 text-[#0071E3] hover:underline">
               <Contact2 size={12} /> Mở hồ sơ
             </button>
           </p>
         </div>
       </div>
-      {item && <p className="text-[13px] font-semibold mt-3 text-[#1D4ED8]">{item.label}</p>}
+      {item && <p className="text-[13px] font-semibold mt-3 text-[#0071E3]">{item.label}</p>}
 
       {hasRememberNotes(contact.rememberNotes) ? (
         <RememberList contact={contact} />
       ) : (
-        <p className="text-[11.5px] text-[#aaa] mt-3">
+        <p className="text-[11.5px] text-[#AEAEB2] mt-3">
           Chưa có "Điều cần nhớ" —{' '}
-          <button type="button" onClick={() => onOpenProfile(contact)} className="text-[#1D4ED8] hover:underline">thêm trong hồ sơ</button>
+          <button type="button" onClick={() => onOpenProfile(contact)} className="text-[#0071E3] hover:underline">thêm trong hồ sơ</button>
           {' '}để lần sau được nhắc ở đây.
         </p>
       )}
 
       {openFollowUps.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#D97706] mb-1">Việc đang mở ({openFollowUps.length})</p>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#C93400] mb-1.5">Việc đang mở ({openFollowUps.length})</p>
           <div className="space-y-1">
             {openFollowUps.map(i => (
-              <div key={i.id} className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                <span className="flex-1 min-w-0 text-[12.5px] text-[#333] leading-snug">
+              <div key={i.id} className="flex items-center gap-2 bg-[#FF9500]/[0.1] rounded-[12px] px-3 py-2">
+                <span className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug">
                   {i.followUpAction}
-                  {i.followUpDue && <span className="text-[#888]"> — hạn {formatDateVN(i.followUpDue)}</span>}
+                  {i.followUpDue && <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>}
                 </span>
                 <button type="button" disabled={busyId === i.id} onClick={() => onDoneFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-7 px-2.5 rounded-lg border border-emerald-200 bg-white text-emerald-700 text-[12px] font-medium hover:bg-emerald-50 disabled:opacity-50">
+                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[13px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
                   <CheckCheck size={13} /> Xong
                 </button>
               </div>
@@ -84,10 +84,10 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
 
       {lastTwo.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#999] mb-1">Gần đây</p>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">Gần đây</p>
           {lastTwo.map(i => (
-            <p key={i.id} className="text-[12.5px] leading-snug mb-1 text-[#333]">
-              <span className="text-[#888]">
+            <p key={i.id} className="text-[12.5px] leading-snug mb-1 text-[#1D1D1F]">
+              <span className="text-[#86868B]">
                 {formatDateVN(i.occurredAt)} · {INTERACTION_LABEL[i.type]}
                 {i.initiatedBy === 'them' ? ' (họ chủ động)' : ''}
                 {i.content ? ' — ' : ''}
@@ -106,8 +106,8 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
               <a key={link.channel} href={link.url} aria-label={`${meta.aria} ${contact.fullName}`}
                 {...(link.channel === 'zalo' ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                 onClick={() => onLaunch(contact, link.channel)}
-                className="h-11 md:h-9 rounded-[10px] border border-[#E8E7E2] bg-white text-[13px] font-medium text-[#333] inline-flex items-center justify-center gap-1.5 hover:border-blue-200 hover:text-[#1D4ED8]">
-                <meta.Icon size={15} /> {meta.label}
+                className="h-[58px] rounded-[12px] bg-white md:bg-[#F5F5F7] text-[12px] font-medium text-[#0071E3] flex flex-col items-center justify-center gap-1 hover:bg-[#0071E3]/10 active:scale-[0.97] transition">
+                <meta.Icon size={19} strokeWidth={2.1} /> {meta.label}
               </a>
             );
           })}
@@ -115,9 +115,9 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
       )}
       <div className="flex gap-2 mt-2">
         <button type="button" onClick={onClose}
-          className="flex-1 h-11 md:h-9 rounded-[10px] border border-gray-300 bg-white text-[13px] font-medium text-gray-600 hover:bg-gray-50">Đóng</button>
+          className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Đóng</button>
         <button type="button" onClick={() => { onClose(); onMarkContacted(contact); }}
-          className="flex-[2] h-11 md:h-9 rounded-[10px] bg-[#1D4ED8] text-white text-[13px] font-semibold hover:bg-[#1E40AF] inline-flex items-center justify-center gap-1.5">
+          className="flex-[2] h-11 md:h-9 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[13px] font-semibold hover:bg-[#0077ED] inline-flex items-center justify-center gap-1.5">
           <Check size={15} strokeWidth={2.4} /> Đã liên hệ
         </button>
       </div>

@@ -8,7 +8,7 @@ export function ContactAvatar({ name, url, tier, size = 36 }: { name: string; ur
   if (url) {
     return (
       <img src={url} alt={name} width={size} height={size} loading="lazy"
-        className="rounded-full object-cover bg-gray-100 shrink-0" style={{ width: size, height: size }} />
+        className="rounded-full object-cover bg-black/[0.05] shrink-0" style={{ width: size, height: size }} />
     );
   }
   const color = TIER_COLOR[tier];

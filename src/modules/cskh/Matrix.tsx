@@ -11,8 +11,7 @@
 // Loại khách mặc định "Đang hợp tác" (chốt 19/10/2026), hiện thành chip để bỏ được.
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Grid3x3, Layers, Plus, Search, Star, UserPlus, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, Grid3x3, Layers, Plus, Star, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -30,9 +29,10 @@ import ContactFormModal from '../../components/contacts/ContactFormModal';
 import { assignGroups, setOwner } from './data/api';
 import { useCskh } from './context';
 import {
-  CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, NEW_GROUP_VALUE, resolveGroupKey, scoreColor, TIER_COLOR,
+  CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
+import { FilterChip, MoreButton, Panel, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
 import { ContactAvatar } from './components/ContactAvatar';
 import { GroupOptions, QuickGroupSelect } from './components/GroupSelect';
 
@@ -90,23 +90,6 @@ function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): 
     case 'name': return c.fullName;
   }
 }
-
-/** Ô chọn dạng viên thuốc — tô xanh khi đang lọc. */
-function PillSelect({ value, active, label, onChange, children }: {
-  value: string; active: boolean; label: string; onChange: (v: string) => void; children: ReactNode;
-}) {
-  return (
-    <span className={`relative inline-flex items-center rounded-full border h-9 md:h-8 ${active ? 'border-[#1D4ED8] bg-blue-50 text-[#1D4ED8]' : 'border-[#E0DFDA] bg-white text-[#555]'}`}>
-      <select value={value} aria-label={label} onChange={e => onChange(e.target.value)}
-        className="appearance-none bg-transparent pl-3 pr-7 h-full text-[12px] font-medium outline-none cursor-pointer max-w-[200px]">
-        {children}
-      </select>
-      <ChevronDown size={13} className="absolute right-2 pointer-events-none" />
-    </span>
-  );
-}
-
-const bulkSelectCls = 'text-[12px] h-9 md:h-8 px-2 rounded-lg border border-blue-200 bg-white outline-none max-w-[200px]';
 
 export default function CskhMatrix() {
   const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroups } = useCskh();
@@ -328,7 +311,7 @@ export default function CskhMatrix() {
     const Icon = sort.dir === 'asc' ? ArrowUp : ArrowDown;
     return (
       <button type="button" onClick={() => sortBy(key)} aria-label={`Sắp xếp theo ${label}`}
-        className={`inline-flex items-center gap-1 ${on ? 'text-[#1D4ED8]' : 'hover:text-[#1D4ED8]'}`}>
+        className={`inline-flex items-center gap-1 transition-colors ${on ? 'text-[#0066CC]' : 'hover:text-[#1D1D1F]'}`}>
         {label}{on && <Icon size={11} strokeWidth={2.6} />}
       </button>
     );
@@ -355,78 +338,77 @@ export default function CskhMatrix() {
   })();
 
   if (!data) {
-    return loading ? <Spinner /> : <p className="py-16 text-center text-[12.5px] text-[#999]">Chưa tải được dữ liệu CSKH.</p>;
+    return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
   }
 
   return (
-    <div className="space-y-3">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[19px] md:text-[20px] font-bold text-[#111] leading-tight">Ma trận Khách hàng</h1>
-          <p className="text-[12.5px] text-[#666] mt-0.5">
-            {careCount} người đang chăm sóc · {contacts.length} người trong danh bạ{avgCare !== null && <> · điểm sức khỏe TB {avgCare}/100</>}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          <button type="button" onClick={openGroups}
-            className="inline-flex items-center justify-center gap-1.5 h-10 md:h-8 px-3 rounded-lg border border-gray-300 bg-white text-[12.5px] font-medium text-[#333]">
-            <Layers size={14} /> Nhóm
-          </button>
-          <button type="button" onClick={openPicker}
-            className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 h-10 md:h-8 px-3 rounded-lg border border-gray-300 bg-white text-[12.5px] font-medium text-[#333]">
-            <UserPlus size={14} /> Chọn người chăm sóc
-          </button>
-          <button type="button" onClick={() => setCreating(true)}
-            className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 h-10 md:h-8 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-semibold">
-            <Plus size={14} /> Thêm liên hệ
-          </button>
-        </div>
-      </header>
+    <div className="space-y-4 md:space-y-5">
+      <PageTitle
+        eyebrow="Danh bạ chăm sóc"
+        title="Ma trận Khách hàng"
+        subtitle={<>{careCount} người đang chăm sóc · {contacts.length} người trong danh bạ{avgCare !== null && <> · sức khỏe TB {avgCare}/100</>}</>}
+        actions={(
+          <>
+            <button type="button" onClick={openGroups} className={`${PILL_GRAY} !flex-none`} aria-label="Quản lý nhóm">
+              <Layers size={15} /> <span className="hidden sm:inline">Nhóm</span>
+            </button>
+            <button type="button" onClick={openPicker} className={PILL_TINTED}>
+              <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn người</span><span className="hidden md:inline">Chọn người chăm sóc</span>
+            </button>
+            <button type="button" onClick={() => setCreating(true)} className={PILL_PRIMARY}>
+              <Plus size={15} strokeWidth={2.4} /> Thêm liên hệ
+            </button>
+          </>
+        )}
+      />
 
       {!data.migrationReady && <MigrationBanner />}
 
       {/* ── Nhóm × Trạng thái ── */}
       {careCount > 0 && (
-        <section className="bg-white border border-[#E8E7E2] rounded-[10px]" aria-label="Nhóm và trạng thái chăm sóc">
-          <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
-            <h2 className="text-[13px] font-semibold text-[#111] flex items-center gap-1.5 mr-auto"><Grid3x3 size={14} className="text-[#888]" /> Nhóm × Trạng thái</h2>
+        <Panel title="Nhóm × Trạng thái" icon={<Grid3x3 size={16} className="text-[#86868B]" />}
+          meta="Bấm một ô để lọc danh sách bên dưới"
+          action={(
+            <button type="button" onClick={() => setShowMatrix(!showMatrix)} aria-expanded={showMatrix} className={LINK}>
+              {showMatrix ? <>Thu gọn <ChevronUp size={14} /></> : <>Chi tiết <ChevronDown size={14} /></>}
+            </button>
+          )}>
+          <div className="flex flex-wrap gap-1.5 pb-2">
             {STATUSES.map(s => {
               const on = filters.group === 'all' && filters.status === s;
               return (
-                <button key={s} type="button" onClick={() => pickCell('all', s)} disabled={matrix.colTotal[s] === 0 && !on}
-                  className={`inline-flex items-center gap-1 h-8 md:h-7 px-2.5 rounded-full text-[11.5px] font-medium border disabled:opacity-40 ${on ? 'border-current' : 'border-transparent'}`}
+                <button key={s} type="button" onClick={() => pickCell('all', s)} disabled={matrix.colTotal[s] === 0 && !on} aria-pressed={on}
+                  className={`inline-flex items-center gap-1.5 h-9 md:h-8 px-3 rounded-full text-[13px] font-medium transition disabled:opacity-40 ${on ? 'ring-2 ring-current' : ''}`}
                   style={chipStyle(CARE_STATUS_COLOR[s])}>
-                  {CARE_STATUS_LABEL[s]} <b>{matrix.colTotal[s]}</b>
+                  <i className="w-1.5 h-1.5 rounded-full" style={{ background: CARE_STATUS_COLOR[s] }} />
+                  {CARE_STATUS_LABEL[s]} <b className="tabular-nums">{matrix.colTotal[s]}</b>
                 </button>
               );
             })}
-            <button type="button" onClick={() => setShowMatrix(!showMatrix)} aria-expanded={showMatrix}
-              className="inline-flex items-center gap-0.5 text-[12px] text-[#1D4ED8] min-h-[32px]">
-              {showMatrix ? <>Thu gọn <ChevronUp size={13} /></> : <>Chi tiết <ChevronDown size={13} /></>}
-            </button>
           </div>
           {showMatrix && (matrix.rows.length === 0
-            ? <p className="px-4 pb-4 text-[12px] text-[#aaa]">Không có ai đang chăm sóc khớp bộ lọc đang chọn.</p>
+            ? <Quiet>Không có ai đang chăm sóc khớp bộ lọc đang chọn.</Quiet>
             : (
-              <div className="overflow-x-auto px-2 pb-3">
-                <table className="w-full text-[12px] min-w-[460px]">
+              <div className="overflow-x-auto -mx-1 pb-2">
+                <table className="w-full text-[13px] min-w-[460px] border-separate border-spacing-x-1 border-spacing-y-1">
                   <thead>
-                    <tr className="text-[10.5px] uppercase tracking-wide text-[#999]">
-                      <th className="text-left font-semibold px-2 py-1">Nhóm</th>
-                      {STATUSES.map(s => <th key={s} className="font-semibold px-1 py-1">{CARE_STATUS_LABEL[s]}</th>)}
-                      <th className="font-semibold px-2 py-1 text-right">Tổng</th>
-                      <th className="font-semibold px-2 py-1 text-right">Điểm TB</th>
+                    <tr className="text-[12px] text-[#86868B]">
+                      <th className="text-left font-medium px-1 py-1">Nhóm</th>
+                      {STATUSES.map(s => <th key={s} className="font-medium px-1 py-1">{CARE_STATUS_LABEL[s]}</th>)}
+                      <th className="font-medium px-2 py-1 text-right">Tổng</th>
+                      <th className="font-medium px-2 py-1 text-right">Điểm TB</th>
                     </tr>
                   </thead>
                   <tbody>
                     {matrix.rows.map(r => {
                       const avg = r.n ? Math.round(r.sum / r.n) : null;
+                      const rowOn = filters.group === r.key && filters.status === 'all';
                       return (
                         <tr key={r.key}>
-                          <td className="px-2 py-1">
-                            <button type="button" onClick={() => pickCell(r.key, 'all')}
-                              className={`inline-flex items-center gap-1.5 rounded px-1 min-h-[32px] md:min-h-0 ${filters.group === r.key && filters.status === 'all' ? 'bg-blue-50 text-[#1D4ED8] font-semibold' : 'hover:text-[#1D4ED8]'}`}>
-                              <i className="w-2 h-2 rounded-full" style={{ background: r.color }} />{r.label}
+                          <td className="py-0.5">
+                            <button type="button" onClick={() => pickCell(r.key, 'all')} aria-pressed={rowOn}
+                              className={`inline-flex items-center gap-2 rounded-full px-2.5 min-h-[34px] md:min-h-[30px] transition ${rowOn ? 'bg-[#0071E3]/10 text-[#0066CC] font-semibold' : 'text-[#1D1D1F] hover:bg-black/[0.04]'}`}>
+                              <i className="w-2 h-2 rounded-full shrink-0" style={{ background: r.color }} />{r.label}
                             </button>
                           </td>
                           {STATUSES.map(s => {
@@ -434,19 +416,19 @@ export default function CskhMatrix() {
                             const on = filters.group === r.key && filters.status === s;
                             const alpha = n === 0 ? 0 : Math.round(26 + 76 * (n / matrix.max));
                             return (
-                              <td key={s} className="px-1 py-1">
+                              <td key={s}>
                                 <button type="button" disabled={n === 0 && !on} onClick={() => pickCell(r.key, s)} aria-pressed={on}
                                   aria-label={`${r.label} · ${CARE_STATUS_LABEL[s]}: ${n} người`}
-                                  className={`w-full h-9 md:h-8 rounded-md text-[12.5px] font-semibold ${on ? 'ring-2 ring-[#1D4ED8]' : ''}`}
-                                  style={{ background: n ? `${CARE_STATUS_COLOR[s]}${alpha.toString(16).padStart(2, '0')}` : '#F7F6F2', color: n ? CARE_STATUS_COLOR[s] : '#ccc' }}>
+                                  className={`w-full h-9 md:h-8 rounded-[10px] text-[13px] font-semibold tabular-nums transition hover:brightness-95 ${on ? 'ring-2 ring-[#0071E3] ring-offset-1' : ''}`}
+                                  style={{ background: n ? `${CARE_STATUS_COLOR[s]}${alpha.toString(16).padStart(2, '0')}` : '#F5F5F7', color: n ? CARE_STATUS_COLOR[s] : '#C7C7CC' }}>
                                   {n || '–'}
                                 </button>
                               </td>
                             );
                           })}
-                          <td className="px-2 py-1 text-right font-medium">{r.total}</td>
-                          <td className="px-2 py-1 text-right">
-                            {avg === null ? <span className="text-[#ccc]">–</span> : <b style={{ color: scoreColor(avg) }}>{avg}</b>}
+                          <td className="px-2 text-right font-medium text-[#1D1D1F] tabular-nums">{r.total}</td>
+                          <td className="px-2 text-right tabular-nums">
+                            {avg === null ? <span className="text-[#C7C7CC]">–</span> : <b style={{ color: scoreColor(avg) }}>{avg}</b>}
                           </td>
                         </tr>
                       );
@@ -455,30 +437,20 @@ export default function CskhMatrix() {
                 </table>
               </div>
             ))}
-        </section>
+        </Panel>
       )}
 
       {/* ── Tìm + phạm vi + bộ lọc ── */}
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 space-y-2.5">
+      <div className={`${PANEL} p-3 md:p-4 space-y-3`}>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-md">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={e => { setSearch(e.target.value); setLimit(PAGE); }}
-              placeholder="Tìm tên, công ty, SĐT, email, chi nhánh… (gõ không dấu được)"
-              className="w-full pl-8 pr-3 h-10 md:h-8 rounded-lg border border-gray-300 text-[13px] outline-none focus:border-blue-500" />
-          </div>
-          <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full" role="group" aria-label="Phạm vi">
-            {SCOPES.map(s => (
-              <button key={s} type="button" onClick={() => { setFilter({ scope: s, ...(s === 'other' || s === 'left' ? { group: 'all', status: 'all' } : {}) }); setSelected(new Set()); }}
-                aria-pressed={filters.scope === s}
-                className={`px-3 h-9 md:h-7 rounded-md text-[12px] whitespace-nowrap ${filters.scope === s ? 'bg-white text-[#333] font-medium border border-[#E0DFDA]' : 'text-[#888]'}`}>
-                {SCOPE_LABEL[s]}
-              </button>
-            ))}
-          </div>
+          <SearchField value={search} onChange={v => { setSearch(v); setLimit(PAGE); }}
+            placeholder="Tìm tên, công ty, SĐT, email, chi nhánh… (gõ không dấu được)" className="flex-1 min-w-[220px] max-w-md" />
+          <Segmented label="Phạm vi" fit value={filters.scope}
+            onChange={s => { setFilter({ scope: s, ...(s === 'other' || s === 'left' ? { group: 'all', status: 'all' } : {}) }); setSelected(new Set()); }}
+            options={SCOPES.map(s => ({ key: s, label: SCOPE_LABEL[s] }))} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           <PillSelect value={filters.group} active={filters.group !== 'all'} label="Lọc theo nhóm" onChange={v => setFilter({ group: v })}>
             <option value="all">Mọi nhóm</option>
             <GroupOptions groups={groups} />
@@ -512,150 +484,149 @@ export default function CskhMatrix() {
               {options.provinces.map(p => <option key={p} value={p}>{p}</option>)}
             </PillSelect>
           )}
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            <select value={`${sort.key}:${sort.dir}`} aria-label="Sắp xếp"
-              onChange={e => { const [k, d] = e.target.value.split(':') as [SortKey, SortDir]; setSort({ key: k, dir: d }); }}
-              className="text-[12px] h-9 md:h-8 px-2 rounded-lg border border-gray-300 bg-white outline-none">
+          <span className="md:ml-auto inline-flex items-center gap-1.5 text-[12px] text-[#86868B]">
+            <ArrowUpDown size={14} className="shrink-0" />
+            <PillSelect value={`${sort.key}:${sort.dir}`} active={false} label="Sắp xếp"
+              onChange={v => { const [k, d] = v.split(':') as [SortKey, SortDir]; setSort({ key: k, dir: d }); }}>
               {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            </PillSelect>
           </span>
         </div>
 
         {chips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {chips.map(ch => (
-              <span key={ch.label} className="inline-flex items-center gap-1 h-8 md:h-6 pl-2.5 pr-1 rounded-full bg-blue-50 text-[#1D4ED8] text-[11.5px] font-medium">
-                {ch.label}
-                <button type="button" onClick={ch.clear} aria-label={`Bỏ lọc ${ch.label}`} className="w-6 h-6 md:w-4 md:h-4 rounded-full hover:bg-blue-100 flex items-center justify-center"><X size={11} /></button>
-              </span>
-            ))}
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {chips.map(ch => <FilterChip key={ch.label} label={ch.label} onClear={ch.clear} />)}
             <button type="button" onClick={() => { setFilters({ ...DEFAULT_FILTERS, scope: filters.scope, kind: 'all' }); setSearch(''); setLimit(PAGE); }}
-              className="text-[11.5px] text-[#888] hover:text-[#333] px-1 min-h-[32px] md:min-h-0">Xoá tất cả</button>
-            <span className="text-[11.5px] text-[#aaa] ml-auto">{filtered.length} người</span>
+              className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 px-1.5 min-h-[32px]">Xoá tất cả</button>
+            <span className="text-[12px] text-[#86868B] ml-auto tabular-nums">{filtered.length} người</span>
           </div>
         )}
         {outside > 0 && (
-          <p className="text-[12px] text-[#92400E]">
+          <p className="text-[13px] text-[#6E6E73]">
             Còn {outside} người khớp "{search.trim()}" ở phạm vi / loại khách khác —{' '}
-            <button type="button" onClick={() => setFilter({ scope: 'all', kind: 'all' })} className="underline font-medium">tìm trong tất cả</button>
+            <button type="button" onClick={() => setFilter({ scope: 'all', kind: 'all' })} className="font-medium text-[#0066CC] hover:opacity-70">tìm trong tất cả</button>
           </p>
         )}
       </div>
 
-      {/* ── Thanh thao tác hàng loạt ── */}
+      {/* ── Thanh thao tác hàng loạt (nổi, kiểu thanh công cụ Apple) ── */}
       {selectedIds.length > 0 && (
-        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-[10px] p-2.5 flex flex-wrap items-center gap-2">
-          <span className="text-[12.5px] font-semibold text-blue-900">Đã chọn {selectedIds.length}</span>
-          <select value="" disabled={busy} aria-label="Xếp vào nhóm" onChange={e => assignGroup(selectedIds, e.target.value)} className={bulkSelectCls}>
+        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-[16px] bg-white/90 backdrop-blur-xl px-3 py-2.5 shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_12px_32px_-8px_rgba(0,0,0,0.2)]">
+          <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#0071E3] text-white text-[13px] font-semibold tabular-nums">
+            <CheckSquare size={14} /> {selectedIds.length} đã chọn
+          </span>
+          <PillSelect value="" active={false} disabled={busy} label="Xếp vào nhóm" onChange={v => assignGroup(selectedIds, v)}>
             <option value="">Xếp vào nhóm…</option>
             <GroupOptions groups={groups} cadence={cadence} allowCreate />
-          </select>
-          <select value="" disabled={busy} aria-label="Đổi người phụ trách"
-            onChange={e => {
-              const v = e.target.value;
+          </PillSelect>
+          <PillSelect value="" active={false} disabled={busy} label="Đổi người phụ trách"
+            onChange={v => {
               if (!v) return;
               const owner = v === 'none' ? null : v;
               void run(async () => { await setOwner(selectedIds, owner, user); return `Đã đổi người phụ trách cho ${selectedIds.length} người`; });
-            }} className={bulkSelectCls}>
+            }}>
             <option value="">Đổi người phụ trách…</option>
             <option value="none">— Chưa giao —</option>
             {data.users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-          <select value="" disabled={busy} aria-label="Gắn thêm công ty" onChange={e => bulkLink(e.target.value)} className={bulkSelectCls}>
+          </PillSelect>
+          <PillSelect value="" active={false} disabled={busy} label="Gắn thêm công ty" onChange={bulkLink}>
             <option value="">Gắn thêm công ty…</option>
             {clientsSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <button type="button" disabled={busy} onClick={bulkDeactivate} className="h-9 md:h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-amber-700 text-[12px] font-medium">Đánh dấu nghỉ</button>
+          </PillSelect>
+          <button type="button" disabled={busy} onClick={bulkDeactivate}
+            className="h-9 md:h-8 px-3.5 rounded-full bg-[#FF9500]/[0.14] text-[#B25000] text-[13px] font-medium hover:bg-[#FF9500]/[0.2] disabled:opacity-40 transition">Đánh dấu nghỉ</button>
           {isAdmin && (
-            <button type="button" disabled={busy} onClick={bulkDelete} className="h-9 md:h-8 px-2.5 rounded-lg border border-red-300 bg-white text-red-700 text-[12px] font-medium">Xoá vĩnh viễn</button>
+            <button type="button" disabled={busy} onClick={bulkDelete}
+              className="h-9 md:h-8 px-3.5 rounded-full bg-[#FF3B30]/10 text-[#D70015] text-[13px] font-medium hover:bg-[#FF3B30]/[0.16] disabled:opacity-40 transition">Xoá vĩnh viễn</button>
           )}
-          <button type="button" onClick={() => setSelected(new Set())} className="text-[12px] text-blue-700 hover:underline ml-auto min-h-[32px]">Bỏ chọn</button>
+          <button type="button" onClick={() => setSelected(new Set())} className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 ml-auto min-h-[32px] px-1">Bỏ chọn</button>
         </div>
       )}
 
       {/* ── Bảng ── */}
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+      <div className={`${PANEL} overflow-hidden`}>
         <div className="overflow-x-auto">
-          <table className="w-full text-[12.5px]">
+          <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-[#E8E7E2] bg-[#F9F9F7] text-[11px] text-[#777]">
-                <th className="px-3 py-2 w-8">
-                  <input ref={headCheck} type="checkbox" className="w-4 h-4 accent-blue-600 align-middle" aria-label="Chọn các dòng đang hiện"
+              <tr className="border-b border-[#E5E5EA] text-[12px] text-[#86868B]">
+                <th className="pl-4 pr-2 py-2.5 w-8">
+                  <input ref={headCheck} type="checkbox" className="w-4 h-4 accent-[#0071E3] align-middle" aria-label="Chọn các dòng đang hiện"
                     checked={visible.length > 0 && visibleSelected === visible.length} onChange={toggleVisible} disabled={!visible.length} />
                 </th>
-                <th className="text-left font-semibold px-2 py-2">{sortHead('name', 'Liên hệ')}</th>
-                <th className="text-left font-semibold px-2 py-2 hidden md:table-cell">Nhóm</th>
-                <th className="text-left font-semibold px-2 py-2 hidden lg:table-cell">Chi nhánh / Tỉnh</th>
-                <th className="text-left font-semibold px-2 py-2 hidden md:table-cell">{sortHead('recent', 'Tương tác cuối')}</th>
-                <th className="text-left font-semibold px-2 py-2 hidden sm:table-cell">{sortHead('due', 'Hạn chăm sóc')}</th>
-                <th className="text-right font-semibold px-2 py-2">{sortHead('score', 'Điểm')}</th>
-                <th className="text-left font-semibold px-2 py-2 hidden xl:table-cell">Phụ trách</th>
-                <th className="px-2 py-2 w-10" />
+                <th className="text-left font-medium px-2 py-2.5">{sortHead('name', 'Liên hệ')}</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden md:table-cell">Nhóm</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden lg:table-cell">Chi nhánh / Tỉnh</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden md:table-cell">{sortHead('recent', 'Tương tác cuối')}</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden sm:table-cell">{sortHead('due', 'Hạn chăm sóc')}</th>
+                <th className="text-right font-medium px-2 py-2.5">{sortHead('score', 'Điểm')}</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden xl:table-cell">Phụ trách</th>
+                <th className="pl-2 pr-4 py-2.5 w-10" />
               </tr>
             </thead>
             <tbody>
               {visible.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-[12.5px] text-[#aaa]">
-                  {contacts.length === 0 ? 'Chưa có người liên hệ nào — bấm "Thêm liên hệ".' : 'Không có ai khớp bộ lọc.'}
+                <tr><td colSpan={9}>
+                  <Quiet icon={<Users size={18} />}>
+                    {contacts.length === 0 ? 'Chưa có người liên hệ nào — bấm "Thêm liên hệ".' : 'Không có ai khớp bộ lọc.'}
+                  </Quiet>
                 </td></tr>
               ) : visible.map(c => {
                 const st = stats.get(c.id);
                 const d = derived.get(c.id);
                 const isPrimary = c.primaryClientIds.length > 0;
                 return (
-                  <tr key={c.id} className={`border-b border-[#F0EFEB] last:border-0 hover:bg-[#FAFAF8] ${selected.has(c.id) ? 'bg-blue-50/50' : ''} ${c.isArchived ? 'opacity-60' : ''}`}>
-                    <td className="px-3 py-2 align-middle">
-                      <input type="checkbox" className="w-4 h-4 accent-blue-600 align-middle" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} aria-label={`Chọn ${c.fullName}`} />
+                  <tr key={c.id} className={`border-b border-[#F0F0F2] last:border-0 transition-colors ${selected.has(c.id) ? 'bg-[#0071E3]/[0.06]' : 'hover:bg-[#FAFAFC]'} ${c.isArchived ? 'opacity-60' : ''}`}>
+                    <td className="pl-4 pr-2 py-2.5 align-middle">
+                      <input type="checkbox" className="w-4 h-4 accent-[#0071E3] align-middle" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} aria-label={`Chọn ${c.fullName}`} />
                     </td>
-                    <td className="px-2 py-2 min-w-[180px]">
-                      <button type="button" onClick={() => openProfile(c.id)} className="flex items-center gap-2 text-left group/name">
-                        <ContactAvatar name={c.fullName} url={c.avatarUrl} tier={c.tier} size={34} />
+                    <td className="px-2 py-2.5 min-w-[180px]">
+                      <button type="button" onClick={() => openProfile(c.id)} className="flex items-center gap-3 text-left group/name">
+                        <ContactAvatar name={c.fullName} url={c.avatarUrl} tier={c.tier} size={36} />
                         <span className="min-w-0">
                           <span className="flex items-center gap-1">
-                            <b className="text-[13px] text-[#111] group-hover/name:text-[#1D4ED8] truncate max-w-[200px]">{c.fullName}</b>
-                            {isPrimary && <Star size={12} className="text-amber-500 fill-amber-500 shrink-0" aria-label="Liên hệ chính" />}
-                            {c.isArchived && <span className="px-1.5 rounded-full text-[10px] bg-gray-100 text-gray-600">Đã nghỉ</span>}
+                            <b className="text-[14px] font-semibold text-[#1D1D1F] group-hover/name:text-[#0066CC] truncate max-w-[200px] transition-colors">{c.fullName}</b>
+                            {isPrimary && <Star size={12} className="text-[#FF9500] fill-[#FF9500] shrink-0" aria-label="Liên hệ chính" />}
+                            {c.isArchived && <span className="px-2 rounded-full text-[11px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
                           </span>
-                          <span className="block text-[11px] text-[#999] truncate max-w-[240px]">
+                          <span className="block text-[12px] text-[#86868B] truncate max-w-[240px]">
                             {[c.organization || 'Chưa gắn công ty', c.jobTitle].filter(Boolean).join(' · ')}
                           </span>
                         </span>
                       </button>
                       {/* Điện thoại: nhóm + hạn nằm dưới tên */}
-                      <div className="md:hidden flex flex-wrap items-center gap-1.5 mt-1 pl-[42px]">
+                      <div className="md:hidden flex flex-wrap items-center gap-1.5 mt-1.5 pl-[48px]">
                         <QuickGroupSelect contact={c} groups={groups} groupById={groupById} cadence={cadence} disabled={busy}
                           onPick={k => assignGroup([c.id], k, c.fullName)} onCreate={openGroups} />
                         {st && st.status !== 'unclassified' && (
-                          <span className="text-[11px] font-medium" style={{ color: CARE_STATUS_COLOR[st.status] }}>{dueLabel(st)}</span>
+                          <span className="text-[12px] font-medium" style={{ color: CARE_STATUS_COLOR[st.status] }}>{dueLabel(st)}</span>
                         )}
                       </div>
                     </td>
-                    <td className="px-2 py-2 hidden md:table-cell">
+                    <td className="px-2 py-2.5 hidden md:table-cell">
                       <QuickGroupSelect contact={c} groups={groups} groupById={groupById} cadence={cadence} disabled={busy}
                         onPick={k => assignGroup([c.id], k, c.fullName)} onCreate={openGroups} />
                     </td>
-                    <td className="px-2 py-2 hidden lg:table-cell text-[11.5px] text-[#666]">
-                      {d?.branchNames.join(', ') || c.province || <span className="text-[#ccc]">—</span>}
+                    <td className="px-2 py-2.5 hidden lg:table-cell text-[12.5px] text-[#6E6E73]">
+                      {d?.branchNames.join(', ') || c.province || <span className="text-[#C7C7CC]">—</span>}
                     </td>
-                    <td className="px-2 py-2 hidden md:table-cell text-[11.5px] text-[#666] whitespace-nowrap">
-                      {c.lastInteractionAt ? relativeDayLabel(c.lastInteractionAt, today) : <span className="text-[#ccc]">—</span>}
+                    <td className="px-2 py-2.5 hidden md:table-cell text-[12.5px] text-[#6E6E73] whitespace-nowrap">
+                      {c.lastInteractionAt ? relativeDayLabel(c.lastInteractionAt, today) : <span className="text-[#C7C7CC]">—</span>}
                     </td>
-                    <td className="px-2 py-2 hidden sm:table-cell whitespace-nowrap">
+                    <td className="px-2 py-2.5 hidden sm:table-cell whitespace-nowrap">
                       {st && st.status !== 'unclassified'
-                        ? <span className="px-2 py-0.5 rounded-full text-[11px] font-medium" style={chipStyle(CARE_STATUS_COLOR[st.status])}>{dueLabel(st)}</span>
-                        : <span className="text-[#ccc]">—</span>}
+                        ? <span className="px-2.5 py-1 rounded-full text-[12px] font-medium" style={chipStyle(CARE_STATUS_COLOR[st.status])}>{dueLabel(st)}</span>
+                        : <span className="text-[#C7C7CC]">—</span>}
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      {st?.score ? <b className="text-[13px]" style={{ color: scoreColor(st.score.total) }}>{st.score.total}</b> : <span className="text-[#ccc]">–</span>}
+                    <td className="px-2 py-2.5 text-right tabular-nums">
+                      {st?.score ? <b className="text-[14px] font-semibold" style={{ color: scoreColor(st.score.total) }}>{st.score.total}</b> : <span className="text-[#C7C7CC]">–</span>}
                     </td>
-                    <td className="px-2 py-2 hidden xl:table-cell text-[11.5px] text-[#666] whitespace-nowrap">
-                      {c.ownerId ? userName.get(c.ownerId) ?? '—' : <span className="text-[#bbb]">Chưa giao</span>}
+                    <td className="px-2 py-2.5 hidden xl:table-cell text-[12.5px] text-[#6E6E73] whitespace-nowrap">
+                      {c.ownerId ? userName.get(c.ownerId) ?? '—' : <span className="text-[#AEAEB2]">Chưa giao</span>}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="pl-2 pr-4 py-2.5">
                       {!c.isArchived && (
-                        <button type="button" onClick={() => openLog(c.id)} title="Ghi tương tác" aria-label={`Ghi tương tác với ${c.fullName}`}
-                          className="w-9 h-9 md:w-7 md:h-7 rounded-lg border border-[#E8E7E2] bg-white text-[#666] hover:text-[#1D4ED8] hover:border-blue-200 flex items-center justify-center">
-                          <Plus size={14} />
+                        <button type="button" onClick={() => openLog(c.id)} title="Ghi tương tác" aria-label={`Ghi tương tác với ${c.fullName}`} className={ROUND_ADD}>
+                          <Plus size={15} strokeWidth={2.4} />
                         </button>
                       )}
                     </td>
@@ -666,10 +637,10 @@ export default function CskhMatrix() {
           </table>
         </div>
         {sorted.length > limit && (
-          <div className="border-t border-[#F0EFEB] px-3 py-2 text-center">
-            <button type="button" onClick={() => setLimit(limit + PAGE)} className="text-[12.5px] text-[#1D4ED8] font-medium min-h-[36px]">
+          <div className="border-t border-[#E5E5EA] px-3 py-1.5">
+            <MoreButton onClick={() => setLimit(limit + PAGE)}>
               Hiện thêm {Math.min(PAGE, sorted.length - limit)} người (còn {sorted.length - limit})
-            </button>
+            </MoreButton>
           </div>
         )}
       </div>
