@@ -544,6 +544,10 @@ export interface ContactUsage {
   deals: number;      // crm_deals.contact_id
   crmGifts: number;   // crm_gifts.recipient_contact_id
   clientGifts: number;// client_gifts.recipient_contact_id
+  /** Nhật ký CSKH (cskh_logs.contact_id, SET NULL) — giữ lại, chỉ mất liên kết người. */
+  cskhLogs: number;
+  /** Ngày đặc biệt / sự kiện (contact_special_dates, ON DELETE CASCADE) — BỊ XOÁ THEO. */
+  specialDates: number;
   /** Số công ty người này đang là liên hệ chính — xoá đi là các công ty đó trống chỗ. */
   primaryCount: number;
   total: number;
@@ -551,8 +555,9 @@ export interface ContactUsage {
 
 /**
  * Đếm những nơi đang trỏ tới liên hệ này, để cảnh báo TRƯỚC khi xoá.
- * Tất cả FK đều ON DELETE SET NULL ⇒ xoá không mất deal/quà tặng,
- * nhưng các bản ghi đó sẽ mất tên người liên hệ/người nhận.
+ * Deal / quà / nhật ký CSKH là FK ON DELETE SET NULL ⇒ không mất, chỉ mất tên
+ * người. Riêng ngày đặc biệt (contact_special_dates) là CASCADE ⇒ bị xoá theo.
+ * Bảng chưa có cột (chưa chạy migration CSKH) thì đếm ra 0.
  */
 export async function getContactUsage(contact: Contact): Promise<ContactUsage> {
   const count = async (table: string, column: string) => {
@@ -560,16 +565,18 @@ export async function getContactUsage(contact: Contact): Promise<ContactUsage> {
       .from(table).select('id', { count: 'exact', head: true }).eq(column, contact.id);
     return n || 0;
   };
-  const [pipeline, deals, crmGifts, clientGifts] = await Promise.all([
+  const [pipeline, deals, crmGifts, clientGifts, cskhLogs, specialDates] = await Promise.all([
     count('crm_pipeline', 'contact_id'),
     count('crm_deals', 'contact_id'),
     count('crm_gifts', 'recipient_contact_id'),
     count('client_gifts', 'recipient_contact_id'),
+    count('cskh_logs', 'contact_id'),
+    count('contact_special_dates', 'contact_id'),
   ]);
   return {
-    pipeline, deals, crmGifts, clientGifts,
+    pipeline, deals, crmGifts, clientGifts, cskhLogs, specialDates,
     primaryCount: primaryClientIdsOf(contact).length,
-    total: pipeline + deals + crmGifts + clientGifts,
+    total: pipeline + deals + crmGifts + clientGifts + cskhLogs + specialDates,
   };
 }
 

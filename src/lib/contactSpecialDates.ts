@@ -1,11 +1,16 @@
 // ============================================================================
 // Ngày đặc biệt của người liên hệ (contact_special_dates, migration 144) +
 // tính toán "sắp tới ngày nào" để nhắc quà tặng. Sinh nhật (contacts.birthday)
-// và mọi ngày đặc biệt đều được coi là LẶP LẠI HÀNG NĂM theo tháng/ngày —
-// không quan tâm năm đã lưu.
+// và mọi ngày đặc biệt đều LẶP LẠI HÀNG NĂM theo tháng/ngày — năm trong `date`
+// không mang nghĩa. Từ migration CSKH 171 có thêm sự kiện ÂM LỊCH (date = NULL,
+// dùng day/month) — form người liên hệ chỉ quản lý phần dương lịch, phần còn lại
+// ở CSKH → Sự kiện & Quà tặng.
 // ============================================================================
 import { supabase } from './supabase';
 import type { Contact } from './types';
+import { todayVN } from './cskh/dates';
+import { diffDays, nextOccurrenceIso } from './cskh/lunar';
+import { mapSpecialDateRow, type SpecialDateRow } from './cskh/mappers';
 
 export interface SpecialDate {
   id: string;
@@ -18,42 +23,95 @@ export interface SpecialDate {
 const isMissingTableError = (err: { message?: string; code?: string } | null) =>
   !!err && (err.code === '42P01' || /could not find the table|does not exist|schema cache/i.test(err.message || ''));
 
-export async function fetchSpecialDates(contactId: string): Promise<SpecialDate[]> {
-  const { data, error } = await supabase
-    .from('contact_special_dates')
-    .select('id, contact_id, label, date')
-    .eq('contact_id', contactId)
-    .order('date');
-  if (error || !data) return [];
-  return data as SpecialDate[];
+/** Cột chưa có (chưa chạy migration CSKH 171 — chưa có is_archived / day / month…). */
+const isMissingColumnError = (err: { message?: string; code?: string } | null) =>
+  !!err && (err.code === '42703' || /column .* does not exist/i.test(err.message || ''));
+
+/**
+ * Chạy truy vấn bỏ qua sự kiện đã xoá mềm (is_archived, migration 171); DB chưa có
+ * cột đó thì chạy lại không lọc — trước migration chưa có gì bị xoá mềm.
+ */
+async function withoutArchived<T>(
+  build: (q: any) => any, // eslint-disable-line @typescript-eslint/no-explicit-any -- builder Supabase
+): Promise<{ data: T[] | null; error: { message?: string; code?: string } | null }> {
+  const first = await build(supabase.from('contact_special_dates')).eq('is_archived', false);
+  if (!isMissingColumnError(first.error)) return first;
+  return build(supabase.from('contact_special_dates'));
 }
 
 /**
- * Ghi lại toàn bộ danh sách ngày đặc biệt của 1 người: xoá hết rồi chèn lại.
- * Số lượng mỗi người rất nhỏ (vài dòng) nên không cần diff phức tạp.
- * Trả về null nếu thành công, hoặc thông báo lỗi thân thiện nếu bảng chưa có.
+ * Ngày đặc biệt DƯƠNG LỊCH của 1 người (có cột `date`) — đúng phần form người
+ * liên hệ quản lý. Sự kiện âm lịch (migration 171, `date` = NULL) do trang
+ * Sự kiện & Quà tặng của CSKH quản lý nên không trả về ở đây.
  */
+export async function fetchSpecialDates(contactId: string): Promise<SpecialDate[]> {
+  const { data, error } = await withoutArchived<SpecialDate>(q => q
+    .select('id, contact_id, label, date')
+    .eq('contact_id', contactId)
+    .not('date', 'is', null)
+    .order('date'));
+  if (error || !data) return [];
+  return data;
+}
+
 const MIGRATION_144_MSG = 'Chưa lưu được ngày đặc biệt: cần chạy migration 144 trên Supabase trước.';
 
+/**
+ * Lưu danh sách ngày đặc biệt dương lịch của 1 người theo TỪNG DÒNG: dòng bị bỏ
+ * khỏi danh sách thì xoá, dòng đổi tên/ngày thì sửa, dòng mới thì thêm.
+ *
+ * Trước đây hàm này xoá hết rồi chèn lại — từ khi CSKH thêm cột cho sự kiện
+ * (loại, người thân, nhắc trước N ngày, âm lịch… — migration 171), cách đó sẽ
+ * làm mất các thông tin ấy mỗi lần bấm Lưu ở form người liên hệ. Giờ chỉ đụng
+ * tới dòng dương lịch form này đang hiển thị; sự kiện âm lịch giữ nguyên.
+ * Trả về null nếu thành công, hoặc thông báo lỗi thân thiện.
+ */
 export async function saveSpecialDates(
   contactId: string,
-  items: { label: string; date: string }[]
+  items: { id?: string; label: string; date: string }[]
 ): Promise<string | null> {
   const clean = items.filter(i => i.label.trim() && i.date);
-  const { error: delErr } = await supabase.from('contact_special_dates').delete().eq('contact_id', contactId);
-  if (delErr) {
-    if (!isMissingTableError(delErr)) return delErr.message;
+  // Sự kiện đã xoá mềm không hiện ở form → cũng không được đụng tới ở đây
+  const { data: existing, error: readErr } = await withoutArchived<{ id: string; label: string; date: string }>(q => q
+    .select('id, label, date')
+    .eq('contact_id', contactId)
+    .not('date', 'is', null));
+  if (readErr) {
+    if (!isMissingTableError(readErr)) return readErr.message || 'Lỗi không rõ';
     // Bảng chưa tồn tại: nếu người dùng KHÔNG có gì cần lưu (chỉ đang xem) thì
     // im lặng bỏ qua là hợp lý. Nhưng nếu họ vừa nhập ngày đặc biệt, phải báo rõ
-    // — trước đây bước xoá thất bại âm thầm khiến bước chèn không bao giờ chạy,
-    // người dùng tưởng đã lưu mà thực ra chưa có gì được ghi.
+    // — người dùng tưởng đã lưu mà thực ra chưa có gì được ghi.
     return clean.length > 0 ? MIGRATION_144_MSG : null;
   }
-  if (clean.length === 0) return null;
-  const { error: insErr } = await supabase
-    .from('contact_special_dates')
-    .insert(clean.map(i => ({ contact_id: contactId, label: i.label.trim(), date: i.date })));
-  if (insErr) return isMissingTableError(insErr) ? MIGRATION_144_MSG : insErr.message;
+
+  const rows = existing || [];
+  const wanted = new Map(clean.filter(i => i.id).map(i => [i.id as string, i]));
+
+  const removed = rows.filter(r => !wanted.has(r.id)).map(r => r.id);
+  if (removed.length) {
+    const { error } = await supabase.from('contact_special_dates').delete().in('id', removed);
+    if (error) return error.message;
+  }
+
+  for (const r of rows) {
+    const it = wanted.get(r.id);
+    if (!it || (it.label.trim() === r.label && it.date === r.date)) continue;
+    const { error } = await supabase
+      .from('contact_special_dates')
+      .update({ label: it.label.trim(), date: it.date })
+      .eq('id', r.id);
+    if (error) return error.message;
+  }
+
+  // Dòng chưa có id, hoặc id không còn trong DB (đã bị xoá ở nơi khác) → thêm mới
+  const known = new Set(rows.map(r => r.id));
+  const added = clean.filter(i => !i.id || !known.has(i.id));
+  if (added.length) {
+    const { error } = await supabase
+      .from('contact_special_dates')
+      .insert(added.map(i => ({ contact_id: contactId, label: i.label.trim(), date: i.date })));
+    if (error) return isMissingTableError(error) ? MIGRATION_144_MSG : error.message;
+  }
   return null;
 }
 
@@ -69,6 +127,8 @@ export interface UpcomingEvent {
   monthDay: string;
   daysUntil: number;
   isToday: boolean;
+  /** Sự kiện âm lịch (monthDay khi đó là ngày dương của lần tới). */
+  isLunar?: boolean;
 }
 
 /** Số ngày từ hôm nay tới lần lặp lại gần nhất (0 = hôm nay, tính theo giờ VN). */
@@ -87,11 +147,61 @@ function daysUntilNextOccurrence(dateStr: string, today: Date): number {
   return Math.round((next.getTime() - t0.getTime()) / 86400000);
 }
 
+type ContactLite = Pick<Contact, 'name' | 'avatar_url' | 'role' | 'is_active'> & { clients?: { name: string } | null };
+type SpecialDateWithContact = SpecialDateRow & { contacts: ContactLite | null };
+
 /**
- * Lấy các ngày đặc biệt (sinh nhật + ngày khác) rơi trong `withinDays` ngày tới,
- * tính cả hôm nay. Chỉ xét người liên hệ đang hoạt động.
+ * Các ngày đặc biệt (sinh nhật + ngày khác) rơi trong `withinDays` ngày tới, tính cả
+ * hôm nay (giờ Việt Nam) — dùng cho popup nhắc khi mở app.
+ *
+ * Từ migration CSKH 169/171 (chốt 19/10/2026): chỉ người ĐANG CHĂM SÓC (đang phụ
+ * trách + đã chọn hạng), tính cả sự kiện ÂM LỊCH và sự kiện của người thân, bỏ sự
+ * kiện đã xoá. DB chưa chạy migration thì giữ cách cũ (mọi người đang phụ trách,
+ * chỉ dương lịch).
  */
-export async function fetchUpcomingContactEvents(withinDays = 7, today = new Date()): Promise<UpcomingEvent[]> {
+export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN()): Promise<UpcomingEvent[]> {
+  const [cRes, sRes] = await Promise.all([
+    supabase.from('contacts')
+      .select('id, name, avatar_url, role, birthday, is_active, tier, clients!contacts_client_id_fkey(name)')
+      .eq('is_active', true)
+      .neq('tier', 'unclassified')
+      .not('birthday', 'is', null),
+    supabase.from('contact_special_dates')
+      .select('*, contacts(name, avatar_url, role, is_active, tier, clients!contacts_client_id_fkey(name))')
+      .eq('is_archived', false),
+  ]);
+  if (isMissingColumnError(cRes.error) || isMissingColumnError(sRes.error)) return legacyUpcoming(withinDays);
+
+  const events: UpcomingEvent[] = [];
+  const push = (contactId: string, c: ContactLite, label: string, nextIso: string, isLunar: boolean) => {
+    const daysUntil = diffDays(today, nextIso);
+    if (daysUntil < 0 || daysUntil > withinDays) return;
+    events.push({
+      contactId, contactName: c.name, avatarUrl: c.avatar_url || null, role: c.role || null,
+      clientName: c.clients?.name || null, label, monthDay: nextIso, daysUntil, isToday: daysUntil === 0, isLunar,
+    });
+  };
+
+  for (const c of (cRes.data || []) as unknown as (ContactLite & { id: string; birthday: string | null })[]) {
+    if (!c.birthday) continue;
+    push(c.id, c, 'Sinh nhật', nextOccurrenceIso(Number(c.birthday.slice(8, 10)), Number(c.birthday.slice(5, 7)), false, today), false);
+  }
+
+  for (const row of (sRes.data || []) as unknown as SpecialDateWithContact[]) {
+    const contact = row.contacts as (ContactLite & { tier?: string }) | null;
+    if (!contact || contact.is_active === false || contact.tier === 'unclassified') continue;
+    const o = mapSpecialDateRow(row);
+    if (!o) continue;
+    const who = o.relatedPerson && !o.title.toLowerCase().includes(o.relatedPerson.toLowerCase()) ? ` của ${o.relatedPerson}` : '';
+    push(o.contactId, contact, `${o.title}${who}${o.isLunar ? ' (âm lịch)' : ''}`, nextOccurrenceIso(o.day, o.month, o.isLunar, today), o.isLunar);
+  }
+
+  return events.sort((a, b) => a.daysUntil - b.daysUntil || a.contactName.localeCompare(b.contactName, 'vi'));
+}
+
+/** Cách tính trước migration CSKH: mọi người đang phụ trách, chỉ dương lịch. */
+async function legacyUpcoming(withinDays: number): Promise<UpcomingEvent[]> {
+  const now = new Date();
   const [{ data: contacts }, { data: specials }] = await Promise.all([
     supabase.from('contacts')
       .select('id, name, avatar_url, role, birthday, is_active, clients!contacts_client_id_fkey(name)')
@@ -105,7 +215,7 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = new Dat
 
   for (const c of (contacts || []) as unknown as (Contact & { clients?: { name: string } | null })[]) {
     if (!c.birthday) continue;
-    const daysUntil = daysUntilNextOccurrence(c.birthday, today);
+    const daysUntil = daysUntilNextOccurrence(c.birthday, now);
     if (daysUntil <= withinDays) {
       events.push({
         contactId: c.id, contactName: c.name, avatarUrl: c.avatar_url || null, role: c.role || null,
@@ -115,10 +225,10 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = new Dat
     }
   }
 
-  for (const s of (specials || []) as any[]) {
+  for (const s of (specials || []) as unknown as SpecialDateWithContact[]) {
     const contact = s.contacts;
     if (!contact || contact.is_active === false || !s.date) continue;
-    const daysUntil = daysUntilNextOccurrence(s.date, today);
+    const daysUntil = daysUntilNextOccurrence(s.date, now);
     if (daysUntil <= withinDays) {
       events.push({
         contactId: s.contact_id, contactName: contact.name, avatarUrl: contact.avatar_url || null,
