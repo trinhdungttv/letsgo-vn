@@ -9,7 +9,7 @@ import { KCNVisitHistory } from './KCNVisitHistory'
 
 // Màu theo số ngày chưa ghé thăm
 function visitColor(days: number | null): { row: string; badge: string; label: string } {
-  if (days === null)  return { row: 'bg-[#fafafa]',                badge: 'bg-gray-100 text-gray-500 border-gray-200',   label: 'Chưa có KH' }
+  if (days === null)  return { row: 'bg-[#F5F5F7]',                badge: 'bg-gray-100 text-gray-500 border-gray-200',   label: 'Chưa có KH' }
   if (days >= 21)     return { row: 'bg-red-50/60',               badge: 'bg-red-50 text-red-700 border-red-200',        label: `${days} ngày` }
   if (days >= 10)     return { row: 'bg-yellow-50/60',            badge: 'bg-yellow-50 text-yellow-700 border-yellow-200', label: `${days} ngày` }
   return               { row: 'bg-green-50/40',                   badge: 'bg-green-50 text-green-700 border-green-200',  label: `${days} ngày` }
@@ -71,22 +71,22 @@ export function KCNGridSection({ toast }: Props) {
     <div className="flex flex-col">
 
       {/* Summary bar */}
-      <div className="grid grid-cols-3 border-b border-[#E8E7E2]">
+      <div className="grid grid-cols-3 border-b border-black/[0.08]">
         {[
-          { label: 'KCN có KH',      value: zones.filter(z => z.client_count > 0).length, sub: `/ ${zones.length} KCN`, color: 'text-blue-600' },
-          { label: 'KCN chưa khai thác', value: uncovered,    sub: 'cơ hội mở rộng', color: 'text-[#333]' },
+          { label: 'KCN có KH',      value: zones.filter(z => z.client_count > 0).length, sub: `/ ${zones.length} KCN`, color: 'text-[#0066CC]' },
+          { label: 'KCN chưa khai thác', value: uncovered,    sub: 'cơ hội mở rộng', color: 'text-[#1D1D1F]' },
           { label: 'KCN cần ghé thăm',   value: redZones,     sub: '>21 ngày không ghé', color: redZones > 0 ? 'text-red-600' : 'text-green-600' },
         ].map((s, i) => (
-          <div key={i} className="flex flex-col items-center py-2.5 border-r border-[#E8E7E2] last:border-r-0">
-            <span className="text-[10px] text-[#999] mb-0.5">{s.label}</span>
+          <div key={i} className="flex flex-col items-center py-2.5 border-r border-black/[0.08] last:border-r-0">
+            <span className="text-[10px] text-[#86868B] mb-0.5">{s.label}</span>
             <span className={`text-[18px] font-medium ${s.color}`}>{s.value}</span>
-            <span className="text-[10px] text-[#bbb]">{s.sub}</span>
+            <span className="text-[10px] text-[#AEAEB2]">{s.sub}</span>
           </div>
         ))}
       </div>
 
       {/* Filter + Sort */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E8E7E2]">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-black/[0.08]">
         {/* Province filter */}
         <div className="flex gap-1">
           {provinces.map(p => (
@@ -95,8 +95,8 @@ export function KCNGridSection({ toast }: Props) {
               onClick={() => setFilterProvince(p)}
               className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
                 filterProvince === p
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-200'
+                  ? 'bg-[#0071E3] text-white border-blue-600'
+                  : 'bg-white text-[#6E6E73] border-black/[0.08] hover:border-blue-200'
               }`}
             >
               {p === 'all' ? 'Tất cả' : p}
@@ -105,9 +105,9 @@ export function KCNGridSection({ toast }: Props) {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[10px] text-[#999]">Sắp xếp:</span>
+          <span className="text-[10px] text-[#86868B]">Sắp xếp:</span>
           <select
-            className="text-[11px] border border-[#E8E7E2] rounded px-2 py-1 bg-white text-[#555] focus:outline-none"
+            className="text-[11px] border border-black/[0.08] rounded px-2 py-1 bg-white text-[#3A3A3C] focus:outline-none"
             value={sortBy}
             onChange={e => setSortBy(e.target.value as typeof sortBy)}
           >
@@ -119,7 +119,7 @@ export function KCNGridSection({ toast }: Props) {
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 px-3 py-1.5 border-b border-[#E8E7E2] bg-[#fafafa]">
+      <div className="flex items-center gap-4 px-3 py-1.5 border-b border-black/[0.08] bg-[#F5F5F7]">
         {[
           { color: 'bg-red-400',    label: 'Cần ghé ngay (>21 ngày)' },
           { color: 'bg-yellow-400', label: 'Theo dõi (10–21 ngày)' },
@@ -128,25 +128,25 @@ export function KCNGridSection({ toast }: Props) {
         ].map(l => (
           <div key={l.label} className="flex items-center gap-1">
             <div className={`w-2 h-2 rounded-full ${l.color}`} />
-            <span className="text-[10px] text-[#888]">{l.label}</span>
+            <span className="text-[10px] text-[#86868B]">{l.label}</span>
           </div>
         ))}
       </div>
 
       {/* KCN Table */}
       {loading
-        ? <div className="text-[11px] text-[#999] p-4 text-center">Đang tải...</div>
+        ? <div className="text-[11px] text-[#86868B] p-4 text-center">Đang tải...</div>
         : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[#E8E7E2] bg-[#fafafa]">
+                <tr className="border-b border-black/[0.08] bg-[#F5F5F7]">
                   {['KCN', 'Tỉnh', 'KH active', 'Tiềm năng', 'Lần ghé gần nhất', 'Lịch khảo sát', 'Trạng thái', ''].map(h => (
-                    <th key={h} className="text-left text-[10px] font-medium text-[#999] uppercase tracking-wide px-3 py-2">{h}</th>
+                    <th key={h} className="text-left text-[10px] font-medium text-[#86868B] uppercase tracking-wide px-3 py-2">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F0EFEB]">
+              <tbody className="divide-y divide-black/[0.06]">
                 {sorted.map(zone => {
                   const vc = visitColor(zone.days_since_visit)
                   const isExpanded = expandedZoneId === zone.id
@@ -155,13 +155,13 @@ export function KCNGridSection({ toast }: Props) {
                     <tr className={`${vc.row} hover:brightness-95 transition-all cursor-pointer`} onClick={() => setExpandedZoneId(isExpanded ? null : zone.id)}>
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-1.5">
-                          <MapPin size={11} className="text-[#bbb] shrink-0" />
-                          <span className="text-[12px] font-medium text-[#333]">{zone.name}</span>
+                          <MapPin size={11} className="text-[#AEAEB2] shrink-0" />
+                          <span className="text-[12px] font-medium text-[#1D1D1F]">{zone.name}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-[11px] text-[#888]">{zone.province}</td>
+                      <td className="px-3 py-2.5 text-[11px] text-[#86868B]">{zone.province}</td>
                       <td className="px-3 py-2.5">
-                        <span className={`text-[13px] font-medium ${zone.client_count > 0 ? 'text-[#333]' : 'text-[#ccc]'}`}>
+                        <span className={`text-[13px] font-medium ${zone.client_count > 0 ? 'text-[#1D1D1F]' : 'text-[#C7C7CC]'}`}>
                           {zone.client_count || '—'}
                         </span>
                       </td>
@@ -170,21 +170,21 @@ export function KCNGridSection({ toast }: Props) {
                       </td>
                       <td className="px-3 py-2.5">
                         {zone.last_visit_date
-                          ? <span className="text-[11px] text-[#666]">
+                          ? <span className="text-[11px] text-[#6E6E73]">
                               {new Date(zone.last_visit_date).toLocaleDateString('vi-VN')}
                             </span>
-                          : <span className="text-[11px] text-[#ccc]">Chưa ghé thăm</span>
+                          : <span className="text-[11px] text-[#C7C7CC]">Chưa ghé thăm</span>
                         }
                       </td>
                       <td className="px-3 py-2.5">
                         {zone.next_visit_date
-                          ? <span className="text-[11px] text-blue-600 inline-flex items-center gap-1"><CalendarClock size={10} /> {formatDate(zone.next_visit_date)}</span>
-                          : <span className="text-[11px] text-[#ccc]">—</span>
+                          ? <span className="text-[11px] text-[#0066CC] inline-flex items-center gap-1"><CalendarClock size={10} /> {formatDate(zone.next_visit_date)}</span>
+                          : <span className="text-[11px] text-[#C7C7CC]">—</span>
                         }
                       </td>
                       <td className="px-3 py-2.5">
                         {zone.client_count === 0
-                          ? <span className="text-[11px] px-2 py-0.5 rounded-full border bg-blue-50 text-blue-600 border-blue-200">
+                          ? <span className="text-[11px] px-2 py-0.5 rounded-full border bg-blue-50 text-[#0066CC] border-blue-200">
                               <TrendingUp size={10} className="inline mr-0.5" />Cơ hội
                             </span>
                           : <span className={`text-[11px] px-2 py-0.5 rounded-full border ${vc.badge}`}>
@@ -192,13 +192,13 @@ export function KCNGridSection({ toast }: Props) {
                             </span>
                         }
                       </td>
-                      <td className="px-3 py-2.5 text-[#bbb]">
+                      <td className="px-3 py-2.5 text-[#AEAEB2]">
                         {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </td>
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={8} className="p-3 bg-[#fafafa]">
+                        <td colSpan={8} className="p-3 bg-[#F5F5F7]">
                           <KCNVisitHistory zoneId={zone.id} zoneName={zone.name} toast={toast} onChanged={load} />
                         </td>
                       </tr>
@@ -213,7 +213,7 @@ export function KCNGridSection({ toast }: Props) {
       }
 
       {isAdmin && (
-        <div className="border-t border-[#E8E7E2] px-3 py-2 text-[10px] text-[#bbb] flex items-center gap-1">
+        <div className="border-t border-black/[0.08] px-3 py-2 text-[10px] text-[#AEAEB2] flex items-center gap-1">
           <Settings size={11} />
           <span>
             Quản lý danh sách KCN:{' '}
