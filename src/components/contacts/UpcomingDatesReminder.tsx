@@ -2,7 +2,8 @@
 // UpcomingDatesReminder — nhắc sinh nhật & ngày đặc biệt sắp tới, tự mở khi
 // vào app. Mỗi ngày chỉ hiện 1 lần (theo user, lưu trong localStorage); nếu
 // còn ngày nào trong vòng 7 ngày tới thì hôm sau vẫn tự hiện lại, cho tới khi
-// hết hạn 7 ngày đó.
+// hết hạn 7 ngày đó. Từ CSKH (migration 169/171): chỉ người đang chăm sóc, tính
+// cả âm lịch + sự kiện của người thân (xem fetchUpcomingContactEvents).
 // ============================================================================
 import { useState, useEffect } from 'react';
 import { CalendarHeart, Gift, X } from 'lucide-react';
@@ -78,7 +79,13 @@ export default function UpcomingDatesReminder({ userId, forceOpenToken }: Props)
           ))}
         </ul>
 
-        <div className="px-5 py-3 border-t border-gray-200 flex justify-end">
+        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+          <button
+            onClick={() => { close(); window.location.hash = '#/crm-leads/events'; }}
+            className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-[13px] font-medium hover:bg-gray-50"
+          >
+            Mở Sự kiện &amp; Quà tặng
+          </button>
           <button onClick={close} className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:bg-blue-700">
             Đã xem
           </button>

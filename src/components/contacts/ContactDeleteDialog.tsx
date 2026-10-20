@@ -58,6 +58,7 @@ export default function ContactDeleteDialog({ contact, clients, onClose, onDone,
     { label: 'thương vụ (deal)', n: usage.deals },
     { label: 'quà tặng CRM', n: usage.crmGifts },
     { label: 'quà tặng khách hàng', n: usage.clientGifts },
+    { label: 'dòng nhật ký CSKH', n: usage.cskhLogs },
   ].filter(r => r.n > 0) : [];
 
   return (
@@ -107,6 +108,15 @@ export default function ContactDeleteDialog({ contact, clients, onClose, onDone,
                     <span>
                       Đây đang là <b>liên hệ chính</b> của {usage.primaryCount} công ty — xoá xong
                       {usage.primaryCount > 1 ? ' các công ty đó' : ' công ty đó'} sẽ không còn liên hệ chính.
+                    </span>
+                  </div>
+                )}
+                {usage.specialDates > 0 && (
+                  <div className="flex items-start gap-1.5 mt-2 text-[11.5px] text-red-800 bg-red-50 border border-red-200 rounded p-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      <b>{usage.specialDates} ngày đặc biệt / sự kiện</b> (sinh nhật người thân, ngày giỗ, kỷ niệm…) của
+                      người này <b>sẽ bị xoá theo</b>. Muốn giữ thì chọn "Đánh dấu đã nghỉ".
                     </span>
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import { ArrowLeft, Edit2, Check, X, RefreshCw, ArrowRightLeft, FileText, Trash2, Sparkles, Download } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
@@ -33,6 +33,9 @@ import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMon
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
 import { KpiTile, SectionCard, SubSection, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
 import MapLinkHint from '../components/MapLinkHint';
+
+// Khối "Sức khỏe CSKH" (module CSKH) — tải riêng khi mở tab Hồ sơ chăm sóc
+const ClientCareBlock = lazy(() => import('../modules/cskh/ClientCareBlock'));
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -92,9 +95,11 @@ interface ClientDetailProps {
   marketZones: MarketZone[];
   toast: (msg: string) => void;
   onOpenDeal?: (dealId: string) => void;
+  /** Toàn bộ khách hàng — khối Sức khỏe CSKH cần để gắn / hiển thị công ty của người liên hệ. */
+  clients?: Client[];
 }
 
-export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal }: ClientDetailProps) {
+export default function ClientDetail({ client, laborHistory, managerHistory, products, onBack, onClientUpdate, onLaborUpdate, onManagerHistoryAdd, onMarketZoneAdd, marketZones, toast, onOpenDeal, clients }: ClientDetailProps) {
   const { user } = useAuth();
   const { managers, add: addManager } = useManagers();
   const [newManagerForm, setNewManagerForm] = useState<{ name: string; phone: string; email: string } | null>(null);
@@ -665,6 +670,11 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
+        {activeTab === 'profile' && (
+          <Suspense fallback={null}>
+            <ClientCareBlock client={client} clients={clients ?? [client]} toast={toast} />
+          </Suspense>
+        )}
         {activeTab === 'profile' ? (
           profileLoading || !profileEntry ? (
             <div className="text-[12px] text-[#999] text-center py-8">Đang tải hồ sơ...</div>

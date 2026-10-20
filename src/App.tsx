@@ -360,6 +360,7 @@ function AppInner() {
             marketZones={marketZones}
             toast={toast}
             onOpenDeal={handleSelectDeal}
+            clients={clients}
           />
         )}
         {page === 'branches' && (
@@ -399,7 +400,7 @@ function AppInner() {
           />
         )}
         {page === 'crm-leads' && (
-          <CRMLeads clients={clients} products={products} onSelectClient={handleSelectClient} toast={toast} />
+          <CRMLeads clients={clients} products={products} onSelectClient={handleSelectClient} onNavigate={navigate} toast={toast} />
         )}
         {page === 'crm-prods' && (
           <CRMProds
