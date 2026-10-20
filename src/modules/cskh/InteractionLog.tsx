@@ -4,28 +4,38 @@
 // Mới nhất trước: loại, kênh, ai chủ động, nội dung, việc tiếp theo + hạn (chip
 // "Trễ hạn" đỏ), Đã xong / Đang chờ. Lọc theo người liên hệ, "Có việc đang mở",
 // chi nhánh, người ghi, loại. Tick xong tại dòng (đóng luôn việc trong Workspace);
+// sửa dòng (nội dung, ngày, hình thức, việc đã hứa — việc trong Workspace đổi theo);
 // xoá có xác nhận (xoá mềm). Dòng cũ chưa gắn người vẫn hiện đủ theo tên công ty /
 // người liên hệ dạng chữ.
 // ============================================================================
 import { useCallback, useMemo, useState } from 'react';
-import { Check, NotebookText, PenLine, Search, Trash2 } from 'lucide-react';
+import { Check, NotebookText, PenLine, Pencil, Trash2 } from 'lucide-react';
+import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { branchOf } from '../../lib/branchRef';
-import { formatDateVN, relativeDayLabel, todayVN } from '../../lib/cskh/dates';
+import { formatDateVN, longDateVN, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import { diffDays } from '../../lib/cskh/lunar';
 import { matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import type { CskhInteraction, InteractionType } from '../../lib/cskh/types';
 import { CHANNEL_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
-import { archiveInteraction, setFollowUpDone } from './data/api';
+import { archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
 import { useCskh } from './context';
-import { INTERACTION_ICON } from './ui';
+import {
+  INTERACTION_ICON, PANEL, PILL_PRIMARY, ROUND_ICON,
+} from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
+import { LogInteractionModal } from './components/LogInteractionModal';
+import { MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
 
 const PAGE = 50;
-const selectCls = 'text-[12px] h-9 md:h-8 px-2 border border-gray-300 rounded-lg bg-white outline-none focus:border-blue-500 max-w-[220px]';
+
+/** Màu ô icon theo hình thức tương tác (kiểu ứng dụng iOS). */
+const TYPE_TILE: Readonly<Record<InteractionType, keyof typeof ICON_TILE>> = {
+  call: 'green', message: 'blue', email: 'indigo', meet: 'orange', coffee: 'orange', gift: 'red', other: 'gray',
+};
 
 export default function CskhInteractionLog() {
   const { data, loading, clients, toast, openProfile, openLog } = useCskh();
@@ -40,6 +50,7 @@ export default function CskhInteractionLog() {
   const [type, setType] = useState<'all' | InteractionType>('all');
   const [limit, setLimit] = useState(PAGE);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<CskhInteraction | null>(null);
 
   const contactById = useMemo(() => new Map((data?.contacts ?? []).map(c => [c.id, c])), [data]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
@@ -120,126 +131,179 @@ export default function CskhInteractionLog() {
     }
   };
 
-  if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[12.5px] text-[#999]">Chưa tải được dữ liệu CSKH.</p>;
+  if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
   const shown = filtered.slice(0, limit);
+  // Gom theo ngày (dữ liệu đã xếp mới nhất trước) → tiêu đề "Hôm nay / Hôm qua / dd/mm/yyyy"
+  const days: { date: string; items: CskhInteraction[] }[] = [];
+  for (const i of shown) {
+    const last = days[days.length - 1];
+    if (last && last.date === i.occurredAt) last.items.push(i);
+    else days.push({ date: i.occurredAt, items: [i] });
+  }
 
   return (
-    <div className="space-y-3 md:space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[19px] md:text-[20px] font-bold text-[#111] leading-tight">Nhật ký CSKH</h1>
-          <p className="text-[12.5px] text-[#666] mt-0.5">{logs.length} lần tương tác · {openCount} việc đã hứa đang mở</p>
-        </div>
-        <button type="button" onClick={() => openLog()}
-          className="w-full md:w-auto inline-flex items-center justify-center gap-1.5 h-10 md:h-8 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-semibold">
-          <PenLine size={14} /> Ghi tương tác
-        </button>
-      </header>
+    <div className="space-y-4 md:space-y-5">
+      <PageTitle
+        eyebrow="Lịch sử liên hệ"
+        title="Nhật ký CSKH"
+        subtitle={<>{logs.length} lần tương tác · {openCount} việc đã hứa đang mở</>}
+        actions={(
+          <button type="button" onClick={() => openLog()} className={PILL_PRIMARY}>
+            <PenLine size={15} strokeWidth={2.2} /> Ghi tương tác
+          </button>
+        )}
+      />
 
       {!data.migrationReady && <MigrationBanner />}
 
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-3 flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input value={search} onChange={e => { setSearch(e.target.value); setLimit(PAGE); }} placeholder="Tìm người, công ty, nội dung… (gõ không dấu được)"
-            className="w-full pl-8 pr-3 h-10 md:h-8 rounded-lg border border-gray-300 text-[13px] outline-none focus:border-blue-500" />
-        </div>
-        <select value={person} onChange={e => { setPerson(e.target.value); setLimit(PAGE); }} className={selectCls} aria-label="Lọc theo người liên hệ">
+      <div className={`${PANEL} p-3 md:p-4 flex flex-wrap items-center gap-2`}>
+        <SearchField value={search} onChange={v => { setSearch(v); setLimit(PAGE); }}
+          placeholder="Tìm người, công ty, nội dung… (gõ không dấu được)" className="flex-1 min-w-[220px] max-w-md basis-full md:basis-auto" />
+        <PillSelect value={person} active={person !== 'all'} label="Lọc theo người liên hệ" onChange={v => { setPerson(v); setLimit(PAGE); }}>
           <option value="all">Mọi người liên hệ</option>
           {options.people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <select value={type} onChange={e => setType(e.target.value as typeof type)} className={selectCls} aria-label="Lọc theo loại">
+        </PillSelect>
+        <PillSelect value={type} active={type !== 'all'} label="Lọc theo loại" onChange={v => setType(v as typeof type)}>
           <option value="all">Mọi loại</option>
           {INTERACTION_TYPES.map(t => <option key={t} value={t}>{INTERACTION_LABEL[t]}</option>)}
-        </select>
+        </PillSelect>
         {options.branches.length > 0 && (
-          <select value={branch} onChange={e => setBranch(e.target.value)} className={selectCls} aria-label="Lọc theo chi nhánh">
+          <PillSelect value={branch} active={branch !== 'all'} label="Lọc theo chi nhánh" onChange={setBranch}>
             <option value="all">Mọi chi nhánh</option>
             {options.branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          </PillSelect>
         )}
         {options.recorders.length > 0 && (
-          <select value={recorder} onChange={e => setRecorder(e.target.value)} className={selectCls} aria-label="Lọc theo người ghi">
+          <PillSelect value={recorder} active={recorder !== 'all'} label="Lọc theo người ghi" onChange={setRecorder}>
             <option value="all">Mọi người ghi</option>
             {options.recorders.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
+          </PillSelect>
         )}
-        <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[#444] cursor-pointer min-h-[36px] md:min-h-0">
-          <input type="checkbox" checked={openOnly} onChange={e => setOpenOnly(e.target.checked)} className="w-4 h-4 accent-blue-600" />
-          Có việc đang mở
-        </label>
+        <Switch checked={openOnly} onChange={setOpenOnly} label="Có việc đang mở" />
         {filtersOn && (
           <button type="button" onClick={() => { setSearch(''); setPerson('all'); setOpenOnly(false); setRecorder('all'); setType('all'); setBranch('all'); }}
-            className="text-[12px] text-[#888] hover:text-[#333] min-h-[36px] md:min-h-0">Xoá lọc</button>
+            className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 px-1 min-h-[36px] md:min-h-0">Xoá lọc</button>
         )}
-        <span className="text-[11.5px] text-[#aaa] ml-auto">{filtered.length} dòng</span>
+        <span className="text-[12px] text-[#86868B] ml-auto tabular-nums">{filtered.length} dòng</span>
       </div>
 
-      <div className="bg-white border border-[#E8E7E2] rounded-[10px] divide-y divide-[#F0EFEB]">
-        {shown.length === 0 && (
-          <p className="py-10 text-center text-[12.5px] text-[#aaa] flex flex-col items-center gap-1.5">
-            <NotebookText size={18} /> {logs.length ? 'Không có dòng nào khớp bộ lọc.' : 'Chưa có nhật ký nào — bấm "Ghi tương tác".'}
-          </p>
-        )}
-        {shown.map(i => {
-          const w = whoOf(i);
-          const Icon = INTERACTION_ICON[i.type];
-          const hasFollowUp = i.followUpAction.trim() !== '';
-          const late = hasFollowUp && !i.followUpDone && i.followUpDue ? diffDays(i.followUpDue, today) : null;
-          return (
-            <div key={i.id} className="flex gap-3 px-3.5 md:px-4 py-3">
-              <span className="w-9 h-9 shrink-0 rounded-full bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center mt-0.5"><Icon size={15} /></span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                  {i.contactId && contactById.has(i.contactId) ? (
-                    <button type="button" onClick={() => openProfile(i.contactId as string)} className="text-[13px] font-semibold text-[#111] hover:text-[#1D4ED8]">{w.name}</button>
-                  ) : <span className="text-[13px] font-semibold text-[#111]">{w.name}</span>}
-                  {w.company && <span className="text-[11.5px] text-[#999]">· {w.company}</span>}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px] text-[#888]">
-                  <span className="font-medium text-[#555]">{INTERACTION_LABEL[i.type]}</span>
-                  {i.channel && <span>· {CHANNEL_LABEL[i.channel]}</span>}
-                  {i.initiatedBy === 'them' && <span className="px-1.5 rounded-full bg-violet-50 text-violet-700">Họ chủ động</span>}
-                  <span>· {formatDateVN(i.occurredAt)} ({relativeDayLabel(i.occurredAt, today).toLowerCase()})</span>
-                  {i.createdByName && <span>· ghi bởi {i.createdByName}</span>}
-                </div>
-                {i.content && <p className="text-[12.5px] text-[#333] mt-1 whitespace-pre-line break-words">{i.content}</p>}
-                {hasFollowUp && (
-                  <div className={`mt-1.5 flex items-start gap-2 rounded-lg px-2.5 py-1.5 ${i.followUpDone ? 'bg-[#F7F6F2]' : 'bg-amber-50 border border-amber-200'}`}>
-                    <button type="button" disabled={busyId === i.id} onClick={() => toggleDone(i)}
-                      aria-label={i.followUpDone ? `Mở lại: ${i.followUpAction}` : `Đánh dấu xong: ${i.followUpAction}`}
-                      className={`w-7 h-7 md:w-5 md:h-5 shrink-0 rounded-full border-2 flex items-center justify-center disabled:opacity-50 ${i.followUpDone ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-[#D1D5DB] text-transparent hover:border-emerald-500 hover:text-emerald-600'}`}>
-                      <Check size={12} strokeWidth={3} />
-                    </button>
-                    <span className="min-w-0 flex-1 text-[12.5px] leading-snug">
-                      <span className={i.followUpDone ? 'text-[#999] line-through' : 'text-[#333]'}>{i.followUpAction}</span>
-                      <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
-                        {i.followUpDone ? <span className="px-1.5 rounded-full text-[10.5px] font-medium bg-emerald-50 text-emerald-700">Đã xong</span>
-                          : <span className="px-1.5 rounded-full text-[10.5px] font-medium bg-amber-100 text-amber-800">Đang chờ</span>}
-                        {late !== null && late > 0 && <span className="px-1.5 rounded-full text-[10.5px] font-semibold bg-red-100 text-red-700">Trễ hạn {late} ngày</span>}
-                        {late === 0 && <span className="px-1.5 rounded-full text-[10.5px] font-semibold bg-amber-100 text-amber-800">Hạn hôm nay</span>}
-                        {i.followUpDue && (late === null || late < 0) && <span className="text-[10.5px] text-[#999]">hạn {formatDateVN(i.followUpDue)}</span>}
-                        {i.followUpTaskId && <span className="text-[10.5px] text-[#999]">· có việc trong Workspace</span>}
-                      </span>
-                    </span>
+      {shown.length === 0 && (
+        <div className={PANEL}>
+          <Quiet icon={<NotebookText size={18} />}>{logs.length ? 'Không có dòng nào khớp bộ lọc.' : 'Chưa có nhật ký nào — bấm "Ghi tương tác".'}</Quiet>
+        </div>
+      )}
+
+      {days.map(day => (
+        <section key={day.date} aria-label={formatDateVN(day.date)}>
+          <h2 className="px-1 mb-2 flex items-baseline gap-2">
+            <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#1D1D1F]">{dayHeading(day.date, today)}</span>
+            <span className="text-[12px] text-[#86868B]">{formatDateVN(day.date)} · {day.items.length} lần</span>
+          </h2>
+          <div className={`${PANEL} px-4 md:px-5 py-1`}>
+            {day.items.map((i, idx) => {
+              const w = whoOf(i);
+              const Icon = INTERACTION_ICON[i.type];
+              const hasFollowUp = i.followUpAction.trim() !== '';
+              const late = hasFollowUp && !i.followUpDone && i.followUpDue ? diffDays(i.followUpDue, today) : null;
+              return (
+                <Row key={i.id} first={idx === 0} inset={48} align="start">
+                  <span className={`w-9 h-9 shrink-0 rounded-[10px] ${ICON_TILE[TYPE_TILE[i.type]]} text-white flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.12)]`}>
+                    <Icon size={17} strokeWidth={2.1} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                      {i.contactId && contactById.has(i.contactId) ? (
+                        <button type="button" onClick={() => openProfile(i.contactId as string)} className="text-[15px] font-semibold text-[#1D1D1F] hover:text-[#0066CC] transition-colors">{w.name}</button>
+                      ) : <span className="text-[15px] font-semibold text-[#1D1D1F]">{w.name}</span>}
+                      {w.company && <span className="text-[12.5px] text-[#86868B]">{w.company}</span>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5 text-[12px] text-[#86868B]">
+                      <span className="font-medium text-[#3A3A3C]">{INTERACTION_LABEL[i.type]}</span>
+                      {i.channel && <span>· {CHANNEL_LABEL[i.channel]}</span>}
+                      {i.initiatedBy === 'them' && <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.purple}`}>Họ chủ động</span>}
+                      {i.createdByName && <span>· ghi bởi {i.createdByName}</span>}
+                    </div>
+                    {i.content && <p className="text-[14px] text-[#1D1D1F] leading-relaxed mt-1.5 whitespace-pre-line break-words">{i.content}</p>}
+                    {hasFollowUp && (
+                      <div className={`mt-2 flex items-start gap-2.5 rounded-[12px] px-3 py-2 ${i.followUpDone ? 'bg-[#F5F5F7]' : late !== null && late > 0 ? 'bg-[#FF3B30]/[0.07]' : 'bg-[#FF9500]/[0.09]'}`}>
+                        <button type="button" disabled={busyId === i.id} onClick={() => toggleDone(i)}
+                          aria-label={i.followUpDone ? `Mở lại: ${i.followUpAction}` : `Đánh dấu xong: ${i.followUpAction}`}
+                          title={i.followUpDone ? 'Mở lại' : 'Đánh dấu xong'}
+                          className="group w-8 h-8 md:w-6 md:h-6 -m-1 md:m-0 shrink-0 flex items-center justify-center disabled:opacity-50">
+                          <span className={`w-[22px] h-[22px] rounded-full flex items-center justify-center transition ${i.followUpDone
+                            ? 'bg-[#34C759] text-white'
+                            : 'border-[1.5px] border-[#C7C7CC] bg-white text-transparent group-hover:border-[#34C759] group-hover:text-[#34C759]'}`}>
+                            <Check size={12} strokeWidth={3} />
+                          </span>
+                        </button>
+                        <span className="min-w-0 flex-1 text-[13.5px] leading-snug pt-0.5">
+                          <span className={i.followUpDone ? 'text-[#86868B] line-through' : 'text-[#1D1D1F] font-medium'}>{i.followUpAction}</span>
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {i.followUpDone ? <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.green}`}>Đã xong</span>
+                              : <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.orange}`}>Đang chờ</span>}
+                            {late !== null && late > 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.red}`}>Trễ hạn {late} ngày</span>}
+                            {late === 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.orange}`}>Hạn hôm nay</span>}
+                            {i.followUpDue && (late === null || late < 0) && <span className="text-[11.5px] text-[#86868B]">hạn {formatDateVN(i.followUpDue)}</span>}
+                            {i.followUpTaskId && <span className="text-[11.5px] text-[#86868B]">· có việc trong Workspace</span>}
+                          </span>
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <button type="button" disabled={busyId === i.id} onClick={() => remove(i)} title="Xoá dòng nhật ký" aria-label="Xoá dòng nhật ký"
-                className="shrink-0 w-9 h-9 md:w-7 md:h-7 rounded-lg text-[#bbb] hover:text-red-600 hover:bg-red-50 flex items-center justify-center disabled:opacity-50">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          );
-        })}
-        {filtered.length > shown.length && (
-          <div className="px-3 py-2 text-center">
-            <button type="button" onClick={() => setLimit(limit + PAGE)} className="text-[12.5px] text-[#1D4ED8] font-medium min-h-[36px]">
-              Hiện thêm {Math.min(PAGE, filtered.length - shown.length)} dòng (còn {filtered.length - shown.length})
-            </button>
+                  <span className="shrink-0 flex flex-col md:flex-row gap-0.5">
+                    <button type="button" disabled={busyId === i.id} onClick={() => setEditing(i)} title="Sửa dòng nhật ký" aria-label={`Sửa nhật ký ngày ${formatDateVN(i.occurredAt)} với ${w.name}`}
+                      className={ROUND_ICON}>
+                      <Pencil size={15} />
+                    </button>
+                    <button type="button" disabled={busyId === i.id} onClick={() => remove(i)} title="Xoá dòng nhật ký" aria-label="Xoá dòng nhật ký"
+                      className={`${ROUND_ICON} hover:!text-[#D70015] hover:!bg-[#FF3B30]/10`}>
+                      <Trash2 size={15} />
+                    </button>
+                  </span>
+                </Row>
+              );
+            })}
           </div>
-        )}
-      </div>
+        </section>
+      ))}
+
+      {editing && (
+        <LogInteractionModal
+          contacts={data.contacts}
+          clients={clients}
+          existing={editing}
+          today={today}
+          onClose={() => setEditing(null)}
+          onUpdate={async edit => {
+            const contact = editing.contactId ? contactById.get(editing.contactId) ?? null : null;
+            try {
+              await updateInteraction(editing, edit, contact, { user, clients, branches });
+            } catch (e) {
+              return (e as Error).message;
+            }
+            setEditing(null);
+            emitCskhDataChanged();
+            toast('Đã lưu thay đổi nhật ký');
+            return null;
+          }}
+        />
+      )}
+
+      {filtered.length > shown.length && (
+        <div className={`${PANEL} px-3 py-1`}>
+          <MoreButton onClick={() => setLimit(limit + PAGE)}>
+            Hiện thêm {Math.min(PAGE, filtered.length - shown.length)} dòng (còn {filtered.length - shown.length})
+          </MoreButton>
+        </div>
+      )}
     </div>
   );
+}
+
+/** "Hôm nay" / "Hôm qua" / "Thứ Hai, 12 tháng 10". */
+function dayHeading(iso: string, today: string): string {
+  const d = diffDays(iso, today);
+  if (d === 0) return 'Hôm nay';
+  if (d === 1) return 'Hôm qua';
+  return longDateVN(iso);
 }

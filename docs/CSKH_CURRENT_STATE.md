@@ -297,3 +297,18 @@ Tony yêu cầu "gọn, chuyên nghiệp, phong cách giống Apple". Dữ liệ
 - `TodayQueue` kiểu danh sách iOS: nút tròn xám, pill "Đã liên hệ"; điện thoại: nút xuống hàng, "Xong" chỉ còn icon, không tràn thẻ ở 375px.
 - Thanh tab CSKH (CRMLeads.tsx) đổi sang điều khiển phân đoạn kiểu iOS.
 - Đã xem thử bằng trang tạm với dữ liệu giả (máy tính + 375px), trang tạm đã xoá. Chưa xem với dữ liệu thật vì khung preview chưa đăng nhập.
+
+### Toàn module kiểu Apple (21/10/2026, chưa commit)
+
+Tony yêu cầu cả 6 tab CSKH "giống Workspace (kiểu Apple) hoặc đẹp hơn". Chỉ đổi giao diện, dữ liệu và luồng bấm giữ nguyên:
+- **Một bộ khối dùng chung** `src/modules/cskh/components/apple.tsx` (tiêu đề lớn `PageTitle`, thẻ `Panel`, điều khiển phân đoạn `Segmented`, dòng iOS `Row`, `PillSelect`, ô tìm iOS `SearchField`, công tắc `Switch`, `FilterChip`, `MoreButton`) + lớp nút viên / nút tròn trong `ui.ts` (dựa trên token `src/components/workspace/wsTheme.ts`). Dashboard bỏ bản sao riêng, dùng chung bộ này.
+- **Màu**: nhấn `#0071E3` như Workspace (thay `#1D4ED8`); màu trạng thái/hạng = bản đậm của màu hệ thống Apple (đỏ `#D70015`, cam `#B25000`, xanh lá `#248A3D`…) để chữ trên capsule đủ tương phản.
+- **Khung trang** (`CRMLeads.tsx`): thanh trên mờ kiểu macOS, tab có icon; < 1280px dùng nhãn ngắn (Tổng quan · Ma trận · Bản đồ · Nhịp độ · Nhật ký · Sự kiện & Quà). Nền `#F5F5F7`.
+- **Ma trận**: ô nhiệt bo tròn, thanh chọn nhiều nổi (mờ, có bóng), bảng không viền. **Nhật ký**: gom theo ngày (Hôm nay / Hôm qua / Thứ…), ô icon màu theo hình thức. **Sự kiện**: ô lịch kiểu ứng dụng Lịch. **Hồ sơ**: đầu hồ sơ kiểu Danh bạ (Gọi / Zalo / SMS / Ghi lại), nhóm trường kiểu iOS, ô tải ảnh chuyển xuống mục Liên lạc; chân sheet dính sát đáy (trước đây hở 16px).
+- **Điện thoại**: thanh lọc Chi nhánh/Phụ trách/Quản lý KH cuộn ngang 1 hàng; Nhịp độ và Sự kiện đưa chip xuống dòng dưới tên.
+- Kiểm tra: `tsc` không thêm lỗi, eslint sạch, 98 test vitest đạt; xem bằng trang giả lập dữ liệu mẫu (Supabase giả, không ghi DB) ở 1024px và 375px.
+
+### Việc nhắc chạy hằng ngày + sửa nhật ký (21/10/2026, chưa commit)
+
+- **Việc nhắc tự động không còn phụ thuộc có ai mở trang CSKH.** `src/modules/cskh/CareAutomationRunner.tsx` gắn ở `App.tsx`: mở app ở bất kỳ trang nào → chờ ~2,5 giây rồi chạy "Chuẩn bị quà" + "Kết nối lại", **mỗi ngày 1 lần mỗi trình duyệt** (localStorage `lgvn_cskh_automation_<user>`), chỉ tài khoản có quyền vào CSKH. Trang CSKH vẫn chạy 1 lần mỗi phiên như trước. Cả hai đi qua `automationRunner.ts`: dùng chung 1 lượt đang chạy nên mở app rồi vào ngay CSKH không tạo việc trùng; nơi gọi sau không báo lại. Code chạy thật nạp động (`import()`), bundle chính không kéo theo dữ liệu CSKH. Test: `automationRunner.test.ts` (8).
+- **Sửa dòng nhật ký** (nút bút chì ở tab Nhật ký): sửa hình thức, ngày, ai chủ động, nội dung, công ty (người kiêm nhiều nơi), việc đã hứa + hạn. Người liên hệ khoá (ghi nhầm người → xoá rồi ghi lại). `updateInteraction` trong `data/api.ts` đồng bộ việc trong Workspace: trước chưa hứa nay thêm → tạo việc mới; đổi chữ/hạn → đổi tên + hạn việc; xoá trắng → xoá mềm việc chưa xong. Giữ hình thức thì giữ kênh cũ (Zalo…); dòng cũ chưa gắn người giữ nguyên công ty dạng chữ; lưu lỗi thì xoá việc vừa tạo. Đổi ngày → trigger migration 170 tự tính lại ngày tương tác cuối. Có ghi audit (cũ/mới). Test: `data/updateInteraction.test.ts` (8).

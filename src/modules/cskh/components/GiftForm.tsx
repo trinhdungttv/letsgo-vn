@@ -12,7 +12,7 @@ import { inputCls } from '../ui';
 import { ContactPicker } from './ContactPicker';
 import { ChoiceChip, Sheet } from './Sheet';
 
-const labelCls = 'block text-[11.5px] font-medium text-[#666] mb-1';
+const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
 export function GiftForm({ contacts, clients, occasions, gifts, existing, initialContactId, onSave, onClose }: {
   contacts: readonly CskhContact[];
@@ -59,14 +59,14 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
 
   return (
     <Sheet label={existing ? 'Sửa quà' : 'Ghi quà'} onClose={onClose} wide>
-      <h2 className="text-[16px] md:text-[15px] font-semibold text-[#111] mb-3">{existing ? 'Sửa quà' : 'Ghi quà'}</h2>
+      <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] mb-3">{existing ? 'Sửa quà' : 'Ghi quà'}</h2>
       <div className="space-y-3">
         <div>
           <label className={labelCls}>Người liên hệ</label>
           <ContactPicker contacts={contacts} value={contactId} autoFocus={!existing}
             onChange={c => { setContactId(c?.id ?? ''); setClientId(c ? defaultClientIdOf(c) : null); setOccasionId(''); }} />
           {contact && contact.clientIds.length === 0 && (
-            <p className="text-[11.5px] text-amber-700 mt-1">Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.</p>
+            <p className="text-[11.5px] text-[#B25000] mt-1">Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.</p>
           )}
         </div>
         {contact && contact.clientIds.length > 1 && (
@@ -78,8 +78,8 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
           </div>
         )}
         {past.length > 0 && (
-          <div className="bg-[#F7F6F2] rounded-lg px-3 py-2 text-[11.5px] text-[#666]">
-            <b className="text-[#444]">Đã ghi trước đây:</b>{' '}
+          <div className="bg-[#F2F2F7] rounded-[10px] px-3 py-2 text-[11.5px] text-[#6E6E73]">
+            <b className="text-[#3A3A3C]">Đã ghi trước đây:</b>{' '}
             {past.map(g => `${g.item} (${GIFT_DIRECTION_LABEL[g.direction].toLowerCase()} ${g.givenAt.slice(8, 10)}/${g.givenAt.slice(5, 7)}/${g.givenAt.slice(0, 4)})`).join(' · ')}
           </div>
         )}
@@ -95,7 +95,7 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
           <div>
             <label className={labelCls}>Giá trị (VND, tuỳ chọn)</label>
             <input value={value} onChange={e => setValue(e.target.value)} inputMode="numeric" className={inputCls} placeholder="500000" />
-            {amount !== null && <p className="text-[10.5px] text-[#888] mt-0.5">{formatCurrencyFull(amount)}</p>}
+            {amount !== null && <p className="text-[11.5px] text-[#86868B] mt-0.5">{formatCurrencyFull(amount)}</p>}
           </div>
           <div>
             <label className={labelCls}>Ngày</label>
@@ -116,11 +116,11 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
           <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} className={`${inputCls} resize-y`} placeholder="VD: anh ấy rất thích, nên tặng lại loại này" />
         </div>
       </div>
-      {error && <p className="mt-3 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
       <div className="flex gap-2 mt-4">
-        <button type="button" onClick={onClose} className="flex-1 h-11 md:h-9 rounded-lg border border-gray-300 bg-white text-[13px] font-medium text-gray-600">Huỷ</button>
+        <button type="button" onClick={onClose} className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Huỷ</button>
         <button type="button" onClick={handleSave} disabled={saving}
-          className="flex-[2] h-11 md:h-9 rounded-lg bg-[#1D4ED8] text-white text-[13px] font-semibold disabled:bg-gray-400">
+          className="flex-[2] h-11 md:h-9 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[13px] font-semibold disabled:opacity-40">
           {saving ? 'Đang lưu…' : existing ? 'Lưu quà' : 'Ghi quà'}
         </button>
       </div>

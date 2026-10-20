@@ -26,10 +26,10 @@ import { useCskh } from './context';
 import { markContactLaunched } from './launch';
 import { useCareScope } from './useCareScope';
 import {
-  CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, ORANGE, RED,
-  scoreColor, TIER_COLOR,
+  CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
+import { Panel, PageTitle, Quiet, Row, Segmented } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { ContactAvatar } from './components/ContactAvatar';
 import { ContactBriefSheet } from './components/ContactBriefSheet';
@@ -43,11 +43,11 @@ const RENEWAL_WINDOW_DAYS = 30;
 const LIST_LIMIT = 5;
 const HEALTH_PANEL_ID = 'cskh-health-panel';
 
-// ── Kiểu Apple: thẻ trắng bo 18px, bóng rất nhẹ, đường kẻ mảnh, chữ xám hệ thống ──
-const panelCls = 'bg-white rounded-[18px] ring-1 ring-black/[0.04] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.10)]';
-const linkCls = 'inline-flex items-center gap-0.5 text-[13px] font-medium text-[#1D4ED8] hover:opacity-70 transition min-h-[36px] md:min-h-0 shrink-0';
+// Kiểu Apple — thẻ, liên kết, chữ phụ dùng chung ở ./components/apple
 const bigNum = 'text-[28px] md:text-[30px] leading-none font-semibold tracking-[-0.02em] text-[#1D1D1F] tabular-nums';
-const caption = 'text-[12px] text-[#86868B] leading-snug';
+const panelCls = PANEL;
+const linkCls = LINK;
+const caption = CAPTION;
 
 type AgendaKey = 'promises' | 'events' | 'recent';
 type HealthKey = 'groups' | 'invest';
@@ -230,33 +230,27 @@ export default function CskhDashboard() {
   return (
     <div className="space-y-4 md:space-y-5">
       {/* ── Đầu trang ── */}
-      <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#86868B]">{longDateVN(today)}</p>
-          <h1 className="text-[26px] md:text-[30px] font-bold tracking-[-0.025em] leading-[1.1] text-[#1D1D1F] mt-1">Tổng quan</h1>
-          <p className="text-[14px] md:text-[15px] text-[#6E6E73] mt-1">
-            {careCountAll === 0
-              ? 'Chăm sóc người đại diện của các công ty đang ký hợp đồng cung ứng lao động.'
-              : `Hôm nay: ${summary}.`}
-          </p>
-        </div>
-        {contacts.length > 0 && (
-          <div className="flex gap-2 w-full md:w-auto">
-            <button type="button" onClick={openPicker} aria-label="Chọn người chăm sóc"
-              className="flex-1 md:flex-none whitespace-nowrap inline-flex items-center justify-center gap-1.5 h-10 md:h-9 px-4 rounded-full bg-[rgba(29,78,216,0.09)] text-[13px] font-semibold text-[#1D4ED8] hover:bg-[rgba(29,78,216,0.15)] transition">
+      <PageTitle
+        eyebrow={longDateVN(today)}
+        title="Tổng quan"
+        subtitle={careCountAll === 0
+          ? 'Chăm sóc người đại diện của các công ty đang ký hợp đồng cung ứng lao động.'
+          : `Hôm nay: ${summary}.`}
+        actions={contacts.length > 0 && (
+          <>
+            <button type="button" onClick={openPicker} aria-label="Chọn người chăm sóc" className={PILL_TINTED}>
               <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn người</span><span className="hidden md:inline">Chọn người chăm sóc</span>
             </button>
-            <button type="button" onClick={() => openLog()}
-              className="flex-1 md:flex-none whitespace-nowrap inline-flex items-center justify-center gap-1.5 h-10 md:h-9 px-4 rounded-full bg-[#1D4ED8] text-[13px] font-semibold text-white hover:bg-[#1E40AF] transition">
+            <button type="button" onClick={() => openLog()} className={PILL_PRIMARY}>
               <PenLine size={15} strokeWidth={2.2} /> Ghi tương tác
             </button>
-          </div>
+          </>
         )}
-      </header>
+      />
 
       {!data.migrationReady && <MigrationBanner />}
 
-      <CareScopeBar scope={scope} users={data.users} total={contacts.length} variant="pill" />
+      <CareScopeBar scope={scope} users={data.users} total={contacts.length} />
 
       {/* ── Trạng thái trống có hướng dẫn ── */}
       {contacts.length === 0 && !loading && (
@@ -356,7 +350,7 @@ export default function CskhDashboard() {
                   {hiddenCount > 0 && (
                     <button type="button" onClick={() => goTab('cadence')}
                       className="flex items-center gap-2 py-1.5 min-h-[40px] md:min-h-[32px] text-left text-[13px] hover:opacity-70 transition">
-                      <span className="flex-1 font-medium text-[#1D4ED8]">Còn {hiddenCount} người khác đang chờ</span>
+                      <span className="flex-1 font-medium text-[#0071E3]">Còn {hiddenCount} người khác đang chờ</span>
                       <span className="inline-flex items-center text-[#86868B]">Nhịp độ <ChevronRight size={14} /></span>
                     </button>
                   )}
@@ -448,7 +442,7 @@ export default function CskhDashboard() {
                       const Icon = INTERACTION_ICON[i.type];
                       return (
                         <Row key={i.id} first={idx === 0} inset={44}>
-                          <span className="w-8 h-8 shrink-0 rounded-full bg-[#F2F2F7] text-[#1D4ED8] flex items-center justify-center"><Icon size={15} /></span>
+                          <span className="w-8 h-8 shrink-0 rounded-full bg-[#F2F2F7] text-[#0071E3] flex items-center justify-center"><Icon size={15} /></span>
                           <button type="button" onClick={() => i.contactId && setBrief({ contactId: i.contactId, item: null })} className="min-w-0 flex-1 text-left">
                             <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{nameOf(i)}</span>
                             <span className={`block ${caption} truncate`}>
@@ -549,33 +543,6 @@ export default function CskhDashboard() {
 
 // ── Khối giao diện nhỏ (chỉ dùng trong Dashboard) ───────────────────────────
 
-function Panel({ id, title, count, meta, action, footer, children }: {
-  id?: string;
-  title: string;
-  count?: number;
-  meta?: ReactNode;
-  action?: ReactNode;
-  footer?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section id={id} className={`${panelCls} scroll-mt-4`} aria-label={title}>
-      <header className="flex items-start justify-between gap-3 px-4 md:px-5 pt-4 pb-2.5">
-        <div className="min-w-0">
-          <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-[#1D1D1F]">
-            {title}
-            {count !== undefined && count > 0 && <span className="ml-1.5 font-normal text-[#86868B] tabular-nums">{count}</span>}
-          </h2>
-          {meta && <p className={`${caption} mt-0.5`}>{meta}</p>}
-        </div>
-        {action}
-      </header>
-      <div className="px-4 md:px-5 pb-2">{children}</div>
-      {footer && <div className="mx-4 md:mx-5 py-1.5 border-t border-[#E5E5EA]">{footer}</div>}
-    </section>
-  );
-}
-
 /** Ô chỉ số trong dải chỉ số; bấm được thì có mũi tên. */
 function Metric({ label, onClick, hint, children }: {
   label: string;
@@ -597,50 +564,6 @@ function Metric({ label, onClick, hint, children }: {
     ? <button type="button" onClick={onClick} title={hint} className={`${cls} hover:bg-[#FAFAFC] transition`}>{body}</button>
     : <div className={cls}>{body}</div>;
 }
-
-/** Điều khiển phân đoạn kiểu iOS. */
-function Segmented<T extends string>({ label, value, options, onChange }: {
-  label: string;
-  value: T;
-  options: ReadonlyArray<{ key: T; label: string; badge?: number }>;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div role="tablist" aria-label={label} className="flex p-[2px] rounded-[9px] bg-[rgba(118,118,128,0.12)]">
-      {options.map(o => {
-        const active = o.key === value;
-        return (
-          <button key={o.key} type="button" role="tab" aria-selected={active} onClick={() => onChange(o.key)}
-            className={`flex-1 min-w-0 h-9 md:h-7 px-2 rounded-[7px] text-[13px] whitespace-nowrap truncate transition ${active
-              ? 'bg-white text-[#1D1D1F] font-semibold shadow-[0_3px_8px_rgba(0,0,0,0.12),0_1px_1px_rgba(0,0,0,0.04)]'
-              : 'text-[#3C3C43]/80 font-medium hover:text-[#1D1D1F]'}`}>
-            {o.label}
-            {o.badge !== undefined && o.badge > 0 && <span className="ml-1 font-normal text-[#86868B] tabular-nums">{o.badge}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/** 1 dòng danh sách, đường kẻ mảnh thụt vào từ chỗ bắt đầu chữ (kiểu bảng iOS). */
-function Row({ first, inset, onClick, title, children }: {
-  first: boolean;
-  inset: number;
-  onClick?: () => void;
-  title?: string;
-  children: ReactNode;
-}) {
-  const line = !first && <span aria-hidden className="absolute top-0 right-0 h-px bg-[#E5E5EA]" style={{ left: inset }} />;
-  const cls = 'relative w-full flex items-center gap-3 py-2.5 text-left';
-  return onClick
-    ? <button type="button" onClick={onClick} title={title} className={`${cls} hover:bg-[#FAFAFC] rounded-[10px] transition`}>{line}{children}</button>
-    : <div className={cls}>{line}{children}</div>;
-}
-
-const Quiet = ({ children }: { children: ReactNode }) => (
-  <p className="py-8 text-center text-[13px] text-[#86868B]">{children}</p>
-);
 
 const Dot = ({ color }: { color: string }) => (
   <i className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle -mt-px" style={{ background: color }} />
@@ -670,7 +593,7 @@ function Spark({ weeks }: { weeks: readonly number[] }) {
       aria-label={`Số tương tác ${weeks.length} tuần gần nhất: ${weeks.join(', ')}`}>
       {weeks.map((n, i) => (
         <i key={i} className="flex-1 rounded-[2px]"
-          style={{ height: `${Math.max(12, (n / max) * 100)}%`, background: i === last ? '#1D4ED8' : 'rgba(29,78,216,0.18)' }}
+          style={{ height: `${Math.max(12, (n / max) * 100)}%`, background: i === last ? '#0071E3' : 'rgba(0,113,227,0.18)' }}
           title={`${i === last ? 'Tuần này' : `${last - i} tuần trước`}: ${n}`} />
       ))}
     </span>
@@ -686,11 +609,10 @@ function Welcome({ icon, title, text, action, onAction }: {
 }) {
   return (
     <section className={`${panelCls} px-6 py-10 text-center`}>
-      <span className="mx-auto mb-3 w-12 h-12 rounded-full bg-[rgba(29,78,216,0.09)] text-[#1D4ED8] flex items-center justify-center">{icon}</span>
+      <span className="mx-auto mb-3 w-12 h-12 rounded-full bg-[rgba(0,113,227,0.09)] text-[#0071E3] flex items-center justify-center">{icon}</span>
       <h2 className="text-[17px] font-semibold text-[#1D1D1F]">{title}</h2>
       <p className="text-[14px] text-[#6E6E73] mt-1 max-w-[480px] mx-auto">{text}</p>
-      <button type="button" onClick={onAction}
-        className="mt-4 h-10 md:h-9 px-5 rounded-full bg-[#1D4ED8] text-white text-[14px] font-semibold hover:bg-[#1E40AF] transition">
+      <button type="button" onClick={onAction} className={`mt-4 ${PILL_PRIMARY}`}>
         {action}
       </button>
     </section>

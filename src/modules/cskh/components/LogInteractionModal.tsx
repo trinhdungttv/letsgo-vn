@@ -1,37 +1,47 @@
 // Form "Ghi tương tác" đầy đủ (port PRM LogInteractionModal): người liên hệ (tìm không
 // dấu), công ty (khi người đó kiêm nhiều nơi), hình thức, ngày, nội dung, ai chủ động,
 // việc tiếp theo + hạn nhanh → tự tạo việc trong Workspace.
+// Có `existing` = SỬA dòng nhật ký: điền sẵn, khoá người liên hệ, lưu qua onUpdate.
 import { useState } from 'react';
-import type { CskhContact, InteractionType } from '../../../lib/cskh/types';
+import type { CskhContact, CskhInteraction, InteractionType } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL, INTERACTION_TYPES } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
-import { defaultClientIdOf, type InteractionInput } from '../data/api';
+import { defaultClientIdOf, type InteractionEdit, type InteractionInput } from '../data/api';
+import { ContactAvatar } from './ContactAvatar';
 import { ContactPicker } from './ContactPicker';
 import { EMPTY_FOLLOW_UP, inputCls, type FollowUpValue } from '../ui';
 import { FollowUpPicker } from './FollowUpPicker';
 import { ChoiceChip, Sheet } from './Sheet';
 
-const labelCls = 'block text-[11.5px] font-medium text-[#666] mb-1';
+const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function LogInteractionModal({ contacts, clients, initialContactId, today, onSave, onClose }: {
+export function LogInteractionModal({ contacts, clients, initialContactId, existing, today, onSave, onUpdate, onClose }: {
   contacts: readonly CskhContact[];
   clients: readonly Client[];
   initialContactId?: string;
+  /** Dòng nhật ký đang sửa (không có = ghi mới). */
+  existing?: CskhInteraction;
   today: string;
-  /** Trả về câu lỗi hoặc null khi đã lưu. */
-  onSave: (input: InteractionInput) => Promise<string | null>;
+  /** Ghi mới — trả về câu lỗi hoặc null khi đã lưu. */
+  onSave?: (input: InteractionInput) => Promise<string | null>;
+  /** Lưu thay đổi khi sửa — trả về câu lỗi hoặc null khi đã lưu. */
+  onUpdate?: (edit: InteractionEdit) => Promise<string | null>;
   onClose: () => void;
 }) {
-  const [contactId, setContactId] = useState(initialContactId ?? '');
+  const editing = !!existing;
+  const [contactId, setContactId] = useState(existing?.contactId ?? initialContactId ?? '');
   const [clientId, setClientId] = useState<string | null>(() => {
+    if (existing) return existing.clientId;
     const c = contacts.find(x => x.id === initialContactId);
     return c ? defaultClientIdOf(c) : null;
   });
-  const [type, setType] = useState<InteractionType>('call');
-  const [occurredAt, setOccurredAt] = useState(today);
-  const [content, setContent] = useState('');
-  const [theyInitiated, setTheyInitiated] = useState(false);
-  const [followUp, setFollowUp] = useState<FollowUpValue>(EMPTY_FOLLOW_UP);
+  const [type, setType] = useState<InteractionType>(existing?.type ?? 'call');
+  const [occurredAt, setOccurredAt] = useState(existing?.occurredAt ?? today);
+  const [content, setContent] = useState(existing?.content ?? '');
+  const [theyInitiated, setTheyInitiated] = useState(existing?.initiatedBy === 'them');
+  const [followUp, setFollowUp] = useState<FollowUpValue>(
+    existing ? { action: existing.followUpAction, due: existing.followUpDue ?? '' } : EMPTY_FOLLOW_UP,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -44,12 +54,29 @@ export function LogInteractionModal({ contacts, clients, initialContactId, today
   };
 
   const handleSave = async () => {
-    if (!contact) { setError('Chọn người liên hệ'); return; }
+    if (!editing && !contact) { setError('Chọn người liên hệ'); return; }
     if (followUp.action.trim() && !followUp.due) { setError('Việc tiếp theo cần có hạn'); return; }
+    if (!occurredAt) { setError('Chọn ngày tương tác'); return; }
     if (occurredAt > today) { setError('Ngày tương tác không được ở tương lai'); return; }
     setSaving(true);
     setError('');
-    const err = await onSave({
+    if (existing) {
+      const err = await onUpdate?.({
+        clientId,
+        type,
+        // Dòng cũ không rõ ai chủ động: giữ "không rõ" nếu vẫn không đánh dấu
+        initiatedBy: theyInitiated ? 'them' : existing.initiatedBy === null ? null : 'me',
+        occurredAt,
+        content,
+        followUpAction: followUp.action,
+        followUpDue: followUp.due || null,
+      }) ?? null;
+      setSaving(false);
+      if (err) setError(err);
+      return;
+    }
+    if (!contact) return;
+    const err = await onSave?.({
       contact,
       clientId,
       type,
@@ -65,13 +92,26 @@ export function LogInteractionModal({ contacts, clients, initialContactId, today
   };
 
   return (
-    <Sheet label="Ghi tương tác" onClose={onClose} wide>
-      <h2 className="text-[16px] md:text-[15px] font-semibold text-[#111] mb-3">Ghi tương tác</h2>
+    <Sheet label={editing ? 'Sửa nhật ký' : 'Ghi tương tác'} onClose={onClose} wide>
+      <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] mb-3">{editing ? 'Sửa nhật ký' : 'Ghi tương tác'}</h2>
 
       <div className="space-y-3">
         <div>
           <label className={labelCls}>Người liên hệ</label>
-          <ContactPicker contacts={contacts} value={contactId} onChange={pick} />
+          {existing ? (
+            // Sửa: không đổi người (ghi nhầm người thì xoá dòng rồi ghi lại cho đúng người)
+            <div className="flex items-center gap-2.5 px-3 py-2 rounded-[12px] bg-black/[0.04]">
+              <ContactAvatar name={contact?.fullName || existing.contactPerson || '?'} url={contact?.avatarUrl || undefined} tier={contact?.tier ?? 'unclassified'} size={30} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-[#1D1D1F] truncate">{contact?.fullName || existing.contactPerson || 'Không rõ người liên hệ'}</div>
+                <div className="text-[11.5px] text-[#86868B] truncate">
+                  {[contact?.organization || existing.clientName, existing.createdByName && `ghi bởi ${existing.createdByName}`].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <ContactPicker contacts={contacts} value={contactId} onChange={pick} />
+          )}
         </div>
 
         {contact && contact.clientIds.length > 1 && (
@@ -100,8 +140,8 @@ export function LogInteractionModal({ contacts, clients, initialContactId, today
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-[13px] text-[#444] cursor-pointer min-h-[40px] md:min-h-0">
-          <input type="checkbox" checked={theyInitiated} onChange={e => setTheyInitiated(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+        <label className="flex items-center gap-2 text-[13px] text-[#3A3A3C] cursor-pointer min-h-[40px] md:min-h-0">
+          <input type="checkbox" checked={theyInitiated} onChange={e => setTheyInitiated(e.target.checked)} className="w-4 h-4 accent-[#0071E3]" />
           Họ chủ động liên hệ mình
         </label>
 
@@ -110,23 +150,30 @@ export function LogInteractionModal({ contacts, clients, initialContactId, today
           <textarea value={content} onChange={e => setContent(e.target.value)} rows={3}
             className={`${inputCls} resize-y min-h-[72px]`}
             placeholder="VD: Chị Lan báo tháng 12 cần thêm 30 LĐ ca đêm cho xưởng 2; con trai vừa đậu đại học…" />
-          <p className="text-[11px] text-[#aaa] mt-1">Ghi đủ chi tiết để lần sau mở ra là nhớ ngay bối cảnh (≥ 80 ký tự được trọn điểm ghi chú).</p>
+          <p className="text-[11px] text-[#AEAEB2] mt-1">Ghi đủ chi tiết để lần sau mở ra là nhớ ngay bối cảnh (≥ 80 ký tự được trọn điểm ghi chú).</p>
         </div>
 
-        <div className="pt-3 border-t border-[#E8E7E2]">
-          <p className="text-[11.5px] font-medium text-[#666] mb-1.5">Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace, giao cho người phụ trách</p>
+        <div className="pt-3 border-t border-black/[0.08]">
+          <p className="text-[12px] font-medium text-[#6E6E73] mb-1.5">
+            {existing?.followUpTaskId
+              ? 'Việc tiếp theo — sửa chữ / hạn thì việc trong Workspace đổi theo; xoá trắng thì việc chưa xong bị xoá'
+              : 'Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace, giao cho người phụ trách'}
+          </p>
           <FollowUpPicker value={followUp} onChange={setFollowUp} today={today} />
+          {existing?.followUpDone && followUp.action.trim() !== '' && (
+            <p className="text-[11.5px] text-[#248A3D] mt-1.5">Việc này đã đánh dấu xong — sửa chữ không mở lại việc.</p>
+          )}
         </div>
       </div>
 
-      {error && <p className="mt-3 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
       <div className="flex gap-2 mt-4">
         <button type="button" onClick={onClose}
-          className="flex-1 h-11 md:h-9 rounded-lg border border-gray-300 bg-white text-[13px] font-medium text-gray-600 hover:bg-gray-50">Huỷ</button>
+          className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Huỷ</button>
         <button type="button" onClick={handleSave} disabled={saving}
-          className="flex-[2] h-11 md:h-9 rounded-lg bg-[#1D4ED8] text-white text-[13px] font-semibold hover:bg-[#1E40AF] disabled:bg-gray-400">
-          {saving ? 'Đang lưu…' : 'Lưu nhật ký'}
+          className="flex-[2] h-11 md:h-9 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[13px] font-semibold hover:bg-[#0077ED] disabled:opacity-40">
+          {saving ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Lưu nhật ký'}
         </button>
       </div>
     </Sheet>

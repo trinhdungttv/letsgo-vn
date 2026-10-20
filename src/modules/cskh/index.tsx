@@ -5,7 +5,8 @@
 //   thì phát `cskh:data-changed` để tải lại.
 // • Giữ các hộp thoại dùng chung: Hồ sơ, Ghi tương tác, Chọn người chăm sóc, Nhóm.
 // • Gắn bottom sheet ghi nhận nhanh (gọi/Zalo xong quay lại app).
-// • Chạy việc nhắc tự động (chuẩn bị quà, kết nối lại) 1 lần mỗi phiên.
+// • Chạy việc nhắc tự động (chuẩn bị quà, kết nối lại) 1 lần mỗi phiên — App cũng chạy
+//   mỗi ngày 1 lần khi mở app (CareAutomationRunner); hai nơi dùng chung automationRunner.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../lib/auth';
@@ -13,7 +14,8 @@ import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
-import { addGroup, addInteraction, archiveGroup, assignGroups, runCareAutomation, updateGroup } from './data/api';
+import { addGroup, addInteraction, archiveGroup, assignGroups, updateGroup } from './data/api';
+import { automationMessage, runCareAutomationOnce } from './automationRunner';
 import { useCskhData } from './data/useCskhData';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
 import CskhDashboard from './Dashboard';
@@ -27,9 +29,6 @@ import { CarePickerModal } from './components/CarePickerModal';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
-
-/** Việc nhắc tự động đã chạy cho tài khoản nào trong phiên này (tải lại trang = phiên mới). */
-const automationRanFor = new Set<string>();
 
 export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace, onOpenClient }: {
   tab: CskhTabKey;
@@ -48,16 +47,11 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   const [picking, setPicking] = useState(false);
   const [managingGroups, setManagingGroups] = useState(false);
 
-  // ── Việc nhắc tự động: 1 lần mỗi phiên, sau khi dữ liệu tải xong ──
+  // ── Việc nhắc tự động: 1 lần mỗi phiên, sau khi dữ liệu tải xong (App có thể đã chạy trước) ──
   useEffect(() => {
-    if (!data?.migrationReady || !user || automationRanFor.has(user.id) || !branches.length) return;
-    automationRanFor.add(user.id);
-    runCareAutomation(data, { user, clients, branches }, todayVN())
-      .then(r => {
-        const total = r.gift + r.reconnect;
-        if (total) toast(`Đã tạo ${total} việc nhắc trong Workspace (${r.gift} chuẩn bị quà, ${r.reconnect} kết nối lại)`);
-        if (total) emitCskhDataChanged();
-      })
+    if (!data?.migrationReady || !user || !branches.length) return;
+    runCareAutomationOnce({ ctx: { user, clients, branches }, today: todayVN(), data })
+      .then(r => { const msg = automationMessage(r); if (msg) toast(msg); })
       .catch(e => toast('Lỗi tạo việc nhắc CSKH: ' + (e as Error).message));
   }, [data, user, clients, branches, toast]);
 

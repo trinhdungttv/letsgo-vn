@@ -33,28 +33,35 @@ import {
   CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, HABIT_PRESETS, hasToken, inputCls, INTEREST_PRESETS,
   mapEmbedQuery, mapEmbedSrc, NEW_GROUP_VALUE, PERSONALITY_PRESETS, resolveGroupKey, scoreColor, toggleToken,
 } from '../ui';
+import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
-import { Sheet } from './Sheet';
+import { Sheet, SHEET_FOOTER } from './Sheet';
 
 const CONTEXT_LABEL: Readonly<Record<CskhContext, string>> = { work: 'Công việc', both: 'Cả hai', personal: 'Cá nhân' };
 
-const labelCls = 'block text-[11.5px] font-medium text-[#666] mb-1';
+/** Nút viên ở chân hồ sơ. */
+const FOOT_BTN = 'inline-flex items-center gap-1.5 h-10 md:h-9 px-3.5 rounded-full text-[13px] font-medium active:scale-[0.97] transition';
+/** Ô nút liên hệ trong hồ sơ (Gọi / Zalo / SMS / Ghi lại). */
+const ACTION_TILE = 'flex flex-col items-center justify-center gap-1 h-[58px] rounded-[12px] bg-white md:bg-[#F5F5F7] text-[#0071E3] text-[12px] font-medium hover:bg-[#0071E3]/10 active:scale-[0.97] transition';
+
+const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
 function Field({ label, hint, children, full }: { label: string; hint?: string; children: ReactNode; full?: boolean }) {
   return (
     <div className={full ? 'md:col-span-2' : undefined}>
       <label className={labelCls}>{label}</label>
       {children}
-      {hint && <p className="text-[10.5px] text-[#aaa] mt-0.5">{hint}</p>}
+      {hint && <p className="text-[11.5px] text-[#86868B] mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="mt-4 pt-3 border-t border-[#E8E7E2]">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[#999] mb-2">{title}</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{children}</div>
+    <section className="mt-5">
+      <h3 className="px-1 text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">{title}</h3>
+      {/* Nhóm kiểu iOS: điện thoại thẻ trắng trên nền sheet xám, máy tính thẻ xám nhạt trên nền trắng */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-[14px] bg-white md:bg-[#F5F5F7] p-3.5 md:p-4">{children}</div>
     </section>
   );
 }
@@ -66,7 +73,7 @@ function PresetChips({ value, presets, onChange }: { value: string; presets: rea
         const on = hasToken(value, p);
         return (
           <button key={p} type="button" onClick={() => onChange(toggleToken(value, p))} aria-pressed={on}
-            className={`px-2.5 h-8 md:h-6 rounded-full text-[11.5px] border transition ${on ? 'bg-[#1D4ED8] border-[#1D4ED8] text-white' : 'bg-white border-[#E0DFDA] text-[#555] hover:border-[#C9C7BE]'}`}>
+            className={`px-3 h-8 md:h-7 rounded-full text-[12.5px] font-medium transition active:scale-[0.97] ${on ? 'bg-[#0071E3] text-white' : 'bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]'}`}>
             {p}
           </button>
         );
@@ -256,19 +263,19 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   return (
     <Sheet label={`Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
       {/* ── Đầu hồ sơ ── */}
-      <div className="flex items-start gap-3 pr-6">
-        <AvatarUpload value={avatarUrl} onChange={setAvatarUrl} name={name} toast={toast} />
+      <div className="flex items-center gap-4 pr-8">
+        <ContactAvatar name={name || current.fullName} url={avatarUrl || undefined} tier={current.tier} size={64} />
         <div className="min-w-0 flex-1">
-          <p className="text-[17px] md:text-[16px] font-bold text-[#111] truncate">{current.fullName}</p>
-          <p className="text-[12px] text-[#888] truncate">{[current.jobTitle, current.organization].filter(Boolean).join(' · ') || 'Chưa gắn công ty'}</p>
-          <div className="flex flex-wrap items-center gap-1.5 mt-1">
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium" style={chipStyle(display.color)}>{display.label}</span>
-            {!current.isActive && <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-600">Đã nghỉ</span>}
+          <p className="text-[22px] md:text-[24px] font-bold tracking-[-0.02em] leading-tight text-[#1D1D1F] truncate">{current.fullName}</p>
+          <p className="text-[13.5px] text-[#6E6E73] truncate mt-0.5">{[current.jobTitle, current.organization].filter(Boolean).join(' · ') || 'Chưa gắn công ty'}</p>
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(display.color)}>{display.label}</span>
+            {!current.isActive && <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
             {stats && stats.status !== 'unclassified' && (
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium" style={chipStyle(CARE_STATUS_COLOR[stats.status])}>{dueLabel(stats)}</span>
+              <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(CARE_STATUS_COLOR[stats.status])}>{dueLabel(stats)}</span>
             )}
             {stats?.score && (
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={chipStyle(scoreColor(stats.score.total))}
+              <span className="px-2.5 py-0.5 rounded-full text-[12px] font-semibold" style={chipStyle(scoreColor(stats.score.total))}
                 title={`Yếu nhất: ${weakestPart(stats.score).label} — ${weakestPart(stats.score).hint}`}>
                 {stats.score.total} điểm · {SCORE_GRADE_LABEL[scoreGrade(stats.score.total)]}
               </span>
@@ -277,35 +284,35 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mt-3">
+      {/* Hàng nút liên hệ kiểu ứng dụng Danh bạ của Apple: ô vuông bo, icon + nhãn xanh */}
+      <div className="grid grid-cols-4 gap-2 mt-4 md:max-w-[440px]">
         {links.map(link => {
           const meta = CHANNEL_META[link.channel];
           return (
             <a key={link.channel} href={link.url} onClick={() => markContactLaunched(current.id, link.channel)}
               {...(link.channel === 'zalo' ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-              className="inline-flex items-center gap-1 h-9 md:h-7 px-3 rounded-lg border border-[#E8E7E2] bg-white text-[12px] font-medium text-[#333] hover:border-blue-200 hover:text-[#1D4ED8]">
-              <meta.Icon size={13} /> {meta.label}
+              className={ACTION_TILE}>
+              <meta.Icon size={19} strokeWidth={2.1} /> {meta.label}
             </a>
           );
         })}
-        <button type="button" onClick={() => onLog(current.id)}
-          className="inline-flex items-center gap-1 h-9 md:h-7 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12px] font-semibold hover:bg-[#1E40AF]">
-          <PenLine size={13} /> Ghi tương tác
+        <button type="button" onClick={() => onLog(current.id)} className={`${ACTION_TILE} !bg-[#0071E3] !text-white hover:!bg-[#0077ED]`}>
+          <PenLine size={19} strokeWidth={2.1} /> Ghi lại
         </button>
       </div>
 
       {openFollowUps.length > 0 && (
-        <div className="mt-3 bg-amber-50 border border-amber-200 rounded-[10px] p-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#D97706] mb-1">Việc đang mở ({openFollowUps.length})</p>
+        <div className="mt-4 rounded-[14px] bg-[#FF9500]/[0.1] px-3.5 py-2.5">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#C93400] mb-1">Việc đang mở · {openFollowUps.length}</p>
           <div className="space-y-1">
             {openFollowUps.map(i => (
               <div key={i.id} className="flex items-center gap-2">
-                <span className="flex-1 min-w-0 text-[12.5px] text-[#333]">
-                  {i.followUpAction}{i.followUpDue && <span className="text-[#888]"> — hạn {formatDateVN(i.followUpDue)}</span>}
+                <span className="flex-1 min-w-0 text-[13.5px] text-[#1D1D1F]">
+                  {i.followUpAction}{i.followUpDue && <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>}
                 </span>
                 <button type="button" disabled={busyId === i.id} onClick={() => completeFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-7 px-2.5 rounded-lg border border-emerald-200 bg-white text-emerald-700 text-[12px] font-medium disabled:opacity-50">
-                  <CheckCheck size={13} /> Xong
+                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[13px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
+                  <CheckCheck size={14} /> Xong
                 </button>
               </div>
             ))}
@@ -387,6 +394,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 
       {/* ── Liên lạc ── */}
       <Section title="Liên lạc">
+        <Field label="Ảnh đại diện" full><AvatarUpload value={avatarUrl} onChange={setAvatarUrl} name={name} toast={toast} /></Field>
         <Field label="Họ tên *"><input value={name} onChange={e => setName(e.target.value)} className={inputCls} /></Field>
         <Field label="Tên thân mật"><input value={nickname} onChange={e => setNickname(e.target.value)} className={inputCls} placeholder="VD: Anh Hùng, Chị Lan" /></Field>
         <Field label="Điện thoại" hint="Nhiều số thì ngăn bằng dấu phẩy">
@@ -401,19 +409,19 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
             <input value={mapLink} onChange={e => setMapLink(e.target.value)} className={inputCls} placeholder="https://maps.app.goo.gl/…" />
             {mapLink.trim() && (
               <a href={mapLink.trim()} target="_blank" rel="noopener noreferrer" title="Mở Google Maps"
-                className="shrink-0 w-10 md:w-8 rounded-lg border border-gray-300 bg-white flex items-center justify-center text-[#666] hover:text-[#1D4ED8]">
+                className="shrink-0 w-10 md:w-9 rounded-[10px] bg-[rgba(118,118,128,0.12)] flex items-center justify-center text-[#0066CC] hover:bg-[rgba(118,118,128,0.2)] transition">
                 <ExternalLink size={14} />
               </a>
             )}
             {embedQuery && (
               <button type="button" onClick={() => setShowMap(v => !v)} title="Xem bản đồ" aria-pressed={showMap}
-                className={`shrink-0 w-10 md:w-8 rounded-lg border flex items-center justify-center ${showMap ? 'border-[#1D4ED8] text-[#1D4ED8] bg-blue-50' : 'border-gray-300 bg-white text-[#666]'}`}>
+                className={`shrink-0 w-10 md:w-9 rounded-[10px] flex items-center justify-center transition ${showMap ? 'bg-[#0071E3] text-white' : 'bg-[rgba(118,118,128,0.12)] text-[#0066CC] hover:bg-[rgba(118,118,128,0.2)]'}`}>
                 <MapIcon size={14} />
               </button>
             )}
           </div>
           {showMap && embedQuery && (
-            <iframe title="Bản đồ" src={mapEmbedSrc(embedQuery)} loading="lazy" className="mt-2 w-full h-[220px] rounded-lg border border-[#E8E7E2]" />
+            <iframe title="Bản đồ" src={mapEmbedSrc(embedQuery)} loading="lazy" className="mt-2 w-full h-[220px] rounded-[12px] border-0 shadow-[0_0_0_0.5px_rgba(0,0,0,0.1)]" />
           )}
         </Field>
         <Field label="Tỉnh / thành">
@@ -427,32 +435,32 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         <Field label="Công ty phụ trách" full hint="★ = liên hệ chính của công ty đó (mỗi công ty 1 người)">
           <div className="flex flex-wrap items-center gap-1.5">
             {clientIds.map(id => (
-              <span key={id} className="inline-flex items-center gap-0.5 rounded-lg bg-white border border-[#E8E7E2] pl-2 pr-0.5 h-9 md:h-7">
-                <button type="button" onClick={() => onOpenClient?.(id)} className="text-[12px] font-medium text-[#333] hover:text-[#1D4ED8] hover:underline">{clientName(id) ?? 'Công ty'}</button>
+              <span key={id} className="inline-flex items-center gap-0.5 rounded-full bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)] pl-3 pr-1 h-9 md:h-8">
+                <button type="button" onClick={() => onOpenClient?.(id)} className="text-[13px] font-medium text-[#1D1D1F] hover:text-[#0066CC] transition-colors">{clientName(id) ?? 'Công ty'}</button>
                 <button type="button" title={primaryIds.includes(id) ? 'Bỏ liên hệ chính' : 'Đặt làm liên hệ chính'} disabled={!raw.is_active}
                   onClick={() => setPrimaryIds(primaryIds.includes(id) ? primaryIds.filter(x => x !== id) : [...primaryIds, id])}
-                  className="p-1.5 md:p-1 rounded disabled:opacity-40">
-                  <Star size={13} className={primaryIds.includes(id) ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-400'} />
+                  className="p-1.5 md:p-1 rounded-full hover:bg-[#FF9500]/10 disabled:opacity-40">
+                  <Star size={13} className={primaryIds.includes(id) ? 'text-[#FF9500] fill-[#FF9500]' : 'text-[#D1D1D6] hover:text-[#FFB340]'} />
                 </button>
                 <button type="button" title="Gỡ khỏi công ty này" onClick={() => {
                   setClientIds(clientIds.filter(x => x !== id));
                   setPrimaryIds(primaryIds.filter(x => x !== id));
-                }} className="p-1.5 md:p-1 rounded hover:bg-red-50">
-                  <X size={12} className="text-gray-400 hover:text-red-500" />
+                }} className="p-1.5 md:p-1 rounded-full hover:bg-[#FF3B30]/10">
+                  <X size={12} className="text-[#AEAEB2] hover:text-[#FF3B30]" />
                 </button>
               </span>
             ))}
             {addingClient ? (
               <select autoFocus defaultValue="" onBlur={() => setAddingClient(false)}
                 onChange={e => { if (e.target.value) setClientIds([...clientIds, e.target.value]); setAddingClient(false); }}
-                className="text-[12px] h-9 md:h-7 px-2 rounded-lg border border-blue-400 bg-white max-w-[220px]">
+                className="text-[13px] h-9 md:h-8 px-3 rounded-full border border-[#0071E3] ring-4 ring-[#0071E3]/15 bg-white outline-none max-w-[240px]">
                 <option value="">— Chọn công ty —</option>
                 {clientsSorted.filter(c => !clientIds.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             ) : (
               <button type="button" onClick={() => setAddingClient(true)}
-                className="inline-flex items-center gap-1 h-9 md:h-7 px-2.5 rounded-lg border border-dashed border-[#C9C7BE] text-[12px] text-[#666] hover:text-[#1D4ED8]">
-                <Plus size={12} /> Gắn công ty
+                className="inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#0071E3]/10 text-[13px] font-medium text-[#0066CC] hover:bg-[#0071E3]/[0.16] transition">
+                <Plus size={14} strokeWidth={2.4} /> Gắn công ty
               </button>
             )}
           </div>
@@ -470,25 +478,25 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </Field>
       </Section>
 
-      {error && <p className="mt-3 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {error && <p className="mt-4 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
-      <div className="sticky bottom-0 -mx-4 md:-mx-5 px-4 md:px-5 pt-3 mt-4 bg-[#F7F6F2] md:bg-white border-t border-[#E8E7E2]">
-        <div className="flex flex-wrap gap-2">
+      <div className={`${SHEET_FOOTER} mt-5 bg-[#F2F2F7]/90 md:bg-white/90`}>
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => setFullForm(true)} title="Ngày đặc biệt khác, ghi chú chi tiết, Facebook/LinkedIn"
-            className="h-10 md:h-8 px-3 rounded-lg border border-gray-300 bg-white text-[12px] text-[#555] inline-flex items-center gap-1">
-            <FileText size={13} /> Form đầy đủ
+            className={`${FOOT_BTN} bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>
+            <FileText size={14} /> Form đầy đủ
           </button>
           <button type="button" onClick={toggleActive}
-            className={`h-10 md:h-8 px-3 rounded-lg border text-[12px] inline-flex items-center gap-1 ${raw.is_active ? 'border-amber-300 text-amber-700 bg-white' : 'border-emerald-300 text-emerald-700 bg-white'}`}>
-            {raw.is_active ? <><UserX size={13} /> Đánh dấu nghỉ</> : <><UserCheck size={13} /> Mở lại</>}
+            className={`${FOOT_BTN} ${raw.is_active ? 'bg-[#FF9500]/[0.14] text-[#B25000] hover:bg-[#FF9500]/[0.2]' : 'bg-[#34C759]/[0.14] text-[#248A3D] hover:bg-[#34C759]/[0.2]'}`}>
+            {raw.is_active ? <><UserX size={14} /> Đánh dấu nghỉ</> : <><UserCheck size={14} /> Mở lại</>}
           </button>
-          <button type="button" onClick={() => setDeleting(true)} className="h-10 md:h-8 px-3 rounded-lg border border-red-200 bg-white text-[12px] text-red-600 inline-flex items-center gap-1">
-            <Trash2 size={13} /> Xoá
+          <button type="button" onClick={() => setDeleting(true)} className={`${FOOT_BTN} bg-[#FF3B30]/10 text-[#D70015] hover:bg-[#FF3B30]/[0.16]`}>
+            <Trash2 size={14} /> Xoá
           </button>
           <span className="flex-1" />
-          <button type="button" onClick={onClose} className="h-10 md:h-8 px-4 rounded-lg border border-gray-300 bg-white text-[12.5px] font-medium text-gray-600">Huỷ</button>
+          <button type="button" onClick={onClose} className={`${FOOT_BTN} px-4 bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>Huỷ</button>
           <button type="button" onClick={handleSave} disabled={saving}
-            className="h-10 md:h-8 px-4 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-semibold hover:bg-[#1E40AF] disabled:bg-gray-400">
+            className={`${FOOT_BTN} px-5 bg-[#0071E3] text-white font-semibold hover:bg-[#0077ED] disabled:opacity-40`}>
             {saving ? 'Đang lưu…' : 'Lưu hồ sơ'}
           </button>
         </div>

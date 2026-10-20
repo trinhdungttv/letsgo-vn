@@ -1,7 +1,8 @@
 // ============================================================================
 // CSKH — hằng số hiển thị dùng chung cho các tab (màu, chip, icon).
-// Tông LetsGo (nền giấy, viền mảnh, xanh #1D4ED8) + capsule màu kiểu PRM:
-// chữ màu đậm trên nền cùng màu pha ~12%. Màu trạng thái luôn đi kèm chữ.
+// Phong cách Apple như Workspace (src/components/workspace/wsTheme.ts): nền #F5F5F7, thẻ
+// trắng bo 18px, nhấn #0071E3; màu trạng thái = bản "đậm" của màu hệ thống Apple để chữ
+// trên capsule (nền cùng màu pha ~12%) đủ tương phản. Màu trạng thái luôn đi kèm chữ.
 // ============================================================================
 import type { CSSProperties } from 'react';
 import { Cake, Clock, Coffee, Gift, Handshake, Mail, MessageCircle, MessageSquare, MoreHorizontal, Phone, Users } from 'lucide-react';
@@ -11,28 +12,45 @@ import type { ContactActionChannel } from '../../lib/cskh/contactActions';
 import type { TodayReason } from '../../lib/cskh/todayQueue';
 import type { CskhContact, CskhGroup, CskhTier, GroupColor, InteractionType } from '../../lib/cskh/types';
 import { TIER_LABEL } from '../../lib/cskh/types';
+import { BTN_ICON, BTN_PRIMARY, BTN_TINTED, CARD } from '../../components/workspace/wsTheme';
 
-export const BLUE = '#1D4ED8';
-export const GREEN = '#059669';
-export const ORANGE = '#D97706';
-export const RED = '#DC2626';
-export const PURPLE = '#7C3AED';
-export const GRAY = '#6B7280';
+// ── Lớp giao diện kiểu Apple (thẻ, nút viên, nút tròn) — khối giao diện ở components/apple.tsx ──
+/** Thẻ chuẩn (trắng, bo 18px, bóng mảnh). */
+export const PANEL = CARD;
+/** Chữ phụ xám hệ thống. */
+export const CAPTION = 'text-[12px] text-[#86868B] leading-snug';
+/** Liên kết chữ xanh (kiểu "Xem tất cả ›"). */
+export const LINK = 'inline-flex items-center gap-0.5 text-[13px] font-medium text-[#0066CC] hover:opacity-70 transition min-h-[36px] md:min-h-0 shrink-0';
+/** Nút viên: chính / phụ tô nhạt — kích thước chuẩn của đầu trang CSKH. */
+export const PILL_PRIMARY = `${BTN_PRIMARY} h-10 md:h-9 px-4 text-[13px] font-semibold whitespace-nowrap`;
+export const PILL_TINTED = `${BTN_TINTED} h-10 md:h-9 px-4 text-[13px] font-semibold whitespace-nowrap`;
+export const PILL_GRAY = 'inline-flex items-center justify-center gap-1.5 rounded-full bg-black/[0.05] text-[#1D1D1F] hover:bg-black/[0.08] active:scale-[0.97] transition disabled:opacity-40 h-10 md:h-9 px-4 text-[13px] font-medium whitespace-nowrap';
+/** Nút tròn chỉ có icon (sửa, xoá, lịch…) — vùng chạm 36px trên điện thoại. */
+export const ROUND_ICON = `${BTN_ICON} !w-9 !h-9 md:!w-8 md:!h-8 shrink-0 disabled:opacity-40`;
+/** Nút tròn "+" ghi tương tác ở cuối dòng. */
+export const ROUND_ADD = 'shrink-0 w-9 h-9 md:w-8 md:h-8 rounded-full bg-[#0071E3]/10 text-[#0066CC] hover:bg-[#0071E3]/[0.16] active:scale-95 flex items-center justify-center transition';
+
+export const BLUE = '#0071E3';
+export const GREEN = '#248A3D';
+export const ORANGE = '#B25000';
+export const RED = '#D70015';
+export const PURPLE = '#8944AB';
+export const GRAY = '#6E6E73';
 
 export const TIER_COLOR: Readonly<Record<CskhTier, string>> = {
   vvip: RED,
   vip: ORANGE,
-  partner: '#2563EB',
+  partner: '#0066CC',
   friend: GREEN,
-  family: '#DB2777',
+  family: '#C4103E',
   other: GRAY,
-  unclassified: '#9CA3AF',
+  unclassified: '#AEAEB2',
 };
 
 export const GROUP_COLOR: Readonly<Record<GroupColor, string>> = {
-  blue: '#2563EB',
+  blue: '#0066CC',
   green: GREEN,
-  orange: '#EA580C',
+  orange: '#B25000',
   red: RED,
   purple: PURPLE,
   gray: GRAY,
@@ -42,7 +60,7 @@ export const CARE_STATUS_COLOR: Readonly<Record<CareStatus, string>> = {
   overdue: RED,
   due_soon: ORANGE,
   ok: GREEN,
-  unclassified: '#9CA3AF',
+  unclassified: '#AEAEB2',
 };
 
 /** Màu điểm sức khỏe: ≥ 70 xanh lá · ≥ 40 cam · còn lại đỏ. */
@@ -62,7 +80,7 @@ export const REASON_META: Readonly<Record<TodayReason, { color: string; Icon: Lu
   followup_overdue: { color: RED, Icon: Handshake },
   followup_today: { color: ORANGE, Icon: Handshake },
   occasion_soon: { color: PURPLE, Icon: Cake },
-  cadence_overdue: { color: '#2563EB', Icon: Clock },
+  cadence_overdue: { color: '#0066CC', Icon: Clock },
 };
 
 /** Nút liên hệ 1 chạm. */
@@ -114,7 +132,7 @@ export function resolveGroupKey(
 }
 
 /** Ô nhập chuẩn trong các form CSKH (16px trên điện thoại do CSS chung lo). */
-export const inputCls = 'w-full text-[13px] px-2.5 py-2 md:py-1.5 rounded-lg border border-gray-300 bg-white outline-none focus:border-blue-500';
+export const inputCls = 'w-full text-[13px] text-[#1D1D1F] placeholder:text-[#AEAEB2] px-3 py-2 md:py-[7px] rounded-[10px] border border-black/[0.12] bg-white outline-none focus:border-[#0071E3] focus:ring-4 focus:ring-[#0071E3]/15 transition';
 
 /** "Việc tiếp theo" + hạn ("YYYY-MM-DD"; rỗng = chưa chọn). */
 export interface FollowUpValue {

@@ -9,7 +9,7 @@ import type { CskhContact, CskhGroup } from '../../../lib/cskh/types';
 import { CHANNEL_META, groupDisplayOf, REASON_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
 
-const roundBtn = 'inline-flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#F2F2F7] text-[#1D4ED8] hover:bg-[#E5E5EA] transition';
+const roundBtn = 'inline-flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#F2F2F7] text-[#0071E3] hover:bg-[#E5E5EA] transition';
 const pill = 'inline-flex items-center gap-1 h-10 md:h-8 px-3.5 md:px-3 rounded-full text-[13px] font-semibold transition';
 
 export function TodayQueue({ items, contactById, groupById, loading, onLaunch, onMarkContacted, onDoneFollowUp, onOpenBrief, busyId }: {
@@ -93,7 +93,7 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
                   </button>
                 )}
                 <button type="button" onClick={() => onMarkContacted(contact)} aria-label={`Ghi nhận đã liên hệ với ${contact.fullName}`}
-                  className={`${pill} ml-auto md:ml-0 bg-[rgba(29,78,216,0.09)] text-[#1D4ED8] hover:bg-[rgba(29,78,216,0.15)]`}>
+                  className={`${pill} ml-auto md:ml-0 bg-[rgba(0,113,227,0.09)] text-[#0071E3] hover:bg-[rgba(0,113,227,0.15)]`}>
                   <Check size={14} strokeWidth={2.5} /> Đã liên hệ
                 </button>
               </div>

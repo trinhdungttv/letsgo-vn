@@ -14,16 +14,19 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { LocateFixed, MapPinned } from 'lucide-react';
+import { Building2, Home, LocateFixed, MapPinned } from 'lucide-react';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { CskhContact } from '../../lib/cskh/types';
 import { nominatimGeocode, parseLatLngFromLink, sleep } from '../../lib/geo';
 import { escapeMapHtml, loadDefaultView, SOUTH_VN_BOUNDS } from '../../lib/mapGroups';
 import { setContactGeo } from './data/api';
 import { useCskh } from './context';
-import { chipStyle, groupDisplayOf, type GroupDisplay } from './ui';
+import {
+  chipStyle, groupDisplayOf, PANEL, PILL_GRAY, PILL_PRIMARY, type GroupDisplay,
+} from './ui';
 import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
+import { PageTitle, Segmented, Switch } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 
 type Mode = 'company' | 'home';
@@ -120,29 +123,27 @@ export default function CskhMap() {
     toast(`Đã định vị ${ok} người${fail ? ` · ${fail} người không tìm được địa chỉ (dán link Google Maps vào hồ sơ để chính xác)` : ''}`);
   };
 
-  if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[12.5px] text-[#999]">Chưa tải được dữ liệu CSKH.</p>;
+  if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
 
   return (
-    <div className="space-y-3">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[19px] md:text-[20px] font-bold text-[#111] leading-tight">Bản đồ Khách hàng</h1>
-          <p className="text-[12.5px] text-[#666] mt-0.5">
-            {points.length} người trên bản đồ
-            {mode === 'company'
-              ? missing.length > 0 && ` — ${missing.length} người thuộc công ty chưa có toạ độ (định vị ở Thị trường → Bản đồ, hoặc dán link Maps vào hồ sơ khách hàng)`
-              : locatable.length > 0 && ` — ${locatable.length} người có địa chỉ / link nhưng chưa định vị`}
-          </p>
-        </div>
-        <div className="flex gap-0.5 bg-[#F4F3EF] border border-[#E8E7E2] rounded-lg p-0.5" role="group" aria-label="Đặt người liên hệ theo">
-          {(['company', 'home'] as const).map(m => (
-            <button key={m} type="button" onClick={() => { setMode(m); setHiddenGroups(new Set()); }} aria-pressed={mode === m}
-              className={`px-3 h-9 md:h-7 rounded-md text-[12px] whitespace-nowrap ${mode === m ? 'bg-white text-[#333] font-medium border border-[#E0DFDA]' : 'text-[#888]'}`}>
-              {m === 'company' ? 'Vị trí công ty' : 'Nhà riêng'}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="space-y-4 md:space-y-5">
+      <PageTitle
+        eyebrow="Ai ở đâu"
+        title="Bản đồ Khách hàng"
+        subtitle={<>
+          {points.length} người trên bản đồ
+          {mode === 'company'
+            ? missing.length > 0 && ` — ${missing.length} người thuộc công ty chưa có toạ độ (định vị ở Thị trường → Bản đồ, hoặc dán link Maps vào hồ sơ khách hàng)`
+            : locatable.length > 0 && ` — ${locatable.length} người có địa chỉ / link nhưng chưa định vị`}
+        </>}
+        actions={(
+          <Segmented label="Đặt người liên hệ theo" fit value={mode} onChange={m => { setMode(m); setHiddenGroups(new Set()); }}
+            options={[
+              { key: 'company', label: 'Vị trí công ty', icon: <Building2 size={14} /> },
+              { key: 'home', label: 'Nhà riêng', icon: <Home size={14} /> },
+            ]} />
+        )}
+      />
 
       {!data.migrationReady && <MigrationBanner />}
       <CareScopeBar scope={scope} users={data.users} total={contacts.length} />
@@ -153,31 +154,27 @@ export default function CskhMap() {
           return (
             <button key={group.key} type="button" aria-pressed={!off}
               onClick={() => setHiddenGroups(prev => { const next = new Set(prev); if (off) next.delete(group.key); else next.add(group.key); return next; })}
-              className={`inline-flex items-center gap-1 h-8 md:h-7 px-2.5 rounded-full text-[11.5px] font-medium border ${off ? 'opacity-40 border-transparent bg-[#F4F3EF] text-[#888]' : 'border-transparent'}`}
+              className={`inline-flex items-center gap-1.5 h-9 md:h-8 px-3 rounded-full text-[13px] font-medium transition ${off ? 'bg-black/[0.04] text-[#AEAEB2]' : ''}`}
               style={off ? undefined : chipStyle(group.color)}>
-              <i className="w-2 h-2 rounded-full" style={{ background: group.color }} />{group.label} <b>{n}</b>
+              <i className="w-2 h-2 rounded-full" style={{ background: off ? '#C7C7CC' : group.color }} />{group.label} <b className="tabular-nums">{n}</b>
             </button>
           );
         })}
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-[#666] cursor-pointer min-h-[32px] ml-auto">
-          <input type="checkbox" checked={includeOthers} onChange={e => setIncludeOthers(e.target.checked)} className="w-4 h-4 accent-blue-600" />
-          Cả người chưa chăm sóc
-        </label>
+        <span className="ml-auto"><Switch checked={includeOthers} onChange={setIncludeOthers} label="Cả người chưa chăm sóc" /></span>
       </div>
 
       {mode === 'home' && locatable.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-200 rounded-[10px] px-3 py-2 text-[12.5px] text-blue-900">
-          <LocateFixed size={15} className="shrink-0" />
+        <div className="flex flex-wrap items-center gap-2.5 rounded-[14px] bg-[#0071E3]/[0.08] px-4 py-2.5 text-[13px] text-[#003A75]">
+          <LocateFixed size={16} className="shrink-0 text-[#0071E3]" />
           {geocoding ? (
             <>
               <span>Đang định vị {geocoding.done}/{geocoding.total}… (tra địa chỉ ~1 người/giây)</span>
-              <button type="button" onClick={() => { cancelRef.current = true; }} className="ml-auto h-8 md:h-7 px-3 rounded-lg border border-blue-300 bg-white text-[12px]">Dừng</button>
+              <button type="button" onClick={() => { cancelRef.current = true; }} className={`ml-auto ${PILL_GRAY} !h-8 !bg-white`}>Dừng</button>
             </>
           ) : (
             <>
               <span>{locatable.length} người có địa chỉ / link Google Maps nhưng chưa định vị.</span>
-              <button type="button" disabled={!data.migrationReady} onClick={() => void geocodeAll()}
-                className="ml-auto h-8 md:h-7 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12px] font-semibold disabled:bg-gray-400">
+              <button type="button" disabled={!data.migrationReady} onClick={() => void geocodeAll()} className={`ml-auto ${PILL_PRIMARY} !h-8`}>
                 Định vị {locatable.length} người
               </button>
             </>
@@ -185,11 +182,11 @@ export default function CskhMap() {
         </div>
       )}
 
-      <div className="relative bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+      <div className={`relative ${PANEL} overflow-hidden`}>
         <MapCanvas points={shown} fitKey={mode} onOpen={openProfile} />
         {points.length === 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-white/80 text-[12.5px] text-[#888] text-center px-6 pointer-events-none">
-            <MapPinned size={20} className="text-[#1D4ED8]" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 backdrop-blur-sm text-[13px] text-[#6E6E73] text-center px-6 pointer-events-none">
+            <span className="w-11 h-11 rounded-full bg-[#0071E3]/10 text-[#0071E3] flex items-center justify-center"><MapPinned size={20} /></span>
             {mode === 'company'
               ? 'Chưa có ai để đặt lên bản đồ — chọn người chăm sóc, hoặc định vị công ty khách hàng ở Thị trường → Bản đồ.'
               : 'Chưa ai có toạ độ nhà riêng — dán link Google Maps hoặc địa chỉ nhà trong hồ sơ rồi bấm "Định vị".'}

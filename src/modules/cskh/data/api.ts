@@ -239,6 +239,101 @@ export async function setFollowUpDone(it: CskhInteraction, done: boolean, user: 
   });
 }
 
+// ── Sửa dòng nhật ký ────────────────────────────────────────────────────────
+export interface InteractionEdit {
+  /** Công ty ghi kèm (chỉ đổi được với dòng đã gắn người liên hệ). */
+  clientId: string | null;
+  type: InteractionType;
+  /** null = dòng cũ không rõ ai chủ động — giữ nguyên nếu không đánh dấu "Họ chủ động". */
+  initiatedBy: InitiatedBy | null;
+  /** "YYYY-MM-DD" giờ Việt Nam */
+  occurredAt: string;
+  content: string;
+  followUpAction: string;
+  followUpDue: string | null;
+}
+
+/**
+ * Sửa 1 dòng nhật ký (gõ sai nội dung, nhầm ngày / hình thức…). Người liên hệ giữ
+ * nguyên — ghi nhầm người thì xoá dòng rồi ghi lại. Việc đã hứa đồng bộ với Workspace:
+ *   • trước chưa hứa, nay thêm → tạo việc mới (như lúc ghi);
+ *   • đổi chữ / hạn → sửa tên + hạn việc đi kèm;
+ *   • xoá trắng → xoá mềm việc đi kèm nếu chưa xong (việc đã xong thì giữ).
+ * Đổi ngày → trigger DB tự tính lại "ngày tương tác cuối" của người liên hệ.
+ */
+export async function updateInteraction(
+  it: CskhInteraction,
+  edit: InteractionEdit,
+  contact: CskhContact | null,
+  ctx: WriteCtx,
+): Promise<void> {
+  const action = edit.followUpAction.trim();
+  if (action && !edit.followUpDue) throw new Error('Việc tiếp theo cần có hạn');
+  const who = contact?.fullName || it.contactPerson || 'người liên hệ';
+  const hadAction = it.followUpAction.trim() !== '';
+  // Dòng cũ chưa gắn người: giữ nguyên công ty đã lưu dạng chữ
+  const client = contact && edit.clientId ? ctx.clients.find(c => c.id === edit.clientId) ?? null : null;
+
+  let createdTaskId: string | null = null;
+  if (action && edit.followUpDue && !hadAction) {
+    const assignee = contact?.ownerId ?? ctx.user?.id;
+    if (!assignee) throw new Error('Chưa đăng nhập');
+    const taskClient = client ?? (it.clientId ? ctx.clients.find(c => c.id === it.clientId) ?? null : null);
+    const { data: task, error } = await supabase.from('work_tasks').insert({
+      user_id: assignee,
+      client_id: taskClient?.id ?? null,
+      branch_id: branchOf(taskClient, ctx.branches)?.id ?? null,
+      title: `CSKH: ${action} — ${who}`,
+      task_type: 'CSKH',
+      due_date: edit.followUpDue,
+      priority: 'high',
+      status: 'pending',
+      notes: edit.content.trim() || null,
+    }).select('id').single();
+    if (error) throw writeError(error);
+    createdTaskId = (task as { id: string }).id;
+  }
+
+  const patch = {
+    contact_type: edit.type,
+    // Đổi hình thức thì kênh theo hình thức mới; giữ nguyên thì giữ kênh cũ (VD Zalo từ ghi nhận nhanh)
+    channel: edit.type === it.type ? it.channel : edit.type === 'call' ? 'call' : '',
+    initiated_by: edit.initiatedBy,
+    content: edit.content.trim() || null,
+    log_date: edit.occurredAt,
+    ...(contact ? { client_id: client?.id ?? null, client_name: client?.name ?? (contact.organization || null) } : {}),
+    followup: action || null,
+    followup_due: action ? edit.followUpDue : null,
+    followup_done: action && hadAction ? it.followUpDone : false,
+    followup_task_id: action ? createdTaskId ?? it.followUpTaskId : null,
+  };
+  const { data, error } = await supabase.from('cskh_logs').update(patch).eq('id', it.id).select().single();
+  if (error) {
+    if (createdTaskId) await supabase.from('work_tasks').delete().eq('id', createdTaskId);
+    throw writeError(error);
+  }
+
+  // Việc đi kèm đã có trong Workspace: sửa theo lời hứa mới, hoặc xoá mềm khi bỏ hứa
+  if (it.followUpTaskId) {
+    const now = new Date().toISOString();
+    const req = action
+      ? (action !== it.followUpAction.trim() || edit.followUpDue !== it.followUpDue)
+        ? supabase.from('work_tasks').update({ title: `CSKH: ${action} — ${who}`, due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
+        : null
+      : supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', it.followUpTaskId).neq('status', 'done');
+    if (req) {
+      const { error: taskError } = await req;
+      if (taskError) console.error('[cskh] Không cập nhật được việc đi kèm trong Workspace', taskError);
+    }
+  }
+
+  await logActivity({
+    user: ctx.user, action: 'update', table: 'cskh_logs', recordId: it.id,
+    description: `Sửa nhật ký CSKH ngày ${edit.occurredAt} — ${who}`,
+    oldData: it, newData: data,
+  });
+}
+
 // ── Xếp nhóm / hạng chăm sóc ────────────────────────────────────────────────
 export interface GroupAssignment {
   contactId: string;
@@ -544,7 +639,7 @@ export interface AutomationResult {
 }
 
 /**
- * Chạy 1 lần mỗi phiên khi mở CSKH (port PRM usePrmAutomation). Việc cần tạo do
+ * Gọi qua automationRunner (mỗi ngày khi mở app + mỗi phiên khi mở CSKH; port PRM usePrmAutomation). Việc cần tạo do
  * lib/cskh/automation.planCareReminders chọn; ở đây chỉ ghi: tạo work_tasks (giao
  * cho người phụ trách của người liên hệ, chưa có thì người đang mở), đánh dấu
  * last_reminded_year / last_cold_alert_at để không tạo trùng. Việc "Chuẩn bị quà"
