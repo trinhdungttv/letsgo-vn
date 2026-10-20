@@ -22,6 +22,8 @@ interface Props {
   taskTypes?: string[]
   title?: string
   emptyHint?: string
+  /** Báo số việc (tổng, đang mở) cho trang cha — vd. đếm trên tab. */
+  onCounts?: (total: number, open: number) => void
 }
 
 const PAGE_SIZE = 8
@@ -31,7 +33,7 @@ const PAGE_SIZE = 8
  * này đọc THẲNG bảng đó thay vì giữ một bản sao riêng — sửa/hoàn thành/xoá ở Workspace là
  * hồ sơ Khách hàng và Chi nhánh thấy ngay, không cần đồng bộ.
  */
-export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, title = 'Công việc & trao đổi', emptyHint }: Props) {
+export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, title = 'Công việc & trao đổi', emptyHint, onCounts }: Props) {
   const [rows, setRows] = useState<Row[]>([])
   // Tên người phụ trách tra riêng thay vì join: bảng app_users nhỏ, và nếu tra tên có
   // trục trặc thì cùng lắm mất tên — danh sách việc vẫn hiện đủ.
@@ -70,6 +72,10 @@ export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, tit
   }, [clientId, branchId, refreshKey, taskTypes?.join('|')])
 
   const open = rows.filter(r => !r.deleted_at && !r.voided_at && r.status !== 'done').length
+  useEffect(() => {
+    if (!loading) onCounts?.(rows.length, open)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, rows.length, open])
   // Phụ lục trực thuộc Hợp đồng: xếp ngay dưới Hợp đồng cha, thụt vào.
   const ordered = (() => {
     const ids = new Set(rows.map(r => r.id))

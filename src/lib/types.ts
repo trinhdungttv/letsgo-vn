@@ -1051,7 +1051,7 @@ export interface Branch {
 }
 
 // --- Morning Priority -------------------------------------------
-export type GoalType = 'tai_ky' | 'chot_bao_gia' | 'follow_up' | 'tham_quan' | 'other' | 'hoi_tham' | 'cap_nhat' | 'kho_khan'
+export type GoalType = 'tai_ky' | 'chot_bao_gia' | 'follow_up' | 'tham_quan' | 'other' | 'hoi_tham' | 'cap_nhat' | 'kho_khan' | 'su_kien'
 export type OutcomeStatus = 'done' | 'partial' | 'missed'
 export type MorningWorkType = 'field' | 'office_contract' | 'office_branch'
 
@@ -1140,6 +1140,7 @@ export const GOAL_TYPE_LABELS: Record<GoalType, string> = {
   hoi_tham:     'Hỏi thăm tình hình',
   cap_nhat:     'Cập nhật thông tin',
   kho_khan:     'Ghi nhận khó khăn',
+  su_kien:      'Sự kiện',
   other:        'Khác',
 }
 
