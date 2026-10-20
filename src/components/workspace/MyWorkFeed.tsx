@@ -7,12 +7,13 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   ChevronDown, Check, X, Trash2, Pencil,
   MessageSquare, History, Search, Plus, SlidersHorizontal,
+  Building2, Hourglass, Hand, Flame, Target, Phone, CalendarClock, CheckCircle2, BellRing,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logActivity } from '../../lib/audit'
 import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact, Branch, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
-import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
+import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
 import { usePersistedState } from '../../hooks/usePersistedState'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
@@ -24,6 +25,7 @@ import { branchOf, branchLabel, branchOptions } from '../../lib/branchRef'
 import { selectContacts } from '../../lib/contactOps'
 import DuplicateCompanyNotice from '../common/DuplicateCompanyNotice'
 import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates'
+import { CARD, POPOVER, BTN_PRIMARY, BTN_SECONDARY, FILTER_ON, FILTER_OFF, FIELD, TINT, ICON_TILE } from './wsTheme'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -39,22 +41,27 @@ export interface WorkspaceTask {
 }
 
 const WS_STATUS: Record<string, { label: string; cls: string }> = {
-  drafting:         { label: 'Đang soạn',    cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-  pending_approval: { label: 'Chờ duyệt',    cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  pending_sign:     { label: 'Chờ ký',       cls: 'bg-purple-50 text-purple-700 border-purple-200' },
-  done:             { label: 'Hoàn thành',   cls: 'bg-green-50 text-green-700 border-green-200' },
-  not_started:      { label: 'Chưa bắt đầu', cls: 'bg-slate-100 text-slate-600 border-slate-300' },
-  overdue:          { label: 'Quá hạn',      cls: 'bg-red-50 text-red-700 border-red-200' },
+  drafting:         { label: 'Đang soạn',    cls: TINT.blue },
+  pending_approval: { label: 'Chờ duyệt',    cls: TINT.orange },
+  pending_sign:     { label: 'Chờ ký',       cls: TINT.purple },
+  done:             { label: 'Hoàn thành',   cls: TINT.green },
+  not_started:      { label: 'Chưa bắt đầu', cls: TINT.gray },
+  overdue:          { label: 'Quá hạn',      cls: TINT.red },
 }
 
 const DOC_STATUS_BTN: Record<string, string> = {
-  chua_soan: 'bg-gray-100 text-gray-600 border-gray-300',
-  dang_soan: 'bg-blue-100 text-blue-700 border-blue-300',
-  cho_duyet: 'bg-amber-100 text-amber-700 border-amber-300',
-  cho_kh_ky: 'bg-violet-100 text-violet-700 border-violet-300',
-  hoan_tat:  'bg-green-100 text-green-700 border-green-300',
-  ngung_hd:  'bg-red-100 text-red-700 border-red-300',
+  chua_soan: TINT.gray,
+  dang_soan: TINT.blue,
+  cho_duyet: TINT.orange,
+  cho_kh_ky: TINT.purple,
+  hoan_tat:  TINT.green,
+  ngung_hd:  TINT.red,
 }
+
+// Ưu tiên / trạng thái việc nội bộ trên dòng việc — bản viên nang không viền
+// (bảng màu chung ở lib/types giữ nguyên cho các trang khác).
+const PRIORITY_TINT: Record<TaskPriority, string> = { high: TINT.red, medium: TINT.gray, low: TINT.green }
+const WS_TASK_TINT: Record<WsTaskStatus, string> = { todo: TINT.gray, in_progress: TINT.blue, done: TINT.green }
 
 // ---- Phân loại hiển thị (chip lọc) ----
 // 'Khách mới' = việc BD tìm hiểu/theo đuổi công ty CHƯA ký (nguồn: crm_pipeline_tasks,
@@ -63,14 +70,14 @@ const DOC_STATUS_BTN: Record<string, string> = {
 type Category = 'Khách mới' | 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Xử lý phát sinh' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
 const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
 const CATEGORY_TAG: Record<Category, string> = {
-  'Khách mới': 'bg-rose-50 text-rose-700 border-rose-200',
-  'Hợp đồng': 'bg-blue-50 text-blue-700 border-blue-200',
-  'Báo giá':  'bg-amber-50 text-amber-700 border-amber-200',
-  'Thăm quan / KH': 'bg-teal-50 text-teal-700 border-teal-200',
-  'Xử lý phát sinh': 'bg-orange-50 text-orange-700 border-orange-200',
-  'Hồ sơ':    'bg-violet-50 text-violet-700 border-violet-200',
-  'Nội bộ':   'bg-slate-100 text-slate-600 border-slate-200',
-  'Khác':     'bg-gray-100 text-gray-600 border-gray-200',
+  'Khách mới': TINT.pink,
+  'Hợp đồng': TINT.blue,
+  'Báo giá':  TINT.yellow,
+  'Thăm quan / KH': TINT.teal,
+  'Xử lý phát sinh': TINT.orange,
+  'Hồ sơ':    TINT.purple,
+  'Nội bộ':   TINT.indigo,
+  'Khác':     TINT.gray,
 }
 
 // ---- Nhãn hiển thị trên mỗi dòng việc: bật/tắt ở nút ⚙ đầu khối, nhớ theo trình duyệt ----
@@ -116,10 +123,10 @@ interface FeedItem {
 
 type GroupKey = 'overdue' | 'today' | 'week' | 'later'
 const GROUP_META: Record<GroupKey, { label: string; head: string; badge: string }> = {
-  overdue: { label: 'Quá hạn',   head: 'text-red-600',   badge: 'bg-red-50 text-red-600' },
-  today:   { label: 'Hôm nay',   head: 'text-[#0c2340]', badge: 'bg-blue-50 text-blue-700' },
-  week:    { label: 'Tuần này',  head: 'text-[#8a887f]', badge: 'bg-[#EFEDE6] text-[#8a887f]' },
-  later:   { label: 'Sau đó',    head: 'text-[#8a887f]', badge: 'bg-[#EFEDE6] text-[#8a887f]' },
+  overdue: { label: 'Quá hạn',   head: 'text-[#D70015]', badge: TINT.red },
+  today:   { label: 'Hôm nay',   head: 'text-[#0066CC]', badge: TINT.blue },
+  week:    { label: 'Tuần này',  head: 'text-[#1D1D1F]', badge: TINT.gray },
+  later:   { label: 'Sau đó',    head: 'text-[#6E6E73]', badge: TINT.gray },
 }
 
 function todayStr() { return new Date().toISOString().split('T')[0] }
@@ -732,9 +739,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     if (ds === 'hoan_tat' || ds === 'ngung_hd') return null
     const days = w.updated_at ? Math.max(0, Math.floor((Date.now() - new Date(w.updated_at).getTime()) / 86400000)) : 0
     const wait = days > 0 ? ` · ${days} ngày` : ''
-    if (ds === 'cho_kh_ky') return { kind: 'client', cls: 'bg-violet-50 text-violet-700 border-violet-200', label: `⏳ Chờ khách${wait}` }
-    if (ds === 'cho_duyet') return { kind: 'internal', cls: 'bg-amber-50 text-amber-700 border-amber-200', label: `⏳ Chờ nội bộ${wait}` }
-    return { kind: 'me', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: '🙋 Đến lượt bạn' }
+    if (ds === 'cho_kh_ky') return { kind: 'client', cls: TINT.purple, label: `Chờ khách${wait}` }
+    if (ds === 'cho_duyet') return { kind: 'internal', cls: TINT.orange, label: `Chờ nội bộ${wait}` }
+    return { kind: 'me', cls: TINT.green, label: 'Đến lượt bạn' }
   }
 
   // «Nhắc lại»: lưu vết đôn đốc bằng 1 bình luận vào việc
@@ -915,7 +922,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     // "Hồ sơ · HĐ (chung)" (type='doc') giữ nguyên bộ trạng thái kiểu hồ sơ cũ.
     const wsSt = it.ws
       ? (it.ws.type === 'task'
-          ? { label: WS_TASK_STATUS_LABELS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_LABELS.todo, cls: WS_TASK_STATUS_COLORS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo }
+          ? { label: WS_TASK_STATUS_LABELS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_LABELS.todo, cls: WS_TASK_TINT[(it.ws.status as WsTaskStatus)] ?? WS_TASK_TINT.todo }
           : (WS_STATUS[it.ws.status] || WS_STATUS.not_started))
       : null
     const wsBranch = it.ws?.branch_id ? branches.find(b => b.id === it.ws!.branch_id) : null
@@ -924,88 +931,89 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     const wi = it.work ? waitInfo(it.work) : null
     const phone = it.work ? phoneOf(it.work.client_id) : null
 
+    const chip = 'inline-flex items-center gap-1 text-[11px] font-medium leading-[18px] px-2 rounded-full'
     return (
-      <div key={it.key} className="border-t border-[#F0EFEB]">
-        <div className="group relative flex items-center gap-2.5 px-4 py-2 hover:bg-[#FBFAF7] cursor-pointer" onClick={() => setExpandedKey(expanded ? null : it.key)}>
+      <div key={it.key} className="relative before:absolute before:left-[52px] before:right-0 before:top-0 before:h-px before:bg-black/[0.06]">
+        <div className={`group relative flex items-center gap-3 pl-4 pr-3 py-2.5 cursor-pointer transition-colors ${expanded ? 'bg-black/[0.02]' : 'hover:bg-black/[0.02]'}`} onClick={() => setExpandedKey(expanded ? null : it.key)}>
           <button
             onClick={e => { e.stopPropagation(); it.source === 'ws' ? markWsDone(it.ws!) : it.source === 'pipeline' ? startPipelineDone(it.pipeline!) : startWorkDone(it.work!) }}
             title="Đánh dấu hoàn thành"
-            className={`w-[19px] h-[19px] rounded-full border-[1.8px] shrink-0 flex items-center justify-center transition-colors hover:border-green-500 hover:bg-green-50 ${isOverdue ? 'border-red-300' : 'border-[#cfccc2]'}`}
+            className={`group/check w-[22px] h-[22px] rounded-full border-[1.5px] shrink-0 flex items-center justify-center transition-colors hover:border-[#34C759] hover:bg-[#34C759] ${isOverdue ? 'border-[#FF3B30]/70' : 'border-[#C7C7CC]'}`}
           >
-            <Check size={11} className="opacity-0 hover:opacity-100 text-green-600" />
+            <Check size={13} strokeWidth={3} className="text-white opacity-0 group-hover/check:opacity-100 transition-opacity" />
           </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] font-semibold text-[#111] truncate">
+            <div className="text-[14px] font-medium text-[#1D1D1F] tracking-[-0.01em] truncate">
               {it.pipeline ? (
                 <>
                   <button
                     onClick={e => { e.stopPropagation(); openCompanyProfile(it.pipeline!.crm_id) }}
-                    className="hover:underline hover:text-blue-600 transition"
+                    className="hover:underline hover:text-[#0066CC] transition"
                     title="Xem hồ sơ công ty"
                   >
                     {it.pipeline.company_name}
                   </button>
-                  <span className="text-[#888] font-normal"> — {it.pipeline.title}</span>
+                  <span className="text-[#86868B] font-normal"> — {it.pipeline.title}</span>
                 </>
               ) : it.title}
             </div>
-            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-              {showField('category') && <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[it.category]}`}>{it.category}</span>}
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              {showField('category') && <span className={`${chip} ${CATEGORY_TAG[it.category]}`}>{it.category}</span>}
               {/* Badge trạng thái hồ sơ — chỉ với việc Tái ký HĐ */}
               {showField('status') && it.work?.task_type === 'Tái ký HĐ' && (() => {
                 const key = (it.work!.doc_status as DocStatus | null) ?? 'chua_soan'
                 const step = DOC_STATUS_STEPS.find(s => s.key === key)
-                return step ? (
-                  <span className={`text-[9.5px] font-bold px-2 py-px rounded-full border ${DOC_STATUS_BTN[key] ?? 'bg-gray-100 text-gray-600 border-gray-300'}`}>{step.label}</span>
-                ) : null
+                return step ? <span className={`${chip} ${DOC_STATUS_BTN[key] ?? TINT.gray}`}>{step.label}</span> : null
               })()}
               {/* ③ «Chờ ai?» + nút Nhắc lưu vết đôn đốc */}
               {showField('waiting') && wi && (
-                <span className={`text-[9.5px] font-bold px-2 py-px rounded-full border ${wi.cls}`}>{wi.label}</span>
+                <span className={`${chip} ${wi.cls}`}>
+                  {wi.kind === 'me' ? <Hand size={10} /> : <Hourglass size={10} />}{wi.label}
+                </span>
               )}
               {showField('remind') && wi && wi.kind !== 'me' && (
                 <button
                   onClick={e => { e.stopPropagation(); remindTask(it.work!) }}
-                  className="text-[9.5px] font-bold px-2 py-px rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
+                  className={`${chip} text-[#0066CC] hover:bg-[#0071E3]/10 transition`}
                 >
-                  Nhắc lại →
+                  <BellRing size={10} /> Nhắc lại
                 </button>
               )}
               {/* Chi nhánh của việc; việc tạo trước migration 137 chưa có branch_id thì
                   vẫn hiện KCN cũ đã nhập, không để trống chỗ này. */}
               {showField('branch') && (workBranch
-                ? <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(workBranch)}</span>
-                : it.work?.kcn && <span className="text-[10.5px] text-[#999]">{it.work.kcn}</span>)}
-              {showField('status') && wsSt && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${wsSt.cls}`}>{wsSt.label}</span>}
-              {showField('branch') && wsBranch && <span className="text-[9.5px] font-semibold px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-violet-700">🏢 {branchLabel(wsBranch)}</span>}
-              {showField('assignee') && it.ws?.assignee && <span className="text-[10.5px] text-[#888]">{it.ws.assignee}</span>}
-              {showField('priority') && it.work && <span className={`text-[9.5px] px-1.5 py-px rounded-full border ${TASK_PRIORITY_COLORS[it.work.priority]}`}>{TASK_PRIORITY_LABELS[it.work.priority]}</span>}
-              {showField('comments') && cmts.length > 0 && <span className="text-[10.5px] text-[#999] flex items-center gap-0.5"><MessageSquare size={10} />{cmts.length}</span>}
+                ? <span className={`${chip} ${TINT.indigo}`}><Building2 size={10} />{branchLabel(workBranch)}</span>
+                : it.work?.kcn && <span className="text-[11.5px] text-[#86868B]">{it.work.kcn}</span>)}
+              {showField('status') && wsSt && <span className={`${chip} ${wsSt.cls}`}>{wsSt.label}</span>}
+              {showField('branch') && wsBranch && <span className={`${chip} ${TINT.indigo}`}><Building2 size={10} />{branchLabel(wsBranch)}</span>}
+              {showField('assignee') && it.ws?.assignee && <span className="text-[11.5px] text-[#86868B]">{it.ws.assignee}</span>}
+              {showField('priority') && it.work && <span className={`${chip} ${PRIORITY_TINT[it.work.priority]}`}>{TASK_PRIORITY_LABELS[it.work.priority]}</span>}
+              {showField('comments') && cmts.length > 0 && <span className="text-[11.5px] text-[#86868B] inline-flex items-center gap-1"><MessageSquare size={11} />{cmts.length}</span>}
             </div>
           </div>
-          <span className={`text-[11px] whitespace-nowrap shrink-0 ${isOverdue ? 'text-red-600 font-bold' : 'text-[#999]'}`}>{dueLabel(it.due, group)}</span>
-          <ChevronDown size={13} className={`text-[#bbb] shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          <span className={`text-[12.5px] whitespace-nowrap shrink-0 tabular-nums ${isOverdue ? 'text-[#D70015] font-medium' : group === 'today' ? 'text-[#0066CC] font-medium' : 'text-[#86868B]'}`}>{dueLabel(it.due, group)}</span>
+          <ChevronDown size={15} className={`text-[#C7C7CC] shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
 
           {/* ④ Thao tác nhanh khi rê chuột (desktop) */}
           <div
-            className="absolute right-10 top-1/2 -translate-y-1/2 hidden lg:group-hover:flex items-center gap-1 bg-white border border-[#E8E7E2] rounded-[10px] px-1.5 py-1 shadow-[0_6px_18px_rgba(12,35,64,0.14)] z-10"
+            className={`absolute right-11 top-1/2 -translate-y-1/2 hidden lg:group-hover:flex items-center gap-1 p-1 z-10 ${POPOVER}`}
             onClick={e => e.stopPropagation()}
           >
             <button onClick={() => it.source === 'ws' ? markWsDone(it.ws!) : it.source === 'pipeline' ? startPipelineDone(it.pipeline!) : startWorkDone(it.work!)}
-              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition">✓ Xong</button>
+              className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.green}`}><Check size={12} strokeWidth={2.5} /> Xong</button>
             <button onClick={() => snoozeItem(it, 1)}
-              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB] hover:border-blue-300 transition">+1 ngày</button>
+              className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.gray}`}><CalendarClock size={12} /> +1 ngày</button>
             <button onClick={() => snoozeItem(it, 7)}
-              className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB] hover:border-blue-300 transition">+1 tuần</button>
+              className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.gray}`}>+1 tuần</button>
             {phone && (
               <a href={`tel:${phone}`} onClick={e => e.stopPropagation()}
-                className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-blue-50 text-blue-600 hover:bg-blue-100 transition whitespace-nowrap">📞 Gọi</a>
+                className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition whitespace-nowrap ${TINT.blue}`}><Phone size={12} /> Gọi</a>
             )}
           </div>
         </div>
 
         {expanded && (
-          <div className="px-4 pb-3 pl-[46px] flex flex-col gap-2">
+          <div className="pr-4 pb-3.5 pl-[52px] flex flex-col gap-2 bg-black/[0.02]">
             {/* --- Việc cá nhân: doc status / trạng thái / xoá --- */}
             {it.work && (
               <div className="flex items-center gap-2 flex-wrap">
@@ -1017,7 +1025,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                         <button
                           key={step.key}
                           onClick={() => changeDocStatus(it.work!, step)}
-                          className={`text-[10px] px-2 py-1 rounded-md border font-medium transition ${active ? (DOC_STATUS_BTN[step.key] ?? '') : 'bg-white text-[#888] border-[#E8E7E2] hover:border-blue-300'} ${step.danger && !active ? 'text-red-500' : ''}`}
+                          className={`text-[12px] h-7 px-3 rounded-full font-medium transition ${active ? `${DOC_STATUS_BTN[step.key] ?? ''}` : `bg-black/[0.04] hover:bg-black/[0.07] ${step.danger ? 'text-[#D70015]' : 'text-[#6E6E73]'}`}`}
                         >
                           {step.label}
                         </button>
@@ -1028,14 +1036,14 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   <select
                     value={it.work.status}
                     onChange={e => changeWorkStatus(it.work!, e.target.value as TaskStatus)}
-                    className={`text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium ${TASK_STATUS_COLORS[it.work.status] ?? 'bg-slate-100 text-slate-600 border-slate-300'}`}
+                    className={`text-[12px] rounded-full px-2.5 py-1 focus:outline-none font-medium cursor-pointer ${TASK_STATUS_COLORS[it.work.status] ?? 'bg-slate-100 text-slate-600 border-slate-300'}`}
                   >
                     {(['pending', 'in_progress', 'done', 'ngung_hd'] as TaskStatus[]).map(s => (
                       <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
                     ))}
                   </select>
                 )}
-                <span className="text-[10.5px] text-[#999]">Hạn: {formatDate(it.work.due_date)}</span>
+                <span className="text-[12px] text-[#86868B] tabular-nums">Hạn: {formatDate(it.work.due_date)}</span>
                 <button
                   onClick={() => {
                     const msg = it.work!.task_type === 'Tái ký HĐ'
@@ -1043,7 +1051,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                       : 'Xoá công việc này?'
                     if (confirm(msg)) deleteWork(it.id)
                   }}
-                  className="ml-auto p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
+                  className="ml-auto w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#FF3B30]/10 text-[#AEAEB2] hover:text-[#D70015] transition"
                   title="Xoá"
                 ><Trash2 size={13} /></button>
               </div>
@@ -1053,7 +1061,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             {it.work && (it.work.task_type === 'Hợp đồng' || it.work.task_type === 'Phụ lục') && (
               it.work.client_id
                 ? <ContractCompareTables clientId={it.work.client_id} taskId={it.work.id} toast={toast} />
-                : <div className="text-[11.5px] text-[#999]">Việc này chưa gắn khách hàng nên chưa có bảng/nội dung Hợp đồng.</div>
+                : <div className="text-[11.5px] text-[#86868B]">Việc này chưa gắn khách hàng nên chưa có bảng/nội dung Hợp đồng.</div>
             )}
 
             {/* --- Việc BD (CRM Pipeline): giai đoạn / trạng thái / xem hồ sơ / xoá --- */}
@@ -1063,29 +1071,29 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   value={localPipelineEntries.find(e => e.id === it.pipeline!.crm_id)?.stage || 'tiem-nang'}
                   onChange={e => changePipelineStage(it.pipeline!.crm_id, e.target.value)}
                   title="Giai đoạn pipeline"
-                  className="text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium bg-indigo-50 text-indigo-700 border-indigo-200"
+                  className="text-[12px] rounded-full px-2.5 py-1 focus:outline-none font-medium cursor-pointer bg-indigo-50 text-indigo-700 border-indigo-200"
                 >
                   {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                 </select>
                 <select
                   value={it.pipeline.status}
                   onChange={e => changePipelineStatus(it.pipeline!, e.target.value as PipelineTaskStatus)}
-                  className="text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium bg-rose-50 text-rose-700 border-rose-200"
+                  className="text-[12px] rounded-full px-2.5 py-1 focus:outline-none font-medium cursor-pointer bg-rose-50 text-rose-700 border-rose-200"
                 >
                   <option value="pending">Chưa xử lý</option>
                   <option value="in_progress">Đang xử lý</option>
                   <option value="done">Đã xong</option>
                 </select>
-                <span className="text-[10.5px] text-[#999]">Hạn: {formatDate(it.pipeline.due_date)}</span>
+                <span className="text-[12px] text-[#86868B] tabular-nums">Hạn: {formatDate(it.pipeline.due_date)}</span>
                 <button
                   onClick={() => openCompanyProfile(it.pipeline!.crm_id)}
-                  className="text-[10.5px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition"
+                  className="text-[12px] font-medium h-7 px-3 rounded-full bg-[#0071E3]/10 text-[#0066CC] hover:bg-[#0071E3]/[0.16] transition"
                 >
                   Xem hồ sơ →
                 </button>
                 <button
                   onClick={() => { if (confirm('Xoá việc này? (nếu công ty chưa có hoạt động nào khác, sẽ xoá luôn khỏi CRM Pipeline)')) deletePipelineTask(it.id) }}
-                  className="ml-auto p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition"
+                  className="ml-auto w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#FF3B30]/10 text-[#AEAEB2] hover:text-[#D70015] transition"
                   title="Xoá"
                 ><Trash2 size={13} /></button>
               </div>
@@ -1094,9 +1102,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             {/* ④ Hoãn nhanh + gọi — hiện trong phần mở rộng để thao tác được trên điện thoại */}
             {!isEditingWs && (
               <div className="flex items-center gap-1.5 flex-wrap lg:hidden">
-                <button onClick={() => snoozeItem(it, 1)} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB]">⏰ +1 ngày</button>
-                <button onClick={() => snoozeItem(it, 7)} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-[#FBFAF7] text-[#666] border border-[#F0EFEB]">⏰ +1 tuần</button>
-                {phone && <a href={`tel:${phone}`} className="text-[10.5px] font-bold px-2.5 py-1 rounded-[7px] bg-blue-50 text-blue-600 border border-blue-200">📞 Gọi {phone}</a>}
+                <button onClick={() => snoozeItem(it, 1)} className={`inline-flex items-center gap-1 h-8 px-3 rounded-full text-[12.5px] font-medium ${TINT.gray}`}><CalendarClock size={13} /> +1 ngày</button>
+                <button onClick={() => snoozeItem(it, 7)} className={`inline-flex items-center gap-1 h-8 px-3 rounded-full text-[12.5px] font-medium ${TINT.gray}`}><CalendarClock size={13} /> +1 tuần</button>
+                {phone && <a href={`tel:${phone}`} className={`inline-flex items-center gap-1 h-8 px-3 rounded-full text-[12.5px] font-medium ${TINT.blue}`}><Phone size={13} /> Gọi {phone}</a>}
               </div>
             )}
 
@@ -1108,7 +1116,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                     <select
                       value={it.ws.status in WS_TASK_STATUS_LABELS ? it.ws.status : 'todo'}
                       onChange={e => changeWsTaskStatus(it.ws!, e.target.value as WsTaskStatus)}
-                      className={`text-[10.5px] border rounded-md px-2 py-1 focus:outline-none font-medium ${WS_TASK_STATUS_COLORS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
+                      className={`text-[12px] rounded-full px-2.5 py-1 focus:outline-none font-medium cursor-pointer ${WS_TASK_STATUS_COLORS[(it.ws.status as WsTaskStatus)] ?? WS_TASK_STATUS_COLORS.todo}`}
                     >
                       {(['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => (
                         <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>
@@ -1118,24 +1126,24 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                       value={it.ws.branch_id ?? ''}
                       onChange={e => changeWsBranch(it.ws!, e.target.value || null)}
                       title="Chi nhánh liên kết"
-                      className="text-[10.5px] border border-[#E8E7E2] rounded-md px-2 py-1 focus:outline-none font-medium bg-white text-[#666]"
+                      className="text-[12px] rounded-full px-2.5 py-1 focus:outline-none font-medium bg-black/[0.05] text-[#3A3A3C] cursor-pointer"
                     >
                       <option value="">— Không liên kết Chi nhánh —</option>
                       {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                     </select>
                   </>
                 ) : (
-                  <span className="text-[10.5px] text-[#999]">Hồ sơ · HĐ</span>
+                  <span className="text-[12px] text-[#86868B]">Hồ sơ · HĐ</span>
                 )}
-                {it.ws.deadline && <span className="text-[10.5px] text-[#999]">Hạn: {formatDate(it.ws.deadline)}</span>}
+                {it.ws.deadline && <span className="text-[12px] text-[#86868B] tabular-nums">Hạn: {formatDate(it.ws.deadline)}</span>}
                 <div className="ml-auto flex items-center gap-1">
                   <button
                     onClick={() => { setEditWsId(it.id); setEditWs({ title: it.ws!.title, status: it.ws!.status, deadline: it.ws!.deadline ?? '', assignee: it.ws!.assignee ?? '' }) }}
-                    className="p-1 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500 transition" title="Sửa"
+                    className="w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#0071E3]/10 text-[#AEAEB2] hover:text-[#0066CC] transition" title="Sửa"
                   ><Pencil size={13} /></button>
                   <button
                     onClick={() => { if (confirm('Xoá công việc này?')) deleteWs(it.id) }}
-                    className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500 transition" title="Xoá"
+                    className="w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#FF3B30]/10 text-[#AEAEB2] hover:text-[#D70015] transition" title="Xoá"
                   ><Trash2 size={13} /></button>
                 </div>
               </div>
@@ -1149,32 +1157,32 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   className="text-[12px] px-2 py-1 border border-blue-300 rounded-md focus:outline-none w-full"
                 />
                 <div className="flex gap-2 flex-wrap">
-                  <select value={editWs.status} onChange={e => setEditWs(p => ({ ...p, status: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none">
+                  <select value={editWs.status} onChange={e => setEditWs(p => ({ ...p, status: e.target.value }))} className="text-[11px] px-2 py-1 border border-black/[0.08] rounded-md focus:outline-none">
                     {it.ws.type === 'task'
                       ? (['todo', 'in_progress', 'done'] as WsTaskStatus[]).map(s => <option key={s} value={s}>{WS_TASK_STATUS_LABELS[s]}</option>)
                       : Object.entries(WS_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select>
-                  <input type="date" value={editWs.deadline} onChange={e => setEditWs(p => ({ ...p, deadline: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none" />
-                  <input placeholder="Người phụ trách" value={editWs.assignee} onChange={e => setEditWs(p => ({ ...p, assignee: e.target.value }))} className="text-[11px] px-2 py-1 border border-[#E8E7E2] rounded-md focus:outline-none flex-1 min-w-[90px]" />
-                  <button onClick={() => setEditWsId(null)} className="text-[11px] px-2.5 py-1 border border-[#E8E7E2] rounded-md text-[#666]">Huỷ</button>
-                  <button onClick={() => saveWsEdit(it.id)} className="text-[11px] px-2.5 py-1 bg-blue-600 text-white rounded-md">Lưu</button>
+                  <input type="date" value={editWs.deadline} onChange={e => setEditWs(p => ({ ...p, deadline: e.target.value }))} className="text-[11px] px-2 py-1 border border-black/[0.08] rounded-md focus:outline-none" />
+                  <input placeholder="Người phụ trách" value={editWs.assignee} onChange={e => setEditWs(p => ({ ...p, assignee: e.target.value }))} className="text-[11px] px-2 py-1 border border-black/[0.08] rounded-md focus:outline-none flex-1 min-w-[90px]" />
+                  <button onClick={() => setEditWsId(null)} className="text-[11px] px-2.5 py-1 border border-black/[0.08] rounded-md text-[#6E6E73]">Huỷ</button>
+                  <button onClick={() => saveWsEdit(it.id)} className="text-[12.5px] h-8 px-4 bg-[#0071E3] text-white font-medium rounded-full hover:bg-[#0077ED] transition">Lưu</button>
                 </div>
               </div>
             )}
 
             {/* --- Bình luận Task nội bộ (chung) --- */}
             {it.ws && it.ws.type === 'task' && (
-              <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+              <div className="rounded-[12px] bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.1)] overflow-hidden">
                 {cmts.length > 0 && (
-                  <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                  <div className="flex flex-col divide-y divide-black/[0.06] max-h-36 overflow-y-auto">
                     {(cmts as WorkspaceTaskComment[]).map(cm => (
                       <div key={cm.id} className="px-2.5 py-1.5 group">
                         <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
-                          <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                          <span className="text-[12px] font-semibold text-[#1D1D1F]">{cm.user_name}</span>
+                          <span className="text-[11px] text-[#86868B]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                           <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { setEditingWsCommentId(cm.id); setEditingWsCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
-                            <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteWsComment(cm.id, it.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
+                            <button onClick={() => { setEditingWsCommentId(cm.id); setEditingWsCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#C7C7CC] hover:text-blue-500"><Pencil size={10} /></button>
+                            <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteWsComment(cm.id, it.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#C7C7CC] hover:text-red-500"><Trash2 size={10} /></button>
                           </div>
                         </div>
                         {editingWsCommentId === cm.id ? (
@@ -1182,28 +1190,28 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                             <input autoFocus value={editingWsCommentText} onChange={e => setEditingWsCommentText(e.target.value)}
                               onKeyDown={e => { if (e.key === 'Enter') saveWsCommentEdit(cm.id, it.id); if (e.key === 'Escape') setEditingWsCommentId(null) }}
                               className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
-                            <button onClick={() => saveWsCommentEdit(cm.id, it.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
-                            <button onClick={() => setEditingWsCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
+                            <button onClick={() => saveWsCommentEdit(cm.id, it.id)} className="text-[10px] px-1.5 py-0.5 bg-[#0071E3] text-white rounded"><Check size={10} /></button>
+                            <button onClick={() => setEditingWsCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-black/[0.08] rounded text-[#6E6E73]"><X size={10} /></button>
                           </div>
                         ) : (
-                          <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                          <div className="text-[13px] leading-snug text-[#1D1D1F] whitespace-pre-wrap">{cm.content}</div>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                <div className="flex gap-1.5 p-1.5 border-t border-black/[0.06] first:border-t-0">
                   <input
                     type="text" value={wsCommentInput[it.id] ?? ''}
                     onChange={e => setWsCommentInput(prev => ({ ...prev, [it.id]: e.target.value }))}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendWsComment(it.id) } }}
                     placeholder="Bình luận tiến độ..."
-                    className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-[#fafafa] placeholder:text-[#ccc]"
+                    className="flex-1 min-w-0 text-[13px] px-3 h-8 rounded-full bg-black/[0.04] border border-transparent focus:outline-none focus:bg-white focus:border-[#0071E3] placeholder:text-[#86868B] transition"
                   />
                   <button
                     onClick={() => sendWsComment(it.id)}
                     disabled={sendingWsComment === it.id || !(wsCommentInput[it.id] ?? '').trim()}
-                    className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                    className="text-[12.5px] h-8 px-3.5 rounded-full bg-[#0071E3] text-white font-medium hover:bg-[#0077ED] disabled:opacity-40 shrink-0"
                   >Gửi</button>
                 </div>
               </div>
@@ -1211,17 +1219,17 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
             {/* --- Bình luận (work) --- */}
             {it.work && (
-              <div className="border border-[#E8E7E2] rounded-lg bg-white overflow-hidden">
+              <div className="rounded-[12px] bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.1)] overflow-hidden">
                 {cmts.length > 0 && (
-                  <div className="flex flex-col divide-y divide-[#F0EEE9] max-h-36 overflow-y-auto">
+                  <div className="flex flex-col divide-y divide-black/[0.06] max-h-36 overflow-y-auto">
                     {cmts.map(cm => (
                       <div key={cm.id} className="px-2.5 py-1.5 group">
                         <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className="text-[10.5px] font-semibold text-[#1D4ED8]">{cm.user_name}</span>
-                          <span className="text-[10px] text-[#bbb]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                          <span className="text-[12px] font-semibold text-[#1D1D1F]">{cm.user_name}</span>
+                          <span className="text-[11px] text-[#86868B]">{new Date(cm.created_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                           <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { setEditingCommentId(cm.id); setEditingCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#ccc] hover:text-blue-500"><Pencil size={10} /></button>
-                            <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteComment(cm.id, it.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#ccc] hover:text-red-500"><Trash2 size={10} /></button>
+                            <button onClick={() => { setEditingCommentId(cm.id); setEditingCommentText(cm.content) }} className="p-0.5 rounded hover:bg-blue-50 text-[#C7C7CC] hover:text-blue-500"><Pencil size={10} /></button>
+                            <button onClick={() => { if (confirm('Xoá bình luận này?')) deleteComment(cm.id, it.id) }} className="p-0.5 rounded hover:bg-red-50 text-[#C7C7CC] hover:text-red-500"><Trash2 size={10} /></button>
                           </div>
                         </div>
                         {editingCommentId === cm.id ? (
@@ -1229,28 +1237,28 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                             <input autoFocus value={editingCommentText} onChange={e => setEditingCommentText(e.target.value)}
                               onKeyDown={e => { if (e.key === 'Enter') saveCommentEdit(cm.id, it.id); if (e.key === 'Escape') setEditingCommentId(null) }}
                               className="flex-1 text-[11px] px-2 py-0.5 border border-blue-300 rounded focus:outline-none" />
-                            <button onClick={() => saveCommentEdit(cm.id, it.id)} className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded"><Check size={10} /></button>
-                            <button onClick={() => setEditingCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-[#E8E7E2] rounded text-[#666]"><X size={10} /></button>
+                            <button onClick={() => saveCommentEdit(cm.id, it.id)} className="text-[10px] px-1.5 py-0.5 bg-[#0071E3] text-white rounded"><Check size={10} /></button>
+                            <button onClick={() => setEditingCommentId(null)} className="text-[10px] px-1.5 py-0.5 border border-black/[0.08] rounded text-[#6E6E73]"><X size={10} /></button>
                           </div>
                         ) : (
-                          <div className="text-[11.5px] text-[#333] whitespace-pre-wrap">{cm.content}</div>
+                          <div className="text-[13px] leading-snug text-[#1D1D1F] whitespace-pre-wrap">{cm.content}</div>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex gap-1.5 p-1.5 border-t border-[#F0EEE9] first:border-t-0">
+                <div className="flex gap-1.5 p-1.5 border-t border-black/[0.06] first:border-t-0">
                   <input
                     type="text" value={commentInput[it.id] ?? ''}
                     onChange={e => setCommentInput(prev => ({ ...prev, [it.id]: e.target.value }))}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(it.id) } }}
                     placeholder="Bình luận tình trạng..."
-                    className="flex-1 text-[11px] px-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-[#fafafa] placeholder:text-[#ccc]"
+                    className="flex-1 min-w-0 text-[13px] px-3 h-8 rounded-full bg-black/[0.04] border border-transparent focus:outline-none focus:bg-white focus:border-[#0071E3] placeholder:text-[#86868B] transition"
                   />
                   <button
                     onClick={() => sendComment(it.id)}
                     disabled={sendingComment === it.id || !(commentInput[it.id] ?? '').trim()}
-                    className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-40 shrink-0"
+                    className="text-[12.5px] h-8 px-3.5 rounded-full bg-[#0071E3] text-white font-medium hover:bg-[#0077ED] disabled:opacity-40 shrink-0"
                   >Gửi</button>
                 </div>
               </div>
@@ -1263,121 +1271,137 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
   return (
     <>
-      <div className="bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden">
-        {/* Head: tiêu đề + chip lọc */}
-        <div className="flex items-center justify-between gap-2 px-4 py-2.5 flex-wrap">
-          <h2 className="text-[13.5px] font-extrabold text-[#0c2340]">Việc của tôi</h2>
-          <div className="flex items-center gap-1 flex-wrap">
-            {CATEGORY_CHIPS.map(c => (
-              <button
-                key={c}
-                onClick={() => setFilter(c)}
-                className={`text-[11.5px] md:text-[10.5px] px-2.5 py-1 md:py-0.5 rounded-full border transition ${filter === c ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
-              >
-                {c}
-              </button>
-            ))}
+      <section className={`${CARD} overflow-hidden`}>
+        {/* Head: tiêu đề + nút chọn nhãn; chip lọc nằm 1 hàng riêng, cuộn ngang khi hẹp */}
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-[19px] font-semibold text-[#1D1D1F] tracking-[-0.02em]">Việc của tôi</h2>
             {/* Chọn nhãn nào hiện trên dòng việc */}
             <div className="relative" ref={fieldMenuRef}>
               <button
                 onClick={() => setFieldMenuOpen(o => !o)}
                 title="Chọn thông tin hiện trên mỗi dòng việc"
-                className={`p-1 rounded-md border transition ${fieldMenuOpen ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-[#E8E7E2] text-[#888] hover:border-blue-300 hover:text-blue-500'}`}
+                className={`w-7 h-7 rounded-full inline-flex items-center justify-center transition ${fieldMenuOpen ? TINT.blue : FILTER_OFF}`}
               >
-                <SlidersHorizontal size={12} />
+                <SlidersHorizontal size={13} />
               </button>
               {fieldMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-[#E8E7E2] rounded-lg shadow-lg p-2 w-[190px]">
-                  <div className="text-[10px] font-semibold text-[#888] uppercase tracking-wide px-1 pb-1.5">Hiện trên dòng việc</div>
+                <div className={`absolute right-0 top-full mt-1.5 z-30 p-1.5 w-[220px] ${POPOVER}`}>
+                  <div className="text-[12px] font-medium text-[#86868B] px-2 pt-1 pb-1.5">Hiện trên dòng việc</div>
                   {ROW_FIELDS.map(f => (
-                    <label key={f.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-[#FAFAF8] cursor-pointer">
+                    <label key={f.key} className="flex items-center gap-2.5 px-2 py-1.5 rounded-[8px] hover:bg-black/[0.04] cursor-pointer">
                       <input
                         type="checkbox"
                         checked={showField(f.key)}
                         onChange={e => setRowFields(prev => ({ ...prev, [f.key]: e.target.checked }))}
-                        className="accent-blue-600"
+                        className="w-4 h-4 accent-[#0071E3]"
                       />
-                      <span className="text-[11.5px] text-[#333]">{f.label}</span>
+                      <span className="text-[13px] text-[#1D1D1F]">{f.label}</span>
                     </label>
                   ))}
-                  <div className="text-[9.5px] text-[#bbb] pt-1.5 mt-1 border-t border-[#F0EFEB] px-1">
+                  <div className="text-[11px] text-[#86868B] pt-1.5 mt-1 border-t border-black/[0.06] px-2 pb-1">
                     Lựa chọn được lưu cho các lần sau.
                   </div>
                 </div>
               )}
             </div>
           </div>
+          <div className="flex items-center gap-1.5 mt-2.5 -mx-4 px-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {CATEGORY_CHIPS.map(c => (
+              <button
+                key={c}
+                onClick={() => setFilter(c)}
+                className={`shrink-0 whitespace-nowrap text-[12.5px] md:text-[12px] font-medium h-7 px-3 rounded-full transition ${filter === c ? FILTER_ON : FILTER_OFF}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* ① Radar 7 ngày */}
-        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto">
-          <button
-            onClick={() => setDayFilter(v => v === 'overdue' ? null : 'overdue')}
-            className={`flex-1 min-w-[52px] text-center py-1.5 rounded-[10px] border transition ${dayFilter === 'overdue' ? 'border-red-500 ring-1 ring-red-300 bg-red-50' : radar.overdue > 0 ? 'border-red-200 bg-red-50/60 hover:border-red-400' : 'border-[#E8E7E2] bg-[#FBFAF7]'}`}
-          >
-            <div className="text-[9px] font-bold uppercase text-red-500">Quá hạn</div>
-            <div className={`text-[14px] font-extrabold leading-tight ${radar.overdue > 0 ? 'text-red-600' : 'text-[#c9c7bf]'}`}>{radar.overdue}</div>
-          </button>
+        {/* ① Radar 7 ngày — dải lịch */}
+        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {(() => {
+            const on = dayFilter === 'overdue'
+            return (
+              <button
+                onClick={() => setDayFilter(v => v === 'overdue' ? null : 'overdue')}
+                className={`flex-1 min-w-[58px] text-center py-2 rounded-[12px] transition ${on ? 'bg-[#FF3B30] shadow-[0_6px_14px_-6px_rgba(255,59,48,0.7)]' : radar.overdue > 0 ? 'bg-[#FF3B30]/10 hover:bg-[#FF3B30]/[0.16]' : 'bg-black/[0.03]'}`}
+              >
+                <div className={`text-[10.5px] font-semibold uppercase tracking-[0.04em] ${on ? 'text-white/85' : 'text-[#D70015]'}`}>Quá hạn</div>
+                <div className={`text-[19px] font-semibold leading-tight tabular-nums ${on ? 'text-white' : radar.overdue > 0 ? 'text-[#D70015]' : 'text-[#C7C7CC]'}`}>{radar.overdue}</div>
+                <div className={`text-[10.5px] font-medium ${on ? 'text-white/85' : 'text-[#86868B]'}`}>việc</div>
+              </button>
+            )
+          })()}
           {radar.days.map(d => {
             const active = dayFilter === d.date
+            const isToday = d.dw === 'Hôm nay'
             return (
               <button
                 key={d.date}
                 onClick={() => setDayFilter(v => v === d.date ? null : d.date)}
-                className={`flex-1 min-w-[52px] text-center py-1.5 rounded-[10px] border transition ${active ? 'border-blue-500 ring-1 ring-blue-300 bg-blue-50' : d.dw === 'Hôm nay' ? 'border-blue-200 bg-blue-50/50 hover:border-blue-400' : 'border-[#E8E7E2] bg-[#FBFAF7] hover:border-blue-300'}`}
+                className={`flex-1 min-w-[58px] text-center py-2 rounded-[12px] transition ${active ? 'bg-[#0071E3] shadow-[0_6px_14px_-6px_rgba(0,113,227,0.7)]' : isToday ? 'bg-[#0071E3]/10 hover:bg-[#0071E3]/[0.15]' : 'bg-black/[0.03] hover:bg-black/[0.06]'}`}
               >
-                <div className={`text-[9px] font-bold uppercase ${d.dw === 'Hôm nay' ? 'text-blue-600' : 'text-[#999]'}`}>{d.dw}</div>
-                <div className="text-[13px] font-extrabold text-[#0c2340] leading-tight">{d.dn}</div>
-                <div className={`text-[9px] font-bold ${d.count > 0 ? 'text-blue-600' : 'text-[#c9c7bf]'}`}>{d.count > 0 ? `${d.count} việc` : '—'}</div>
+                <div className={`text-[10.5px] font-semibold uppercase tracking-[0.04em] ${active ? 'text-white/85' : isToday ? 'text-[#0066CC]' : 'text-[#86868B]'}`}>{d.dw}</div>
+                <div className={`text-[19px] font-semibold leading-tight tabular-nums ${active ? 'text-white' : isToday ? 'text-[#0066CC]' : 'text-[#1D1D1F]'}`}>{d.dn}</div>
+                <div className={`text-[10.5px] font-medium ${active ? 'text-white/85' : d.count > 0 ? 'text-[#0066CC]' : 'text-[#C7C7CC]'}`}>{d.count > 0 ? `${d.count} việc` : '—'}</div>
               </button>
             )
           })}
         </div>
 
         {/* ⑤ Tìm nhanh + Tập trung */}
-        <div className="flex gap-2 px-4 pb-2.5 items-center">
-          <div className="flex-1 min-w-0 flex items-center gap-1.5 border border-[#E8E7E2] rounded-[9px] px-2.5 py-1.5 bg-white focus-within:border-blue-400">
-            <Search size={12} className="text-[#bbb] shrink-0" />
+        <div className="flex gap-2 px-4 pb-3 items-center">
+          <div className={`flex-1 min-w-0 flex items-center gap-2 px-3 h-9 ${FIELD}`}>
+            <Search size={15} className="text-[#86868B] shrink-0" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm nhanh theo tên khách, Chi nhánh..."
-              className="flex-1 text-[12px] focus:outline-none placeholder:text-[#ccc] bg-transparent min-w-0"
+              placeholder="Tìm nhanh theo tên khách, chi nhánh…"
+              className="flex-1 text-[13.5px] text-[#1D1D1F] focus:outline-none placeholder:text-[#86868B] bg-transparent min-w-0"
             />
-            {search && <button onClick={() => setSearch('')} className="text-[#bbb] hover:text-[#666]"><X size={12} /></button>}
+            {search && (
+              <button onClick={() => setSearch('')} title="Xoá" className="w-4 h-4 rounded-full bg-[#AEAEB2] text-white flex items-center justify-center hover:bg-[#86868B] shrink-0">
+                <X size={10} strokeWidth={3} />
+              </button>
+            )}
           </div>
           <button
             onClick={() => setFocusMode(v => !v)}
-            className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-[9px] border transition shrink-0 ${focusMode ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-[#FBFAF7] text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}
+            className={`h-9 px-3.5 text-[13px] shrink-0 ${focusMode ? 'inline-flex items-center justify-center gap-1.5 rounded-full bg-[#1D1D1F] text-white font-medium transition' : BTN_SECONDARY}`}
             title="Chỉ hiện Quá hạn + Hôm nay"
           >
-            🎯 Tập trung
+            <Target size={14} /> Tập trung
           </button>
         </div>
 
         {/* ② «Nên làm trước» */}
         {topSuggest && (
-          <div className="mx-4 mb-2.5 flex items-center gap-3 rounded-[12px] border border-amber-200 bg-gradient-to-br from-amber-50 to-[#FEF9EF] px-3.5 py-2.5">
-            <span className="text-[18px]">🔥</span>
+          <div className="mx-4 mb-3 flex items-center gap-3 rounded-[14px] bg-gradient-to-r from-[#FF9500]/[0.12] to-[#FF9500]/[0.03] px-3.5 py-3">
+            <span className={`w-9 h-9 rounded-[10px] flex items-center justify-center text-white shrink-0 ${ICON_TILE.orange}`}><Flame size={18} /></span>
             <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] font-extrabold text-[#0c2340] truncate">{topSuggest.it.title}</div>
-              <div className="text-[10.5px] font-semibold text-amber-700 mt-0.5">{topSuggest.reason}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[#B25000]">Nên làm trước</div>
+              <div className="text-[14px] font-semibold text-[#1D1D1F] tracking-[-0.01em] truncate">{topSuggest.it.title}</div>
+              <div className="text-[12px] text-[#6E6E73] mt-px truncate">{topSuggest.reason}</div>
             </div>
             <button
               onClick={() => { setFilter('Tất cả'); setSearch(''); setDayFilter(null); setExpandedKey(topSuggest.it.key) }}
-              className="text-[11px] font-bold text-white bg-[#0c2340] px-3 py-1.5 rounded-[9px] shrink-0 hover:bg-[#16345c] transition"
+              className={`${BTN_PRIMARY} h-8 px-4 text-[13px] shrink-0`}
             >
-              Xử lý ngay →
+              Xử lý ngay
             </button>
           </div>
         )}
 
         {/* Thêm việc nhanh + form đầy đủ */}
-        <div className="px-4 py-2 border-t border-[#F0EFEB] bg-[#FBFAF7]">
+        <div className="px-4 py-2 border-t border-black/[0.06]">
           {!quickOpen && !fullForm ? (
             <button onClick={() => { setQuickOpen(true); setTimeout(() => quickInputRef.current?.focus(), 60) }}
-              className="w-full text-left text-[12px] text-[#999] px-3 py-1.5 rounded-[9px] border border-dashed border-[#d6d3c8] bg-white hover:border-blue-300 transition flex items-center gap-1.5">
-              <Plus size={13} /> Thêm việc mới — Enter để lưu
+              className="w-full flex items-center gap-3 -mx-1 px-1 py-1.5 rounded-[10px] text-left text-[14px] font-medium text-[#0066CC] hover:bg-[#0071E3]/[0.05] transition">
+              <span className="w-[22px] h-[22px] rounded-full bg-[#0071E3] text-white flex items-center justify-center shrink-0"><Plus size={14} strokeWidth={2.5} /></span>
+              Thêm việc mới
+              <span className="text-[12px] font-normal text-[#AEAEB2]">Enter để lưu</span>
             </button>
           ) : quickOpen && !fullForm ? (
             <div className="flex flex-col gap-1.5">
@@ -1386,7 +1410,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   ref={quickInputRef} autoFocus placeholder={qKind === 'pipeline' ? 'Tên công ty...' : 'Tên công việc...'}
                   value={qTitle} onChange={e => setQTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') saveQuickTask(); if (e.key === 'Escape') setQuickOpen(false) }}
-                  className="flex-1 text-[12.5px] px-3 py-1.5 rounded-[9px] border border-[#E8E7E2] bg-white focus:outline-none focus:border-blue-400"
+                  className="flex-1 text-[14px] px-3 h-9 rounded-[10px] border border-black/[0.12] bg-white focus:outline-none focus:border-[#0071E3] focus:ring-4 focus:ring-[#0071E3]/15 transition"
                 />
                 <div className="flex gap-2 flex-wrap">
                   <select value={qKind} onChange={e => {
@@ -1394,7 +1418,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                       // Hợp đồng / Phụ lục phải gắn khách hàng → mở form đầy đủ với loại việc chọn sẵn
                       if (v === 'contract' || v === 'appendix') { setFType(v === 'contract' ? 'Hợp đồng' : 'Phụ lục'); setQuickOpen(false); setFullForm(true); setFDesc(qTitle); return }
                       setQKind(v as typeof qKind)
-                    }} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none">
+                    }} className="text-[13px] px-2.5 h-8 rounded-[10px] border border-black/[0.12] bg-white focus:outline-none focus:border-[#0071E3]">
                     <option value="work">Việc của tôi</option>
                     <option value="pipeline">Công ty mới (CRM)</option>
                     <option value="contract">Hợp đồng (gắn khách hàng)</option>
@@ -1402,35 +1426,35 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                     <option value="ws_task">Task nội bộ (chung)</option>
                     <option value="ws_doc">Hồ sơ · HĐ (chung)</option>
                   </select>
-                  <input type="date" value={qDue} onChange={e => setQDue(e.target.value)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none" />
+                  <input type="date" value={qDue} onChange={e => setQDue(e.target.value)} className="text-[13px] px-2.5 h-8 rounded-[10px] border border-black/[0.12] bg-white focus:outline-none focus:border-[#0071E3]" />
                   {qKind !== 'work' && qKind !== 'pipeline' && (
-                    <input placeholder="Người phụ trách" value={qAssignee} onChange={e => setQAssignee(e.target.value)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] bg-white focus:outline-none w-28" />
+                    <input placeholder="Người phụ trách" value={qAssignee} onChange={e => setQAssignee(e.target.value)} className="text-[13px] px-2.5 h-8 rounded-[10px] border border-black/[0.12] bg-white focus:outline-none focus:border-[#0071E3] w-28" />
                   )}
-                  <button onClick={saveQuickTask} disabled={!qTitle.trim() || qSaving} className="text-[11.5px] px-3 py-1 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40">Lưu</button>
-                  <button onClick={() => setQuickOpen(false)} className="text-[11.5px] px-2 py-1 rounded-md border border-[#E8E7E2] text-[#666]">✕</button>
+                  <button onClick={saveQuickTask} disabled={!qTitle.trim() || qSaving} className="text-[13px] h-8 px-4 rounded-full bg-[#0071E3] text-white font-medium hover:bg-[#0077ED] disabled:opacity-40 transition">Lưu</button>
+                  <button onClick={() => setQuickOpen(false)} className="w-8 h-8 inline-flex items-center justify-center rounded-full bg-black/[0.05] text-[#6E6E73] hover:bg-black/[0.08]" title="Đóng"><X size={14} /></button>
                 </div>
               </div>
               {qKind === 'pipeline' && <DuplicateCompanyNotice dup={qDup} onUseName={setQTitle} className="!mt-0" />}
-              <button onClick={() => { setQuickOpen(false); setFullForm(true); setFDesc(qTitle) }} className="self-start text-[11px] text-blue-600 hover:underline">
+              <button onClick={() => { setQuickOpen(false); setFullForm(true); setFDesc(qTitle) }} className="self-start text-[11px] text-[#0066CC] hover:underline">
                 Mở form đầy đủ (khách hàng, loại việc, ưu tiên, Chi nhánh...) →
               </button>
             </div>
           ) : (
-            <div className="border border-[#E8E7E2] rounded-lg p-3 flex flex-col gap-2 bg-white">
+            <div className="rounded-[14px] p-3.5 flex flex-col gap-2.5 bg-[#F5F5F7]">
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">{fType === 'Hợp đồng' ? 'Tên Hợp đồng' : fType === 'Phụ lục' ? 'Tên Phụ lục' : 'Tên công việc'}</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">{fType === 'Hợp đồng' ? 'Tên Hợp đồng' : fType === 'Phụ lục' ? 'Tên Phụ lục' : 'Tên công việc'}</label>
                   <input
                     autoFocus
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400"
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] placeholder:text-[#AEAEB2] focus:outline-none focus:border-[#0071E3]"
                     placeholder={fType === 'Hợp đồng' ? 'VD: Cung ứng 2026 (tự thêm "HĐ" phía trước)' : fType === 'Phụ lục' ? 'VD: 01/PLHDDV-AMPACS-LGVN (tự thêm "Phụ lục")' : 'VD: đàm phán giá tái ký, soạn HĐ mới...'}
                     value={fDesc} onChange={e => setFDesc(e.target.value)}
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Khách hàng</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Khách hàng</label>
                   <select
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400"
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]"
                     value={fClientId} onChange={e => selectFormClient(e.target.value)}
                   >
                     <option value="">— Không chọn —</option>
@@ -1438,9 +1462,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   </select>
                 </div>
                 <div className="sm:w-32">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Loại việc</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Loại việc</label>
                   <select
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2 py-1.5 bg-white text-[#555] focus:outline-none focus:border-blue-400"
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2 py-1.5 bg-white text-[#3A3A3C] focus:outline-none focus:border-[#0071E3]"
                     value={fType} onChange={e => setFType(e.target.value)}
                   >
                     {TASK_TYPE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -1449,56 +1473,56 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Ngày dự kiến</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Ngày dự kiến</label>
                   <input type="date" value={fDue} onChange={e => setFDue(e.target.value)}
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400" />
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]" />
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Mức độ ưu tiên</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Mức độ ưu tiên</label>
                   <div className="flex gap-1.5">
                     {(['high', 'medium', 'low'] as TaskPriority[]).map(p => (
                       <button key={p} onClick={() => setFPriority(p)}
-                        className={`flex-1 text-[11px] px-2.5 py-1.5 rounded-md border transition-all ${fPriority === p ? TASK_PRIORITY_COLORS[p] + ' font-medium' : 'bg-white text-[#666] border-[#E8E7E2] hover:border-blue-300'}`}>
+                        className={`flex-1 text-[12.5px] h-8 rounded-full font-medium transition-all ${fPriority === p ? PRIORITY_TINT[p] + '' : 'bg-white text-[#6E6E73] hover:bg-black/[0.03]'}`}>
                         {TASK_PRIORITY_LABELS[p]}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Chi Nhánh</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Chi Nhánh</label>
                   <select value={fBranchId} onChange={e => setFBranchId(e.target.value)}
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400">
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]">
                     <option value="">— Không chọn —</option>
                     {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Ghi chú / Chuẩn bị</label>
+                <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Ghi chú / Chuẩn bị</label>
                 <textarea rows={2} placeholder="Chuẩn bị tài liệu, thông tin cần lưu ý..."
                   value={fNotes} onChange={e => setFNotes(e.target.value)}
-                  className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] placeholder:text-[#bbb] focus:outline-none focus:border-blue-400 resize-none" />
+                  className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] placeholder:text-[#AEAEB2] focus:outline-none focus:border-[#0071E3] resize-none" />
               </div>
               {fType === 'Phụ lục' && (
                 <div>
-                  <label className="text-[10px] font-medium text-[#888] uppercase tracking-wide mb-1 block">Thuộc Hợp đồng</label>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Thuộc Hợp đồng</label>
                   <select value={fParentId} onChange={e => setFParentId(e.target.value)}
-                    className="w-full text-[12px] border border-[#E8E7E2] rounded-md px-2.5 py-1.5 bg-white text-[#333] focus:outline-none focus:border-blue-400">
+                    className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]">
                     <option value="">{!fClientId ? '— Chọn khách hàng trước —' : parentOptions.length ? '— Chọn Hợp đồng —' : '— Khách này chưa có Hợp đồng (tạo việc loại "Hợp đồng" trước) —'}</option>
                     {parentOptions.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
                   </select>
                 </div>
               )}
               {(fType === 'Hợp đồng' || fType === 'Phụ lục') && (
-                <div className="text-[11px] text-[#888] bg-[#F9F9F7] border border-[#E8E7E2] rounded-md px-2.5 py-1.5">
+                <div className="text-[12px] text-[#6E6E73] bg-white rounded-[10px] px-3 py-2">
                   Bảng thay đổi &amp; nội dung {fType} thuộc về từng việc: bấm <b>Lưu công việc</b>, rồi mở dòng việc vừa tạo để tạo bảng / dán nội dung.
                 </div>
               )}
               <div className="flex justify-end gap-2">
                 <button onClick={() => { resetFullForm(); setFullForm(false) }}
-                  className="text-[12px] px-3 py-1.5 rounded-md border border-[#E8E7E2] text-[#666] hover:bg-[#f4f4f1] transition-colors">Huỷ</button>
+                  className={`${BTN_SECONDARY} h-8 px-4 text-[13px]`}>Huỷ</button>
                 <button onClick={saveFullTask} disabled={!fDesc.trim() || fSaving}
-                  className="text-[12px] px-3 py-1.5 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40 hover:bg-blue-700 transition-colors">
+                  className={`${BTN_PRIMARY} h-8 px-4 text-[13px]`}>
                   {fSaving ? 'Đang lưu...' : 'Lưu công việc'}
                 </button>
               </div>
@@ -1508,10 +1532,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
         {/* Feed */}
         {loading ? (
-          <div className="text-[12.5px] text-[#999] py-8 text-center border-t border-[#F0EFEB]">Đang tải...</div>
+          <div className="py-10 flex justify-center border-t border-black/[0.06]"><div className="w-5 h-5 border-2 border-black/10 border-t-[#0071E3] rounded-full animate-spin" /></div>
         ) : totalVisible === 0 ? (
-          <div className="text-[12.5px] text-[#999] py-8 text-center border-t border-[#F0EFEB]">
-            {filter === 'Tất cả' ? '🎉 Không còn việc nào — tuyệt vời!' : 'Không có việc nào trong nhóm này'}
+          <div className="py-10 flex flex-col items-center gap-2 text-center border-t border-black/[0.06]">
+            <CheckCircle2 size={34} strokeWidth={1.5} className="text-[#34C759]" />
+            <div className="text-[14px] font-medium text-[#1D1D1F]">{filter === 'Tất cả' ? 'Không còn việc nào' : 'Không có việc nào trong nhóm này'}</div>
+            {filter === 'Tất cả' && <div className="text-[12.5px] text-[#86868B]">Bạn đã xử lý xong mọi việc — tuyệt vời!</div>}
           </div>
         ) : (
           (Object.keys(GROUP_META) as GroupKey[]).map(gk => {
@@ -1520,70 +1546,72 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             const meta = GROUP_META[gk]
             return (
               <div key={gk}>
-                <div className={`flex items-center gap-2 px-4 pt-3 pb-1 text-[10.5px] font-extrabold uppercase tracking-wider ${meta.head}`}>
+                <div className={`flex items-center gap-2 px-4 pt-4 pb-1.5 text-[13px] font-semibold tracking-[-0.01em] ${meta.head}`}>
                   {meta.label}
-                  <span className={`text-[10px] font-bold px-1.5 py-px rounded-full ${meta.badge}`}>{items.length}</span>
+                  <span className={`min-w-[20px] h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-semibold tabular-nums ${meta.badge}`}>{items.length}</span>
                 </div>
                 {items.map(it => renderRow(it, gk))}
               </div>
             )
           })
         )}
-      </div>
+        <div className="h-2" />
+      </section>
 
       {/* Lịch sử hoàn thành — accordion */}
       {!hideHistory && (
-        <div className="mt-4 bg-white border border-[#E8E7E2] rounded-[12px] overflow-hidden">
-          <button onClick={() => setHistoryOpen(v => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-[#F9F9F7] text-left">
-            <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#333]">
-              <History size={14} className="text-[#888]" />
-              Lịch sử hoàn thành — 30 ngày
+        <section className={`mt-4 md:mt-5 ${CARD} overflow-hidden`}>
+          <button onClick={() => setHistoryOpen(v => !v)} className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-black/[0.02] transition-colors">
+            <div className="flex items-center gap-2.5">
+              <span className={`w-6 h-6 rounded-[7px] flex items-center justify-center text-white shrink-0 ${ICON_TILE.green}`}><History size={13} /></span>
+              <span className="text-[14px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">Lịch sử hoàn thành</span>
+              <span className="text-[13px] text-[#86868B]">30 ngày</span>
               {doneHistory.length > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">{doneHistory.length}</span>
+                <span className={`min-w-[20px] h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-semibold tabular-nums ${TINT.green}`}>{doneHistory.length}</span>
               )}
             </div>
-            <ChevronDown size={15} className={`text-[#999] transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown size={16} className={`text-[#86868B] transition-transform duration-200 ${historyOpen ? 'rotate-180' : ''}`} />
           </button>
           {historyOpen && (
-            <div className="border-t border-[#E8E7E2]">
-              <div className="flex items-center gap-2 px-4 py-2 flex-wrap">
-                <div className="relative">
-                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#bbb]" />
+            <div className="border-t border-black/[0.06]">
+              <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
+                <div className={`flex items-center gap-1.5 px-2.5 h-8 w-48 ${FIELD}`}>
+                  <Search size={13} className="text-[#86868B] shrink-0" />
                   <input
-                    value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="Tìm theo tên..."
-                    className="text-[11px] pl-6 pr-2 py-1 rounded-md border border-[#E8E7E2] focus:outline-none focus:border-blue-400 bg-white w-40"
+                    value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="Tìm theo tên…"
+                    className="flex-1 min-w-0 text-[13px] text-[#1D1D1F] bg-transparent focus:outline-none placeholder:text-[#86868B]"
                   />
                 </div>
-                <div className="flex gap-1 flex-wrap">
+                <div className="flex gap-1.5 flex-wrap">
                   {HIST_CATS.map(c => {
                     const key = c === 'Tất cả' ? 'all' : c
                     const count = c === 'Tất cả' ? doneHistory.length : doneHistory.filter(t => t.category === c).length
                     return (
                       <button key={c} onClick={() => setHistCat(key)}
-                        className={`text-[10.5px] px-2 py-0.5 rounded-full border transition ${histCat === key ? 'bg-[#0c2340] text-white border-[#0c2340]' : 'bg-white text-[#666] border-[#E8E7E2]'}`}>
-                        {c}{count > 0 ? ` ${count}` : ''}
+                        className={`text-[12px] font-medium h-7 px-3 rounded-full transition ${histCat === key ? FILTER_ON : FILTER_OFF}`}>
+                        {c}{count > 0 ? <span className="opacity-60"> {count}</span> : null}
                       </button>
                     )
                   })}
                 </div>
               </div>
-              <div className="max-h-80 overflow-y-auto px-4 pb-3 flex flex-col gap-1.5">
+              <div className="max-h-80 overflow-y-auto px-4 pb-4 flex flex-col gap-2">
                 {filteredHistory.length === 0 ? (
-                  <div className="text-[12px] text-[#999] py-5 text-center">Không có kết quả</div>
+                  <div className="text-[13px] text-[#86868B] py-6 text-center">Không có kết quả</div>
                 ) : filteredHistory.map(t => (
-                  <div key={t.key} className="px-3 py-2 border border-[#F0EFEB] bg-[#fafafa] rounded-lg">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[9.5px] font-semibold px-1.5 py-px rounded-md border ${CATEGORY_TAG[t.category as Category] ?? CATEGORY_TAG['Khác']}`}>{t.category}</span>
-                      <span className="text-[12px] font-medium text-[#111] truncate">{t.title}</span>
+                  <div key={t.key} className="px-3.5 py-2.5 rounded-[12px] bg-[#F5F5F7]">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CheckCircle2 size={15} className="text-[#34C759] shrink-0" />
+                      <span className="text-[13.5px] font-medium text-[#1D1D1F] truncate">{t.title}</span>
+                      <span className={`ml-auto shrink-0 text-[11px] font-medium leading-[18px] px-2 rounded-full ${CATEGORY_TAG[t.category as Category] ?? CATEGORY_TAG['Khác']}`}>{t.category}</span>
                     </div>
-                    <div className="text-[10.5px] text-[#888] mt-0.5">
-                      ✓ {t.doneAt ? formatDate(t.doneAt.split('T')[0]) : ''}
+                    <div className="text-[12px] text-[#86868B] mt-0.5 pl-[23px] tabular-nums">
+                      {t.doneAt ? formatDate(t.doneAt.split('T')[0]) : ''}
                       {t.place ? ` · ${t.place}` : ''}{t.assignee ? ` · ${t.assignee}` : ''}
                     </div>
                     {t.notes && (
-                      <div className="mt-1 flex items-start gap-1.5 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
-                        <span className="text-[10px] text-emerald-600 font-semibold shrink-0 mt-0.5">Kết quả:</span>
-                        <span className="text-[11px] text-emerald-800">{t.notes}</span>
+                      <div className="mt-1.5 ml-[23px] text-[12.5px] text-[#1D1D1F] bg-white rounded-[10px] px-2.5 py-1.5">
+                        <span className="text-[#1E7B34] font-medium">Kết quả: </span>{t.notes}
                       </div>
                     )}
                   </div>
@@ -1591,15 +1619,15 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* Modal báo cáo hoàn thành (work task) */}
       {reportItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setReportItem(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-gray-200">
-              <h2 className="text-[14px] font-semibold text-gray-900">Hoàn thành công việc</h2>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-[2px] flex items-center justify-center z-50 p-4" onClick={() => setReportItem(null)}>
+          <div className="bg-white rounded-[20px] shadow-[0_24px_64px_-12px_rgba(0,0,0,0.35)] max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-black/[0.06]">
+              <h2 className="text-[16px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">Hoàn thành công việc</h2>
               <p className="text-[11.5px] text-gray-500 mt-0.5 truncate">{reportItem.title}</p>
             </div>
             <div className="p-5 space-y-3">
@@ -1607,19 +1635,19 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                 <div>
                   <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Hạn hợp đồng mới <span className="text-red-500">*</span></label>
                   <input type="date" value={newContractEnd} onChange={e => setNewContractEnd(e.target.value)}
-                    className="w-full text-[12.5px] border border-[#E8E7E2] rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400" />
+                    className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
                 </div>
               )}
               <div>
                 <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Báo cáo kết quả</label>
                 <textarea rows={3} autoFocus value={reportText} onChange={e => setReportText(e.target.value)}
                   placeholder="Nội dung đã hoàn thành..."
-                  className="w-full text-[12.5px] border border-[#E8E7E2] rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 resize-none" />
+                  className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3] resize-none" />
               </div>
             </div>
             <div className="px-5 pb-5 flex gap-2">
-              <button onClick={() => setReportItem(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Huỷ</button>
-              <button onClick={submitReport} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">Hoàn thành</button>
+              <button onClick={() => setReportItem(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-[#1D1D1F] bg-black/[0.05] hover:bg-black/[0.08] rounded-full transition">Huỷ</button>
+              <button onClick={submitReport} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-[#0071E3] hover:bg-[#0077ED] rounded-full transition">Hoàn thành</button>
             </div>
           </div>
         </div>
@@ -1627,10 +1655,10 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
       {/* Modal báo cáo hoàn thành (việc BD / CRM Pipeline) */}
       {pipelineReportItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPipelineReportItem(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-gray-200">
-              <h2 className="text-[14px] font-semibold text-gray-900">Hoàn thành việc BD</h2>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-[2px] flex items-center justify-center z-50 p-4" onClick={() => setPipelineReportItem(null)}>
+          <div className="bg-white rounded-[20px] shadow-[0_24px_64px_-12px_rgba(0,0,0,0.35)] max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-black/[0.06]">
+              <h2 className="text-[16px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">Hoàn thành việc BD</h2>
               <p className="text-[11.5px] text-gray-500 mt-0.5 truncate">{pipelineReportItem.company_name} — {pipelineReportItem.title}</p>
             </div>
             <div className="p-5 space-y-3">
@@ -1638,12 +1666,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                 <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Kết quả <span className="text-red-500">*</span></label>
                 <textarea rows={3} autoFocus value={pipelineReportText} onChange={e => setPipelineReportText(e.target.value)}
                   placeholder="Nội dung đã trao đổi/kết quả..."
-                  className="w-full text-[12.5px] border border-[#E8E7E2] rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 resize-none" />
+                  className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3] resize-none" />
               </div>
             </div>
             <div className="px-5 pb-5 flex gap-2">
-              <button onClick={() => setPipelineReportItem(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Huỷ</button>
-              <button onClick={submitPipelineReport} disabled={!pipelineReportText.trim()} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition">Hoàn thành</button>
+              <button onClick={() => setPipelineReportItem(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-[#1D1D1F] bg-black/[0.05] hover:bg-black/[0.08] rounded-full transition">Huỷ</button>
+              <button onClick={submitPipelineReport} disabled={!pipelineReportText.trim()} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 rounded-full transition">Hoàn thành</button>
             </div>
           </div>
         </div>
@@ -1651,11 +1679,11 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
       {/* Modal yêu cầu ngưng HĐ */}
       {suspendTask && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSuspendTask(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-[2px] flex items-center justify-center z-50 p-4" onClick={() => setSuspendTask(null)}>
+          <div className="bg-white rounded-[20px] shadow-[0_24px_64px_-12px_rgba(0,0,0,0.35)] max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-black/[0.06]">
               <div>
-                <h2 className="text-[14px] font-semibold text-gray-900">{isAdmin ? 'Ngưng hợp tác' : 'Yêu cầu ngưng hợp tác'}</h2>
+                <h2 className="text-[16px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">{isAdmin ? 'Ngưng hợp tác' : 'Yêu cầu ngưng hợp tác'}</h2>
                 <p className="text-[11px] text-gray-500 mt-0.5">{clients.find(c => c.id === suspendTask.client_id)?.name ?? suspendTask.title}</p>
               </div>
               <button onClick={() => setSuspendTask(null)} className="p-1 hover:bg-gray-100 rounded-md text-gray-500"><X size={15} /></button>
@@ -1669,20 +1697,20 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               <div>
                 <label className="block text-[11px] font-semibold text-gray-700 mb-1">Ngày ngưng hợp tác <span className="text-red-500">*</span></label>
                 <input type="date" value={suspendFrom} onChange={e => setSuspendFrom(e.target.value)}
-                  className="w-full px-3 py-2 text-[12.5px] border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                  className="w-full px-3 py-2 text-[12.5px] border border-black/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400" />
                 <p className="text-[10.5px] text-gray-500 mt-1">Tháng chứa ngày này vẫn nhập được P&amp;L Dự án và số lao động; từ tháng sau mới khoá.</p>
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-gray-700 mb-1">Lý do ngưng <span className="text-red-500">*</span></label>
                 <textarea rows={3} value={suspendReason} onChange={e => setSuspendReason(e.target.value)} autoFocus
                   placeholder="Nhập lý do ngưng hợp tác..."
-                  className="w-full px-3 py-2 text-[12.5px] border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none" />
+                  className="w-full px-3 py-2 text-[12.5px] border border-black/[0.12] rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none" />
               </div>
             </div>
             <div className="px-5 pb-5 flex gap-2">
-              <button onClick={() => setSuspendTask(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Hủy</button>
+              <button onClick={() => setSuspendTask(null)} className="flex-1 px-3 py-2 text-[12.5px] font-medium text-[#1D1D1F] bg-black/[0.05] hover:bg-black/[0.08] rounded-full transition">Hủy</button>
               <button onClick={submitSuspend} disabled={suspendSaving || !suspendReason.trim() || !suspendFrom}
-                className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded-lg transition">
+                className="flex-1 px-3 py-2 text-[12.5px] font-medium text-white bg-[#FF9500] hover:brightness-95 disabled:opacity-50 rounded-full transition">
                 {suspendSaving ? 'Đang gửi...' : isAdmin ? 'Xác nhận ngưng' : 'Gửi yêu cầu'}
               </button>
             </div>
