@@ -17,7 +17,7 @@ import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
 import { QuoteModal } from '../components/workspace/QuoteModal';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
-import { BranchHistoryFields, recordBranchUpdateSession } from '../components/workspace/BranchHistoryFields';
+import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { useBranchData } from '../hooks/useBranchData';
@@ -87,7 +87,7 @@ function RailCard({ title, icon, count, action, children }: {
 
 export default function Workspace({ clients, pipeline, products, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
   const { user } = useAuth();
-  const { branches, updateBranch } = useBranchData();
+  const { branches } = useBranchData();
 
   // Việc tạo tự động (tái ký HĐ) gắn luôn chi nhánh để khỏi phải vào sửa tay từng việc.
   const branchIdOfClient = (c: Client) => branchOf(c, branches)?.id ?? null;
@@ -204,9 +204,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [showVisitSettings, setShowVisitSettings] = useState(false);
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({});
   const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null);
-  const [panelForm, setPanelForm] = useState<Partial<Branch>>({});
-  const [panelRecordDate, setPanelRecordDate] = useState(todayStr());
-  const [panelSaving, setPanelSaving] = useState(false);
 
   // morning_priorities.target_name = `Chi nhánh ${tên}`. Các phiên GHI TRƯỚC ĐÂY dùng
   // tên chi nhánh cũ (branches.region), phiên mới dùng tên chuẩn (branches.name). Ta ĐỌC
@@ -259,29 +256,14 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
 
   function openBranchProfile(branch: Branch) {
     setOpenBranchPanel(branch);
-    setPanelForm(branch);
-    setPanelRecordDate(todayStr());
   }
 
-  async function savePanelBranch() {
-    if (!openBranchPanel || !user) return;
-    setPanelSaving(true);
-    const fields = {
-      status_note: panelForm.status_note ?? null,
-      difficulties: panelForm.difficulties ?? null,
-      opportunities: panelForm.opportunities ?? null,
-    };
-    try {
-      await updateBranch(openBranchPanel.id, fields);
-      const key = branchKey(openBranchPanel);
-      await recordBranchUpdateSession(user.id, key, fields, panelRecordDate);
-      setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${key}`]: panelRecordDate }));
-      setOpenBranchPanel(null);
-    } catch (e) {
-      alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)));
-    } finally {
-      setPanelSaving(false);
-    }
+  // Ghi nhận được lưu ngay trong panel (BranchHistoryFields) — ở đây chỉ dời mốc "liên hệ gần
+  // nhất" của rail, và chỉ dời tới (ghi bù một ngày cũ không làm chi nhánh trông như lâu chưa ghé).
+  function onBranchVisitSaved(branch: Branch, date: string) {
+    if (date > todayStr()) return;
+    const k = `Chi nhánh ${branchKey(branch)}`;
+    setBranchActivity(prev => (prev[k] && prev[k] >= date ? prev : { ...prev, [k]: date }));
   }
 
   // ---- Rail: KCN cần ghé + accordion KCN Grid ----
@@ -727,23 +709,21 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       {/* ==== Panel hồ sơ chi nhánh ==== */}
       {openBranchPanel && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-end z-50" onClick={() => setOpenBranchPanel(null)}>
-          <div className="bg-white h-full w-full max-w-md shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-[#E8E7E2] px-4 py-3 flex items-center gap-2 z-10">
+          <div className="bg-[#F7F7F5] h-full w-full max-w-2xl shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white border-b border-[#E8E7E2] px-4 md:px-5 py-3 flex items-center gap-2 z-10">
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-[#111] truncate">{openBranchPanel.name}</div>
-                <div className="text-[11px] text-[#888] mt-0.5">
-                  {openBranchPanel.manager_name && `Quản lý: ${openBranchPanel.manager_name}`}
-                  {openBranchPanel.phone && ` · ${openBranchPanel.phone}`}
+                <div className="text-[15px] font-semibold text-[#111] truncate">{openBranchPanel.name}</div>
+                <div className="text-[12px] text-[#888] mt-0.5 flex items-center gap-x-2 flex-wrap">
+                  {openBranchPanel.manager_name && <span>Quản lý: <span className="text-[#555]">{openBranchPanel.manager_name}</span></span>}
+                  {openBranchPanel.phone && (
+                    <a href={`tel:${openBranchPanel.phone}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline"><Phone size={11} />{openBranchPanel.phone}</a>
+                  )}
                 </div>
               </div>
-              <button onClick={() => setOpenBranchPanel(null)} className="text-[#999] hover:text-[#333] transition-colors shrink-0"><X size={18} /></button>
+              <button onClick={() => setOpenBranchPanel(null)} title="Đóng" className="p-1.5 rounded-md text-[#999] hover:text-[#333] hover:bg-[#F4F4F1] transition-colors shrink-0"><X size={18} /></button>
             </div>
-            <div className="p-4">
-              <BranchHistoryFields branch={panelForm as Branch} onChange={fields => setPanelForm(prev => ({ ...prev, ...fields }))} recordDate={panelRecordDate} onRecordDateChange={setPanelRecordDate} />
-              <button onClick={savePanelBranch} disabled={panelSaving}
-                className="mt-3 w-full text-[12px] px-3 py-2 rounded-md bg-blue-600 text-white font-medium disabled:opacity-40 hover:bg-blue-700 transition-colors">
-                {panelSaving ? 'Đang lưu...' : 'Lưu'}
-              </button>
+            <div className="p-3 md:p-5">
+              <BranchHistoryFields key={openBranchPanel.id} branch={openBranchPanel} onSaved={date => onBranchVisitSaved(openBranchPanel, date)} />
             </div>
           </div>
         </div>

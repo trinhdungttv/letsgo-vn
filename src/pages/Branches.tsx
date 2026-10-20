@@ -7,7 +7,7 @@ import {
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useBranchData } from '../hooks/useBranchData';
 import { useBranchStaffs } from '../hooks/useBranchStaffs';
-import { BranchHistoryFields, recordBranchUpdateSession, todayStr } from '../components/workspace/BranchHistoryFields';
+import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
 import { useManagers } from '../hooks/useManagers';
 import { useOverheadCategories } from '../hooks/useOverheadCategories';
 import { useHashSubRoute } from '../hooks/useHashSubRoute';
@@ -279,9 +279,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   const [newTypeEntry, setNewTypeEntry] = useState({ branch_type: 'contracted' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, khoan_mode: 'common' as 'common' | 'per_project', notes: '' });
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [editTypeForm, setEditTypeForm] = useState({ branch_type: 'contracted' as 'contracted' | 'company', effective_from: '', manager_name: '', lg_pct: 60, cn_pct: 40, khoan_mode: 'common' as 'common' | 'per_project', notes: '' });
-  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
-  const [recordDate, setRecordDate] = useState(todayStr());
-  useEffect(() => { setShowHistory(false); setShowTypeHistory(false); setRecordDate(todayStr()); }, [selectedId]);
+  useEffect(() => { setShowHistory(false); setShowTypeHistory(false); }, [selectedId]);
   useEffect(() => {
     if (!selectedId) { setBranchTypeHistory([]); return; }
     supabase.from('branch_type_history').select('*').eq('branch_id', selectedId).order('effective_from', { ascending: false })
@@ -355,21 +353,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         established_date: form.established_date ?? null,
         status: (form.status as BranchStatus) || 'active',
         notes: form.notes ?? null,
-        status_note: form.status_note ?? null,
-        difficulties: form.difficulties ?? null,
-        opportunities: form.opportunities ?? null,
       });
-      // Phiên cập nhật ghi theo TÊN CHUẨN của chi nhánh (trước đây ghi theo tên cũ).
-      const sessionName = form.name || selected.name;
-      if (user && sessionName) {
-        await recordBranchUpdateSession(user.id, sessionName, {
-          status_note: form.status_note ?? null,
-          difficulties: form.difficulties ?? null,
-          opportunities: form.opportunities ?? null,
-        }, recordDate);
-        setHistoryRefreshKey(k => k + 1);
-        setRecordDate(todayStr());
-      }
+      // Lần ghé / ghi chú chi nhánh lưu riêng bằng nút "Lưu ghi nhận" trong BranchHistoryFields.
+      // Trước đây mỗi lần lưu hồ sơ lại ghi thêm 1 phiên (thường rỗng "Cập nhật thông tin chi
+      // nhánh") và ghi đè phiên cùng ngày — đã bỏ.
       toast('Đã lưu thông tin chi nhánh');
     } catch (e) {
       toast('Lỗi: ' + errMsg(e));
@@ -827,10 +814,10 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
                 <div className="bg-white border border-[#E8E7E2] rounded-xl overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-[#E8E7E2] bg-[#FAFAF8] flex items-center gap-2">
                     <History size={14} className="text-[#7C3AED]" />
-                    <span className="text-[12px] font-semibold text-[#444] uppercase tracking-wide">Lịch sử trao đổi & Tình trạng</span>
+                    <span className="text-[12px] font-semibold text-[#444] uppercase tracking-wide">Nhật ký ghé thăm & Công việc</span>
                   </div>
                   <div className="p-3 md:p-4">
-                    <BranchHistoryFields branch={form as Branch} onChange={setF} refreshKey={historyRefreshKey} recordDate={recordDate} onRecordDateChange={setRecordDate} />
+                    <BranchHistoryFields key={selected.id} branch={selected} />
                   </div>
                 </div>
 
