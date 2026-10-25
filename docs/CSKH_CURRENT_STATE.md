@@ -312,3 +312,69 @@ Tony yêu cầu cả 6 tab CSKH "giống Workspace (kiểu Apple) hoặc đẹp 
 
 - **Việc nhắc tự động không còn phụ thuộc có ai mở trang CSKH.** `src/modules/cskh/CareAutomationRunner.tsx` gắn ở `App.tsx`: mở app ở bất kỳ trang nào → chờ ~2,5 giây rồi chạy "Chuẩn bị quà" + "Kết nối lại", **mỗi ngày 1 lần mỗi trình duyệt** (localStorage `lgvn_cskh_automation_<user>`), chỉ tài khoản có quyền vào CSKH. Trang CSKH vẫn chạy 1 lần mỗi phiên như trước. Cả hai đi qua `automationRunner.ts`: dùng chung 1 lượt đang chạy nên mở app rồi vào ngay CSKH không tạo việc trùng; nơi gọi sau không báo lại. Code chạy thật nạp động (`import()`), bundle chính không kéo theo dữ liệu CSKH. Test: `automationRunner.test.ts` (8).
 - **Sửa dòng nhật ký** (nút bút chì ở tab Nhật ký): sửa hình thức, ngày, ai chủ động, nội dung, công ty (người kiêm nhiều nơi), việc đã hứa + hạn. Người liên hệ khoá (ghi nhầm người → xoá rồi ghi lại). `updateInteraction` trong `data/api.ts` đồng bộ việc trong Workspace: trước chưa hứa nay thêm → tạo việc mới; đổi chữ/hạn → đổi tên + hạn việc; xoá trắng → xoá mềm việc chưa xong. Giữ hình thức thì giữ kênh cũ (Zalo…); dòng cũ chưa gắn người giữ nguyên công ty dạng chữ; lưu lỗi thì xoá việc vừa tạo. Đổi ngày → trigger migration 170 tự tính lại ngày tương tác cuối. Có ghi audit (cũ/mới). Test: `data/updateInteraction.test.ts` (8).
+
+---
+
+## 10. Nâng cấp 24/10/2026 — mang các tính năng PRM mới của Tony Study sang
+
+> Theo `tony-study/docs/LETSGO_CSKH_UPGRADE_2026-10-24.md`. Tony chốt: làm hết A→E một lượt; quê quán thêm cột `origin_province`; nới CHECK `geo_source` thêm `'manual'`, `'address_url'`; quà ghi nhóm vào `client_gifts`; sửa / xoá đợt: người tạo đợt + admin. Không làm E2 (sao lưu ảnh): đếm thật 24/10 chỉ 1/49 người có ảnh và ảnh đã nằm trong bucket `avatars` của app.
+
+### 10.1 Khảo sát — đã có / một phần / chưa có (trước khi build)
+
+| Tính năng | Trước 24/10 | Ánh xạ |
+|---|---|---|
+| A1 Giới tính + đoán theo tên | chưa có | cột mới `contacts.gender` (174). Dữ liệu thật: 39/49 tên bắt đầu "Ms"/"Mr", 3 tên đệm "Thị" → gợi ý dùng được ngay |
+| A2 Tuổi âm, mệnh, hợp/kỵ | chưa có | `lib/cskh/canChi.ts` dùng lại `lunar.ts` |
+| A3 Ngày quan trọng trong hồ sơ + nhắc 2 lần | một phần: `contact_special_dates.remind_days_before` đã có (171) nhưng popup chỉ nhắc "trong 7 ngày, mỗi ngày 1 lần", không theo số ngày từng sự kiện; sinh nhật hồ sơ cố định 7 ngày | sinh nhật chính chủ (dương lịch, có năm) giữ ở `contacts.birthday` (dùng chung hồ sơ Khách hàng) + cột mới `birthday_remind_days`; còn lại ở `contact_special_dates` |
+| A4 Gia đình có cấu trúc | chưa có (hàm làm sạch bỏ khoá lạ) | `remember_notes.members`, không cần cột |
+| A5 Chuyên sâu thu gọn | chưa có | giữ bố cục hồ sơ hiện tại (Tony đã ưng), thêm khối "Thông tin chuyên sâu" thu gọn |
+| B1 Thẻ dùng chung | một phần: chip mẫu bật/tắt, không đếm người, không gợi ý thẻ người khác | giữ cột cũ (`hobbies` JSON, chữ nối ", ") |
+| B2 Học vấn | chưa có | cột mới `contacts.education` jsonb (174) |
+| B3 Lọc & tìm | tìm không dấu đã có; chưa lọc giới tính / đặc điểm | mở rộng `search.ts` |
+| C1 Địa chỉ + link Maps + ghim | một phần: có địa chỉ + link + iframe Google; link rút gọn `maps.app.goo.gl` (cách dán phổ biến nhất từ điện thoại) KHÔNG đọc được toạ độ; tra chữ không lùi dần | `api/resolve-map.ts` + ghim Leaflet chấm tay; `province` = nơi ở, `origin_province` = quê |
+| C2 Chính xác / Tương đối | chưa có | tự suy: có link hoặc chấm tay = chính xác |
+| C3 Bản đồ nâng cấp | một phần: 2 chế độ công ty / nhà riêng | 3 lớp + đo khoảng cách + vị trí của tôi + định vị hàng loạt |
+| D1/D2 Ghi nhóm + đợt | chưa có | dấu đợt `created_at` (tương thích Tony Study) |
+| D3 Số đang chăm sóc | Dashboard "6 / 8", Ma trận "Chưa chăm sóc · Tất cả" | bỏ so với danh bạ |
+| E1 Vùng miền (AI) | chưa có | `api/gemini.ts` sẵn có + responseSchema |
+
+### 10.2 Migration (Tony tự chạy)
+
+| Số | File | Nội dung | Mất dữ liệu? | Rollback |
+|---|---|---|---|---|
+| 174 | `20261024100000_174_cskh_contact_profile_upgrade.sql` | `contacts.gender`, `education`, `origin_province`, `birthday_remind_days`; nới CHECK `geo_source` (+`manual`, `address_url`) | **Không** — chỉ ADD COLUMN có DEFAULT/NULL; nới CHECK không sửa dòng nào | Có — cuối file (chấm tay đổi nguồn về `address`, giữ toạ độ) |
+
+Đã chạy thử 2 lần liên tiếp trên PGlite: dữ liệu cũ giữ nguyên, CHECK chặn đúng giá trị lạ, rollback chạy được. **App chạy được khi chưa chạy 174**: cột mới chỉ gửi khi đổi; lỗi thiếu cột / CHECK hẹp → ghi lại không kèm cột mới và báo "cần chạy migration 174".
+
+### 10.3 Đã làm
+
+- **Hồ sơ** (`ContactProfileModal`): Giới tính Nam | Nữ + "Gợi ý: Nữ" (tooltip lý do); mục **Ngày sinh & ngày quan trọng** (`OccasionEditor`: loại, tên, ngày/tháng/năm, Âm lịch, Nhắc trước 1/3/7 ngày hoặc chỉ đúng ngày, "Lần tới … còn N ngày · tròn X tuổi", tuổi âm + mệnh + Hợp/kỵ); **Địa chỉ nhà hiện tại** (ô tự cao, link Maps, bản đồ ghim Leaflet chạm/kéo để chấm tay, huy hiệu Chính xác / ~ Tương đối) + Tỉnh nơi ở + **Quê quán (63 tỉnh)** + **Tìm hiểu vùng miền**; **Học vấn** (gợi ý trường người khác đã nhập, "Cùng trường với N người"); **Thông tin chuyên sâu** thu gọn ("đã nhập N mục"): Gia đình (Vợ/Chồng, Con 1–3 + năm sinh → tuổi), Điều cần nhớ (Món ăn / Kiêng kỵ dạng thẻ), Thấu hiểu (Sở thích / Thói quen / Tính cách dạng thẻ dùng chung, MBTI). Iframe Google cũ thay bằng ghim Leaflet.
+- **Nhắc khi mở app** (`UpcomingDatesReminder`, mọi trang): mỗi sự kiện nhắc TRƯỚC N ngày (theo từng sự kiện) + ĐÚNG NGÀY, mỗi mốc 1 lần/trình duyệt (`lgvn_occ_alert_seen_<user>`, tự dọn mốc cũ), kiểm lại khi quay lại app sang ngày mới, chỉ người đang chăm sóc. Chưa chạy migration → cách cũ.
+- **Ma trận**: lọc Giới tính (cả "Gợi ý Nữ/Nam theo tên"), lọc Đặc điểm ("Golf (5)"), tỉnh khớp cả quê; tìm khớp sở thích / thói quen / tính cách / trường / quê; chọn nhiều → **Ghi tương tác** (mở Ghi cho nhóm chọn sẵn) + **Giới tính…**; phạm vi "Đang chăm sóc · Danh bạ khác · Cả danh bạ · Đã nghỉ"; dòng phụ "6 người đang chăm sóc — chọn từ danh bạ 8 người".
+- **Ghi cho nhóm** (`GroupLogModal`, nút ở Dashboard / Nhật ký / thanh chọn nhiều): hành động + dịp (tự gợi ý 20/10, 8/3; thêm "Tri ân khách hàng", "Kỷ niệm hợp tác"), nội dung tự ghép, ngày ≤ hôm nay, quà (tên + giá trị/người); lọc Tất cả/Nữ/Nam (Nữ gồm người đoán "Nữ?", nút lưu xác nhận), Đang chăm sóc / Cả danh bạ, nhóm, **chi nhánh, công ty, chức vụ**, tìm; "Chọn tất cả N người đang lọc". Mỗi người 1 dòng `cskh_logs` + 1 dòng `client_gifts` (người chưa gắn công ty chỉ có nhật ký — báo rõ). Ghi theo lô 200, chung 1 dấu đợt.
+- **Đợt ghi nhóm** (`BatchEditModal`): Nhật ký + Dashboard "Gần đây" gom đợt thành 1 dòng; sửa hình thức / nội dung / ngày cả đợt, bỏ người (Hoàn tác trước khi Lưu), thêm người (cùng dấu đợt), xoá cả đợt — **xoá mềm** nhật ký + quà; chỉ người tạo đợt / admin. Dòng lẻ giữ màn sửa cũ (có việc đã hứa ↔ Workspace). Đổi ngày → trigger 170 tính lại ngày tương tác cuối (đã có `UPDATE OF log_date`).
+- **Bản đồ** (`MapView`): lớp Công ty / Nơi ở hiện tại / Quê quán (tâm tỉnh, nhớ trong máy); ghim ✓ / ~; popup Mở hồ sơ / Chỉ đường; **Đo khoảng cách** (người, **chi nhánh**, vị trí của tôi; OSRM xanh + chim bay đỏ); **Vị trí của tôi** + "Gần bạn"; **Định vị N** (link Maps trước, rồi tra chữ ~1 người/giây, bấm để dừng; quê: mỗi tỉnh 1 lần).
+- **Dashboard**: nút Ghi cho nhóm; "Đang chăm sóc 6 người" (bỏ "/ danh bạ").
+- **Server**: `api/resolve-map.ts` (Edge) mở link rút gọn Google Maps — kiểm phiên đăng nhập qua RPC `bds_access_check` (header `x-letsgo-token`, chấp nhận `ok`/`not_admin`), chỉ đi theo chuyển hướng trong tên miền Google, tối đa 5 bước. Dev: `vite.config.ts` phục vụ `/api/resolve-map` như `/api/check-link`. Dùng biến `SUPABASE_URL`/`SUPABASE_ANON_KEY` hoặc `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` trên Vercel.
+- **Logic thuần + test** (`src/lib/cskh`): `gender`, `canChi`, `occasions`, `remember` (gia đình), `traits`, `education`, `search` (mở rộng), `nearby`, `mapPoints` (+ `planGeo`: chấm tay > link > tra chữ), `groupLog`, `regionInsight` (Gemini), `provinces`. Test tầng ghi DB: `data/saveProfile.test.ts`, `data/groupLogSave.test.ts`.
+
+### 10.4 Lỗi logic đã sửa kèm
+
+1. Popup nhắc sinh nhật bỏ qua "nhắc trước N ngày" của từng sự kiện và hiện lại mỗi ngày trong 7 ngày → nay 2 mốc (trước N ngày + đúng ngày), mỗi mốc 1 lần.
+2. Link Google Maps rút gọn (dán từ điện thoại) không đọc được toạ độ → hồ sơ tra theo chữ và ghi nguồn "address" dù đã có link → nay mở qua server.
+3. Tra địa chỉ chỉ thử 1 lần cả chuỗi → nay lùi dần (bỏ số nhà → bỏ phường → từ quận trở đi), không bỏ tên đường.
+4. Việc "Chuẩn bị quà" của sinh nhật trong hồ sơ bị **tạo lại hôm sau** nếu người dùng xoá việc đó (kiểm trùng bỏ qua việc đã xoá) → nay tính cả việc đã xoá.
+5. Form người liên hệ đầy đủ **xoá cứng** ngày đặc biệt bị bỏ khỏi form (mất loại, người thân, liên kết quà) trong khi mọi nơi khác của CSKH xoá mềm → nay xoá mềm (DB chưa có cột thì xoá như cũ); nhận diện thêm lỗi thiếu cột `PGRST204`.
+6. Dashboard / Ma trận so số đang chăm sóc với tổng danh bạ (D3).
+7. `pruneSeenKeys` của PRM lấy ngày ở vị trí cố định → sai với id sinh nhật hồ sơ dạng `birthday:<uuid>` → sửa đọc ngày ở áp chót.
+
+### 10.5 Thay đổi hành vi cần biết
+
+- Sự kiện MỚI mặc định nhắc trước **3 ngày** (Tony chốt); sự kiện cũ giữ 7. Sinh nhật trong hồ sơ chưa đặt → 3 ngày (trước đây cố định 7) — đổi được trong hồ sơ sau khi chạy 174.
+- Nhãn "Điều cần nhớ → Sở thích, món ăn" đổi thành "Món ăn, đồ uống" (sở thích đã có ô riêng).
+
+### 10.6 Chưa kiểm được / để sau
+
+- Xem bằng trang giả lập (Supabase giả, không ghi DB) ở 1280px và 375px: Dashboard, Ma trận, Ghi cho nhóm, Sửa đợt, Hồ sơ, Bản đồ (đo khoảng cách qua OSRM chạy thật). **Chưa xem được ảnh nền bản đồ và tra Nominatim** vì mạng máy làm việc không vào được `nominatim.openstreetmap.org` / `tile.openstreetmap.org` lúc kiểm; chưa thử `api/resolve-map` trên Vercel thật và "Tìm hiểu vùng miền" với Gemini thật.
+- `ContactFormModal` (form chung với hồ sơ Khách hàng) vẫn nhập sở thích kiểu cũ — cùng cách lưu nên thẻ vẫn dùng chung.
+- ~~Proxy `api/gemini.ts` không kiểm phiên đăng nhập~~ — **đã sửa 25/10**: hàm dùng chung `api/_letsgoSession.ts` (RPC `bds_access_check`, chấp nhận `ok`/`not_admin`) cho cả `api/gemini.ts` lẫn `api/resolve-map.ts`; `lib/gemini.ts` gửi kèm header `x-letsgo-token` (token đọc qua `lib/sessionToken.ts`); hết phiên → "Phiên đăng nhập đã hết hạn — đăng xuất rồi đăng nhập lại". Test: `src/lib/apiSession.test.ts`. Môi trường dev gọi thẳng Google như cũ nên không bị ảnh hưởng.

@@ -4,29 +4,8 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--",
-        "--host",
-        "--port",
-        "5199",
-        "--strictPort"
-      ],
+      "runtimeArgs": ["run", "dev", "--", "--host", "--port", "5199", "--strictPort"],
       "port": 5199
-    },
-    {
-      "name": "cskh-harness",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "vite",
-        "--config",
-        "/private/tmp/claude-501/-Users-trinhdung-Documents-Project-Letsgo-vn-letsgo-vn/fc23dfc9-73ad-44c9-ad0c-6625779d90f5/scratchpad/harness/vite.config.ts",
-        "--port",
-        "5198",
-        "--strictPort"
-      ],
-      "port": 5198
     }
   ]
 }

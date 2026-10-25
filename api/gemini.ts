@@ -4,7 +4,10 @@
 //   Vercel > Project > Settings > Environment Variables > them GEMINI_API_KEY (KHONG co tien to VITE_).
 //   Sau do rotate (thu hoi + tao moi) key cu trong Google AI Studio vi key cu da tung nam trong bundle.
 //
-// Client (src/lib/gemini.ts) POST len day voi body { model, body }; function nay gan key o phia server.
+// Client (src/lib/gemini.ts) POST len day voi body { model, body } + header x-letsgo-token; function nay
+// kiem phien dang nhap LetsGo (api/_letsgoSession.ts) roi moi gan key o phia server — nguoi ngoai biet
+// duong dan cung khong goi duoc AI bang key cua cong ty.
+import { requireSession } from './_letsgoSession';
 
 export const config = { runtime: 'edge' };
 
@@ -14,6 +17,9 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return json({ error: 'Method not allowed' }, 405);
   }
+
+  const denied = await requireSession(req);
+  if (denied) return denied;
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
