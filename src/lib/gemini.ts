@@ -1,4 +1,5 @@
 import type { Client, FinanceRecord, CRMPipelineEntry } from './types';
+import { getStoredSessionToken } from './sessionToken';
 import { formatCurrency, daysUntil } from './format';
 
 export interface ChatMessage {
@@ -14,7 +15,8 @@ export function geminiConfigured(): boolean {
 }
 
 // Goi Gemini generateContent.
-//  - Prod: POST qua /api/gemini (key nam o server, KHONG lo ra client bundle).
+//  - Prod: POST qua /api/gemini (key nam o server, KHONG lo ra client bundle) kem header x-letsgo-token —
+//          proxy chi chay cho phien dang nhap con han (api/_letsgoSession.ts).
 //  - Dev:  goi thang Google bang VITE_GEMINI_API_KEY. Reference key nam trong nhanh import.meta.env.DEV
 //          nen bi loai bo khoi prod build (key khong xuat hien trong bundle).
 async function generateContent(body: unknown): Promise<Response> {
@@ -27,9 +29,10 @@ async function generateContent(body: unknown): Promise<Response> {
       body: JSON.stringify(body),
     });
   }
+  const token = getStoredSessionToken();
   return fetch('/api/gemini', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'x-letsgo-token': token } : {}) },
     body: JSON.stringify({ model: MODEL, body }),
   });
 }
@@ -115,6 +118,7 @@ function overloadedMessage(): string {
 
 // Chuyển lỗi HTTP từ Gemini thành thông báo lịch sự bằng tiếng Việt, thay vì hiển thị JSON thô.
 function friendlyErrorMessage(status: number, errBody: string): string {
+  if (status === 401) return 'Phiên đăng nhập đã hết hạn — đăng xuất rồi đăng nhập lại để dùng trợ lý AI.';
   if (status === 429) return rateLimitMessage(errBody);
   if (status === 503) return overloadedMessage();
   return `Gemini API lỗi (${status}): ${errBody.slice(0, 200)}`;

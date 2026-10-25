@@ -5,14 +5,11 @@
 // POST { url }  (header x-letsgo-token: token phien dang nhap cua app)  ->  { url, coords: {lat,lng} | null }
 //
 // An toan:
-//  - Yeu cau dang nhap: kiem token qua RPC bds_access_check (doc header x-letsgo-token, dung chung
-//    session_role cua migration 061/164) — 'ok' hoac 'not_admin' = phien hop le.
+//  - Yeu cau dang nhap: header x-letsgo-token, kiem qua api/_letsgoSession.ts (RPC bds_access_check).
 //  - Chi nhan link rut gon cua Google, chi di theo chuyen huong trong ten mien Google (toi da 5 buoc)
 //    -> khong dung duoc API nay de goi trang bat ky.
-//
-// Cau hinh: dung lai bien moi truong Supabase cua app (SUPABASE_URL / SUPABASE_ANON_KEY, hoac
-// VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY da khai bao tren Vercel cho ban build).
 import { extractLatLng, isGoogleMapsHost, isShortMapLink } from '../src/lib/cskh/nearby';
+import { requireSession } from './_letsgoSession';
 
 export const config = { runtime: 'edge' };
 
@@ -20,30 +17,10 @@ const MAX_HOPS = 5;
 const TIMEOUT_MS = 8000;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
 
-/** Phien dang nhap LetsGo con han (bat ky vai tro nao). */
-async function sessionOk(token: string): Promise<boolean> {
-  const base = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!base || !key || !token) return false;
-  try {
-    const res = await fetch(`${base.replace(/\/$/, '')}/rest/v1/rpc/bds_access_check`, {
-      method: 'POST',
-      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'x-letsgo-token': token },
-      body: '{}',
-    });
-    if (!res.ok) return false;
-    const state = await res.json();
-    return state === 'ok' || state === 'not_admin';
-  } catch {
-    return false;
-  }
-}
-
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!(await sessionOk(req.headers.get('x-letsgo-token') ?? ''))) {
-    return json({ error: 'Phiên đăng nhập hết hạn — đăng nhập lại rồi thử.' }, 401);
-  }
+  const denied = await requireSession(req);
+  if (denied) return denied;
 
   let url = '';
   try {

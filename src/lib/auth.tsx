@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import type { AppUser, RolePermission } from './types';
 import { OFFICE_PAGES, OFFICE_PERMISSION_MODULE, isOfficePage } from '../modules/office-rental/pages';
 import { startGoogleLogin, completeGoogleLogin, hasGoogleRedirect } from './googleLogin';
+import { SESSION_TOKEN_KEY } from './sessionToken';
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -31,7 +32,7 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 const STORAGE_KEY = 'letsgo_user';
-const TOKEN_KEY = 'letsgo_token';
+const TOKEN_KEY = SESSION_TOKEN_KEY;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
