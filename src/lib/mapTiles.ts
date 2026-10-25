@@ -1,5 +1,5 @@
-// Lớp nền bản đồ đường phố dùng chung (CSKH, Thị trường, bản đồ nhỏ): OpenStreetMap → hỏng thì tự
-// chuyển OSM France (cùng dữ liệu OSM) → Esri. Quy tắc chọn nguồn ở mapTileChoice.ts.
+// Lớp nền bản đồ đường phố dùng chung (CSKH, Thị trường, bản đồ nhỏ): OpenStreetMap chuẩn → hỏng thì
+// OSM chuẩn qua server LetsGo → OSM France (cùng dữ liệu, kiểu khác) → Esri. Quy tắc chọn nguồn ở mapTileChoice.ts.
 // Trả về 1 LayerGroup: nơi gọi thêm / gỡ khỏi bản đồ như 1 lớp bình thường (VD bật tắt vệ tinh),
 // việc đổi nguồn diễn ra bên trong nhóm.
 import L from 'leaflet';
@@ -9,6 +9,8 @@ const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenS
 
 const PROVIDERS: Readonly<Record<TileProviderKey, { url: string; options: L.TileLayerOptions }>> = {
   osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', options: { maxZoom: 19, attribution: OSM_ATTR } },
+  // Cùng ảnh nền OSM chuẩn, server LetsGo (Vercel) tải hộ khi mạng chặn openstreetmap.org — xem api/osm-tile.ts
+  osmproxy: { url: '/api/osm-tile?z={z}&x={x}&y={y}', options: { maxZoom: 19, attribution: OSM_ATTR } },
   // Máy chủ cộng đồng OSM France — cùng dữ liệu OSM, nhãn tiếng Việt; khác hạ tầng nên thường vẫn vào được khi OSM bị chặn.
   // (CARTO từng thử: nay trả ảnh "API KEY REQUIRED" thay vì báo lỗi — không dùng được.)
   osmfr: {
@@ -21,7 +23,7 @@ const PROVIDERS: Readonly<Record<TileProviderKey, { url: string; options: L.Tile
   },
 };
 
-const STORE_KEY = 'lgvn_map_tiles_v2';
+const STORE_KEY = 'lgvn_map_tiles_v3';
 
 function readStored(): string | null {
   try { return localStorage.getItem(STORE_KEY); } catch { return null; }

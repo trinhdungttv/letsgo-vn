@@ -428,11 +428,20 @@ export default function CskhMap() {
   );
 }
 
+/** Dấu tích xanh "vị trí chính xác" (SVG, kiểu huy hiệu xác minh). */
+const TICK_SVG = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="8" cy="8" r="8" fill="#0071E3"/><path d="M4.6 8.3l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/**
+ * Ghim kiểu PRM Tony Study: chấm màu nhóm + nhãn tên luôn hiện; ✓ xanh = vị trí chính xác (có link
+ * Maps / chấm tay), "~ " + chấm viền đứt = tương đối (tra chữ, tâm tỉnh quê). Lớp công ty không có dấu.
+ */
 function pinHtml(p: Point, layer: MapLayer): string {
-  const badge = layer === 'company' ? ''
-    : p.approx ? '<span class="lgmap-pin-badge lgmap-pin-badge-approx">~</span>'
-      : p.verified ? '<span class="lgmap-pin-badge lgmap-pin-badge-ok">✓</span>' : '';
-  return `<span style="position:relative;display:block"><span class="lgmap-pin${p.approx ? ' lgmap-pin-approx' : ''}" style="background:${p.group.color}"></span>${badge}</span>`;
+  const approx = layer !== 'company' && p.approx;
+  const tick = layer !== 'company' && p.verified ? `<span class="lgmap-label-tick">${TICK_SVG}</span>` : '';
+  return `<span class="lgmap-label${approx ? ' lgmap-label-approx' : ''}">`
+    + `<span class="lgmap-label-dot" style="background:${p.group.color}"></span>`
+    + `<span class="lgmap-label-name">${approx ? '~ ' : ''}<span class="lgmap-label-text">${escapeMapHtml(p.contact.fullName)}</span>${tick}</span>`
+    + '</span>';
 }
 
 /**
@@ -500,15 +509,15 @@ function MapCanvas({ points, layer, measureOn, pair, endpoints, me, onPick, onOp
     markerById.current.clear();
     for (const p of points) {
       const picked = measureOn && (pair.from === p.contact.id || pair.to === p.contact.id);
+      // Neo ở tâm chấm tròn (16px); nhãn tên tràn sang phải như bản đồ PRM
       const icon = L.divIcon({
-        className: `lgmap-marker${picked ? ' lgmap-marker-picked' : ''}`,
+        className: `lgmap-label-marker${picked ? ' lgmap-label-picked' : ''}`,
         html: pinHtml(p, layer),
-        iconSize: [26, 34],
-        iconAnchor: [13, 32],
-        popupAnchor: [0, -30],
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10],
       });
       const marker = L.marker([p.lat, p.lng], { icon });
-      marker.bindTooltip(escapeMapHtml(p.contact.fullName), { direction: 'top', offset: [0, -30], className: 'lgmap-tooltip' });
       if (measureOn) {
         marker.on('click', () => onPickRef.current(p.contact.id));
       } else {

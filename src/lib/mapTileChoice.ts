@@ -1,13 +1,15 @@
 // ============================================================================
 // Chọn nguồn ảnh nền bản đồ đường phố (hàm thuần, có test — phần gắn Leaflet ở mapTiles.ts).
 // ----------------------------------------------------------------------------
-// OpenStreetMap là nguồn chính, nhưng một số mạng ở VN chặn hẳn tile.openstreetmap.org (kết nối
-// hỏng ngay) → bản đồ xám trơn. Khi ảnh nền của nguồn đang dùng hỏng liên tiếp mà chưa tải được
+// OpenStreetMap chuẩn (giống Tony Study) là nguồn chính, nhưng một số mạng ở VN chặn hẳn
+// tile.openstreetmap.org (kết nối hỏng ngay) → bản đồ xám trơn. Thứ tự: OSM trực tiếp → OSM qua
+// server LetsGo (api/osm-tile, vẫn đúng kiểu nền) → OSM France → Esri. Khi ảnh nền của nguồn đang
+// dùng hỏng liên tiếp mà chưa tải được
 // ảnh nào thì chuyển nguồn kế tiếp; nguồn tải được thì nhớ 24 giờ để lần mở sau dùng luôn
 // (khỏi chớp xám), hết hạn thì thử lại OSM.
 // ============================================================================
 
-export const TILE_PROVIDER_KEYS = ['osm', 'osmfr', 'esri'] as const;
+export const TILE_PROVIDER_KEYS = ['osm', 'osmproxy', 'osmfr', 'esri'] as const;
 export type TileProviderKey = (typeof TILE_PROVIDER_KEYS)[number];
 
 /** Nhớ nguồn chạy được bấy lâu. */

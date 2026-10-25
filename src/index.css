@@ -262,30 +262,56 @@ body {
   border-style: dashed;
   opacity: 0.8;
 }
-/* CSKH: dấu ✓ (chính xác) / ~ (tương đối) cạnh ghim + ghim đang chọn khi đo khoảng cách */
-.lgmap-pin-badge {
-  position: absolute;
-  top: -6px;
-  right: -8px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 3px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 15px;
-  text-align: center;
-  color: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+/* CSKH: ghim kiểu PRM Tony Study — chấm màu nhóm + nhãn tên luôn hiện, ✓ xanh = chính xác */
+.lgmap-label-marker {
+  overflow: visible;
 }
-.lgmap-pin-badge-ok {
-  background: #0071E3;
+.lgmap-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  pointer-events: auto;
 }
-.lgmap-pin-badge-approx {
-  background: #8E8E93;
+.lgmap-label-dot {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
-.lgmap-marker-picked .lgmap-pin {
-  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.45), 0 2px 6px rgba(0, 0, 0, 0.4);
+.lgmap-label-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #1d1d1f;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.lgmap-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lgmap-label-tick {
+  display: inline-flex;
+  flex: none;
+}
+.lgmap-label-approx .lgmap-label-dot {
+  border-style: dashed;
+  opacity: 0.85;
+}
+.lgmap-label-picked .lgmap-label-dot {
+  box-shadow: 0 0 0 3px #0071E3, 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.lgmap-label-marker:hover .lgmap-label-name {
+  color: #0066cc;
 }
 /* CSKH: "Vị trí của tôi" nhấp nháy */
 .lgmap-me {
