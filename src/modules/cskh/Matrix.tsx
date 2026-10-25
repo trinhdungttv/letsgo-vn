@@ -2,16 +2,17 @@
 // Ma trận Khách hàng (port PRM ContactMatrixPage) — thay tab "Danh sách liên hệ" cũ.
 // ----------------------------------------------------------------------------
 //   • Bảng nhiệt Nhóm × Trạng thái — bấm ô để lọc ngay
-//   • Tìm không dấu · Phạm vi Đang chăm sóc / Chưa chăm sóc / Đã nghỉ / Tất cả
-//   • Bộ lọc dạng viên: Nhóm, Trạng thái, Chi nhánh, Người phụ trách, Loại khách,
-//     Công ty, Tỉnh + hàng chip bộ lọc đang bật
+//   • Tìm không dấu (khớp cả sở thích, thói quen, tính cách, tên trường, quê) · Phạm vi
+//     Đang chăm sóc / Danh bạ khác / Cả danh bạ / Đã nghỉ — danh bạ chỉ là nguồn để chọn
+//   • Bộ lọc dạng viên: Nhóm, Trạng thái, Giới tính (kèm "Gợi ý Nữ/Nam theo tên"), Đặc điểm
+//     (Golf (5)…), Chi nhánh, Người phụ trách, Loại khách, Công ty, Tỉnh + chip bộ lọc đang bật
 //   • BẢNG sắp xếp được, chip nhóm bấm để đổi nhanh, "Hiện thêm" cho danh bạ lớn
-//   • Chọn nhiều → Xếp vào nhóm / Bỏ chăm sóc / Đổi người phụ trách / Gắn thêm công ty /
-//     Đánh dấu nghỉ / Xoá vĩnh viễn (admin) — giữ đủ thao tác của Danh sách liên hệ cũ
+//   • Chọn nhiều → Ghi tương tác (cho cả nhóm) / Xếp vào nhóm / Giới tính / Bỏ chăm sóc / Đổi
+//     người phụ trách / Gắn thêm công ty / Đánh dấu nghỉ / Xoá vĩnh viễn (admin)
 // Loại khách mặc định "Đang hợp tác" (chốt 19/10/2026), hiện thành chip để bỏ được.
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, Grid3x3, Layers, Plus, Star, UserPlus, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, Grid3x3, Layers, PenLine, Plus, Star, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -21,12 +22,14 @@ import { buildContactStats, CARE_STATUS_LABEL, dueLabel, type CareStatus, type C
 import { relativeDayLabel, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import { contactSearchHaystack, matchesQuery } from '../../lib/cskh/search';
+import { GENDER_FILTER_LABEL, matchesGender, type GenderFilter } from '../../lib/cskh/gender';
+import { buildTagStats, hasTrait, parseTraitFilter, TRAIT_FIELDS, TRAIT_LABEL, traitFilterValue } from '../../lib/cskh/traits';
 import { isCooperatingClient } from '../../lib/cskh/seedTiers';
-import type { CskhContact } from '../../lib/cskh/types';
-import { CLASSIFIED_TIERS, TIER_LABEL } from '../../lib/cskh/types';
+import type { CskhContact, Gender } from '../../lib/cskh/types';
+import { CLASSIFIED_TIERS, GENDER_LABEL, TIER_LABEL } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
 import ContactFormModal from '../../components/contacts/ContactFormModal';
-import { assignGroups, setOwner } from './data/api';
+import { assignGroups, setGender, setOwner } from './data/api';
 import { useCskh } from './context';
 import {
   CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, scoreColor, TIER_COLOR,
@@ -39,10 +42,14 @@ import { GroupOptions, QuickGroupSelect } from './components/GroupSelect';
 type ActiveStatus = Exclude<CareStatus, 'unclassified'>;
 const STATUSES: readonly ActiveStatus[] = ['overdue', 'due_soon', 'ok'];
 
-/** Phạm vi: đang chăm sóc (mặc định) / chưa chăm sóc / đã nghỉ (rời công ty khách) / tất cả. */
-type Scope = 'care' | 'other' | 'left' | 'all';
-const SCOPE_LABEL: Readonly<Record<Scope, string>> = { care: 'Đang chăm sóc', other: 'Chưa chăm sóc', left: 'Đã nghỉ', all: 'Tất cả' };
-const SCOPES: Scope[] = ['care', 'other', 'left', 'all'];
+/**
+ * Phạm vi: đang chăm sóc (mặc định) / danh bạ khác (chưa chọn chăm sóc — không phải "bị bỏ bê",
+ * danh bạ chỉ là nguồn để chọn) / cả danh bạ / đã nghỉ (rời công ty khách).
+ */
+type Scope = 'care' | 'other' | 'all' | 'left';
+const SCOPE_LABEL: Readonly<Record<Scope, string>> = { care: 'Đang chăm sóc', other: 'Danh bạ khác', all: 'Cả danh bạ', left: 'Đã nghỉ' };
+const SCOPES: Scope[] = ['care', 'other', 'all', 'left'];
+const GENDER_FILTERS: readonly GenderFilter[] = ['all', 'female', 'male', 'unknown', 'guess_female', 'guess_male'];
 
 /** Loại khách của các công ty người này phụ trách. */
 type ClientKind = 'cooperating' | 'suspended' | 'prospect' | 'unlinked';
@@ -76,9 +83,12 @@ interface Filters {
   kind: 'all' | ClientKind;
   company: string;      // 'all' | client id
   province: string;     // 'all' | tên tỉnh
+  gender: GenderFilter;
+  trait: string;        // 'all' | "<mục>:<khoá thẻ>"
 }
 const DEFAULT_FILTERS: Filters = {
   scope: 'care', group: 'all', status: 'all', branch: 'all', owner: 'all', kind: 'cooperating', company: 'all', province: 'all',
+  gender: 'all', trait: 'all',
 };
 type Dim = keyof Filters | 'search';
 
@@ -92,7 +102,7 @@ function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): 
 }
 
 export default function CskhMatrix() {
-  const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroups } = useCskh();
+  const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroups, openGroupLog } = useCskh();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const { branches } = useBranchLookup();
@@ -144,6 +154,7 @@ export default function CskhMatrix() {
     }] as const;
   })), [contacts, clientById, branches, groupById]);
 
+  const trait = filters.trait === 'all' ? null : parseTraitFilter(filters.trait);
   const passes = (c: CskhContact, skip: readonly Dim[] = []): boolean => {
     const on = (d: Dim) => !skip.includes(d);
     const d = derived.get(c.id);
@@ -159,7 +170,9 @@ export default function CskhMatrix() {
     if (on('owner') && filters.owner !== 'all' && (filters.owner === 'none' ? c.ownerId !== null : c.ownerId !== filters.owner)) return false;
     if (on('kind') && filters.kind !== 'all' && !d.kinds.has(filters.kind)) return false;
     if (on('company') && filters.company !== 'all' && !c.clientIds.includes(filters.company)) return false;
-    if (on('province') && filters.province !== 'all' && c.province !== filters.province) return false;
+    if (on('province') && filters.province !== 'all' && c.province !== filters.province && c.originProvince !== filters.province) return false;
+    if (on('gender') && filters.gender !== 'all' && !matchesGender(c, filters.gender)) return false;
+    if (on('trait') && trait && !hasTrait(c, trait.field, trait.key)) return false;
     if (on('search') && search.trim() && !matchesQuery(d.haystack, search)) return false;
     return true;
   };
@@ -216,6 +229,7 @@ export default function CskhMatrix() {
       derived.get(c.id)?.branchIds.forEach(id => bIds.add(id));
       c.clientIds.forEach(id => cIds.add(id));
       if (c.province) provinces.add(c.province);
+      if (c.originProvince) provinces.add(c.originProvince);
     }
     return {
       branches: branches.filter(b => bIds.has(b.id)),
@@ -224,6 +238,14 @@ export default function CskhMatrix() {
     };
   }, [contacts, derived, branches, clients]);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
+  // Đặc điểm (thẻ) của người trong phạm vi đang xem — "Golf (5)" ra 5 người chơi golf
+  const scopeKey = filters.scope;
+  const traitOptions = useMemo(() => {
+    const pool = contacts.filter(c => (scopeKey === 'care' ? c.tier !== 'unclassified' && !c.isArchived
+      : scopeKey === 'other' ? c.tier === 'unclassified' && !c.isArchived
+        : scopeKey === 'left' ? c.isArchived : true));
+    return TRAIT_FIELDS.map(f => ({ field: f, stats: buildTagStats(pool, f) })).filter(g => g.stats.length > 0);
+  }, [contacts, scopeKey]);
 
   // ── Chọn hàng loạt ──
   const selectedIds = [...selected].filter(id => contacts.some(c => c.id === id));
@@ -329,6 +351,11 @@ export default function CskhMatrix() {
   if (filters.kind !== 'all') chips.push({ label: `Khách: ${KIND_LABEL[filters.kind]}`, clear: () => setFilter({ kind: 'all' }) });
   if (filters.company !== 'all') chips.push({ label: `Công ty: ${clientById.get(filters.company)?.name ?? '?'}`, clear: () => setFilter({ company: 'all' }) });
   if (filters.province !== 'all') chips.push({ label: filters.province, clear: () => setFilter({ province: 'all' }) });
+  if (filters.gender !== 'all') chips.push({ label: GENDER_FILTER_LABEL[filters.gender], clear: () => setFilter({ gender: 'all' }) });
+  if (trait) {
+    const label = traitOptions.find(g => g.field === trait.field)?.stats.find(t => t.key === trait.key)?.label ?? trait.key;
+    chips.push({ label: `${TRAIT_LABEL[trait.field]}: ${label}`, clear: () => setFilter({ trait: 'all' }) });
+  }
   if (search.trim()) chips.push({ label: `"${search.trim()}"`, clear: () => setSearch('') });
 
   const careCount = contacts.filter(c => c.tier !== 'unclassified' && !c.isArchived).length;
@@ -346,7 +373,7 @@ export default function CskhMatrix() {
       <PageTitle
         eyebrow="Danh bạ chăm sóc"
         title="Ma trận Khách hàng"
-        subtitle={<>{careCount} người đang chăm sóc · {contacts.length} người trong danh bạ{avgCare !== null && <> · sức khỏe TB {avgCare}/100</>}</>}
+        subtitle={<>{careCount} người đang chăm sóc — chọn từ danh bạ {contacts.length} người{avgCare !== null && <> · sức khỏe TB {avgCare}/100</>}</>}
         actions={(
           <>
             <button type="button" onClick={openGroups} className={`${PILL_GRAY} !flex-none`} aria-label="Quản lý nhóm">
@@ -459,6 +486,19 @@ export default function CskhMatrix() {
             <option value="all">Mọi trạng thái</option>
             {STATUSES.map(s => <option key={s} value={s}>{CARE_STATUS_LABEL[s]}</option>)}
           </PillSelect>
+          <PillSelect value={filters.gender} active={filters.gender !== 'all'} label="Lọc theo giới tính" onChange={v => setFilter({ gender: v as GenderFilter })}>
+            {GENDER_FILTERS.map(g => <option key={g} value={g}>{GENDER_FILTER_LABEL[g]}</option>)}
+          </PillSelect>
+          {(traitOptions.length > 0 || trait) && (
+            <PillSelect value={filters.trait} active={!!trait} label="Lọc theo đặc điểm" onChange={v => setFilter({ trait: v })}>
+              <option value="all">Mọi đặc điểm</option>
+              {traitOptions.map(g => (
+                <optgroup key={g.field} label={TRAIT_LABEL[g.field]}>
+                  {g.stats.map(t => <option key={t.key} value={traitFilterValue(g.field, t.key)}>{`${t.label} (${t.count})`}</option>)}
+                </optgroup>
+              ))}
+            </PillSelect>
+          )}
           {options.branches.length > 0 && (
             <PillSelect value={filters.branch} active={filters.branch !== 'all'} label="Lọc theo chi nhánh" onChange={v => setFilter({ branch: v })}>
               <option value="all">Mọi chi nhánh</option>
@@ -479,8 +519,8 @@ export default function CskhMatrix() {
             {options.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </PillSelect>
           {options.provinces.length > 0 && (
-            <PillSelect value={filters.province} active={filters.province !== 'all'} label="Lọc theo tỉnh" onChange={v => setFilter({ province: v })}>
-              <option value="all">Mọi tỉnh</option>
+            <PillSelect value={filters.province} active={filters.province !== 'all'} label="Lọc theo tỉnh (nơi ở hoặc quê)" onChange={v => setFilter({ province: v })}>
+              <option value="all">Mọi tỉnh / quê</option>
               {options.provinces.map(p => <option key={p} value={p}>{p}</option>)}
             </PillSelect>
           )}
@@ -515,6 +555,10 @@ export default function CskhMatrix() {
           <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#0071E3] text-white text-[13px] font-semibold tabular-nums">
             <CheckSquare size={14} /> {selectedIds.length} đã chọn
           </span>
+          <button type="button" disabled={busy} onClick={() => openGroupLog(selectedIds)}
+            className="inline-flex items-center gap-1.5 h-9 md:h-8 px-3.5 rounded-full bg-[#0071E3]/10 text-[#0066CC] text-[13px] font-medium hover:bg-[#0071E3]/[0.16] disabled:opacity-40 transition">
+            <PenLine size={14} /> Ghi tương tác
+          </button>
           <PillSelect value="" active={false} disabled={busy} label="Xếp vào nhóm" onChange={v => assignGroup(selectedIds, v)}>
             <option value="">Xếp vào nhóm…</option>
             <GroupOptions groups={groups} cadence={cadence} allowCreate />
@@ -528,6 +572,17 @@ export default function CskhMatrix() {
             <option value="">Đổi người phụ trách…</option>
             <option value="none">— Chưa giao —</option>
             {data.users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </PillSelect>
+          <PillSelect value="" active={false} disabled={busy} label="Đặt giới tính"
+            onChange={v => {
+              if (!v) return;
+              const g = (v === 'none' ? '' : v) as Gender;
+              void run(async () => { await setGender(selectedIds, g, user); return `Đã đặt giới tính ${g ? GENDER_LABEL[g] : 'chưa rõ'} cho ${selectedIds.length} người`; });
+            }}>
+            <option value="">Giới tính…</option>
+            <option value="female">Nữ</option>
+            <option value="male">Nam</option>
+            <option value="none">Chưa rõ</option>
           </PillSelect>
           <PillSelect value="" active={false} disabled={busy} label="Gắn thêm công ty" onChange={bulkLink}>
             <option value="">Gắn thêm công ty…</option>

@@ -8,9 +8,12 @@
 // ============================================================================
 import { supabase } from './supabase';
 import type { Contact } from './types';
+import { selectContacts } from './contactOps';
 import { todayVN } from './cskh/dates';
 import { diffDays, nextOccurrenceIso } from './cskh/lunar';
-import { mapSpecialDateRow, type SpecialDateRow } from './cskh/mappers';
+import { birthdayOccasion, mapContactRow, mapSpecialDateRow, type ContactRow, type SpecialDateRow } from './cskh/mappers';
+import { buildOccasionAlerts, type OccasionAlert } from './cskh/occasions';
+import type { CskhOccasion } from './cskh/types';
 
 export interface SpecialDate {
   id: string;
@@ -25,7 +28,8 @@ const isMissingTableError = (err: { message?: string; code?: string } | null) =>
 
 /** Cột chưa có (chưa chạy migration CSKH 171 — chưa có is_archived / day / month…). */
 const isMissingColumnError = (err: { message?: string; code?: string } | null) =>
-  !!err && (err.code === '42703' || /column .* does not exist/i.test(err.message || ''));
+  !!err && (err.code === '42703' || err.code === 'PGRST204'
+    || /column .* does not exist|could not find the .* column/i.test(err.message || ''));
 
 /**
  * Chạy truy vấn bỏ qua sự kiện đã xoá mềm (is_archived, migration 171); DB chưa có
@@ -87,10 +91,16 @@ export async function saveSpecialDates(
   const rows = existing || [];
   const wanted = new Map(clean.filter(i => i.id).map(i => [i.id as string, i]));
 
+  // Dòng bị bỏ khỏi form → xoá MỀM như mọi nơi khác của CSKH (giữ loại, người thân, quà đã gắn…;
+  // khôi phục được). DB chưa có cột is_archived (chưa chạy migration 171) thì xoá như trước.
   const removed = rows.filter(r => !wanted.has(r.id)).map(r => r.id);
   if (removed.length) {
-    const { error } = await supabase.from('contact_special_dates').delete().in('id', removed);
-    if (error) return error.message;
+    const soft = await supabase.from('contact_special_dates').update({ is_archived: true }).in('id', removed);
+    if (soft.error) {
+      if (!isMissingColumnError(soft.error)) return soft.error.message;
+      const { error } = await supabase.from('contact_special_dates').delete().in('id', removed);
+      if (error) return error.message;
+    }
   }
 
   for (const r of rows) {
@@ -197,6 +207,29 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN
   }
 
   return events.sort((a, b) => a.daysUntil - b.daysUntil || a.contactName.localeCompare(b.contactName, 'vi'));
+}
+
+/**
+ * Mốc nhắc ngày quan trọng khi mở app (nâng cấp 24/10/2026, port PRM OccasionAlertHost):
+ * mỗi sự kiện nhắc TRƯỚC N ngày (số ngày riêng từng sự kiện) rồi nhắc LẠI ĐÚNG NGÀY — người
+ * gọi tự lọc các mốc đã xem. Chỉ người đang chăm sóc (cùng luật với hàng đợi Hôm nay).
+ * Trả về null khi DB chưa chạy migration CSKH 169/171 → người gọi dùng cách cũ.
+ */
+export async function fetchOccasionAlerts(today = todayVN()): Promise<OccasionAlert[] | null> {
+  const [rows, sRes] = await Promise.all([
+    selectContacts(q => q.eq('is_active', true)) as Promise<ContactRow[]>,
+    supabase.from('contact_special_dates').select('*').eq('is_archived', false),
+  ]);
+  if (rows.length > 0 && !('tier' in rows[0])) return null;
+  if (isMissingColumnError(sRes.error)) return null;
+  const contacts = rows.map(mapContactRow).filter(c => c.tier !== 'unclassified' && !c.isArchived);
+  const ids = new Set(contacts.map(c => c.id));
+  const occasions: CskhOccasion[] = [
+    ...((sRes.data ?? []) as SpecialDateRow[]).filter(r => ids.has(r.contact_id)).map(mapSpecialDateRow)
+      .filter((o): o is CskhOccasion => o !== null),
+    ...contacts.map(birthdayOccasion).filter((o): o is CskhOccasion => o !== null),
+  ];
+  return buildOccasionAlerts(contacts, occasions, today);
 }
 
 /** Cách tính trước migration CSKH: mọi người đang phụ trách, chỉ dương lịch. */

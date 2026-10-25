@@ -188,3 +188,16 @@ export async function askGemini(context: string, history: ChatMessage[]): Promis
   if (!text) throw new Error('Gemini không trả về nội dung');
   return text;
 }
+
+/**
+ * Gọi Gemini với thân yêu cầu dựng sẵn (VD responseSchema trả JSON — "Tìm hiểu vùng miền" của
+ * CSKH) và trả nguyên phản hồi để nơi gọi tự đọc / kiểm. Lỗi HTTP → câu tiếng Việt dễ hiểu.
+ */
+export async function generateGeminiResponse(body: Record<string, unknown>): Promise<unknown> {
+  const res = await generateContent(body);
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(friendlyErrorMessage(res.status, errBody));
+  }
+  return res.json();
+}

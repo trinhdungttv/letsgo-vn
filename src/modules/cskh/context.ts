@@ -17,6 +17,8 @@ export interface CskhContextValue {
   openLog: (contactId?: string) => void;
   openPicker: () => void;
   openGroups: () => void;
+  /** Mở "Ghi cho nhóm" (chọn sẵn người nếu mở từ Ma trận). */
+  openGroupLog: (contactIds?: readonly string[]) => void;
   goTab: (tab: CskhTabKey) => void;
   openWorkspace: () => void;
   /** Mở hồ sơ công ty bên Khách hàng. */

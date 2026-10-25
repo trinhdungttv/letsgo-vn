@@ -257,6 +257,55 @@ body {
   border: 3px solid #fff;
   box-shadow: 0 0 0 2px #1D4ED8, 0 2px 6px rgba(0, 0, 0, 0.3);
 }
+/* CSKH: ghim vị trí tương đối (tra chữ, tâm tỉnh quê) — viền đứt, nhạt hơn */
+.lgmap-pin.lgmap-pin-approx {
+  border-style: dashed;
+  opacity: 0.8;
+}
+/* CSKH: dấu ✓ (chính xác) / ~ (tương đối) cạnh ghim + ghim đang chọn khi đo khoảng cách */
+.lgmap-pin-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.lgmap-pin-badge-ok {
+  background: #0071E3;
+}
+.lgmap-pin-badge-approx {
+  background: #8E8E93;
+}
+.lgmap-marker-picked .lgmap-pin {
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.45), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+/* CSKH: "Vị trí của tôi" nhấp nháy */
+.lgmap-me {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #0071E3;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 0 rgba(0, 113, 227, 0.5);
+  animation: lgmap-me-pulse 1.8s ease-out infinite;
+}
+@keyframes lgmap-me-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(0, 113, 227, 0.5); }
+  70% { box-shadow: 0 0 0 14px rgba(0, 113, 227, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 113, 227, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lgmap-me { animation: none; }
+}
 .lgmap-popup {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', 'Inter', Arial, sans-serif;
 }

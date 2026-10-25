@@ -10,13 +10,15 @@
 // ============================================================================
 import type { ClientGift, Contact, CSKHLog } from '../types';
 import { splitPhones } from './contactActions';
+import { cleanEducation } from './education';
+import { DEFAULT_REMIND_DAYS } from './occasions';
 import { cleanRememberNotes } from './remember';
 import type {
   CadenceConfig, CskhClassifiedTier, CskhContact, CskhContext, CskhGift, CskhGroup,
   CskhInteraction, CskhOccasion, CskhSettings, CskhTier, GeoSource, GiftDirection,
-  GroupColor, InitiatedBy, InteractionChannel, InteractionType, OccasionType, RememberNotes,
+  Gender, GroupColor, InitiatedBy, InteractionChannel, InteractionType, OccasionType, RememberNotes,
 } from './types';
-import { ALL_TIERS, CLASSIFIED_TIERS, DEFAULT_CADENCE, GROUP_COLORS, INTERACTION_TYPES } from './types';
+import { ALL_TIERS, CLASSIFIED_TIERS, DEFAULT_CADENCE, GEO_SOURCES, GROUP_COLORS, INTERACTION_TYPES } from './types';
 
 // ── Kiểu dòng DB ────────────────────────────────────────────────────────────
 /** Cột CSKH thêm vào contacts (migration 169). */
@@ -41,7 +43,14 @@ export interface ContactCskhColumns {
   geo_source: string;
   external_ref: string | null;
 }
-export type ContactRow = Contact & Partial<ContactCskhColumns>;
+/** Cột hồ sơ nâng cấp 24/10 (migration 174) — chưa chạy migration thì không có. */
+export interface ContactProfileColumns {
+  gender: string;
+  education: unknown;
+  origin_province: string;
+  birthday_remind_days: number | null;
+}
+export type ContactRow = Contact & Partial<ContactCskhColumns> & Partial<ContactProfileColumns>;
 
 /** Cột thêm vào cskh_logs (migration 170). */
 export interface CskhLogColumns {
@@ -160,10 +169,14 @@ export function mapContactRow(row: ContactRow): CskhContact {
     address: text(row.address),
     mapUrl: text(row.map_link),
     province: text(row.province),
+    originProvince: text(row.origin_province),
     lat: row.lat ?? null,
     lng: row.lng ?? null,
-    geoSource: oneOf<GeoSource>(row.geo_source, ['', 'map_url', 'address'], ''),
+    geoSource: oneOf<GeoSource>(row.geo_source, GEO_SOURCES, ''),
     birthday: row.birthday || null,
+    birthdayRemindDays: row.birthday_remind_days ?? null,
+    gender: oneOf<Gender>(row.gender, ['', 'male', 'female'], ''),
+    education: cleanEducation(row.education),
     isActive: row.is_active,
     isArchived: !row.is_active,
     externalRef: row.external_ref ?? null,
@@ -240,7 +253,7 @@ export function mapSpecialDateRow(row: SpecialDateRow): CskhOccasion | null {
 export const birthdayOccasionId = (contactId: string) => `birthday:${contactId}`;
 
 /** contacts.birthday → sự kiện "Sinh nhật" (dương lịch). Không có ngày sinh → null. */
-export function birthdayOccasion(contact: Pick<CskhContact, 'id' | 'birthday'>): CskhOccasion | null {
+export function birthdayOccasion(contact: Pick<CskhContact, 'id' | 'birthday' | 'birthdayRemindDays'>): CskhOccasion | null {
   const b = contact.birthday;
   if (!b || !/^\d{4}-\d{2}-\d{2}/.test(b)) return null;
   const year = Number(b.slice(0, 4));
@@ -254,7 +267,7 @@ export function birthdayOccasion(contact: Pick<CskhContact, 'id' | 'birthday'>):
     year: year >= 1900 && year <= 2100 ? year : null,
     isLunar: false,
     relatedPerson: '',
-    remindDaysBefore: 7,
+    remindDaysBefore: contact.birthdayRemindDays ?? DEFAULT_REMIND_DAYS,
     lastRemindedYear: null,
     note: '',
     isArchived: false,
@@ -277,6 +290,7 @@ export function mapGiftRow(row: ClientGiftRow): CskhGift {
     note: text(row.notes),
     createdBy: text(row.created_by),
     isArchived: !!row.is_archived,
+    createdAt: row.created_at,
   };
 }
 

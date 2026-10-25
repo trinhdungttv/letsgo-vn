@@ -9,10 +9,16 @@ import { supabase } from '../../../lib/supabase';
 import { logActivity } from '../../../lib/audit';
 import { branchOf } from '../../../lib/branchRef';
 import { contactToForm, saveContact, selectContacts, type ContactFormValues } from '../../../lib/contactOps';
-import { nominatimGeocode, parseLatLngFromLink } from '../../../lib/geo';
 import { cleanRememberNotes } from '../../../lib/cskh/remember';
 import { planCareReminders } from '../../../lib/cskh/automation';
 import { isValidDayMonth } from '../../../lib/cskh/dates';
+import { sameEducation } from '../../../lib/cskh/education';
+import {
+  buildGroupLogRows, canEditBatch, planBatchEdit, type BatchEdit, type GroupLogPlan, type InteractionBatch,
+} from '../../../lib/cskh/groupLog';
+import { planGeo } from '../../../lib/cskh/mapPoints';
+import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
+import { isEmptyPlan, type OccasionFields, type OccasionWritePlan } from '../../../lib/cskh/occasions';
 import type { AppUser, Branch, Client, Contact } from '../../../lib/types';
 import {
   birthdayOccasion, mapContactRow, mapGiftRow, mapGroupRow, mapLogRow, mapSettingsRow, mapSpecialDateRow,
@@ -20,11 +26,14 @@ import {
 } from '../../../lib/cskh/mappers';
 import type {
   CskhClassifiedTier, CskhContact, CskhContext, CskhGift, CskhGroup, CskhInteraction, CskhOccasion, CskhSettings,
-  CskhTier, GroupColor, InitiatedBy, InteractionChannel, InteractionType, RememberNotes,
+  CskhTier, Education, Gender, GeoSource, GroupColor, InitiatedBy, InteractionChannel, InteractionType, RememberNotes,
 } from '../../../lib/cskh/types';
 
 export const MIGRATION_HINT =
   'Cần chạy migration CSKH 168–173 trên Supabase (SQL Editor) trước khi lưu dữ liệu chăm sóc.';
+
+export const MIGRATION_174_HINT =
+  'Chưa lưu được giới tính / học vấn / quê quán / số ngày nhắc sinh nhật / vị trí chấm tay — cần chạy migration 174 trên Supabase (SQL Editor).';
 
 type DbError = { message?: string; code?: string } | null;
 
@@ -35,6 +44,39 @@ const isMissingSchema = (err: DbError) =>
 /** Lỗi ghi → câu tiếng Việt đọc được (thiếu bảng/cột = chưa chạy migration). */
 function writeError(err: DbError): Error {
   return new Error(isMissingSchema(err) ? MIGRATION_HINT : (err?.message || 'Lỗi không rõ'));
+}
+
+/** Cột chỉ có sau migration 174 (hồ sơ nâng cấp 24/10). */
+const OPTIONAL_174 = ['gender', 'education', 'origin_province', 'birthday_remind_days'];
+/** Nguồn toạ độ chỉ được CHECK cho phép sau migration 174. */
+const GEO_SOURCES_174: readonly string[] = ['manual', 'address_url'];
+
+/**
+ * Ghi contacts kèm cột của migration 174. DB chưa chạy 174 (thiếu cột / CHECK geo_source còn
+ * hẹp) → ghi lại KHÔNG kèm các cột đó (toạ độ chấm tay ghi nguồn 'address') để phần còn lại
+ * vẫn lưu được. Trả về false khi phải bỏ bớt — nơi gọi báo "chạy migration 174".
+ */
+async function updateContactWith174(ids: readonly string[], patch: Record<string, unknown>): Promise<boolean> {
+  const { error } = await supabase.from('contacts').update(patch).in('id', [...ids]);
+  if (!error) return true;
+  const geoNew = GEO_SOURCES_174.includes(String(patch.geo_source ?? ''));
+  const has174 = Object.keys(patch).some(k => OPTIONAL_174.includes(k)) || geoNew;
+  if (!has174 || !(isMissingSchema(error) || (error.code === '23514' && geoNew))) throw writeError(error);
+  const fallback = Object.fromEntries(Object.entries(patch).filter(([k]) => !OPTIONAL_174.includes(k)));
+  if (geoNew) fallback.geo_source = 'address';
+  if (Object.keys(fallback).length) {
+    const { error: e2 } = await supabase.from('contacts').update(fallback).in('id', [...ids]);
+    if (e2) throw writeError(e2);
+  }
+  return false;
+}
+
+/** Ghi theo lô (Supabase / URL có giới hạn độ dài) — dấu đợt đặt 1 lần cho mọi lô. */
+const CHUNK = 200;
+function chunks<T>(list: readonly T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += CHUNK) out.push(list.slice(i, i + CHUNK));
+  return out;
 }
 
 /** Supabase trả tối đa 1000 dòng/lần — nhật ký nhiều năm phải tải theo trang. */
@@ -390,7 +432,7 @@ export async function setOwner(ids: readonly string[], ownerId: string | null, u
 }
 
 // ── Hồ sơ người liên hệ ─────────────────────────────────────────────────────
-/** Các trường riêng của CSKH (migration 169) — phần chung đi qua contactOps.saveContact. */
+/** Các trường riêng của CSKH (migration 169 + 174) — phần chung đi qua contactOps.saveContact. */
 export interface CskhProfilePatch {
   tier: CskhTier;
   groupId: string | null;
@@ -405,42 +447,61 @@ export interface CskhProfilePatch {
   introducedBy: string | null;
   context: CskhContext;
   province: string;
+  /** Migration 174 — chỉ ghi khi đổi (lưu được cả khi chưa chạy migration). */
+  gender: Gender;
+  education: Education[];
+  originProvince: string;
+}
+
+/** Toạ độ nhà hiện tại khi lưu: chấm tay > link Maps > tra chữ (xem lib/cskh/mapPoints.planGeo). */
+export interface ProfileGeoInput {
+  /** Vừa chấm / kéo ghim trong lần sửa này. */
+  manualPin: LatLng | null;
+  /** Toạ độ đọc được từ link Maps (link rút gọn đã mở qua api/resolve-map). */
+  linkCoords: LatLng | null;
+  /** Kết quả tra chữ đã có sẵn ở bản đồ nhỏ trong hồ sơ — dùng lại, khỏi tra lần nữa. */
+  preview: { address: string; lat: number; lng: number } | null;
 }
 
 /**
- * Lưu hồ sơ: (1) trường dùng chung với hồ sơ Khách hàng qua contactOps (giữ đủ
- * quy tắc gắn công ty, liên hệ chính, lịch sử chuyển công ty); (2) trường CSKH.
- * Toạ độ nhà riêng: ưu tiên link Google Maps (@lat,lng); không có thì tra địa chỉ
- * (chỉ tra lại khi địa chỉ đổi).
+ * Lưu hồ sơ: (1) trường dùng chung với hồ sơ Khách hàng qua contactOps (giữ đủ quy tắc gắn
+ * công ty, liên hệ chính, lịch sử chuyển công ty); (2) trường CSKH + cột migration 174;
+ * (3) ngày sinh & ngày quan trọng (contacts.birthday + contact_special_dates).
+ * Trả về `partial174 = true` khi DB chưa chạy 174 nên chưa lưu được các cột mới.
  */
 export async function saveProfile(opts: {
   raw: Contact;
   current: CskhContact;
   shared: Partial<ContactFormValues>;
   cskh: CskhProfilePatch;
+  geo: ProfileGeoInput;
+  /** Kế hoạch lưu ngày quan trọng (lib/cskh/occasions.planOccasionSave); null = không đụng. */
+  occasions: OccasionWritePlan | null;
   user: AppUser | null;
   clientName: (id: string | null) => string | null;
-}): Promise<void> {
+}): Promise<{ partial174: boolean }> {
+  const { current, occasions } = opts;
   const form: ContactFormValues = { ...contactToForm(opts.raw), ...opts.shared };
+  if (occasions?.birthday !== undefined) form.birthday = occasions.birthday ?? '';
   await saveContact(form, opts.raw, { user: opts.user, clientName: opts.clientName });
 
-  const mapLink = form.map_link.trim();
-  const address = form.address.trim();
-  let geo: { lat: number | null; lng: number | null; geo_source: string } = {
-    lat: opts.current.lat, lng: opts.current.lng, geo_source: opts.current.geoSource,
-  };
-  const fromLink = parseLatLngFromLink(mapLink);
-  if (fromLink) {
-    geo = { lat: fromLink.lat, lng: fromLink.lng, geo_source: 'map_url' };
-  } else if (address && (address !== opts.current.address.trim() || opts.current.lat === null || opts.current.geoSource === 'map_url')) {
-    const found = await nominatimGeocode(address);
+  const plan = planGeo(
+    { address: current.address, mapUrl: current.mapUrl, lat: current.lat, lng: current.lng, geoSource: current.geoSource },
+    { address: form.address, mapUrl: form.map_link },
+    opts.geo.manualPin,
+    opts.geo.linkCoords,
+  );
+  let geo: { lat: number | null; lng: number | null; geo_source: GeoSource } | null = null;
+  if (plan.kind === 'set') geo = { lat: plan.lat, lng: plan.lng, geo_source: plan.source };
+  else if (plan.kind === 'clear') geo = { lat: null, lng: null, geo_source: '' };
+  else if (plan.kind === 'geocode') {
+    const p = opts.geo.preview;
+    const found = p && p.address.trim() === plan.address ? p : await geocodeAddressDetailed(plan.address);
     geo = found ? { lat: found.lat, lng: found.lng, geo_source: 'address' } : { lat: null, lng: null, geo_source: '' };
-  } else if (!address && !mapLink) {
-    geo = { lat: null, lng: null, geo_source: '' };
   }
 
   const c = opts.cskh;
-  const { error } = await supabase.from('contacts').update({
+  const patch: Record<string, unknown> = {
     tier: c.tier,
     group_id: c.tier === 'unclassified' ? null : c.groupId,
     cadence_days: c.cadenceDays,
@@ -454,13 +515,34 @@ export async function saveProfile(opts: {
     introduced_by: c.introducedBy,
     context: c.context,
     province: c.province.trim(),
-    ...geo,
-  }).eq('id', opts.raw.id);
-  if (error) throw writeError(error);
+    ...(geo ?? {}),
+    // Cột migration 174: chỉ gửi khi thật sự đổi — DB chưa chạy 174 vẫn lưu được hồ sơ
+    ...(c.gender !== current.gender ? { gender: c.gender } : {}),
+    ...(!sameEducation(c.education, current.education) ? { education: c.education } : {}),
+    ...(c.originProvince.trim() !== current.originProvince ? { origin_province: c.originProvince.trim() } : {}),
+    ...(occasions?.birthdayRemindDays !== undefined ? { birthday_remind_days: occasions.birthdayRemindDays } : {}),
+  };
+  const full = await updateContactWith174([opts.raw.id], patch);
+  if (occasions && !isEmptyPlan(occasions)) await applyOccasionPlan(opts.raw.id, occasions, opts.user);
   await logActivity({
     user: opts.user, action: 'update', table: 'contacts', recordId: opts.raw.id,
     description: `Cập nhật hồ sơ chăm sóc "${form.name.trim()}"`,
-    newData: c,
+    newData: { ...c, geo, occasions },
+  });
+  return { partial174: !full };
+}
+
+/** Đặt giới tính cho nhiều người (Ma trận / Ghi cho nhóm → "Lưu Nữ cho N người gợi ý"). */
+export async function setGender(ids: readonly string[], gender: Gender, user: AppUser | null): Promise<void> {
+  if (!ids.length) return;
+  for (const part of chunks(ids)) {
+    const { error } = await supabase.from('contacts').update({ gender }).in('id', part);
+    if (error) throw new Error(isMissingSchema(error) ? MIGRATION_174_HINT : error.message);
+  }
+  await logActivity({
+    user, action: 'update', table: 'contacts', recordId: ids[0],
+    description: `Đặt giới tính ${gender === 'female' ? 'Nữ' : gender === 'male' ? 'Nam' : 'chưa rõ'} cho ${ids.length} người liên hệ`,
+    newData: { ids, gender },
   });
 }
 
@@ -540,6 +622,49 @@ export interface OccasionInput {
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /**
+ * Cột contact_special_dates của 1 sự kiện. Dương lịch: ghi cả cột `date` (năm thật nếu biết,
+ * không thì 2000 — năm nhuận, giữ được 29/02) để form người liên hệ cũ vẫn thấy; âm lịch: NULL.
+ */
+function occasionDbFields(f: OccasionFields) {
+  return {
+    label: f.title,
+    occasion_type: f.occasionType,
+    day: f.day,
+    month: f.month,
+    year: f.year,
+    is_lunar: f.isLunar,
+    remind_days_before: f.remindDaysBefore,
+    date: f.isLunar ? null : `${f.year ?? 2000}-${pad2(f.month)}-${pad2(f.day)}`,
+  };
+}
+
+/** Ghi kế hoạch ngày quan trọng của hồ sơ: thêm / sửa / xoá mềm từng dòng (không xoá cứng). */
+async function applyOccasionPlan(contactId: string, plan: OccasionWritePlan, user: AppUser | null): Promise<void> {
+  if (plan.inserts.length) {
+    const { error } = await supabase.from('contact_special_dates')
+      .insert(plan.inserts.map(f => ({ contact_id: contactId, ...occasionDbFields(f) })));
+    if (error) throw writeError(error);
+  }
+  for (const u of plan.updates) {
+    const { error } = await supabase.from('contact_special_dates')
+      .update({ ...occasionDbFields(u.fields), ...(u.resetReminded ? { last_reminded_year: null } : {}) }).eq('id', u.id);
+    if (error) throw writeError(error);
+  }
+  if (plan.deletes.length) {
+    const { error } = await supabase.from('contact_special_dates').update({ is_archived: true }).in('id', plan.deletes);
+    if (error) throw writeError(error);
+  }
+  const n = plan.inserts.length + plan.updates.length + plan.deletes.length;
+  if (n) {
+    await logActivity({
+      user, action: 'update', table: 'contact_special_dates', recordId: contactId,
+      description: `Cập nhật ngày quan trọng trong hồ sơ: thêm ${plan.inserts.length}, sửa ${plan.updates.length}, xoá ${plan.deletes.length}`,
+      newData: plan,
+    });
+  }
+}
+
+/**
  * Thêm / sửa sự kiện. Dương lịch: ghi cả cột `date` (năm thật nếu biết, không thì 2000
  * — năm nhuận, giữ được 29/02) để form người liên hệ cũ vẫn thấy; âm lịch: `date` = NULL.
  * Đổi ngày → xoá dấu "đã nhắc năm nay" để nhắc lại đúng ngày mới.
@@ -552,16 +677,9 @@ export async function saveOccasion(input: OccasionInput, existing: CskhOccasion 
   }
   const row = {
     contact_id: input.contactId,
-    label: title,
-    occasion_type: input.occasionType,
-    day: input.day,
-    month: input.month,
-    year: input.year,
-    is_lunar: input.isLunar,
+    ...occasionDbFields({ ...input, title }),
     related_person: input.relatedPerson.trim(),
-    remind_days_before: input.remindDaysBefore,
     note: input.note.trim(),
-    date: input.isLunar ? null : `${input.year ?? 2000}-${pad2(input.month)}-${pad2(input.day)}`,
   };
   if (existing) {
     const moved = existing.day !== input.day || existing.month !== input.month || existing.isLunar !== input.isLunar;
@@ -663,7 +781,9 @@ export async function runCareAutomation(data: CskhData, ctx: WriteCtx, today: st
   const plan = planCareReminders({ contacts: data.contacts, occasions: data.occasions, cadence: data.settings.cadence, today });
 
   for (const r of plan.gifts) {
-    const { data: dup } = await supabase.from('work_tasks').select('id').eq('title', r.title).eq('due_date', r.nextIso).is('deleted_at', null).limit(1);
+    // Tính cả việc đã xoá: người dùng xoá việc nhắc thì đừng tạo lại hôm sau (sinh nhật trong hồ sơ
+    // không có cột last_reminded_year để đánh dấu)
+    const { data: dup } = await supabase.from('work_tasks').select('id').eq('title', r.title).eq('due_date', r.nextIso).limit(1);
     if (!dup?.length) {
       const o = r.occasion;
       const { error } = await supabase.from('work_tasks').insert({
@@ -698,9 +818,115 @@ export async function runCareAutomation(data: CskhData, ctx: WriteCtx, today: st
 }
 
 // ── Bản đồ: toạ độ nhà riêng ────────────────────────────────────────────────
-/** Lưu toạ độ nhà riêng đã định vị (từ link Google Maps hoặc tra địa chỉ). */
+/** Lưu toạ độ nhà hiện tại đã định vị (từ link Google Maps hoặc tra địa chỉ). */
 export async function setContactGeo(contactId: string, geo: { lat: number; lng: number; source: 'map_url' | 'address' }): Promise<void> {
   const { error } = await supabase.from('contacts')
     .update({ lat: geo.lat, lng: geo.lng, geo_source: geo.source }).eq('id', contactId);
   if (error) throw writeError(error);
+}
+
+// ── Ghi cho nhóm + đợt ghi nhóm ─────────────────────────────────────────────
+export interface GroupLogResult {
+  logs: number;
+  gifts: number;
+  /** Người chưa gắn công ty → không ghi được quà (client_gifts.client_id bắt buộc). */
+  noGiftNames: string[];
+}
+
+const groupCtxOf = (contacts: readonly CskhContact[], ctx: WriteCtx) => ({
+  userId: ctx.user?.id ?? null,
+  userName: ctx.user?.full_name ?? null,
+  contactById: new Map(contacts.map(c => [c.id, c])),
+  clientName: (id: string) => ctx.clients.find(c => c.id === id)?.name ?? null,
+});
+
+/**
+ * Mỗi người 1 dòng nhật ký (tính là đã liên hệ → hết nhắc trong hàng đợi) + 1 dòng quà nếu
+ * bật. Mọi dòng chung 1 dấu đợt created_at → Nhật ký gom lại để sửa / xoá cả đợt.
+ */
+export async function saveGroupLog(plan: GroupLogPlan, contacts: readonly CskhContact[], ctx: WriteCtx): Promise<GroupLogResult> {
+  if (!ctx.user) throw new Error('Chưa đăng nhập');
+  const rows = buildGroupLogRows(plan, groupCtxOf(contacts, ctx), new Date().toISOString());
+  if (!rows.logs.length) throw new Error('Chưa chọn ai');
+  let done = 0;
+  for (const part of chunks(rows.logs)) {
+    const { error } = await supabase.from('cskh_logs').insert(part);
+    if (error) throw new Error(done === 0 ? writeError(error).message : `Mới ghi được ${done} người: ${writeError(error).message}`);
+    done += part.length;
+  }
+  for (const part of chunks(rows.gifts)) {
+    const { error } = await supabase.from('client_gifts').insert(part);
+    if (error) throw new Error(`Đã ghi nhật ký cho ${done} người nhưng chưa ghi được lịch sử quà: ${writeError(error).message}`);
+  }
+  await logActivity({
+    user: ctx.user, action: 'insert', table: 'cskh_logs', recordId: 'group-log',
+    description: `Ghi cho nhóm "${plan.content.trim()}" — ${done} người${rows.gifts.length ? `, ${rows.gifts.length} dòng quà` : ''}`,
+    newData: { ...plan, contactIds: [...plan.contactIds] },
+  });
+  return { logs: done, gifts: rows.gifts.length, noGiftNames: rows.noGiftNames };
+}
+
+/**
+ * Sửa cả đợt: đổi hình thức / nội dung / ngày cho mọi người còn lại (quà của đợt đổi ngày +
+ * ghi chú theo), bỏ người (xoá mềm nhật ký + quà của họ trong đợt), thêm người (cùng dấu đợt).
+ * Đổi ngày → trigger migration 170 tự tính lại ngày tương tác cuối của từng người.
+ */
+export async function applyBatchEdit(
+  batch: InteractionBatch,
+  gifts: readonly CskhGift[],
+  edit: BatchEdit,
+  contacts: readonly CskhContact[],
+  ctx: WriteCtx,
+): Promise<{ noGiftNames: string[] }> {
+  if (!canEditBatch(batch, ctx.user)) throw new Error('Chỉ người tạo đợt hoặc admin được sửa đợt này');
+  const plan = planBatchEdit(batch, gifts, edit, groupCtxOf(contacts, ctx));
+  for (const ids of chunks(plan.updateLogIds)) {
+    const { error } = await supabase.from('cskh_logs').update(plan.logPatch).in('id', ids);
+    if (error) throw writeError(error);
+  }
+  for (const ids of chunks(plan.archiveLogIds)) {
+    const { error } = await supabase.from('cskh_logs').update({ is_archived: true }).in('id', ids);
+    if (error) throw new Error(`Đã sửa nhưng chưa bỏ được người khỏi đợt: ${writeError(error).message}`);
+  }
+  for (const part of chunks(plan.insertLogs)) {
+    const { error } = await supabase.from('cskh_logs').insert(part);
+    if (error) throw new Error(`Đã sửa nhưng chưa thêm được người: ${writeError(error).message}`);
+  }
+  for (const ids of chunks(plan.updateGiftIds)) {
+    const { error } = await supabase.from('client_gifts').update(plan.giftPatch).in('id', ids);
+    if (error) throw new Error(`Đã sửa nhật ký nhưng chưa sửa được lịch sử quà: ${writeError(error).message}`);
+  }
+  for (const ids of chunks(plan.archiveGiftIds)) {
+    const { error } = await supabase.from('client_gifts').update({ is_archived: true }).in('id', ids);
+    if (error) throw new Error(`Đã sửa nhật ký nhưng chưa xoá được lịch sử quà: ${writeError(error).message}`);
+  }
+  for (const part of chunks(plan.insertGifts)) {
+    const { error } = await supabase.from('client_gifts').insert(part);
+    if (error) throw new Error(`Đã thêm người nhưng chưa ghi được lịch sử quà: ${writeError(error).message}`);
+  }
+  await logActivity({
+    user: ctx.user, action: 'update', table: 'cskh_logs', recordId: batch.items[0]?.id ?? 'batch',
+    description: `Sửa đợt ghi nhóm "${batch.content || 'không nội dung'}" (${batch.occurredAt}): bỏ ${plan.archiveLogIds.length}, thêm ${plan.insertLogs.length} người`,
+    oldData: { type: batch.type, content: batch.content, occurredAt: batch.occurredAt, ids: batch.items.map(i => i.id) },
+    newData: edit,
+  });
+  return { noGiftNames: plan.noGiftNames };
+}
+
+/** Xoá cả đợt = xoá mềm mọi dòng nhật ký + quà của đợt (khôi phục được ở trang Lịch sử). */
+export async function archiveBatch(batch: InteractionBatch, gifts: readonly CskhGift[], user: AppUser | null): Promise<void> {
+  if (!canEditBatch(batch, user)) throw new Error('Chỉ người tạo đợt hoặc admin được xoá đợt này');
+  for (const ids of chunks(batch.items.map(i => i.id))) {
+    const { error } = await supabase.from('cskh_logs').update({ is_archived: true }).in('id', ids);
+    if (error) throw writeError(error);
+  }
+  for (const ids of chunks(gifts.map(g => g.id))) {
+    const { error } = await supabase.from('client_gifts').update({ is_archived: true }).in('id', ids);
+    if (error) throw new Error(`Đã xoá nhật ký nhưng chưa xoá được lịch sử quà: ${writeError(error).message}`);
+  }
+  await logActivity({
+    user, action: 'update', table: 'cskh_logs', recordId: batch.items[0]?.id ?? 'batch',
+    description: `Xoá đợt ghi nhóm "${batch.content || 'không nội dung'}" (${batch.occurredAt}) — ${batch.items.length} người, ${gifts.length} dòng quà`,
+    oldData: { ids: batch.items.map(i => i.id), giftIds: gifts.map(g => g.id) },
+  });
 }

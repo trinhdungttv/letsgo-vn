@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { formatDateVN, isValidDayMonth, todayVN } from '../../../lib/cskh/dates';
 import { nextOccurrenceIso } from '../../../lib/cskh/lunar';
+import { DEFAULT_REMIND_DAYS } from '../../../lib/cskh/occasions';
 import type { CskhContact, CskhOccasion, OccasionType } from '../../../lib/cskh/types';
 import { BUSINESS_OCCASION_TITLES, OCCASION_LABEL } from '../../../lib/cskh/types';
 import type { OccasionInput } from '../data/api';
@@ -31,7 +32,7 @@ export function OccasionForm({ contacts, existing, initialContactId, onSave, onC
   const [year, setYear] = useState(existing?.year ? String(existing.year) : '');
   const [isLunar, setIsLunar] = useState(existing?.isLunar ?? false);
   const [related, setRelated] = useState(existing?.relatedPerson ?? '');
-  const [remind, setRemind] = useState(String(existing?.remindDaysBefore ?? 7));
+  const [remind, setRemind] = useState(String(existing?.remindDaysBefore ?? DEFAULT_REMIND_DAYS));
   const [note, setNote] = useState(existing?.note ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -115,7 +116,7 @@ export function OccasionForm({ contacts, existing, initialContactId, onSave, onC
           <div>
             <label className={labelCls}>Nhắc trước (ngày)</label>
             <input type="number" inputMode="numeric" min={0} max={60} value={remind} onChange={e => setRemind(e.target.value)} className={inputCls} />
-            <p className="text-[11.5px] text-[#86868B] mt-0.5">Tự tạo việc "Chuẩn bị quà" trong Workspace trước bấy nhiêu ngày</p>
+            <p className="text-[11.5px] text-[#86868B] mt-0.5">Nhắc khi mở app trước bấy nhiêu ngày (rồi nhắc lại đúng ngày) + tạo việc "Chuẩn bị quà" trong Workspace. 0 = chỉ đúng ngày</p>
           </div>
         </div>
         <div>

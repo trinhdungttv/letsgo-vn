@@ -14,7 +14,7 @@ import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
-import { addGroup, addInteraction, archiveGroup, assignGroups, updateGroup } from './data/api';
+import { addGroup, addInteraction, archiveGroup, assignGroups, saveGroupLog, setGender, updateGroup } from './data/api';
 import { automationMessage, runCareAutomationOnce } from './automationRunner';
 import { useCskhData } from './data/useCskhData';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
@@ -26,6 +26,7 @@ import CskhInteractionLog from './InteractionLog';
 import CskhEvents from './Events';
 import QuickLogHost from './components/QuickLogHost';
 import { CarePickerModal } from './components/CarePickerModal';
+import { GroupLogModal } from './components/GroupLogModal';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
@@ -46,6 +47,8 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   const [logFor, setLogFor] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [managingGroups, setManagingGroups] = useState(false);
+  /** null = đóng; mảng = người chọn sẵn (rỗng = tự chọn trong hộp). */
+  const [groupLogFor, setGroupLogFor] = useState<readonly string[] | null>(null);
 
   // ── Việc nhắc tự động: 1 lần mỗi phiên, sau khi dữ liệu tải xong (App có thể đã chạy trước) ──
   useEffect(() => {
@@ -57,6 +60,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
 
   const openLog = useCallback((contactId?: string) => { setProfileId(null); setLogFor(contactId ?? ''); }, []);
   const openGroups = useCallback(() => { setProfileId(null); setManagingGroups(true); }, []);
+  const openGroupLog = useCallback((ids?: readonly string[]) => { setProfileId(null); setGroupLogFor(ids ?? []); }, []);
 
   const ctx = useMemo<CskhContextValue>(() => ({
     data,
@@ -67,10 +71,11 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
     openLog,
     openPicker: () => setPicking(true),
     openGroups,
+    openGroupLog,
     goTab: onTab,
     openWorkspace: onOpenWorkspace,
     openClient: onOpenClient,
-  }), [data, loading, clients, toast, openLog, openGroups, onTab, onOpenWorkspace, onOpenClient]);
+  }), [data, loading, clients, toast, openLog, openGroups, openGroupLog, onTab, onOpenWorkspace, onOpenClient]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -136,6 +141,38 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
             setPicking(false);
             emitCskhDataChanged();
             toast(`Đã đưa ${rows.length} người vào danh sách chăm sóc`);
+            return null;
+          }}
+        />
+      )}
+      {data && groupLogFor !== null && (
+        <GroupLogModal
+          contacts={data.contacts}
+          groups={data.groups}
+          clients={clients}
+          today={todayVN()}
+          initialSelected={groupLogFor}
+          onClose={() => setGroupLogFor(null)}
+          onSave={async plan => {
+            try {
+              const r = await saveGroupLog(plan, data.contacts, { user, clients, branches });
+              setGroupLogFor(null);
+              emitCskhDataChanged();
+              toast(`Đã ghi “${plan.content.trim()}” cho ${r.logs} người${r.gifts ? ` + ${r.gifts} dòng quà` : ''}`
+                + (r.noGiftNames.length ? ` · ${r.noGiftNames.length} người chưa gắn công ty nên không ghi quà` : '')
+                + ' — nhầm thì sửa cả đợt ở Nhật ký');
+              return null;
+            } catch (e) {
+              return (e as Error).message;
+            }
+          }}
+          onSetGender={async (ids, gender) => {
+            try {
+              await setGender(ids, gender, user);
+            } catch (e) {
+              return (e as Error).message;
+            }
+            emitCskhDataChanged();
             return null;
           }}
         />

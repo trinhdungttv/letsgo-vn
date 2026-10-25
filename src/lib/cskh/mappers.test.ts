@@ -40,6 +40,19 @@ describe('người liên hệ', () => {
     expect(mapContactRow({ ...baseContact, tier: 'boss' }).tier).toBe('unclassified');
   });
 
+  it('cột hồ sơ 24/10 (migration 174): chưa chạy → mặc định; đã chạy → đọc + làm sạch', () => {
+    expect(mapContactRow(baseContact)).toMatchObject({ gender: '', education: [], originProvince: '', birthdayRemindDays: null });
+    const c = mapContactRow({
+      ...baseContact, gender: 'female', origin_province: 'Nam Định', birthday_remind_days: 7, geo_source: 'manual',
+      education: [{ level: 'university', school: '  ĐH Kinh tế ' }, { level: 'x', school: '' }],
+      remember_notes: { members: [{ role: 'child', name: 'Na', year: 2019 }] },
+    });
+    expect(c).toMatchObject({ gender: 'female', originProvince: 'Nam Định', birthdayRemindDays: 7, geoSource: 'manual' });
+    expect(c.education).toEqual([{ level: 'university', school: 'ĐH Kinh tế' }]);
+    expect(c.rememberNotes.members).toEqual([{ role: 'child', name: 'Na', year: 2019 }]);
+    expect(mapContactRow({ ...baseContact, gender: 'x' }).gender).toBe('');
+  });
+
   it('DB chưa có bảng nối → lấy công ty từ cột cũ client_id', () => {
     const c = mapContactRow({ ...baseContact, contact_clients: undefined, is_primary: true, clients: { name: 'Midea' } });
     expect(c).toMatchObject({ clientIds: ['cl1'], primaryClientIds: ['cl1'], organization: 'Midea' });
@@ -87,9 +100,10 @@ describe('sự kiện', () => {
     expect(mapSpecialDateRow({ id: 's3', contact_id: 'c1', label: 'Hỏng', date: null, is_lunar: true })).toBeNull();
   });
 
-  it('ngày sinh trong hồ sơ → sự kiện "Sinh nhật" ảo', () => {
+  it('ngày sinh trong hồ sơ → sự kiện "Sinh nhật" ảo (nhắc trước theo cột riêng, mặc định 3 ngày)', () => {
     expect(birthdayOccasion(makeContact({ id: 'c9', birthday: '1985-03-15' })))
-      .toMatchObject({ id: 'birthday:c9', day: 15, month: 3, year: 1985, occasionType: 'birthday', source: 'birthday' });
+      .toMatchObject({ id: 'birthday:c9', day: 15, month: 3, year: 1985, occasionType: 'birthday', source: 'birthday', remindDaysBefore: 3 });
+    expect(birthdayOccasion(makeContact({ birthday: '1985-03-15', birthdayRemindDays: 7 }))?.remindDaysBefore).toBe(7);
     expect(birthdayOccasion(makeContact({ birthday: null }))).toBeNull();
   });
 });
