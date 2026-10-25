@@ -35,10 +35,14 @@ export function makeContact(over: Partial<CskhContact> = {}): CskhContact {
     address: '',
     mapUrl: '',
     province: '',
+    originProvince: '',
     lat: null,
     lng: null,
     geoSource: '',
     birthday: null,
+    birthdayRemindDays: null,
+    gender: '',
+    education: [],
     isActive: true,
     isArchived: false,
     externalRef: null,
@@ -105,6 +109,7 @@ export function makeGift(contactId: string, over: Partial<CskhGift> = {}): CskhG
     note: '',
     createdBy: '',
     isArchived: false,
+    createdAt: '2026-09-01T00:00:00Z',
     ...over,
   };
 }

@@ -12,6 +12,7 @@ import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { branchOf } from '../../lib/branchRef';
 import { buildContactStats, CARE_STATUS_LABEL } from '../../lib/cskh/cadence';
+import { groupBatches } from '../../lib/cskh/groupLog';
 import { formatDateVN, longDateVN, relativeDayLabel, todayVN } from '../../lib/cskh/dates';
 import { requestQuickLog, emitCskhDataChanged } from '../../lib/cskh/events';
 import { groupBaseTier } from '../../lib/cskh/mappers';
@@ -53,7 +54,7 @@ type AgendaKey = 'promises' | 'events' | 'recent';
 type HealthKey = 'groups' | 'invest';
 
 export default function CskhDashboard() {
-  const { data, loading, clients, toast, openProfile, openLog, openPicker, goTab, openWorkspace } = useCskh();
+  const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroupLog, goTab, openWorkspace } = useCskh();
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const [brief, setBrief] = useState<{ contactId: string; item: TodayQueueItem | null } | null>(null);
@@ -171,7 +172,8 @@ export default function CskhDashboard() {
       upcoming,
       followUps,
       dueFollowUps: followUps.filter(i => i.followUpDue !== null && i.followUpDue <= today).length,
-      recent: mine.slice(0, LIST_LIMIT),
+      // Đợt "Ghi cho nhóm" gom thành 1 dòng
+      recent: groupBatches(mine).slice(0, LIST_LIMIT),
       last30,
       prev30,
       weeks,
@@ -239,10 +241,13 @@ export default function CskhDashboard() {
         actions={contacts.length > 0 && (
           <>
             <button type="button" onClick={openPicker} aria-label="Chọn người chăm sóc" className={PILL_TINTED}>
-              <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn người</span><span className="hidden md:inline">Chọn người chăm sóc</span>
+              <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn</span><span className="hidden md:inline">Chọn người chăm sóc</span>
             </button>
-            <button type="button" onClick={() => openLog()} className={PILL_PRIMARY}>
-              <PenLine size={15} strokeWidth={2.2} /> Ghi tương tác
+            <button type="button" onClick={() => openGroupLog()} aria-label="Ghi cho nhóm" className={PILL_TINTED}>
+              <Users size={15} strokeWidth={2.2} /> <span className="md:hidden">Nhóm</span><span className="hidden md:inline">Ghi cho nhóm</span>
+            </button>
+            <button type="button" onClick={() => openLog()} aria-label="Ghi tương tác" className={PILL_PRIMARY}>
+              <PenLine size={15} strokeWidth={2.2} /> <span className="md:hidden">Ghi</span><span className="hidden md:inline">Ghi tương tác</span>
             </button>
           </>
         )}
@@ -286,9 +291,10 @@ export default function CskhDashboard() {
             </Metric>
 
             <Metric label="Đang chăm sóc" onClick={() => goTab('matrix')}>
+              {/* Danh bạ chỉ là nguồn để chọn — không so số đang chăm sóc với tổng danh bạ */}
               <span className="flex items-baseline gap-1">
                 <b className={bigNum}>{view.classified.length}</b>
-                <small className="text-[13px] text-[#86868B] tabular-nums">/ {scoped.length}</small>
+                <small className="text-[13px] text-[#86868B]">người</small>
               </span>
               {careTotal > 0 ? (
                 <>
@@ -438,7 +444,22 @@ export default function CskhDashboard() {
                     )))}
 
                   {agenda === 'recent' && (view.recent.length === 0 ? <Quiet>Chưa ghi nhận tương tác nào.</Quiet>
-                    : view.recent.map((i, idx) => {
+                    : view.recent.map((entry, idx) => {
+                      if (entry.kind === 'batch') {
+                        const b = entry.batch;
+                        const BIcon = INTERACTION_ICON[b.type];
+                        return (
+                          <Row key={b.key} first={idx === 0} inset={44} onClick={() => goTab('log')} title="Mở Nhật ký để sửa cả đợt">
+                            <span className="w-8 h-8 shrink-0 rounded-full bg-[#F2F2F7] text-[#0071E3] flex items-center justify-center"><BIcon size={15} /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{b.content || INTERACTION_LABEL[b.type]} · {b.items.length} người</span>
+                              <span className={`block ${caption} truncate`}>Ghi cho nhóm{b.createdByName ? ` · ${b.createdByName}` : ''}</span>
+                            </span>
+                            <span className="text-[12px] text-[#86868B] shrink-0">{relativeDayLabel(b.occurredAt, today)}</span>
+                          </Row>
+                        );
+                      }
+                      const i = entry.item;
                       const Icon = INTERACTION_ICON[i.type];
                       return (
                         <Row key={i.id} first={idx === 0} inset={44}>

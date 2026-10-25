@@ -4,23 +4,37 @@
 // Phần dùng chung với hồ sơ Khách hàng (tên, SĐT, email, công ty, chức vụ, địa chỉ,
 // ngày sinh, sở thích, ảnh…) lưu qua lib/contactOps để giữ nguyên quy tắc gắn công ty,
 // liên hệ chính, lịch sử chuyển công ty. Phần riêng CSKH (nhóm, nhịp riêng, người phụ
-// trách, Điều cần nhớ, thấu hiểu…) lưu thẳng cột migration 169.
-// Ngày đặc biệt + ghi chú chi tiết vẫn ở form đầy đủ (nút "Form đầy đủ") tới giai đoạn 5.
+// trách, Điều cần nhớ, thấu hiểu…) lưu thẳng cột migration 169 + 174.
+// Nâng cấp 24/10/2026 (theo PRM Tony Study): giới tính + gợi ý theo tên, ngày sinh & ngày
+// quan trọng nhập ngay trong hồ sơ (tuổi âm, hợp/kỵ), địa chỉ nhà hiện tại + link Maps +
+// ghim chấm tay (Chính xác / Tương đối), quê quán theo tỉnh, tìm hiểu vùng miền (AI), học vấn
+// "cùng trường", gia đình có cấu trúc, đặc điểm dạng thẻ dùng chung, phần chuyên sâu thu gọn.
+// Ghi chú chi tiết, Facebook/LinkedIn vẫn ở form đầy đủ (nút "Form đầy đủ").
 // ============================================================================
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CheckCheck, ExternalLink, FileText, Map as MapIcon, PenLine, Plus, Star, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import {
+  BadgeCheck, CheckCheck, ChevronDown, ExternalLink, FileText, Minus, PenLine, Plus, RotateCcw, Star, Trash2, UserCheck, UserX, X,
+} from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { useProvinces } from '../../../hooks/useProvinces';
 import { CONTACT_CHANNELS, deactivateContact, reactivateContact } from '../../../lib/contactOps';
 import { buildContactStats, dueLabel } from '../../../lib/cskh/cadence';
 import { contactActionLinks } from '../../../lib/cskh/contactActions';
 import { formatDateVN, todayVN } from '../../../lib/cskh/dates';
+import { buildSchoolIndex, cleanEducation, EDUCATION_MAX_ROWS, schoolKey } from '../../../lib/cskh/education';
 import { emitCskhDataChanged } from '../../../lib/cskh/events';
-import { REMEMBER_KEYS, REMEMBER_MAX_CHARS, REMEMBER_PLACEHOLDER } from '../../../lib/cskh/remember';
+import { guessGender } from '../../../lib/cskh/gender';
+import { addressPrecision } from '../../../lib/cskh/mapPoints';
+import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
+import { draftError, draftFromOccasion, isBlankDraft, planOccasionSave } from '../../../lib/cskh/occasions';
+import { provinceOptions } from '../../../lib/cskh/provinces';
+import { regionCandidates } from '../../../lib/cskh/regionInsight';
+import { cleanRememberNotes, FAMILY_MAX, familyAge, familyYearError, REMEMBER_MAX_CHARS, REMEMBER_PLACEHOLDER } from '../../../lib/cskh/remember';
 import { SCORE_GRADE_LABEL, scoreGrade, weakestPart } from '../../../lib/cskh/score';
-import type { CskhContext, CskhInteraction, RememberNotes } from '../../../lib/cskh/types';
-import { MBTI_TYPES, REMEMBER_LABEL } from '../../../lib/cskh/types';
+import { buildTagStats, joinTags, splitTags, TRAIT_FIELDS, TRAIT_LABEL, TRAIT_PRESETS, type TagStat, type TraitField } from '../../../lib/cskh/traits';
+import type { CskhContext, CskhInteraction, EducationLevel, FamilyMember, FamilyRole, Gender, RememberNotes } from '../../../lib/cskh/types';
+import { EDUCATION_LEVEL_LABEL, EDUCATION_LEVELS, GENDER_LABEL, MBTI_TYPES, REMEMBER_LABEL } from '../../../lib/cskh/types';
 import { compareVnName } from '../../../lib/vnName';
 import type { Client, Contact } from '../../../lib/types';
 import AvatarUpload from '../../../components/contacts/AvatarUpload';
@@ -28,14 +42,20 @@ import RoleSelect from '../../../components/contacts/RoleSelect';
 import ContactDeleteDialog from '../../../components/contacts/ContactDeleteDialog';
 import ContactFormModal from '../../../components/contacts/ContactFormModal';
 import { saveProfile, setFollowUpDone, type CskhData } from '../data/api';
+import { mapLinkCoords, useMapLink } from '../data/mapLink';
 import { markContactLaunched } from '../launch';
 import {
-  CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, HABIT_PRESETS, hasToken, inputCls, INTEREST_PRESETS,
-  mapEmbedQuery, mapEmbedSrc, NEW_GROUP_VALUE, PERSONALITY_PRESETS, resolveGroupKey, scoreColor, toggleToken,
+  CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, inputCls, NEW_GROUP_VALUE, resolveGroupKey, scoreColor,
 } from '../ui';
+import { AddressPinMap } from './AddressPinMap';
 import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
+import { OccasionEditor } from './OccasionEditor';
+import { newOccasionRow, toOccasionRow, type OccasionRow } from './occasionRows';
+import { RegionInsightPanel } from './RegionInsightPanel';
+import { SchoolInput } from './SchoolInput';
 import { Sheet, SHEET_FOOTER } from './Sheet';
+import { TagInput } from './TagInput';
 
 const CONTEXT_LABEL: Readonly<Record<CskhContext, string>> = { work: 'Công việc', both: 'Cả hai', personal: 'Cá nhân' };
 
@@ -43,44 +63,98 @@ const CONTEXT_LABEL: Readonly<Record<CskhContext, string>> = { work: 'Công vi�
 const FOOT_BTN = 'inline-flex items-center gap-1.5 h-10 md:h-9 px-3.5 rounded-full text-[13px] font-medium active:scale-[0.97] transition';
 /** Ô nút liên hệ trong hồ sơ (Gọi / Zalo / SMS / Ghi lại). */
 const ACTION_TILE = 'flex flex-col items-center justify-center gap-1 h-[58px] rounded-[12px] bg-white md:bg-[#F5F5F7] text-[#0071E3] text-[12px] font-medium hover:bg-[#0071E3]/10 active:scale-[0.97] transition';
+/** Viên chọn 1 (Nam / Nữ). */
+const PILL = 'h-9 md:h-8 px-4 rounded-full text-[13px] font-medium transition active:scale-[0.97]';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-function Field({ label, hint, children, full }: { label: string; hint?: string; children: ReactNode; full?: boolean }) {
+function Field({ label, hint, children, full, aside }: { label: string; hint?: ReactNode; children: ReactNode; full?: boolean; aside?: ReactNode }) {
   return (
     <div className={full ? 'md:col-span-2' : undefined}>
-      <label className={labelCls}>{label}</label>
+      <div className="flex items-center gap-1.5 mb-1">
+        <label className={`${labelCls} !mb-0`}>{label}</label>
+        {aside}
+      </div>
       {children}
       {hint && <p className="text-[11.5px] text-[#86868B] mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children, note }: { title: string; children: ReactNode; note?: ReactNode }) {
   return (
     <section className="mt-5">
       <h3 className="px-1 text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">{title}</h3>
       {/* Nhóm kiểu iOS: điện thoại thẻ trắng trên nền sheet xám, máy tính thẻ xám nhạt trên nền trắng */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-[14px] bg-white md:bg-[#F5F5F7] p-3.5 md:p-4">{children}</div>
+      {note && <p className="px-1 mt-1.5 text-[11.5px] text-[#86868B] leading-snug">{note}</p>}
     </section>
   );
 }
 
-function PresetChips({ value, presets, onChange }: { value: string; presets: readonly string[]; onChange: (v: string) => void }) {
+/** Ô chữ tự cao theo nội dung (đo lại khi đổi cỡ màn — ResizeObserver). */
+function AutoTextarea({ value, onChange, placeholder, label }: { value: string; onChange: (v: string) => void; placeholder: string; label: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [value]);
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      {presets.map(p => {
-        const on = hasToken(value, p);
-        return (
-          <button key={p} type="button" onClick={() => onChange(toggleToken(value, p))} aria-pressed={on}
-            className={`px-3 h-8 md:h-7 rounded-full text-[12.5px] font-medium transition active:scale-[0.97] ${on ? 'bg-[#0071E3] text-white' : 'bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]'}`}>
-            {p}
-          </button>
-        );
-      })}
-    </div>
+    <textarea ref={ref} rows={1} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} aria-label={label}
+      className={`${inputCls} resize-none overflow-hidden leading-snug`} />
   );
 }
+
+/** Giữ giá trị sau `ms` mili-giây không đổi (bản đồ / link không gọi theo từng phím gõ). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+// ── Gia đình / học vấn: dòng trên form (uid ổn định để xoá dòng giữa không lệch ô) ──
+interface FamRow { uid: number; role: FamilyRole; name: string; year: string }
+let famUid = 0;
+const famRow = (role: FamilyRole, m?: FamilyMember): FamRow => ({ uid: ++famUid, role, name: m?.name ?? '', year: m?.year != null ? String(m.year) : '' });
+/** Luôn có ô Vợ / Chồng + ít nhất 3 ô Con. */
+function toFamRows(members: readonly FamilyMember[] = []): FamRow[] {
+  const spouses = members.filter(m => m.role === 'spouse');
+  const kids = members.filter(m => m.role === 'child');
+  return [
+    ...(spouses.length > 0 ? spouses.map(m => famRow('spouse', m)) : [famRow('spouse')]),
+    ...kids.map(m => famRow('child', m)),
+    ...Array.from({ length: Math.max(0, 3 - kids.length) }, () => famRow('child')),
+  ];
+}
+const famMembersOf = (rows: readonly FamRow[]): FamilyMember[] =>
+  rows.map(r => ({ role: r.role, name: r.name, year: r.year.trim() ? Number(r.year) : null }));
+
+interface EduRow { uid: number; level: EducationLevel; school: string }
+let eduUid = 0;
+const blankEdu = (): EduRow => ({ uid: ++eduUid, level: '', school: '' });
+
+/** Nút ⊖ đỏ kiểu iOS. */
+const RemoveBtn = ({ onClick, label }: { onClick: () => void; label: string }) => (
+  <button type="button" onClick={onClick} aria-label={label} title={label}
+    className="shrink-0 w-7 h-7 rounded-full bg-[#FF3B30] text-white flex items-center justify-center hover:brightness-95 active:scale-95 transition">
+    <Minus size={14} strokeWidth={3} />
+  </button>
+);
+/** Dòng ⊕ xanh lá "Thêm …". */
+const AddRow = ({ onClick, children }: { onClick: () => void; children: ReactNode }) => (
+  <button type="button" onClick={onClick} className="md:col-span-2 inline-flex items-center gap-2 min-h-[36px] text-[13px] font-medium text-[#0066CC] hover:opacity-70 w-fit">
+    <span className="w-[22px] h-[22px] rounded-full bg-[#34C759] text-white flex items-center justify-center"><Plus size={14} strokeWidth={3} /></span>
+    {children}
+  </button>
+);
 
 export function ContactProfileModal({ contactId, data, clients, toast, onClose, onLog, onOpenClient, onManageGroups }: {
   contactId: string;
@@ -95,14 +169,17 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   /** Mở màn quản lý nhóm (chọn "Tạo nhóm mới…"). */
   onManageGroups?: () => void;
 }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { provinces } = useProvinces();
   const raw = data.rawContacts.get(contactId) as Contact;
   const current = data.contacts.find(c => c.id === contactId)!;
   const today = todayVN();
+  const thisYear = Number(today.slice(0, 4));
   const groupById = useMemo(() => new Map(data.groups.map(g => [g.id, g])), [data.groups]);
   const clientName = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? null : null);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
+  const others = useMemo(() => data.contacts.filter(c => c.id !== contactId), [data.contacts, contactId]);
+  const nameById = useMemo(() => new Map(data.contacts.map(c => [c.id, c.fullName])), [data.contacts]);
 
   // ── Trường dùng chung (contactOps) ──
   const [name, setName] = useState(current.fullName);
@@ -115,8 +192,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [channel, setChannel] = useState(raw.channel ?? '');
   const [address, setAddress] = useState(raw.address ?? '');
   const [mapLink, setMapLink] = useState(raw.map_link ?? '');
-  const [birthday, setBirthday] = useState(raw.birthday ?? '');
-  const [interests, setInterests] = useState(current.interests.join(', '));
+  const [interests, setInterests] = useState(joinTags(current.interests));
   const [avatarUrl, setAvatarUrl] = useState(raw.avatar_url ?? '');
   const [notes, setNotes] = useState(raw.notes ?? '');
   // ── Trường CSKH ──
@@ -132,22 +208,60 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [introducedBy, setIntroducedBy] = useState(current.introducedBy ?? '');
   const [context, setContext] = useState<CskhContext>(current.context);
   const [province, setProvince] = useState(current.province);
+  // ── Nâng cấp 24/10 ──
+  const [gender, setGender] = useState<Gender>(current.gender);
+  const [originProvince, setOriginProvince] = useState(current.originProvince);
+  const [famRows, setFamRows] = useState<FamRow[]>(() => toFamRows(current.rememberNotes.members));
+  const [eduRows, setEduRows] = useState<EduRow[]>(() =>
+    current.education.length ? current.education.map(e => ({ ...e, uid: ++eduUid })) : [blankEdu()]);
+  const myOccasions = useMemo(
+    () => data.occasions.filter(o => o.contactId === contactId && !o.isArchived)
+      .sort((a, b) => Number(b.source === 'birthday') - Number(a.source === 'birthday') || a.month - b.month || a.day - b.day),
+    [data.occasions, contactId],
+  );
+  const [occRows, setOccRows] = useState<OccasionRow[]>(() =>
+    myOccasions.length ? myOccasions.map(o => toOccasionRow(draftFromOccasion(o), o.relatedPerson)) : [newOccasionRow()]);
+  const [manualPin, setManualPin] = useState<LatLng | null>(null);
+  const [deepOpen, setDeepOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [showMap, setShowMap] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fullForm, setFullForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [newInterest, setNewInterest] = useState('');
   const [addingClient, setAddingClient] = useState(false);
 
-  // Bản đồ nhúng — trì hoãn để iframe không tải lại theo từng phím gõ
-  const [embedQuery, setEmbedQuery] = useState<string | null>(() => mapEmbedQuery(mapLink, address));
+  // ── Địa chỉ nhà hiện tại: ghim = chấm tay > link Maps > tra chữ ──
+  const linkDebounced = useDebounced(mapLink, 500);
+  const link = useMapLink(linkDebounced, token);
+  const addressDebounced = useDebounced(address.trim(), 900);
+  const [preview, setPreview] = useState<{ address: string; lat: number; lng: number; precise: boolean } | null>(null);
+  const savedPin = current.lat !== null && current.lng !== null ? { lat: current.lat, lng: current.lng } : null;
+  const addressUnchanged = address.trim() === current.address.trim() && mapLink.trim() === current.mapUrl.trim();
+  const needPreview = !manualPin && link.status !== 'ok' && link.status !== 'resolving' && addressDebounced !== ''
+    && !(addressDebounced === current.address.trim() && savedPin);
   useEffect(() => {
-    const t = setTimeout(() => setEmbedQuery(mapEmbedQuery(mapLink, address)), 500);
-    return () => clearTimeout(t);
-  }, [mapLink, address]);
+    if (!needPreview || preview?.address === addressDebounced) return;
+    let cancelled = false;
+    void geocodeAddressDetailed(addressDebounced).then(found => {
+      if (!cancelled && found) setPreview({ address: addressDebounced, ...found });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [needPreview, addressDebounced, preview?.address]);
+  const pin: LatLng | null = manualPin
+    ?? link.coords
+    ?? (preview && preview.address === address.trim() ? preview : null)
+    ?? (address.trim() === current.address.trim() ? savedPin : null);
+  const geoSourceNow = manualPin ? 'manual' : addressUnchanged ? current.geoSource : '';
+  const precision = addressPrecision({ address, mapUrl: mapLink, geoSource: geoSourceNow });
+
+  // ── Thẻ dùng chung + trường học (thống kê trên NGƯỜI KHÁC) ──
+  const tagStats = useMemo(() => {
+    const out = {} as Record<TraitField, TagStat[]>;
+    for (const f of TRAIT_FIELDS) out[f] = buildTagStats(others, f);
+    return out;
+  }, [others]);
+  const schoolIndex = useMemo(() => buildSchoolIndex(others), [others]);
 
   const stats = useMemo(
     () => buildContactStats([current], data.interactions, data.gifts, data.occasions, data.settings.cadence, today).get(current.id),
@@ -157,13 +271,23 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const openFollowUps = recent.filter(i => i.followUpAction.trim() && !i.followUpDone);
   const introduced = data.contacts.filter(c => c.introducedBy === current.id);
   const introducerOptions = useMemo(
-    () => data.contacts.filter(c => c.id !== current.id).sort((a, b) => compareVnName(a.fullName, b.fullName)),
-    [data.contacts, current.id],
+    () => others.slice().sort((a, b) => compareVnName(a.fullName, b.fullName)),
+    [others],
   );
   const target = resolveGroupKey(groupKey, groupById);
   const effectiveCadence = target && target.tier !== 'unclassified' ? data.settings.cadence[target.tier] : null;
   const links = contactActionLinks(current);
   const display = groupDisplayOf(current, groupById);
+  const genderHint = gender === '' ? guessGender({ fullName: name, nickname }) : null;
+  const provinceList = useMemo(() => provinceOptions([...provinces, province, originProvince]), [provinces, province, originProvince]);
+  const regions = useMemo(() => regionCandidates({ originProvince, province }, link.place), [originProvince, province, link.place]);
+  const famKids = famRows.filter(r => r.role === 'child');
+  const deepCount = Object.keys(cleanRememberNotes({ ...remember, members: famMembersOf(famRows) }, thisYear)).length
+    + [interests, habits, personality].filter(v => splitTags(v).length > 0).length + (mbti ? 1 : 0);
+
+  const patchFam = (uid: number, p: Partial<FamRow>) => setFamRows(rows => rows.map(r => (r.uid === uid ? { ...r, ...p } : r)));
+  const patchEdu = (uid: number, p: Partial<EduRow>) => setEduRows(rows => rows.map(r => (r.uid === uid ? { ...r, ...p } : r)));
+  const removeEdu = (uid: number) => setEduRows(rows => (rows.length > 1 ? rows.filter(r => r.uid !== uid) : [blankEdu()]));
 
   const completeFollowUp = async (it: CskhInteraction) => {
     setBusyId(it.id);
@@ -208,10 +332,15 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       return;
     }
     if (!target) { setError('Chọn nhóm'); return; }
+    const occErr = occRows.map(r => draftError(r, thisYear)).find(Boolean);
+    if (occErr) { setError(occErr); return; }
+    const famErr = famRows.map(r => familyYearError(r.year, thisYear)).find(Boolean);
+    if (famErr) { setError(`Gia đình: ${famErr}`); setDeepOpen(true); return; }
     setSaving(true);
     setError('');
     try {
-      await saveProfile({
+      const linkCoords = mapLink.trim() ? await mapLinkCoords(mapLink, token) : null;
+      const { partial174 } = await saveProfile({
         raw,
         current,
         user,
@@ -220,8 +349,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           name, phone, email, role,
           client_ids: clientIds,
           primary_client_ids: primaryIds.filter(id => clientIds.includes(id)),
-          start_date: startDate, channel, address, map_link: mapLink, birthday,
-          hobbies: interests.split(',').map(s => s.trim()).filter(Boolean),
+          start_date: startDate, channel, address, map_link: mapLink,
+          hobbies: splitTags(interests),
           avatar_url: avatarUrl, notes,
         },
         cskh: {
@@ -230,20 +359,24 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           cadenceDays: cadence,
           ownerId: ownerId || null,
           nickname, zaloPhone, habits, personality, mbti,
-          rememberNotes: remember,
+          rememberNotes: { ...remember, members: famMembersOf(famRows) },
           introducedBy: introducedBy || null,
           context, province,
+          gender,
+          education: cleanEducation(eduRows, schoolIndex),
+          originProvince,
         },
+        geo: { manualPin, linkCoords, preview },
+        occasions: planOccasionSave(myOccasions, occRows.filter(r => !isBlankDraft(r))),
       });
+      setSaving(false);
+      emitCskhDataChanged();
+      toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : 'Đã cập nhật hồ sơ');
+      onClose();
     } catch (e) {
       setSaving(false);
       setError((e as Error).message);
-      return;
     }
-    setSaving(false);
-    emitCskhDataChanged();
-    toast('Đã cập nhật hồ sơ');
-    onClose();
   };
 
   // Hộp thoại xoá / form đầy đủ nằm ở lớp thấp hơn bottom sheet → thay chỗ hồ sơ khi mở
@@ -259,6 +392,21 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         onSaved={() => { emitCskhDataChanged(); onClose(); }} />
     );
   }
+
+  const tagField = (f: TraitField, placeholder: string, always = false) => {
+    const value = f === 'interests' ? interests : f === 'habits' ? habits : f === 'personality' ? personality : remember[f] ?? '';
+    const set = (v: string) => {
+      if (f === 'interests') setInterests(v);
+      else if (f === 'habits') setHabits(v);
+      else if (f === 'personality') setPersonality(v);
+      else setRemember(m => ({ ...m, [f]: v }));
+    };
+    return (
+      <Field key={f} label={TRAIT_LABEL[f]} full>
+        <TagInput value={value} onChange={set} stats={tagStats[f]} presets={TRAIT_PRESETS[f]} placeholder={placeholder} label={TRAIT_LABEL[f]} alwaysSuggest={always} />
+      </Field>
+    );
+  };
 
   return (
     <Sheet label={`Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
@@ -286,11 +434,11 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 
       {/* Hàng nút liên hệ kiểu ứng dụng Danh bạ của Apple: ô vuông bo, icon + nhãn xanh */}
       <div className="grid grid-cols-4 gap-2 mt-4 md:max-w-[440px]">
-        {links.map(link => {
-          const meta = CHANNEL_META[link.channel];
+        {links.map(l => {
+          const meta = CHANNEL_META[l.channel];
           return (
-            <a key={link.channel} href={link.url} onClick={() => markContactLaunched(current.id, link.channel)}
-              {...(link.channel === 'zalo' ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            <a key={l.channel} href={l.url} onClick={() => markContactLaunched(current.id, l.channel)}
+              {...(l.channel === 'zalo' ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
               className={ACTION_TILE}>
               <meta.Icon size={19} strokeWidth={2.1} /> {meta.label}
             </a>
@@ -350,84 +498,91 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </Field>
       </Section>
 
-      {/* ── Điều cần nhớ ── */}
-      <Section title="Điều cần nhớ — hiện ra mỗi lần chuẩn bị liên hệ">
-        {REMEMBER_KEYS.map(k => (
-          <Field key={k} label={REMEMBER_LABEL[k]} full={k === 'other'}>
-            <textarea rows={2} maxLength={REMEMBER_MAX_CHARS} value={remember[k] ?? ''}
-              onChange={e => setRemember({ ...remember, [k]: e.target.value })}
-              className={`${inputCls} resize-y`} placeholder={REMEMBER_PLACEHOLDER[k]} />
-          </Field>
-        ))}
-      </Section>
-
-      {/* ── Thấu hiểu con người ── */}
-      <Section title="Thấu hiểu con người">
-        <Field label="Sở thích" full>
-          <div className="flex gap-1.5">
-            <input value={newInterest} onChange={e => setNewInterest(e.target.value)} className={inputCls} placeholder="Thêm sở thích khác rồi Enter"
-              onKeyDown={e => {
-                if (e.key !== 'Enter' || !newInterest.trim()) return;
-                e.preventDefault();
-                if (!hasToken(interests, newInterest.trim())) setInterests(toggleToken(interests, newInterest.trim()));
-                setNewInterest('');
-              }} />
-          </div>
-          <PresetChips value={interests} presets={[...INTEREST_PRESETS, ...interests.split(',').map(s => s.trim()).filter(s => s && !INTEREST_PRESETS.some(p => p.toLowerCase() === s.toLowerCase()))]}
-            onChange={setInterests} />
-        </Field>
-        <Field label="Thói quen" full>
-          <input value={habits} onChange={e => setHabits(e.target.value)} className={inputCls} placeholder="Gõ tự do, phẩy ngăn cách" />
-          <PresetChips value={habits} presets={HABIT_PRESETS} onChange={setHabits} />
-        </Field>
-        <Field label="Tính cách" full>
-          <input value={personality} onChange={e => setPersonality(e.target.value)} className={inputCls} placeholder="Gõ tự do, phẩy ngăn cách" />
-          <PresetChips value={personality} presets={PERSONALITY_PRESETS} onChange={setPersonality} />
-        </Field>
-        <Field label="MBTI">
-          <select value={mbti} onChange={e => setMbti(e.target.value)} className={inputCls}>
-            <option value="">— Chưa rõ —</option>
-            {MBTI_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </Field>
-      </Section>
-
       {/* ── Liên lạc ── */}
       <Section title="Liên lạc">
         <Field label="Ảnh đại diện" full><AvatarUpload value={avatarUrl} onChange={setAvatarUrl} name={name} toast={toast} /></Field>
         <Field label="Họ tên *"><input value={name} onChange={e => setName(e.target.value)} className={inputCls} /></Field>
         <Field label="Tên thân mật"><input value={nickname} onChange={e => setNickname(e.target.value)} className={inputCls} placeholder="VD: Anh Hùng, Chị Lan" /></Field>
+        <Field label="Giới tính" full hint={genderHint ? undefined : 'Dùng để lọc khi chúc mừng 20/10, 8/3'}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(['male', 'female'] as const).map(g => (
+              <button key={g} type="button" aria-pressed={gender === g} onClick={() => setGender(gender === g ? '' : g)}
+                className={`${PILL} ${gender === g ? 'bg-[#0071E3] text-white' : 'bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]'}`}>
+                {GENDER_LABEL[g]}
+              </button>
+            ))}
+            {genderHint && (
+              <button type="button" onClick={() => setGender(genderHint.gender)} title={`${genderHint.reason} — bấm để chọn`}
+                className="h-9 md:h-8 px-3 rounded-full text-[12.5px] font-medium text-[#0066CC] hover:bg-[#0071E3]/10 transition">
+                Gợi ý: {GENDER_LABEL[genderHint.gender]}
+              </button>
+            )}
+          </div>
+        </Field>
         <Field label="Điện thoại" hint="Nhiều số thì ngăn bằng dấu phẩy">
           <input value={phone} onChange={e => setPhone(e.target.value)} className={inputCls} inputMode="tel" />
         </Field>
         <Field label="Zalo (nếu khác số chính)"><input value={zaloPhone} onChange={e => setZaloPhone(e.target.value)} className={inputCls} inputMode="tel" /></Field>
-        <Field label="Email"><input value={email} onChange={e => setEmail(e.target.value)} className={inputCls} inputMode="email" /></Field>
-        <Field label="Ngày sinh"><input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className={inputCls} /></Field>
-        <Field label="Địa chỉ nhà" full><input value={address} onChange={e => setAddress(e.target.value)} className={inputCls} /></Field>
-        <Field label="Link Google Maps (nhà riêng)" full>
+        <Field label="Email" full><input value={email} onChange={e => setEmail(e.target.value)} className={inputCls} inputMode="email" /></Field>
+      </Section>
+
+      {/* ── Ngày sinh & ngày quan trọng ── */}
+      <Section title="Ngày sinh & ngày quan trọng">
+        <OccasionEditor rows={occRows} onChange={setOccRows} today={today} notCared={target?.tier === 'unclassified'} />
+      </Section>
+
+      {/* ── Địa chỉ & quê quán ── */}
+      <Section title="Địa chỉ & quê quán">
+        <Field label="Địa chỉ nhà hiện tại" full
+          aside={precision === 'precise'
+            ? <span className="inline-flex items-center gap-0.5 text-[11.5px] font-semibold text-[#0071E3]" title="Có link Google Maps hoặc đã chấm tay"><BadgeCheck size={14} fill="#0071E3" color="#fff" /> Chính xác</span>
+            : precision === 'approx'
+              ? <span className="text-[11.5px] font-medium text-[#86868B]" title="Chỉ có chữ — dán link Google Maps hoặc chấm ghim để chính xác">~ Tương đối</span>
+              : undefined}>
+          <AutoTextarea value={address} onChange={setAddress} label="Địa chỉ nhà hiện tại" placeholder="Dán nguyên địa chỉ, VD: 12 Lê Lợi, P. Phú Cường, Thủ Dầu Một, Bình Dương" />
+        </Field>
+        <Field label="Link Google Maps (biết chính xác thì dán)" full
+          hint={mapLink.trim() ? {
+            empty: undefined,
+            resolving: 'Đang mở link rút gọn…',
+            ok: 'Đọc được vị trí từ link',
+            nocoords: 'Link không có toạ độ — sẽ định vị theo chữ địa chỉ',
+            fail: 'Không mở được link rút gọn lúc này — vẫn lưu link, định vị theo chữ',
+          }[link.status] : undefined}>
           <div className="flex gap-1.5">
-            <input value={mapLink} onChange={e => setMapLink(e.target.value)} className={inputCls} placeholder="https://maps.app.goo.gl/…" />
+            <input value={mapLink} onChange={e => { setMapLink(e.target.value); setManualPin(null); }} className={inputCls} placeholder="https://maps.app.goo.gl/…" inputMode="url" />
             {mapLink.trim() && (
               <a href={mapLink.trim()} target="_blank" rel="noopener noreferrer" title="Mở Google Maps"
                 className="shrink-0 w-10 md:w-9 rounded-[10px] bg-[rgba(118,118,128,0.12)] flex items-center justify-center text-[#0066CC] hover:bg-[rgba(118,118,128,0.2)] transition">
                 <ExternalLink size={14} />
               </a>
             )}
-            {embedQuery && (
-              <button type="button" onClick={() => setShowMap(v => !v)} title="Xem bản đồ" aria-pressed={showMap}
-                className={`shrink-0 w-10 md:w-9 rounded-[10px] flex items-center justify-center transition ${showMap ? 'bg-[#0071E3] text-white' : 'bg-[rgba(118,118,128,0.12)] text-[#0066CC] hover:bg-[rgba(118,118,128,0.2)]'}`}>
-                <MapIcon size={14} />
-              </button>
-            )}
           </div>
-          {showMap && embedQuery && (
-            <iframe title="Bản đồ" src={mapEmbedSrc(embedQuery)} loading="lazy" className="mt-2 w-full h-[220px] rounded-[12px] border-0 shadow-[0_0_0_0.5px_rgba(0,0,0,0.1)]" />
-          )}
         </Field>
-        <Field label="Tỉnh / thành">
+        {(address.trim() || mapLink.trim() || pin) && (
+          <div className="md:col-span-2">
+            <AddressPinMap pin={pin} precise={precision === 'precise'} onPick={setManualPin} />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11.5px] text-[#86868B]">
+              <span>{manualPin ? 'Đã chấm tay — lưu vị trí này.' : pin ? 'Sai chỗ? Chạm hoặc kéo ghim để chấm lại.' : 'Đang tìm vị trí theo địa chỉ… hoặc chạm vào bản đồ để chấm.'}</span>
+              {manualPin && (
+                <button type="button" onClick={() => setManualPin(null)} className="inline-flex items-center gap-1 font-medium text-[#0066CC] hover:opacity-70">
+                  <RotateCcw size={12} /> Bỏ chấm tay
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        <Field label="Tỉnh / thành nơi ở">
           <input list="cskh-provinces" value={province} onChange={e => setProvince(e.target.value)} className={inputCls} />
-          <datalist id="cskh-provinces">{provinces.map(p => <option key={p} value={p} />)}</datalist>
+          <datalist id="cskh-provinces">{provinceList.map(p => <option key={p} value={p} />)}</datalist>
         </Field>
+        <Field label="Quê quán (tỉnh)" hint="Chỉ cần tỉnh — trên bản đồ vẽ ở tâm tỉnh">
+          <select value={originProvince} onChange={e => setOriginProvince(e.target.value)} className={inputCls}>
+            <option value="">— Chưa rõ —</option>
+            {provinceList.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Field>
+        {user && regions.length > 0 && <RegionInsightPanel candidates={regions} userId={user.id} />}
       </Section>
 
       {/* ── Công ty & chức vụ ── */}
@@ -466,7 +621,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           </div>
         </Field>
         <Field label="Chức vụ"><RoleSelect value={role} onChange={setRole} toast={toast} className={inputCls} /></Field>
-        <Field label="Phụ trách từ ngày"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={inputCls} /></Field>
+        <Field label="Phụ trách từ ngày"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} min-w-[9.5rem]`} /></Field>
         <Field label="Kênh tiếp cận">
           <select value={channel} onChange={e => setChannel(e.target.value)} className={inputCls}>
             <option value="">— Chưa rõ —</option>
@@ -478,11 +633,104 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </Field>
       </Section>
 
+      {/* ── Học vấn ── */}
+      <Section title="Học vấn" note="Gõ tên trường có gợi ý từ người khác đã nhập; khác dấu / hoa vẫn nhận là 1 trường.">
+        {eduRows.map(r => {
+          const mates = r.school.trim() ? (schoolIndex.get(schoolKey(r.school))?.contactIds ?? []) : [];
+          const canRemove = eduRows.length > 1 || r.level !== '' || r.school.trim() !== '';
+          return (
+            <div key={r.uid} className="md:col-span-2">
+              <div className="flex items-center gap-2">
+                <select value={r.level} onChange={e => patchEdu(r.uid, { level: e.target.value as EducationLevel })} aria-label="Bậc học"
+                  className={`${inputCls} !w-[118px] shrink-0`}>
+                  <option value="">Bậc học</option>
+                  {EDUCATION_LEVELS.map(l => <option key={l} value={l}>{EDUCATION_LEVEL_LABEL[l]}</option>)}
+                </select>
+                <SchoolInput value={r.school} onChange={school => patchEdu(r.uid, { school })} index={schoolIndex} />
+                {canRemove && <RemoveBtn onClick={() => removeEdu(r.uid)} label="Bỏ dòng học vấn này" />}
+              </div>
+              {mates.length > 0 && (
+                <p className="mt-1 text-[11.5px] text-[#0066CC]">
+                  Cùng trường với <b>{mates.length} người</b>: {mates.slice(0, 4).map(id => nameById.get(id) ?? '').filter(Boolean).join(', ')}{mates.length > 4 && ` +${mates.length - 4}`}
+                </p>
+              )}
+            </div>
+          );
+        })}
+        {eduRows.length < EDUCATION_MAX_ROWS && eduRows.every(r => r.level !== '' || r.school.trim() !== '') && (
+          <AddRow onClick={() => setEduRows(rows => [...rows, blankEdu()])}>Thêm trường</AddRow>
+        )}
+      </Section>
+
+      {/* ── Thông tin chuyên sâu: không phải ai cũng nhập — mặc định thu gọn ── */}
+      <section className="mt-5">
+        <button type="button" onClick={() => setDeepOpen(v => !v)} aria-expanded={deepOpen}
+          className="w-full flex items-center gap-3 rounded-[14px] bg-white md:bg-[#F5F5F7] px-4 min-h-[56px] text-left hover:bg-black/[0.02] transition">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold text-[#1D1D1F]">Thông tin chuyên sâu</span>
+            <span className="block text-[12px] text-[#86868B]">Gia đình · điều cần nhớ · sở thích · thói quen · tính cách{deepCount > 0 ? ` · đã nhập ${deepCount} mục` : ''}</span>
+          </span>
+          <ChevronDown size={18} className={`shrink-0 text-[#AEAEB2] transition-transform ${deepOpen ? 'rotate-180' : ''}`} />
+        </button>
+      </section>
+      {deepOpen && (
+        <>
+          <Section title="Gia đình" note="Hiện nhanh trước khi liên hệ: hỏi thăm con khách, quà 1/6.">
+            {famRows.map(r => {
+              const label = r.role === 'spouse' ? 'Vợ / Chồng' : `Con ${famKids.indexOf(r) + 1}`;
+              const age = r.year.length === 4 && !familyYearError(r.year, thisYear) ? familyAge(Number(r.year), thisYear) : null;
+              return (
+                <Fragment key={r.uid}>
+                  <div className="md:col-span-2 flex items-center gap-2">
+                    <span className="w-[76px] shrink-0 text-[12.5px] font-medium text-[#6E6E73]">{label}</span>
+                    <input type="text" value={r.name} onChange={e => patchFam(r.uid, { name: e.target.value })} placeholder="Tên" maxLength={60}
+                      aria-label={`Tên ${label}`} className={`${inputCls} flex-1 min-w-0`} />
+                    <input type="text" inputMode="numeric" value={r.year} placeholder="Năm sinh" aria-label={`Năm sinh ${label}`}
+                      onChange={e => patchFam(r.uid, { year: e.target.value.replace(/\D/g, '').slice(0, 4) })} className={`${inputCls} !w-[92px] shrink-0`} />
+                    <span className="w-[58px] shrink-0 text-[12px] text-[#86868B] tabular-nums">{age === null ? '' : age === 0 ? 'mới sinh' : `${age} tuổi`}</span>
+                  </div>
+                </Fragment>
+              );
+            })}
+            {famKids.length < FAMILY_MAX - 1 && famKids.every(r => r.name.trim() !== '' || r.year.trim() !== '') && (
+              <AddRow onClick={() => setFamRows(rows => [...rows, famRow('child')])}>Thêm con</AddRow>
+            )}
+            <Field label="Ghi chú gia đình" full>
+              <input type="text" value={remember.family ?? ''} onChange={e => setRemember(m => ({ ...m, family: e.target.value }))}
+                placeholder={REMEMBER_PLACEHOLDER.family} maxLength={REMEMBER_MAX_CHARS} className={inputCls} />
+            </Field>
+          </Section>
+
+          <Section title="Điều cần nhớ — hiện ra mỗi lần chuẩn bị liên hệ" note="Mỗi ý là 1 thẻ — gõ rồi Enter; thẻ người khác đã có thì bấm chọn (số nhỏ = bao nhiêu người cũng có).">
+            {tagField('likes', 'Cà phê, lẩu hải sản…')}
+            {tagField('avoid', 'Không uống rượu bia…')}
+            {(['work', 'other'] as const).map(k => (
+              <Field key={k} label={REMEMBER_LABEL[k]} full>
+                <input type="text" value={remember[k] ?? ''} onChange={e => setRemember(m => ({ ...m, [k]: e.target.value }))}
+                  placeholder={REMEMBER_PLACEHOLDER[k]} maxLength={REMEMBER_MAX_CHARS} className={inputCls} />
+              </Field>
+            ))}
+          </Section>
+
+          <Section title="Thấu hiểu con người" note="Lọc những người giống nhau ở Ma trận → Mọi đặc điểm.">
+            {tagField('interests', 'Golf, du lịch, cà phê…', true)}
+            {tagField('habits', 'Dậy sớm, hay đi công tác…', true)}
+            {tagField('personality', 'Quyết đoán, trọng chữ tín…', true)}
+            <Field label="MBTI">
+              <select value={mbti} onChange={e => setMbti(e.target.value)} className={inputCls}>
+                <option value="">— Chưa rõ —</option>
+                {MBTI_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+          </Section>
+        </>
+      )}
+
       {error && <p className="mt-4 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
       <div className={`${SHEET_FOOTER} mt-5 bg-[#F2F2F7]/90 md:bg-white/90`}>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setFullForm(true)} title="Ngày đặc biệt khác, ghi chú chi tiết, Facebook/LinkedIn"
+          <button type="button" onClick={() => setFullForm(true)} title="Ghi chú chi tiết, Facebook/LinkedIn"
             className={`${FOOT_BTN} bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>
             <FileText size={14} /> Form đầy đủ
           </button>
@@ -501,7 +749,6 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           </button>
         </div>
       </div>
-
     </Sheet>
   );
 }

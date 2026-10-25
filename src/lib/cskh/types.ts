@@ -105,14 +105,54 @@ export const GIFT_DIRECTION_LABEL: Readonly<Record<GiftDirection, string>> = {
 
 // ── Hồ sơ người liên hệ ─────────────────────────────────────────────────────
 export type CskhContext = 'personal' | 'work' | 'both';
-export type GeoSource = '' | 'map_url' | 'address';
+/**
+ * Nguồn toạ độ nhà hiện tại (khoá giống PRM): map_url = link Google Maps trong hồ sơ ·
+ * address = tra chữ địa chỉ · manual = chấm tay trên bản đồ · address_url = link Maps của
+ * địa chỉ (PRM tách 2 link; LetsGo chỉ có 1 link nên ít dùng). 'address_url' / 'manual'
+ * cần migration 174 (nới CHECK).
+ */
+export type GeoSource = '' | 'map_url' | 'address' | 'address_url' | 'manual';
+export const GEO_SOURCES: readonly GeoSource[] = ['', 'map_url', 'address', 'address_url', 'manual'];
+
+/** Giới tính — '' = chưa rõ (migration 174, khoá giống PRM). */
+export type Gender = '' | 'male' | 'female';
+export const GENDER_LABEL: Readonly<Record<Exclude<Gender, ''>, string>> = { male: 'Nam', female: 'Nữ' };
+
+/** Bậc học của 1 dòng học vấn — '' = chưa chọn (khoá giống PRM). */
+export type EducationLevel = '' | 'high_school' | 'vocational' | 'college' | 'university' | 'master' | 'doctor' | 'other';
+export interface Education {
+  level: EducationLevel;
+  /** Tên trường đã chuẩn hoá (gom khoảng trắng, trùng tên đã có ở người khác). */
+  school: string;
+}
+export const EDUCATION_LEVELS: readonly Exclude<EducationLevel, ''>[] = [
+  'high_school', 'vocational', 'college', 'university', 'master', 'doctor', 'other',
+];
+export const EDUCATION_LEVEL_LABEL: Readonly<Record<Exclude<EducationLevel, ''>, string>> = {
+  high_school: 'THPT',
+  vocational: 'Trung cấp',
+  college: 'Cao đẳng',
+  university: 'Đại học',
+  master: 'Thạc sĩ',
+  doctor: 'Tiến sĩ',
+  other: 'Khác',
+};
 
 export type RememberKey = 'family' | 'likes' | 'avoid' | 'work' | 'other';
-export type RememberNotes = Partial<Record<RememberKey, string>>;
+/** Thành viên gia đình (Vợ/Chồng, Con) — lưu ở remember_notes.members, không cần cột mới. */
+export type FamilyRole = 'spouse' | 'child';
+export interface FamilyMember {
+  role: FamilyRole;
+  name: string;
+  /** Năm sinh dương lịch; null = chưa biết. */
+  year: number | null;
+}
+/** family = ghi chú gia đình (chữ tự do); members = vợ/chồng + con có năm sinh. */
+export type RememberNotes = Partial<Record<RememberKey, string>> & { members?: FamilyMember[] };
 
 export const REMEMBER_LABEL: Readonly<Record<RememberKey, string>> = {
   family: 'Gia đình',
-  likes: 'Sở thích, món ăn',
+  likes: 'Món ăn, đồ uống',
   avoid: 'Kiêng kỵ',
   work: 'Công việc, dự án',
   other: 'Khác',
@@ -162,14 +202,23 @@ export interface CskhContact {
   rememberNotes: RememberNotes;
   introducedBy: string | null;
   context: CskhContext;
+  /** Địa chỉ nhà hiện tại — giữ nguyên chữ người dùng dán. */
   address: string;
+  /** Link Google Maps của nhà hiện tại (có link = vị trí chính xác). */
   mapUrl: string;
+  /** Tỉnh / thành nơi ở hiện tại. */
   province: string;
+  /** Quê quán — chỉ tỉnh (migration 174); trên bản đồ vẽ ở tâm tỉnh, luôn "tương đối". */
+  originProvince: string;
   lat: number | null;
   lng: number | null;
   geoSource: GeoSource;
   /** Ngày sinh dương lịch "YYYY-MM-DD" (cột contacts.birthday). */
   birthday: string | null;
+  /** Nhắc sinh nhật trong hồ sơ trước N ngày (migration 174); null = mặc định 3. */
+  birthdayRemindDays: number | null;
+  gender: Gender;
+  education: Education[];
   /** false = "Đã nghỉ" (rời công ty khách). */
   isActive: boolean;
   /**
@@ -243,6 +292,8 @@ export interface CskhGift {
   note: string;
   createdBy: string;
   isArchived: boolean;
+  /** Dấu đợt khi ghi cho nhóm (cùng created_at với nhật ký của đợt). */
+  createdAt: string;
 }
 
 export interface CskhGroup {

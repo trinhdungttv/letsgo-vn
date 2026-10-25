@@ -16,16 +16,23 @@ export function normalizeSearch(text: string): string {
     .trim();
 }
 
-/** Chuỗi để so khớp: tên, tên thân mật, công ty, chức vụ, email, SĐT (chỉ giữ chữ số). */
+/**
+ * Chuỗi để so khớp: tên, tên thân mật, công ty, chức vụ, email, SĐT (chỉ giữ chữ số), tên
+ * trường, sở thích / thói quen / tính cách, quê quán (gõ "golf" ra những người chơi golf,
+ * gõ "kinh te" ra người học ĐH Kinh tế).
+ */
 export function contactSearchHaystack(
-  c: Pick<CskhContact, 'fullName' | 'nickname' | 'organization' | 'jobTitle' | 'phones' | 'emails'>,
+  c: Pick<CskhContact, 'fullName' | 'nickname' | 'organization' | 'jobTitle' | 'phones' | 'emails'>
+    & Partial<Pick<CskhContact, 'education' | 'interests' | 'habits' | 'personality' | 'originProvince'>>,
   extra: readonly string[] = [],
 ): string {
   // Mỗi SĐT giữ cả dạng gốc (chỉ số) lẫn dạng nội địa 0xxx
   const phones = c.phones
     .map(p => `${p.replace(/\D/g, '')} ${normalizePhone(p).replace(/\D/g, '')}`)
     .join(' ');
-  return normalizeSearch([c.fullName, c.nickname, c.organization, c.jobTitle, c.emails.join(' '), ...extra].join(' ')) + ' ' + phones;
+  const schools = (c.education ?? []).map(e => e.school).join(' ');
+  const traits = [(c.interests ?? []).join(' '), c.habits ?? '', c.personality ?? '', c.originProvince ?? ''].join(' ');
+  return normalizeSearch([c.fullName, c.nickname, c.organization, c.jobTitle, c.emails.join(' '), schools, traits, ...extra].join(' ')) + ' ' + phones;
 }
 
 /** Mọi từ trong truy vấn đều phải xuất hiện (thứ tự không quan trọng). Truy vấn rỗng = khớp hết. */

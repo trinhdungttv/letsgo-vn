@@ -7,26 +7,31 @@
 // sửa dòng (nội dung, ngày, hình thức, việc đã hứa — việc trong Workspace đổi theo);
 // xoá có xác nhận (xoá mềm). Dòng cũ chưa gắn người vẫn hiện đủ theo tên công ty /
 // người liên hệ dạng chữ.
+// Đợt "Ghi cho nhóm" (cùng dấu đợt created_at) gom thành 1 dòng "Tặng hoa 20/10 · 12 người";
+// bút chì → Sửa đợt (đổi ngày / nội dung cả loạt, bỏ / thêm người, xoá cả đợt) — chỉ người
+// tạo đợt hoặc admin.
 // ============================================================================
 import { useCallback, useMemo, useState } from 'react';
-import { Check, NotebookText, PenLine, Pencil, Trash2 } from 'lucide-react';
+import { Check, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { branchOf } from '../../lib/branchRef';
 import { formatDateVN, longDateVN, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
+import { batchGiftsOf, canEditBatch, groupBatches, type InteractionBatch, type LogEntry } from '../../lib/cskh/groupLog';
 import { diffDays } from '../../lib/cskh/lunar';
 import { matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import type { CskhInteraction, InteractionType } from '../../lib/cskh/types';
 import { CHANNEL_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
-import { archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
+import { applyBatchEdit, archiveBatch, archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
 import { useCskh } from './context';
 import {
-  INTERACTION_ICON, PANEL, PILL_PRIMARY, ROUND_ICON,
+  INTERACTION_ICON, PANEL, PILL_PRIMARY, PILL_TINTED, ROUND_ICON,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
+import { BatchEditModal } from './components/BatchEditModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
 import { MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
 
@@ -38,7 +43,7 @@ const TYPE_TILE: Readonly<Record<InteractionType, keyof typeof ICON_TILE>> = {
 };
 
 export default function CskhInteractionLog() {
-  const { data, loading, clients, toast, openProfile, openLog } = useCskh();
+  const { data, loading, clients, toast, openProfile, openLog, openGroupLog } = useCskh();
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const today = todayVN();
@@ -51,6 +56,7 @@ export default function CskhInteractionLog() {
   const [limit, setLimit] = useState(PAGE);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<CskhInteraction | null>(null);
+  const [editingBatch, setEditingBatch] = useState<InteractionBatch | null>(null);
 
   const contactById = useMemo(() => new Map((data?.contacts ?? []).map(c => [c.id, c])), [data]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
@@ -132,14 +138,20 @@ export default function CskhInteractionLog() {
   };
 
   if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
-  const shown = filtered.slice(0, limit);
+  // Đợt ghi nhóm gom thành 1 dòng; phân trang theo dòng hiển thị
+  const entries = groupBatches(filtered);
+  const shown = entries.slice(0, limit);
+  const dateOf = (e: LogEntry) => (e.kind === 'batch' ? e.batch.occurredAt : e.item.occurredAt);
   // Gom theo ngày (dữ liệu đã xếp mới nhất trước) → tiêu đề "Hôm nay / Hôm qua / dd/mm/yyyy"
-  const days: { date: string; items: CskhInteraction[] }[] = [];
-  for (const i of shown) {
+  const days: { date: string; items: LogEntry[] }[] = [];
+  for (const e of shown) {
     const last = days[days.length - 1];
-    if (last && last.date === i.occurredAt) last.items.push(i);
-    else days.push({ date: i.occurredAt, items: [i] });
+    if (last && last.date === dateOf(e)) last.items.push(e);
+    else days.push({ date: dateOf(e), items: [e] });
   }
+  const editingGifts = editingBatch
+    ? batchGiftsOf(data.gifts, editingBatch.createdAt, editingBatch.items.map(i => i.contactId as string))
+    : [];
 
   return (
     <div className="space-y-4 md:space-y-5">
@@ -148,9 +160,14 @@ export default function CskhInteractionLog() {
         title="Nhật ký CSKH"
         subtitle={<>{logs.length} lần tương tác · {openCount} việc đã hứa đang mở</>}
         actions={(
-          <button type="button" onClick={() => openLog()} className={PILL_PRIMARY}>
-            <PenLine size={15} strokeWidth={2.2} /> Ghi tương tác
-          </button>
+          <>
+            <button type="button" onClick={() => openGroupLog()} className={PILL_TINTED}>
+              <Users size={15} strokeWidth={2.2} /> Ghi cho nhóm
+            </button>
+            <button type="button" onClick={() => openLog()} className={PILL_PRIMARY}>
+              <PenLine size={15} strokeWidth={2.2} /> Ghi tương tác
+            </button>
+          </>
         )}
       />
 
@@ -197,10 +214,43 @@ export default function CskhInteractionLog() {
         <section key={day.date} aria-label={formatDateVN(day.date)}>
           <h2 className="px-1 mb-2 flex items-baseline gap-2">
             <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#1D1D1F]">{dayHeading(day.date, today)}</span>
-            <span className="text-[12px] text-[#86868B]">{formatDateVN(day.date)} · {day.items.length} lần</span>
+            <span className="text-[12px] text-[#86868B]">{formatDateVN(day.date)} · {day.items.reduce((n, e) => n + (e.kind === 'batch' ? e.batch.items.length : 1), 0)} lần</span>
           </h2>
           <div className={`${PANEL} px-4 md:px-5 py-1`}>
-            {day.items.map((i, idx) => {
+            {day.items.map((entry, idx) => {
+              if (entry.kind === 'batch') {
+                const b = entry.batch;
+                const BIcon = INTERACTION_ICON[b.type];
+                const names = b.items.map(i => (i.contactId ? contactById.get(i.contactId)?.fullName : null) ?? i.contactPerson).filter(Boolean);
+                const editable = canEditBatch(b, user);
+                return (
+                  <Row key={b.key} first={idx === 0} inset={48} align="start">
+                    <span className={`w-9 h-9 shrink-0 rounded-[10px] ${ICON_TILE[TYPE_TILE[b.type]]} text-white flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.12)]`}>
+                      <BIcon size={17} strokeWidth={2.1} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                        <span className="text-[15px] font-semibold text-[#1D1D1F]">{b.content || INTERACTION_LABEL[b.type]}</span>
+                        <span className={`inline-flex items-center gap-1 px-2 rounded-full text-[11px] font-semibold ${TINT.blue}`}><Users size={11} strokeWidth={2.4} /> {b.items.length} người</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-1.5 mt-0.5 text-[12px] text-[#86868B]">
+                        <span className="font-medium text-[#3A3A3C]">{INTERACTION_LABEL[b.type]}</span>
+                        <span>· Ghi cho nhóm</span>
+                        {b.createdByName && <span>· ghi bởi {b.createdByName}</span>}
+                      </div>
+                      <p className="text-[13px] text-[#3A3A3C] leading-snug mt-1.5">
+                        {names.slice(0, 6).join(', ')}{names.length > 6 && <span className="text-[#86868B]"> và {names.length - 6} người khác</span>}
+                      </p>
+                    </div>
+                    {editable && (
+                      <button type="button" onClick={() => setEditingBatch(b)} title="Sửa đợt ghi nhóm" aria-label={`Sửa đợt ${b.content}`} className={ROUND_ICON}>
+                        <Pencil size={15} />
+                      </button>
+                    )}
+                  </Row>
+                );
+              }
+              const i = entry.item;
               const w = whoOf(i);
               const Icon = INTERACTION_ICON[i.type];
               const hasFollowUp = i.followUpAction.trim() !== '';
@@ -289,10 +339,42 @@ export default function CskhInteractionLog() {
         />
       )}
 
-      {filtered.length > shown.length && (
+      {editingBatch && (
+        <BatchEditModal
+          batch={editingBatch}
+          gifts={editingGifts}
+          contacts={data.contacts}
+          today={today}
+          onClose={() => setEditingBatch(null)}
+          onApply={async edit => {
+            try {
+              const r = await applyBatchEdit(editingBatch, editingGifts, edit, data.contacts, { user, clients, branches });
+              setEditingBatch(null);
+              emitCskhDataChanged();
+              toast(`Đã sửa đợt${r.noGiftNames.length ? ` — ${r.noGiftNames.length} người mới chưa gắn công ty nên không ghi quà` : ''}`);
+              return null;
+            } catch (e) {
+              return (e as Error).message;
+            }
+          }}
+          onDelete={async () => {
+            try {
+              await archiveBatch(editingBatch, editingGifts, user);
+              setEditingBatch(null);
+              emitCskhDataChanged();
+              toast(`Đã xoá đợt (${editingBatch.items.length} người)`);
+              return null;
+            } catch (e) {
+              return (e as Error).message;
+            }
+          }}
+        />
+      )}
+
+      {entries.length > shown.length && (
         <div className={`${PANEL} px-3 py-1`}>
           <MoreButton onClick={() => setLimit(limit + PAGE)}>
-            Hiện thêm {Math.min(PAGE, filtered.length - shown.length)} dòng (còn {filtered.length - shown.length})
+            Hiện thêm {Math.min(PAGE, entries.length - shown.length)} dòng (còn {entries.length - shown.length})
           </MoreButton>
         </div>
       )}

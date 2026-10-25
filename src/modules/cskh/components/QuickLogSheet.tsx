@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { interactionTypeOfChannel, type ContactActionChannel } from '../../../lib/cskh/contactActions';
-import { hasRememberNotes, REMEMBER_KEYS } from '../../../lib/cskh/remember';
+import { rememberDisplayRows } from '../../../lib/cskh/remember';
 import type { CskhContact, InitiatedBy, InteractionChannel, InteractionType } from '../../../lib/cskh/types';
 import { CHANNEL_LABEL, INTERACTION_LABEL, REMEMBER_LABEL } from '../../../lib/cskh/types';
 import { EMPTY_FOLLOW_UP, inputCls, type FollowUpValue } from '../ui';
@@ -29,14 +29,16 @@ const OUTCOMES: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'attention', label: 'Cần chú ý' },
 ];
 
+/** "Điều cần nhớ" hiện nhanh trước khi liên hệ — gia đình gồm vợ/chồng, con (năm sinh, tuổi) + ghi chú. */
 export function RememberList({ contact }: { contact: Pick<CskhContact, 'rememberNotes'> }) {
-  if (!hasRememberNotes(contact.rememberNotes)) return null;
+  const rows = rememberDisplayRows(contact.rememberNotes);
+  if (rows.length === 0) return null;
   return (
     <dl className="mt-3 bg-[#FF9500]/[0.09] rounded-[12px] px-3.5 py-2.5 space-y-1">
-      {REMEMBER_KEYS.filter(k => (contact.rememberNotes[k] ?? '').trim() !== '').map(k => (
-        <div key={k} className="text-[13px] leading-snug">
-          <dt className="inline font-semibold text-[#B25000]">{REMEMBER_LABEL[k]}: </dt>
-          <dd className="inline text-[#1D1D1F]">{contact.rememberNotes[k]}</dd>
+      {rows.map(r => (
+        <div key={r.key} className="text-[13px] leading-snug">
+          <dt className="inline font-semibold text-[#B25000]">{REMEMBER_LABEL[r.key]}: </dt>
+          <dd className="inline text-[#1D1D1F]">{r.value}</dd>
         </div>
       ))}
     </dl>
