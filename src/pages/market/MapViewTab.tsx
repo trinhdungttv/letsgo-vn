@@ -16,6 +16,7 @@ import { shortId } from '../../hooks/useHashSubRoute';
 import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep, haversineKm } from '../../lib/geo';
 import type { Branch, MarketLeadSupplier } from '../../lib/types';
 import type { MarketTabProps } from './shared';
+import { streetTiles } from '../../lib/mapTiles';
 import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, loadGroupIcons, DEFAULT_VIEW_KEY, loadDefaultView, SOUTH_VN_BOUNDS, type MapGroup, type SavedMapView } from '../../lib/mapGroups';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
@@ -134,7 +135,7 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
   const mapRef = useRef<L.Map | null>(null);
   const myLocationMarkerRef = useRef<L.Marker | L.Circle | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
-  const osmLayerRef = useRef<L.TileLayer | null>(null);
+  const osmLayerRef = useRef<L.LayerGroup | null>(null);
   const satLayerRef = useRef<L.TileLayer | null>(null);
   const boundaryLayerRef = useRef<L.TileLayer | null>(null);
   const measureLineRef = useRef<L.Polyline | null>(null);
@@ -295,10 +296,8 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     const savedView = loadDefaultView();
     if (savedView) map.setView(savedView.center, savedView.zoom);
     else map.fitBounds(SOUTH_VN_BOUNDS);
-    osmLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(map);
+    // Nền đường phố: OSM bị chặn ở một số mạng → tự chuyển nguồn dự phòng (lib/mapTiles)
+    osmLayerRef.current = streetTiles().addTo(map);
     // Lớp vệ tinh + ranh giới/địa danh (Esri) — chỉ add khi bật «Vệ tinh + ranh giới».
     satLayerRef.current = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',

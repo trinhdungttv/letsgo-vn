@@ -2,7 +2,8 @@
 // CSKH — Định vị địa chỉ người liên hệ (port PRM nearby.ts)
 // ----------------------------------------------------------------------------
 // Dịch vụ cộng đồng OpenStreetMap (miễn phí, không cần API key): Nominatim đổi địa chỉ chữ
-// sang toạ độ; toạ độ trong link Google Maps đầy đủ thì trích thẳng; link rút gọn
+// sang toạ độ (mạng chặn Nominatim thì lib/geo tự chuyển Photon); toạ độ trong link Google Maps
+// đầy đủ thì trích thẳng; link rút gọn
 // (maps.app.goo.gl) phải mở ở server (api/resolve-map.ts) vì trình duyệt bị CORS.
 // File này KHÔNG import gì ngoài lib/geo (thuần fetch) để api/resolve-map dùng chung được.
 // ============================================================================

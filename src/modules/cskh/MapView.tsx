@@ -30,6 +30,7 @@ import { geocodeAddressDetailed, NOMINATIM_DELAY_MS, type LatLng } from '../../l
 import { normalizeSearch } from '../../lib/cskh/search';
 import { nominatimGeocode, sleep } from '../../lib/geo';
 import { escapeMapHtml, loadDefaultView, SOUTH_VN_BOUNDS } from '../../lib/mapGroups';
+import { streetTiles } from '../../lib/mapTiles';
 import { setContactGeo } from './data/api';
 import { mapLinkCoords } from './data/mapLink';
 import { useCskh } from './context';
@@ -49,7 +50,7 @@ interface Point extends MapPoint {
 const ME = 'me';
 const BRANCH = 'b:';
 
-// ── Tâm tỉnh quê: tra Nominatim 1 lần mỗi tỉnh rồi nhớ trong máy ──
+// ── Tâm tỉnh quê: tra 1 lần mỗi tỉnh (Nominatim, bị chặn thì Photon) rồi nhớ trong máy ──
 const PROVINCE_CACHE_KEY = 'lgvn_cskh_province_geo_v1';
 function readProvinceCache(): Map<string, LatLng> {
   try {
@@ -469,10 +470,8 @@ function MapCanvas({ points, layer, measureOn, pair, endpoints, me, onPick, onOp
     if (saved) map.setView(saved.center, saved.zoom);
     else map.fitBounds(SOUTH_VN_BOUNDS);
     map.attributionControl.setPrefix(false);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(map);
+    // OSM bị chặn ở một số mạng → tự chuyển nguồn dự phòng (lib/mapTiles)
+    streetTiles().addTo(map);
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 45,
       spiderfyOnMaxZoom: true,

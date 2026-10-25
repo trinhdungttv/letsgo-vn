@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { LatLng } from '../../../lib/cskh/nearby';
+import { streetTiles } from '../../../lib/mapTiles';
 
 const VIETNAM_CENTER: [number, number] = [16.0, 106.0];
 const PIN_ZOOM = 17;
@@ -60,10 +61,7 @@ export function AddressPinMap({ pin, precise, onPick, height = 200 }: {
     const map = L.map(el, { dragging: !coarse, scrollWheelZoom: false })
       .setView(start ? [start.lat, start.lng] : VIETNAM_CENTER, start ? PIN_ZOOM : 5);
     map.attributionControl.setPrefix(false);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(map);
+    streetTiles().addTo(map);
     map.on('click', (e: L.LeafletMouseEvent) => {
       placeMarker(e.latlng, false);
       onPickRef.current({ lat: e.latlng.lat, lng: e.latlng.lng });

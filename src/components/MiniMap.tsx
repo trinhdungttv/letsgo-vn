@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import { streetTiles } from '../lib/mapTiles';
 import {
   MAP_GROUPS, MAP_GROUP_COLOR, loadGroupIcons, loadDefaultView, SOUTH_VN_BOUNDS, escapeMapHtml,
   type MapContextPoint,
@@ -47,10 +48,8 @@ export default function MiniMap({ pin, pinLabel, others, picking = false, onPick
     else if (saved) map.setView(saved.center, saved.zoom);
     else map.fitBounds(SOUTH_VN_BOUNDS);
     map.attributionControl.setPrefix(false);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(map);
+    // OSM bị chặn ở một số mạng → tự chuyển nguồn dự phòng (lib/mapTiles)
+    streetTiles().addTo(map);
     const cluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 40, spiderfyOnMaxZoom: true });
     map.addLayer(cluster);
     clusterRef.current = cluster;
