@@ -12,7 +12,7 @@ describe('chọn nguồn ảnh nền bản đồ', () => {
 
   it('nhớ nguồn dự phòng chạy được trong 24 giờ, hết hạn thì thử lại OSM', () => {
     expect(startTileProvider(rememberTileProvider(1, NOW), NOW + 60_000)).toBe(1);
-    expect(startTileProvider(rememberTileProvider(2, NOW), NOW + TILE_MEMORY_MS - 1)).toBe(2);
+    expect(startTileProvider(rememberTileProvider(3, NOW), NOW + TILE_MEMORY_MS - 1)).toBe(3);
     expect(startTileProvider(rememberTileProvider(1, NOW), NOW + TILE_MEMORY_MS + 1)).toBe(0);
     expect(startTileProvider(rememberTileProvider(1, NOW + 60_000), NOW)).toBe(0); // giờ máy lùi → không tin
   });
@@ -21,6 +21,7 @@ describe('chọn nguồn ảnh nền bản đồ', () => {
     expect(shouldFallback(0, 1, 0)).toBe(false);
     expect(shouldFallback(0, 2, 0)).toBe(true);
     expect(shouldFallback(3, 5, 0)).toBe(false); // đã tải được ảnh — chỉ là vài ảnh lỗi lẻ
-    expect(shouldFallback(0, 9, 2)).toBe(false); // hết nguồn dự phòng
+    expect(shouldFallback(0, 9, 2)).toBe(true);
+    expect(shouldFallback(0, 9, 3)).toBe(false); // hết nguồn dự phòng
   });
 });

@@ -2,7 +2,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // Dev: Vite không chạy thư mục /api của Vercel, nên tự phục vụ các route /api cần dùng bằng đúng code đó.
-const DEV_API_ROUTES = ['check-link', 'resolve-map'];
+const DEV_API_ROUTES = ['check-link', 'resolve-map', 'osm-tile'];
 const devApi = (): Plugin => ({
   name: 'dev-api',
   configureServer(server) {
@@ -15,16 +15,20 @@ const devApi = (): Plugin => ({
         for await (const c of req) chunks.push(c as Buffer);
         const mod = await server.ssrLoadModule(`/api/${route}.ts`);
         const headers = new Headers();
-        for (const k of ['content-type', 'x-letsgo-token']) {
+        for (const k of ['content-type', 'x-letsgo-token', 'referer']) {
           const v = req.headers[k];
           if (typeof v === 'string') headers.set(k, v);
         }
-        const r: Response = await mod.default(new Request(`http://localhost/api/${route}`, {
+        // req.url ở đây đã bỏ tiền tố /api/<route> → giữ lại phần query (?z=&x=&y= của osm-tile)
+        const query = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?')) : '';
+        const r: Response = await mod.default(new Request(`http://localhost/api/${route}${query}`, {
           method: req.method, headers, body: req.method === 'POST' ? Buffer.concat(chunks) : undefined,
         }));
         res.statusCode = r.status;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(await r.text());
+        res.setHeader('Content-Type', r.headers.get('content-type') ?? 'application/json');
+        const cache = r.headers.get('cache-control');
+        if (cache) res.setHeader('Cache-Control', cache);
+        res.end(Buffer.from(await r.arrayBuffer()));
       });
     }
   },
