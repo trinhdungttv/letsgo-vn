@@ -92,26 +92,19 @@ export default function CskhCadence() {
                         <button type="button" onClick={() => openProfile(c.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left group">
                           <ContactAvatar name={c.fullName} url={c.avatarUrl} tier={c.tier} size={40} />
                           <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <b className="text-[15px] font-semibold text-[#1D1D1F] truncate group-hover:text-[#0066CC] transition-colors">{c.fullName}</b>
-                              <span className="hidden md:inline shrink-0 px-2 py-px rounded-full text-[11px] font-medium" style={chipStyle(g.color)}>{g.label}</span>
-                            </span>
-                            {/* Điện thoại: nhóm + hạn + điểm xuống 1 dòng riêng (cột phải bị ẩn) */}
-                            <span className="md:hidden flex flex-wrap items-center gap-1 mt-0.5">
-                              <span className="px-2 py-px rounded-full text-[11px] font-medium" style={chipStyle(g.color)}>{g.label}</span>
+                            {/* Ưu tiên tên người + tên công ty: tên được xuống dòng đủ chữ (không cắt "…"), công ty ngay dưới */}
+                            <b className="block text-[15px] leading-snug font-semibold text-[#1D1D1F] break-words group-hover:text-[#0066CC] transition-colors">{c.fullName}</b>
+                            {c.organization && <span className="block mt-0.5"><CompanyTag name={c.organization} /></span>}
+                            <span className="flex flex-wrap items-center gap-1 mt-1">
+                              <span className="px-2 py-px rounded-full text-[11px] font-medium whitespace-nowrap" style={chipStyle(g.color)}>{g.label}</span>
                               <span className="px-2 py-px rounded-full text-[11px] font-medium whitespace-nowrap" style={chipStyle(CARE_STATUS_COLOR[sec.key])}>{dueLabel(st)}</span>
                               {st.score && <span className="text-[11px] font-semibold tabular-nums" style={{ color: scoreColor(st.score.total) }}>{st.score.total} điểm</span>}
                             </span>
-                            {c.organization && <span className="block mt-0.5"><CompanyTag name={c.organization} /></span>}
-                            <span className="block text-[12px] text-[#86868B] truncate">
+                            <span className="block text-[12px] text-[#86868B] mt-0.5">
                               {c.lastInteractionAt ? `Lần cuối ${formatDateVN(c.lastInteractionAt)}` : 'Chưa có tương tác nào'} · {st.cadence} ngày/lần
                             </span>
                           </span>
                         </button>
-                        <span className="hidden md:flex shrink-0 flex-col items-end gap-1">
-                          <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium whitespace-nowrap" style={chipStyle(CARE_STATUS_COLOR[sec.key])}>{dueLabel(st)}</span>
-                          {st.score && <span className="text-[11.5px] font-semibold tabular-nums" style={{ color: scoreColor(st.score.total) }}>{st.score.total} điểm</span>}
-                        </span>
                         <button type="button" onClick={() => openLog(c.id)} title="Ghi tương tác" aria-label={`Ghi tương tác với ${c.fullName}`} className={ROUND_ADD}>
                           <Plus size={15} strokeWidth={2.4} />
                         </button>
