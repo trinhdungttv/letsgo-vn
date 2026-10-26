@@ -32,7 +32,11 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
 }) {
   const links = contactActionLinks(contact);
   const lastTwo = recent.slice(0, 2);
-  const openFollowUps = [...recent, ...expandOpenExtras(recent)].filter(i => i.followUpAction.trim() !== '' && !i.followUpDone);
+  const allFollowUps = [...recent, ...expandOpenExtras(recent, true)].filter(i => i.followUpAction.trim() !== '');
+  const openFollowUps = allFollowUps.filter(i => !i.followUpDone);
+  // Việc đã xong: hiện để biết cái nào đã hoàn thành (mới nhất trước, tối đa 6)
+  const doneFollowUps = allFollowUps.filter(i => i.followUpDone)
+    .sort((a, b) => (b.followUpDue ?? '').localeCompare(a.followUpDue ?? '')).slice(0, 6);
 
   return (
     <Sheet label={`Tóm tắt ${contact.fullName}`} onClose={onClose}>
@@ -79,6 +83,25 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
                   className="shrink-0 inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[13px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
                   <CheckCheck size={13} /> Xong
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {doneFollowUps.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#248A3D] mb-1.5">Đã hoàn thành ({doneFollowUps.length})</p>
+          <div className="space-y-1">
+            {doneFollowUps.map(i => (
+              <div key={i.id} className="flex items-center gap-2 bg-[#F5F5F7] rounded-[12px] px-3 py-2">
+                <span className="flex-1 min-w-0 text-[12.5px] leading-snug text-[#86868B]">
+                  <span className="line-through">{i.followUpAction}</span>
+                  {i.followUpDue && <span> — hạn {formatDateVN(i.followUpDue)}</span>}
+                </span>
+                <span className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[12px] font-semibold">
+                  <Check size={12} strokeWidth={3} /> Đã xong
+                </span>
               </div>
             ))}
           </div>
