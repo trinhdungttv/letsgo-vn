@@ -22,7 +22,7 @@ import { isCooperatingClient } from '../../lib/cskh/seedTiers';
 import { buildTodayQueue, TODAY_QUEUE_LIMIT, type TodayQueueItem } from '../../lib/cskh/todayQueue';
 import type { CskhContact, CskhInteraction, RelationshipScore } from '../../lib/cskh/types';
 import { CLASSIFIED_TIERS, INTERACTION_LABEL, TIER_LABEL } from '../../lib/cskh/types';
-import { setFollowUpDone } from './data/api';
+import { expandOpenExtras, setFollowUpDone } from './data/api';
 import { useCskh } from './context';
 import { markContactLaunched } from './launch';
 import { useCareScope } from './useCareScope';
@@ -138,7 +138,7 @@ export default function CskhDashboard() {
       .sort((a, b) => a.daysUntil - b.daysUntil);
 
     const mine = interactions.filter(i => i.contactId !== null && scopedIds.has(i.contactId));
-    const followUps = mine
+    const followUps = [...mine, ...expandOpenExtras(mine)]
       .filter(i => i.followUpAction.trim() !== '' && !i.followUpDone)
       .sort((a, b) => {
         if (a.followUpDue && b.followUpDue) return a.followUpDue.localeCompare(b.followUpDue);

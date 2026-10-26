@@ -67,6 +67,8 @@ export function makeInteraction(contactId: string | null, over: Partial<CskhInte
     followUpDue: null,
     followUpDone: false,
     followUpTaskId: null,
+    extraTaskIds: [],
+    extraTasks: [],
     createdBy: null,
     createdByName: '',
     isArchived: false,

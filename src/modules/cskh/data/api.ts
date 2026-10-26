@@ -25,7 +25,7 @@ import {
   type ClientGiftRow, type ContactRow, type CskhGroupRow, type CskhLogRow, type CskhSettingsRow, type SpecialDateRow,
 } from '../../../lib/cskh/mappers';
 import type {
-  CskhClassifiedTier, CskhContact, CskhContext, CskhGift, CskhGroup, CskhInteraction, CskhOccasion, CskhSettings,
+  CskhClassifiedTier, CskhContact, CskhExtraTask, CskhContext, CskhGift, CskhGroup, CskhInteraction, CskhOccasion, CskhSettings,
   CskhTier, Education, Gender, GeoSource, GroupColor, InitiatedBy, InteractionChannel, InteractionType, RememberNotes,
 } from '../../../lib/cskh/types';
 
@@ -137,12 +137,21 @@ export async function loadCskhData(): Promise<CskhData> {
   // Việc đã hứa đã được đánh dấu xong bên Workspace → coi như xong ở CSKH luôn
   let interactions = logRows.map(mapLogRow);
   const openTaskIds = interactions.filter(i => !i.followUpDone && i.followUpTaskId).map(i => i.followUpTaskId as string);
-  if (openTaskIds.length) {
-    const { data: tasks } = await supabase.from('work_tasks').select('id, status').in('id', openTaskIds);
-    const done = new Set(((tasks ?? []) as { id: string; status: string }[]).filter(t => t.status === 'done').map(t => t.id));
-    if (done.size) {
-      interactions = interactions.map(i => (i.followUpTaskId && done.has(i.followUpTaskId) ? { ...i, followUpDone: true } : i));
-    }
+  const extraIds = [...new Set(interactions.flatMap(i => (i.isArchived ? [] : i.extraTaskIds)))];
+  const watchIds = [...new Set([...openTaskIds, ...extraIds])];
+  if (watchIds.length) {
+    const { data: tasks } = await supabase.from('work_tasks').select('id, title, due_date, status, deleted_at').in('id', watchIds);
+    const rows = (tasks ?? []) as { id: string; title: string; due_date: string | null; status: string; deleted_at: string | null }[];
+    const done = new Set(rows.filter(t => t.status === 'done').map(t => t.id));
+    const byId = new Map(rows.filter(t => !t.deleted_at).map(t => [t.id, t]));
+    interactions = interactions.map(i => ({
+      ...i,
+      followUpDone: i.followUpDone || (!!i.followUpTaskId && done.has(i.followUpTaskId)),
+      extraTasks: i.extraTaskIds.flatMap((id): CskhExtraTask[] => {
+        const t = byId.get(id);
+        return t ? [{ id, action: taskActionOf(t.title), due: t.due_date, done: t.status === 'done' }] : [];
+      }),
+    }));
   }
 
   const occasions: CskhOccasion[] = [
@@ -195,6 +204,11 @@ export function cskhTaskTitle(companyName: string | null | undefined, action: st
   return `${company ? `[${company}] ` : ''}CSKH: ${action} — ${who}`;
 }
 
+/** Phần "việc" trong tên việc Workspace: bỏ "[Công ty] CSKH: " ở đầu và " — người" ở cuối. */
+export function taskActionOf(title: string): string {
+  return title.replace(/^\s*(\[[^\]]*\]\s*)?CSKH:\s*/, '').replace(/\s+—\s+[^—]*$/, '').trim();
+}
+
 export interface WriteCtx {
   user: AppUser | null;
   clients: readonly Client[];
@@ -206,6 +220,36 @@ export function defaultClientIdOf(contact: Pick<CskhContact, 'clientIds' | 'prim
   return contact.primaryClientIds[0] ?? contact.clientIds[0] ?? null;
 }
 
+/** Tạo các việc THÊM trong Workspace; trả về id theo đúng thứ tự. */
+async function insertExtraTasks(
+  extras: readonly { action: string; due: string }[],
+  o: { contact: CskhContact | null; client: Client | null; content: string; ctx: WriteCtx; fallbackCompany?: string | null; who: string },
+): Promise<string[]> {
+  if (!extras.length) return [];
+  if (extras.some(e => !e.due)) throw new Error('Mỗi việc cần có hạn');
+  const assignee = o.contact?.ownerId ?? o.ctx.user?.id;
+  if (!assignee) throw new Error('Chưa đăng nhập');
+  const { data, error } = await supabase.from('work_tasks').insert(extras.map(e => ({
+    user_id: assignee,
+    client_id: o.client?.id ?? null,
+    branch_id: branchOf(o.client, o.ctx.branches)?.id ?? null,
+    title: cskhTaskTitle(o.client?.name ?? o.contact?.organization ?? o.fallbackCompany, e.action, o.who),
+    task_type: 'CSKH',
+    due_date: e.due,
+    priority: 'high',
+    status: 'pending',
+    notes: o.content.trim() || null,
+  }))).select('id');
+  if (error) throw writeError(error);
+  return ((data ?? []) as { id: string }[]).map(r => r.id);
+}
+
+/** Ghi extra_task_ids (migration 175); DB chưa chạy 175 thì bỏ qua — việc vẫn nằm ở Workspace. */
+async function saveExtraTaskIds(logId: string, ids: readonly string[]): Promise<void> {
+  const { error } = await supabase.from('cskh_logs').update({ extra_task_ids: [...ids] }).eq('id', logId);
+  if (error && !isMissingSchema(error)) throw writeError(error);
+}
+
 /**
  * Ghi 1 dòng nhật ký. Có "việc tiếp theo" + hạn → tạo luôn 1 việc trong
  * Workspace (work_tasks, giao cho NGƯỜI PHỤ TRÁCH của người liên hệ, không có
@@ -215,6 +259,7 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
   const { contact } = input;
   const action = input.followUpAction.trim();
   if (action && !input.followUpDue) throw new Error('Việc tiếp theo cần có hạn');
+  if ((input.extraFollowUps ?? []).some(e => e.action.trim() && !e.due)) throw new Error('Mỗi việc cần có hạn');
   const client = input.clientId ? ctx.clients.find(c => c.id === input.clientId) ?? null : null;
 
   let taskId: string | null = null;
@@ -260,23 +305,15 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
     throw writeError(error);
   }
 
-  // Việc thêm: mỗi việc 1 dòng trong Workspace (cùng người phụ trách, công ty, chi nhánh)
+  // Việc thêm: mỗi việc 1 dòng trong Workspace, liên kết với dòng nhật ký để sửa lại sau
   const extras = (input.extraFollowUps ?? []).map(e => ({ action: e.action.trim(), due: e.due })).filter(e => e.action);
-  if (extras.some(e => !e.due)) throw new Error('Mỗi việc cần có hạn');
   if (extras.length) {
-    const assignee = contact.ownerId ?? ctx.user?.id;
-    const { error: extraErr } = await supabase.from('work_tasks').insert(extras.map(e => ({
-      user_id: assignee,
-      client_id: client?.id ?? null,
-      branch_id: branchOf(client, ctx.branches)?.id ?? null,
-      title: cskhTaskTitle(client?.name ?? contact.organization, e.action, contact.fullName),
-      task_type: 'CSKH',
-      due_date: e.due,
-      priority: 'high',
-      status: 'pending',
-      notes: input.content.trim() || null,
-    })));
-    if (extraErr) throw new Error(`Đã ghi nhật ký nhưng chưa tạo được việc thêm: ${writeError(extraErr).message}`);
+    try {
+      const ids = await insertExtraTasks(extras, { contact, client, content: input.content, ctx, who: contact.fullName });
+      await saveExtraTaskIds((data as { id: string }).id, ids);
+    } catch (e) {
+      throw new Error(`Đã ghi nhật ký nhưng chưa tạo được việc thêm: ${(e as Error).message}`);
+    }
   }
 
   await logActivity({
@@ -292,8 +329,20 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
  * Workspace để không còn việc "CSKH: …" mồ côi. Lỗi ở bước đóng việc không chặn
  * (việc có thể đã bị xoá bên Workspace).
  */
+/**
+ * Mỗi việc THÊM chưa xong của 1 dòng nhật ký → 1 "dòng việc" riêng (id `<logId>#<taskId>`) để Dashboard /
+ * tóm tắt / hồ sơ liệt kê chung với việc đầu. Chỉ dùng để HIỂN THỊ việc đang mở — không đưa vào thống kê.
+ */
+export function expandOpenExtras(list: readonly CskhInteraction[]): CskhInteraction[] {
+  return list.flatMap(i => (i.isArchived ? [] : i.extraTasks.filter(t => !t.done).map(t => ({
+    ...i, id: `${i.id}#${t.id}`, followUpAction: t.action, followUpDue: t.due, followUpDone: false,
+    followUpTaskId: t.id, extraTaskIds: [], extraTasks: [],
+  }))));
+}
+
 export async function setFollowUpDone(it: CskhInteraction, done: boolean, user: AppUser | null): Promise<void> {
-  const { error } = await supabase.from('cskh_logs').update({ followup_done: done }).eq('id', it.id);
+  // Việc thêm (id có "#"): chỉ đóng / mở việc trong Workspace, dòng nhật ký không đổi
+  const { error } = it.id.includes('#') ? { error: null } : await supabase.from('cskh_logs').update({ followup_done: done }).eq('id', it.id);
   if (error) throw writeError(error);
   if (it.followUpTaskId) {
     const now = new Date().toISOString();
@@ -323,6 +372,11 @@ export interface InteractionEdit {
   content: string;
   followUpAction: string;
   followUpDue: string | null;
+  /**
+   * Các việc THÊM sau khi sửa (có taskId = việc đang có, không có = việc mới). Thiếu so với danh
+   * sách cũ = bỏ việc (xoá mềm nếu chưa xong; việc đã xong luôn giữ). undefined = không đụng.
+   */
+  extraFollowUps?: { taskId?: string; action: string; due: string }[];
 }
 
 /**
@@ -341,6 +395,7 @@ export async function updateInteraction(
 ): Promise<void> {
   const action = edit.followUpAction.trim();
   if (action && !edit.followUpDue) throw new Error('Việc tiếp theo cần có hạn');
+  if ((edit.extraFollowUps ?? []).some(e => e.action.trim() && !e.due)) throw new Error('Mỗi việc cần có hạn');
   const who = contact?.fullName || it.contactPerson || 'người liên hệ';
   const hadAction = it.followUpAction.trim() !== '';
   // Dòng cũ chưa gắn người: giữ nguyên công ty đã lưu dạng chữ
@@ -383,6 +438,28 @@ export async function updateInteraction(
   if (error) {
     if (createdTaskId) await supabase.from('work_tasks').delete().eq('id', createdTaskId);
     throw writeError(error);
+  }
+
+  // Việc THÊM: bỏ / sửa / thêm theo danh sách mới
+  if (edit.extraFollowUps) {
+    const now = new Date().toISOString();
+    const wanted = edit.extraFollowUps.map(e => ({ ...e, action: e.action.trim() })).filter(e => e.action);
+    const keepIds = new Set(wanted.filter(e => e.taskId).map(e => e.taskId as string));
+    const old = new Map(it.extraTasks.map(t => [t.id, t]));
+    const taskClient = client ?? (it.clientId ? ctx.clients.find(c => c.id === it.clientId) ?? null : null);
+    const company = taskClient?.name ?? contact?.organization ?? it.clientName;
+    const removed = it.extraTasks.filter(t => !keepIds.has(t.id) && !t.done).map(t => t.id);
+    if (removed.length) {
+      await supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).in('id', removed).neq('status', 'done');
+    }
+    for (const e of wanted) {
+      const prev = e.taskId ? old.get(e.taskId) : undefined;
+      if (!prev || prev.done || (prev.action === e.action && prev.due === e.due)) continue;
+      await supabase.from('work_tasks').update({ title: cskhTaskTitle(company, e.action, who), due_date: e.due, updated_at: now }).eq('id', prev.id);
+    }
+    const created = await insertExtraTasks(wanted.filter(e => !e.taskId), { contact, client: taskClient, content: edit.content, ctx, fallbackCompany: it.clientName, who });
+    const doneKept = it.extraTasks.filter(t => t.done && !keepIds.has(t.id)).map(t => t.id);
+    await saveExtraTaskIds(it.id, [...keepIds, ...doneKept, ...created]);
   }
 
   // Việc đi kèm đã có trong Workspace: sửa theo lời hứa mới, hoặc xoá mềm khi bỏ hứa

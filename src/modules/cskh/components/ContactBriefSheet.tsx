@@ -9,6 +9,7 @@ import type { CskhContact, CskhInteraction } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../../lib/cskh/types';
 import { CHANNEL_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
+import { expandOpenExtras } from '../data/api';
 import { RememberList } from './QuickLogSheet';
 import { Sheet } from './Sheet';
 
@@ -30,7 +31,7 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
 }) {
   const links = contactActionLinks(contact);
   const lastTwo = recent.slice(0, 2);
-  const openFollowUps = recent.filter(i => i.followUpAction.trim() !== '' && !i.followUpDone);
+  const openFollowUps = [...recent, ...expandOpenExtras(recent)].filter(i => i.followUpAction.trim() !== '' && !i.followUpDone);
 
   return (
     <Sheet label={`Tóm tắt ${contact.fullName}`} onClose={onClose}>
