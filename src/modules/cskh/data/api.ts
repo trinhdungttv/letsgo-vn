@@ -182,6 +182,17 @@ export interface InteractionInput {
   content: string;
   followUpAction: string;
   followUpDue: string | null;
+  /** Việc tiếp theo THÊM (ngoài việc đầu): chỉ tạo việc trong Workspace, không gắn vào dòng nhật ký. */
+  extraFollowUps?: { action: string; due: string }[];
+}
+
+/**
+ * Tên việc trong Workspace: "[Công ty] CSKH: <việc> — <người>" — tên công ty đứng đầu để biết
+ * ngay việc của khách nào (người liên hệ có thể kiêm nhiều công ty).
+ */
+export function cskhTaskTitle(companyName: string | null | undefined, action: string, who: string): string {
+  const company = (companyName ?? '').trim();
+  return `${company ? `[${company}] ` : ''}CSKH: ${action} — ${who}`;
 }
 
 export interface WriteCtx {
@@ -214,7 +225,7 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
       user_id: assignee,
       client_id: client?.id ?? null,
       branch_id: branchOf(client, ctx.branches)?.id ?? null,
-      title: `CSKH: ${action} — ${contact.fullName}`,
+      title: cskhTaskTitle(client?.name ?? contact.organization, action, contact.fullName),
       task_type: 'CSKH',
       due_date: input.followUpDue,
       priority: 'high',
@@ -247,6 +258,25 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
     // Đừng để lại việc mồ côi trong Workspace khi dòng nhật ký không lưu được
     if (taskId) await supabase.from('work_tasks').delete().eq('id', taskId);
     throw writeError(error);
+  }
+
+  // Việc thêm: mỗi việc 1 dòng trong Workspace (cùng người phụ trách, công ty, chi nhánh)
+  const extras = (input.extraFollowUps ?? []).map(e => ({ action: e.action.trim(), due: e.due })).filter(e => e.action);
+  if (extras.some(e => !e.due)) throw new Error('Mỗi việc cần có hạn');
+  if (extras.length) {
+    const assignee = contact.ownerId ?? ctx.user?.id;
+    const { error: extraErr } = await supabase.from('work_tasks').insert(extras.map(e => ({
+      user_id: assignee,
+      client_id: client?.id ?? null,
+      branch_id: branchOf(client, ctx.branches)?.id ?? null,
+      title: cskhTaskTitle(client?.name ?? contact.organization, e.action, contact.fullName),
+      task_type: 'CSKH',
+      due_date: e.due,
+      priority: 'high',
+      status: 'pending',
+      notes: input.content.trim() || null,
+    })));
+    if (extraErr) throw new Error(`Đã ghi nhật ký nhưng chưa tạo được việc thêm: ${writeError(extraErr).message}`);
   }
 
   await logActivity({
@@ -325,7 +355,7 @@ export async function updateInteraction(
       user_id: assignee,
       client_id: taskClient?.id ?? null,
       branch_id: branchOf(taskClient, ctx.branches)?.id ?? null,
-      title: `CSKH: ${action} — ${who}`,
+      title: cskhTaskTitle(taskClient?.name ?? contact?.organization ?? it.clientName, action, who),
       task_type: 'CSKH',
       due_date: edit.followUpDue,
       priority: 'high',
@@ -360,7 +390,7 @@ export async function updateInteraction(
     const now = new Date().toISOString();
     const req = action
       ? (action !== it.followUpAction.trim() || edit.followUpDue !== it.followUpDue)
-        ? supabase.from('work_tasks').update({ title: `CSKH: ${action} — ${who}`, due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
+        ? supabase.from('work_tasks').update({ title: cskhTaskTitle(client?.name ?? contact?.organization ?? it.clientName, action, who), due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
         : null
       : supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', it.followUpTaskId).neq('status', 'done');
     if (req) {
