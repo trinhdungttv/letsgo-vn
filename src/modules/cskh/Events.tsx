@@ -4,29 +4,34 @@
 // • Sự kiện sắp tới: ngày dương lần tới (âm lịch đã quy đổi), đếm ngược, nút Thêm vào
 //   Google Calendar (link điền sẵn, sự kiện cả ngày — không cần OAuth). Mặc định chỉ
 //   người đang chăm sóc. Sinh nhật trong hồ sơ hiện kèm (sửa ở hồ sơ).
-// • Lịch sử quà — tránh tặng trùng: Đã tặng / Đã nhận, giá trị, gắn sự kiện.
+// • Lịch sử quà — tránh tặng trùng: Đã tặng / Đã nhận, giá trị, gắn sự kiện. Quà ghi từ Nhật ký
+//   (hình thức "Quà tặng") cũng nằm ở đây; dòng "Quà tặng" cũ chưa có món quà được nhắc ở đầu trang
+//   để ghi bổ sung.
 // Xoá = lưu trữ (xoá mềm), khôi phục được ở trang Lịch sử.
 // ============================================================================
 import { useMemo, useState } from 'react';
 import { CalendarHeart, CalendarPlus, Gift, Pencil, Plus, Trash2 } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
+import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { useAuth } from '../../lib/auth';
 import { formatCurrencyFull } from '../../lib/format';
 import { formatDateVN, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
+import { logOfGift, logsMissingGift } from '../../lib/cskh/logGift';
 import { diffDays, nextOccurrenceIso } from '../../lib/cskh/lunar';
-import type { CskhGift, CskhOccasion, GiftDirection } from '../../lib/cskh/types';
+import type { CskhGift, CskhInteraction, CskhOccasion, GiftDirection } from '../../lib/cskh/types';
 import { GIFT_DIRECTION_LABEL, OCCASION_LABEL } from '../../lib/cskh/types';
-import { archiveGift, archiveOccasion, saveGift, saveOccasion } from './data/api';
+import { archiveGift, archiveOccasion, saveGift, saveOccasion, updateInteraction } from './data/api';
 import { useCskh } from './context';
 import {
-  chipStyle, daysUntilLabel, gcalTemplateUrl, PILL_PRIMARY, PILL_TINTED, PURPLE, ROUND_ICON,
+  chipStyle, daysUntilLabel, gcalTemplateUrl, PANEL, PILL_PRIMARY, PILL_TINTED, PURPLE, ROUND_ICON,
 } from './ui';
 import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, MoreButton, PageTitle, Panel, Quiet, Row, Segmented, Switch } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { GiftForm } from './components/GiftForm';
+import { LogInteractionModal } from './components/LogInteractionModal';
 import { OccasionForm } from './components/OccasionForm';
 
 const PAGE = 30;
@@ -34,6 +39,7 @@ const PAGE = 30;
 export default function CskhEvents() {
   const { data, loading, clients, toast, openProfile } = useCskh();
   const { user } = useAuth();
+  const { branches } = useBranchLookup();
   const today = todayVN();
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
@@ -45,6 +51,8 @@ export default function CskhEvents() {
   const [giftDir, setGiftDir] = useState<'all' | GiftDirection>('all');
   const [occForm, setOccForm] = useState<{ existing: CskhOccasion | null } | null>(null);
   const [giftForm, setGiftForm] = useState<{ existing: CskhGift | null } | null>(null);
+  const [fixingLog, setFixingLog] = useState<CskhInteraction | null>(null);
+  const [showAllMissing, setShowAllMissing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const scopedIds = useMemo(() => new Set(scope.scoped.map(c => c.id)), [scope.scoped]);
@@ -65,6 +73,11 @@ export default function CskhEvents() {
   const gifts = useMemo(() => (data?.gifts ?? [])
     .filter(g => !g.isArchived && (giftDir === 'all' || g.direction === giftDir) && (!g.contactId || scopedIds.has(g.contactId)))
     .sort((a, b) => b.givenAt.localeCompare(a.givenAt)), [data, giftDir, scopedIds]);
+  // Dòng nhật ký "Quà tặng" lẻ chưa có món quà trong Lịch sử quà (trong phạm vi đang xem)
+  const missingGift = useMemo(
+    () => logsMissingGift(data?.interactions ?? [], data?.gifts ?? []).filter(i => i.contactId && scopedIds.has(i.contactId)),
+    [data, scopedIds],
+  );
   const givenYear = (data?.gifts ?? []).filter(g => !g.isArchived && g.direction === 'given' && diffDays(g.givenAt, today) <= 365 && diffDays(g.givenAt, today) >= 0);
   const givenYearValue = givenYear.reduce((s, g) => s + (g.estimatedValue ?? 0), 0);
 
@@ -121,6 +134,37 @@ export default function CskhEvents() {
 
       {!data.migrationReady && <MigrationBanner />}
       <CareScopeBar scope={scope} users={data.users} total={contacts.length} />
+
+      {missingGift.length > 0 && (
+        <section className={`${PANEL} px-4 md:px-5 py-3`} aria-label="Nhật ký quà tặng chưa có món quà">
+          <p className="text-[13.5px] font-semibold text-[#1D1D1F]">
+            {missingGift.length} dòng nhật ký “Quà tặng” chưa có món quà trong Lịch sử quà
+          </p>
+          <p className="text-[12px] text-[#86868B] mt-0.5">Ghi trước khi có ô chọn món quà — bấm “Ghi món quà” để bổ sung (không mất nhật ký).</p>
+          <div className="mt-1">
+            {(showAllMissing ? missingGift : missingGift.slice(0, 4)).map((i, idx) => {
+              const c = i.contactId ? contactById.get(i.contactId) : undefined;
+              return (
+                <Row key={i.id} first={idx === 0} inset={0} align="start">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13.5px] font-semibold text-[#1D1D1F] leading-snug">
+                      {c?.fullName || i.contactPerson || 'Không rõ người'}
+                      {(c?.organization || i.clientName) && <>{' '}<CompanyTag name={c?.organization || i.clientName} /></>}
+                    </p>
+                    <p className="text-[12px] text-[#86868B] mt-0.5 line-clamp-2">{formatDateVN(i.occurredAt)}{i.content ? ` · ${i.content}` : ''}</p>
+                  </div>
+                  <button type="button" onClick={() => setFixingLog(i)} className={PILL_TINTED}>
+                    <Gift size={14} strokeWidth={2.2} /> Ghi món quà
+                  </button>
+                </Row>
+              );
+            })}
+          </div>
+          {missingGift.length > 4 && !showAllMissing && (
+            <MoreButton onClick={() => setShowAllMissing(true)}>Hiện thêm (còn {missingGift.length - 4})</MoreButton>
+          )}
+        </section>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5 items-start">
         <Panel title="Sự kiện sắp tới" count={soon}
@@ -217,7 +261,11 @@ export default function CskhEvents() {
                         className={ROUND_ICON}><Pencil size={14} /></button>
                     )}
                     <button type="button" disabled={busyId === g.id} title="Xoá" aria-label={`Xoá quà ${g.item}`}
-                      onClick={() => { if (confirm(`Xoá món quà "${g.item}"?`)) void run(g.id, () => archiveGift(g, user), 'Đã xoá món quà'); }}
+                      onClick={() => {
+                        const log = logOfGift(data.interactions, g);
+                        const also = log ? `\n\nDòng “Quà tặng” ngày ${formatDateVN(log.occurredAt)} trong Nhật ký${log.followUpAction.trim() && !log.followUpDone ? ' (và việc đã hứa chưa xong của dòng đó)' : ''} cũng bị xoá.` : '';
+                        if (confirm(`Xoá món quà "${g.item}"?${also}\n\nKhôi phục được ở trang Lịch sử.`)) void run(g.id, () => archiveGift(g, user, data.interactions), log ? 'Đã xoá món quà + dòng nhật ký' : 'Đã xoá món quà');
+                      }}
                       className={`${ROUND_ICON} hover:!text-[#D70015] hover:!bg-[#FF3B30]/10`}><Trash2 size={14} /></button>
                   </Row>
                 );
@@ -241,6 +289,25 @@ export default function CskhEvents() {
           }}
         />
       )}
+      {fixingLog && (
+        <LogInteractionModal
+          contacts={contacts}
+          clients={clients}
+          gifts={data.gifts}
+          occasions={data.occasions}
+          existing={fixingLog}
+          today={today}
+          onClose={() => setFixingLog(null)}
+          onUpdate={async edit => {
+            const contact = fixingLog.contactId ? contactById.get(fixingLog.contactId) ?? null : null;
+            try { await updateInteraction(fixingLog, edit, contact, { user, clients, branches }, data.gifts); } catch (e) { return (e as Error).message; }
+            setFixingLog(null);
+            emitCskhDataChanged();
+            toast(edit.gift?.item.trim() ? 'Đã ghi món quà vào Lịch sử quà' : 'Đã lưu nhật ký');
+            return null;
+          }}
+        />
+      )}
       {giftForm && (
         <GiftForm
           contacts={contacts}
@@ -248,12 +315,13 @@ export default function CskhEvents() {
           occasions={data.occasions}
           gifts={data.gifts}
           existing={giftForm.existing}
+          linkedLog={!!giftForm.existing && !!logOfGift(data.interactions, giftForm.existing)}
           onClose={() => setGiftForm(null)}
           onSave={async input => {
-            try { await saveGift(input, giftForm.existing, user); } catch (e) { return (e as Error).message; }
+            try { await saveGift(input, giftForm.existing, { user, clients, branches }, data.interactions); } catch (e) { return (e as Error).message; }
             setGiftForm(null);
             emitCskhDataChanged();
-            toast(giftForm.existing ? 'Đã lưu món quà' : 'Đã ghi món quà');
+            toast(giftForm.existing ? 'Đã lưu món quà' : 'Đã ghi món quà + 1 dòng vào Nhật ký');
             return null;
           }}
         />

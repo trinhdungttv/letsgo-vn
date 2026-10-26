@@ -1,9 +1,12 @@
 // Form "Ghi tương tác" đầy đủ (port PRM LogInteractionModal): người liên hệ (tìm không
 // dấu), công ty (khi người đó kiêm nhiều nơi), hình thức, ngày, nội dung, ai chủ động,
 // việc tiếp theo + hạn nhanh → tự tạo việc trong Workspace.
+// Hình thức "Quà tặng": thêm ô món quà (mình tặng / họ tặng, giá trị, sự kiện) → ghi luôn vào
+// Sự kiện & Quà tặng → Lịch sử quà; sửa / xoá dòng nhật ký thì món quà đi theo.
 // Có `existing` = SỬA dòng nhật ký: điền sẵn, khoá người liên hệ, lưu qua onUpdate.
 import { useState } from 'react';
-import type { CskhContact, CskhInteraction, InteractionType } from '../../../lib/cskh/types';
+import { giftDraftOf, giftInputOf, giftOfLog, type LogGiftDraft } from '../../../lib/cskh/logGift';
+import type { CskhContact, CskhGift, CskhInteraction, CskhOccasion, InteractionType } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL, INTERACTION_TYPES } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
 import { defaultClientIdOf, type InteractionEdit, type InteractionInput } from '../data/api';
@@ -11,6 +14,7 @@ import { ContactAvatar } from './ContactAvatar';
 import { ContactPicker } from './ContactPicker';
 import { EMPTY_FOLLOW_UP, inputCls, type FollowUpValue } from '../ui';
 import { FollowUpPicker } from './FollowUpPicker';
+import { LogGiftFields } from './LogGiftFields';
 import { ChoiceChip, Sheet } from './Sheet';
 
 /** Việc thêm trên form: có taskId = việc đang có trong Workspace; done = đã xong (chỉ xem). */
@@ -18,9 +22,13 @@ type ExtraRow = FollowUpValue & { taskId?: string; done?: boolean };
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function LogInteractionModal({ contacts, clients, initialContactId, existing, today, onSave, onUpdate, onClose }: {
+export function LogInteractionModal({ contacts, clients, gifts = [], occasions = [], initialContactId, existing, today, onSave, onUpdate, onClose }: {
   contacts: readonly CskhContact[];
   clients: readonly Client[];
+  /** Quà đã ghi — tìm món quà của dòng đang sửa + gợi ý "đã tặng gì" để tránh tặng trùng. */
+  gifts?: readonly CskhGift[];
+  /** Sự kiện — để gắn món quà vào một dịp. */
+  occasions?: readonly CskhOccasion[];
   initialContactId?: string;
   /** Dòng nhật ký đang sửa (không có = ghi mới). */
   existing?: CskhInteraction;
@@ -48,15 +56,20 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
   const [extras, setExtras] = useState<ExtraRow[]>(
     () => (existing?.extraTasks ?? []).map(t => ({ taskId: t.id, action: t.action, due: t.due ?? '', done: t.done })),
   );
+  const existingGift = existing ? giftOfLog(gifts, existing) : null;
+  const [giftDraft, setGiftDraft] = useState<LogGiftDraft>(() => giftDraftOf(existingGift));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const contact = contacts.find(c => c.id === contactId) ?? null;
+  // Dòng cũ chưa gắn người (contact = null) không ghi quà được
+  const giftActive = type === 'gift' && !!contact;
   const clientName = (id: string) => clients.find(c => c.id === id)?.name ?? 'Công ty';
 
   const pick = (c: CskhContact | null) => {
     setContactId(c?.id ?? '');
     setClientId(c ? defaultClientIdOf(c) : null);
+    setGiftDraft(d => ({ ...d, occasionId: '' }));
   };
 
   const handleSave = async () => {
@@ -66,6 +79,15 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
     if (extras.some(e => e.action.trim() && !e.due)) { setError('Mỗi việc cần có hạn'); return; }
     if (!occurredAt) { setError('Chọn ngày tương tác'); return; }
     if (occurredAt > today) { setError('Ngày tương tác không được ở tương lai'); return; }
+    const giftInput = giftInputOf(giftDraft);
+    if (giftActive && !giftInput.item && (!editing || existingGift)) {
+      setError(editing ? 'Nhập món quà — hoặc đổi sang hình thức khác để bỏ món quà này khỏi Lịch sử quà' : 'Nhập món quà (sẽ ghi vào Lịch sử quà)');
+      return;
+    }
+    if (giftActive && giftInput.item && !clientId) { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
+    // Đổi dòng "Quà tặng" sang hình thức khác = bỏ món quà khỏi Lịch sử quà → hỏi trước (xoá mềm, khôi phục được)
+    const dropGift = editing && existing.type === 'gift' && type !== 'gift' && !!existingGift;
+    if (dropGift && !confirm(`Đổi sang hình thức khác “Quà tặng” thì món quà “${existingGift.item}” sẽ bị bỏ khỏi Lịch sử quà.\n\nKhôi phục được ở trang Lịch sử. Tiếp tục?`)) return;
     setSaving(true);
     setError('');
     if (existing) {
@@ -79,6 +101,7 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
         followUpAction: followUp.action,
         followUpDue: followUp.due || null,
         extraFollowUps: extras.filter(e => e.action.trim()).map(e => ({ taskId: e.taskId, action: e.action, due: e.due })),
+        gift: giftActive ? giftInput : dropGift ? null : undefined,
       }) ?? null;
       setSaving(false);
       if (err) setError(err);
@@ -96,6 +119,7 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
       followUpAction: followUp.action,
       followUpDue: followUp.due || null,
       extraFollowUps: extras.filter(e => e.action.trim()),
+      gift: giftActive ? giftInput : undefined,
     });
     setSaving(false);
     if (err) setError(err);
@@ -149,6 +173,20 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
             <input type="date" value={occurredAt} max={today} onChange={e => setOccurredAt(e.target.value)} className={inputCls} />
           </div>
         </div>
+
+        {giftActive && (
+          <LogGiftFields
+            draft={giftDraft}
+            onChange={setGiftDraft}
+            past={gifts.filter(g => g.contactId === contactId && !g.isArchived && g.id !== existingGift?.id)}
+            occasions={occasions.filter(o => o.contactId === contactId && o.source === 'special_date' && !o.isArchived)}
+            notice={!clientId
+              ? { tone: 'warn', text: 'Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà (Lịch sử quà tính theo công ty).' }
+              : editing && !existingGift
+                ? { tone: 'info', text: 'Nhật ký này chưa có món quà trong Lịch sử quà — điền món quà để ghi bổ sung (bỏ trống thì giữ nguyên).' }
+                : null}
+          />
+        )}
 
         <label className="flex items-center gap-2 text-[13px] text-[#3A3A3C] cursor-pointer min-h-[40px] md:min-h-0">
           <input type="checkbox" checked={theyInitiated} onChange={e => setTheyInitiated(e.target.checked)} className="w-4 h-4 accent-[#0071E3]" />

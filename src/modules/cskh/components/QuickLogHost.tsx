@@ -13,7 +13,7 @@ import { emitCskhDataChanged, onQuickLogRequest } from '../../../lib/cskh/events
 import { clearPending, getPendingStorage, isPendingReady, loadPending } from '../../../lib/cskh/pendingContact';
 import type { CskhContact } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
-import { addInteraction, defaultClientIdOf, loadContact } from '../data/api';
+import { addInteraction, defaultClientIdOf, loadContact, logToast } from '../data/api';
 import { QuickLogSheet, type QuickLogInput } from './QuickLogSheet';
 
 interface Active {
@@ -85,6 +85,7 @@ export default function QuickLogHost({ clients, toast }: { clients: readonly Cli
         content: input.content,
         followUpAction: input.followUpAction,
         followUpDue: input.followUpDue,
+        gift: input.gift,
       }, { user, clients, branches });
     } catch (e) {
       return (e as Error).message;
@@ -92,7 +93,7 @@ export default function QuickLogHost({ clients, toast }: { clients: readonly Cli
     clearPending(storage);
     setActive(null);
     emitCskhDataChanged(); // các tab đang mở tự tải lại: rời hàng đợi, cập nhật điểm
-    toastRef.current(input.followUpAction ? 'Đã ghi nhận + tạo việc trong Workspace' : 'Đã ghi nhận');
+    toastRef.current(input.type === 'gift' || input.followUpAction ? logToast(input) : 'Đã ghi nhận');
     return null;
   }, [contact, user, clients, branches, storage]);
 

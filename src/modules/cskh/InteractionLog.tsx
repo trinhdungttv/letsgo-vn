@@ -12,18 +12,20 @@
 // tạo đợt hoặc admin.
 // ============================================================================
 import { useCallback, useMemo, useState } from 'react';
-import { Check, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
+import { Check, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { branchOf } from '../../lib/branchRef';
+import { formatCurrencyFull } from '../../lib/format';
 import { formatDateVN, longDateVN, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import { batchGiftsOf, canEditBatch, groupBatches, type InteractionBatch, type LogEntry } from '../../lib/cskh/groupLog';
+import { giftOfLog } from '../../lib/cskh/logGift';
 import { diffDays } from '../../lib/cskh/lunar';
 import { matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import type { CskhInteraction, InteractionType } from '../../lib/cskh/types';
-import { CHANNEL_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
+import { CHANNEL_LABEL, GIFT_DIRECTION_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
 import { applyBatchEdit, archiveBatch, archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
 import { useCskh } from './context';
@@ -123,11 +125,14 @@ export default function CskhInteractionLog() {
 
   const remove = async (i: CskhInteraction) => {
     const w = whoOf(i);
-    const extra = i.followUpTaskId && !i.followUpDone ? '\nViệc đã hứa đi kèm (chưa xong) trong Workspace cũng bị xoá.' : '';
+    const gifts = data?.gifts ?? [];
+    const gift = giftOfLog(gifts, i);
+    const extra = (i.followUpTaskId && !i.followUpDone ? '\nViệc đã hứa đi kèm (chưa xong) trong Workspace cũng bị xoá.' : '')
+      + (gift ? `\nMón quà “${gift.item}” ghi kèm cũng bị xoá khỏi Lịch sử quà.` : '');
     if (!confirm(`Xoá dòng nhật ký ngày ${formatDateVN(i.occurredAt)} với ${w.name}?${extra}\n\nKhôi phục được ở trang Lịch sử.`)) return;
     setBusyId(i.id);
     try {
-      await archiveInteraction(i, user);
+      await archiveInteraction(i, user, gifts);
       emitCskhDataChanged();
       toast('Đã xoá dòng nhật ký');
     } catch (e) {
@@ -255,6 +260,8 @@ export default function CskhInteractionLog() {
               const Icon = INTERACTION_ICON[i.type];
               const hasFollowUp = i.followUpAction.trim() !== '';
               const late = hasFollowUp && !i.followUpDone && i.followUpDue ? diffDays(i.followUpDue, today) : null;
+              const gift = i.type === 'gift' ? giftOfLog(data.gifts, i) : null;
+              const giftRemoved = i.type === 'gift' && !gift && !!giftOfLog(data.gifts, i, true);
               return (
                 <Row key={i.id} first={idx === 0} inset={48} align="start">
                   <span className={`w-9 h-9 shrink-0 rounded-[10px] ${ICON_TILE[TYPE_TILE[i.type]]} text-white flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.12)]`}>
@@ -274,6 +281,25 @@ export default function CskhInteractionLog() {
                       {i.createdByName && <span>· ghi bởi {i.createdByName}</span>}
                     </div>
                     {i.content && <p className="text-[14px] text-[#1D1D1F] leading-relaxed mt-1.5 whitespace-pre-line break-words">{i.content}</p>}
+                    {gift && (
+                      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] px-3 py-2 bg-[#FF3B30]/[0.07] text-[13px]">
+                        <Gift size={14} className="text-[#D70015] shrink-0" strokeWidth={2.2} />
+                        <span className="font-medium text-[#1D1D1F]">{gift.item}</span>
+                        {gift.estimatedValue != null && <span className="text-[#6E6E73] tabular-nums">{formatCurrencyFull(gift.estimatedValue)}</span>}
+                        <span className={`px-2 rounded-full text-[11px] font-medium ${gift.direction === 'given' ? TINT.blue : TINT.green}`}>{GIFT_DIRECTION_LABEL[gift.direction]}</span>
+                        <span className="text-[11.5px] text-[#86868B]">· có trong Lịch sử quà</span>
+                      </p>
+                    )}
+                    {i.type === 'gift' && !gift && i.contactId && (
+                      giftRemoved
+                        ? <p className="mt-2 text-[12px] text-[#86868B]">Món quà của dòng này đã được xoá khỏi Lịch sử quà.</p>
+                        : (
+                          <button type="button" onClick={() => setEditing(i)}
+                            className={`mt-2 inline-flex items-center gap-1.5 rounded-[12px] px-3 py-1.5 text-[12.5px] font-medium text-left ${TINT.orange} hover:opacity-80 transition`}>
+                            <Gift size={13} strokeWidth={2.2} className="shrink-0" /> Chưa ghi món quà vào Lịch sử quà — bấm để ghi
+                          </button>
+                        )
+                    )}
                     {hasFollowUp && (
                       <div className={`mt-2 flex items-start gap-2.5 rounded-[12px] px-3 py-2 ${i.followUpDone ? 'bg-[#F5F5F7]' : late !== null && late > 0 ? 'bg-[#FF3B30]/[0.07]' : 'bg-[#FF9500]/[0.09]'}`}>
                         <button type="button" disabled={busyId === i.id} onClick={() => toggleDone(i)}
@@ -349,13 +375,15 @@ export default function CskhInteractionLog() {
         <LogInteractionModal
           contacts={data.contacts}
           clients={clients}
+          gifts={data.gifts}
+          occasions={data.occasions}
           existing={editing}
           today={today}
           onClose={() => setEditing(null)}
           onUpdate={async edit => {
             const contact = editing.contactId ? contactById.get(editing.contactId) ?? null : null;
             try {
-              await updateInteraction(editing, edit, contact, { user, clients, branches });
+              await updateInteraction(editing, edit, contact, { user, clients, branches }, data.gifts);
             } catch (e) {
               return (e as Error).message;
             }
