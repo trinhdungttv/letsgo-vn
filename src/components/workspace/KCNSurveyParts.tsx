@@ -5,8 +5,8 @@ import { formatDate } from '../../lib/format'
 import { LABOR_AVAIL_OPTIONS } from '../../pages/market/shared'
 import { INPUT, TINT, BTN_TINTED, BTN_ICON } from './wsTheme'
 import {
-  SIGNAL_LABEL, addCompetitorEntry, formatWageRange, formatWageValue, hasLegacyUnskilled, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
-  removeWageEntry, setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput,
+  SIGNAL_LABEL, addCompetitorEntry, formatDong, formatDongRange, formatWageRange, hasLegacyUnskilled, parseDongInput, pickableCompetitors,
+  pickableIndustries, removeCompetitorEntry, removeWageEntry, setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput,
   type IndustryOption, type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry, type WageField,
 } from '../../lib/kcnSurveySnapshot'
 
@@ -184,7 +184,7 @@ export function CompetitorSnapshotView({ entries }: { entries: SurveyCompetitorE
 /* ─────────────────────────── Lương TT — nhập ─────────────────────────── */
 
 /** Ô nhập số TRIỆU: giữ chữ người dùng đang gõ ("7." chưa thành "7") và chỉ đồng bộ lại khi giá trị bên ngoài đổi. */
-function TrInput({ value, onChange, placeholder, strong }: { value: number | null; onChange: (v: number | null) => void; placeholder: string; strong?: boolean }) {
+function TrInput({ value, onChange, placeholder }: { value: number | null; onChange: (v: number | null) => void; placeholder: string }) {
   const [text, setText] = useState(vndToTrInput(value))
   useEffect(() => {
     if (trInputToVnd(text) !== value) setText(vndToTrInput(value))
@@ -193,7 +193,23 @@ function TrInput({ value, onChange, placeholder, strong }: { value: number | nul
     <input
       inputMode="decimal" value={text} placeholder={placeholder}
       onChange={e => { setText(e.target.value); onChange(trInputToVnd(e.target.value)) }}
-      className={`${INPUT} w-full min-w-0 ${strong ? 'text-[15px] font-semibold px-2.5 py-2' : 'text-[12px] px-2 py-1.5'} text-center`}
+      className={`${INPUT} w-full min-w-0 text-[12px] px-2 py-1.5 text-center`}
+    />
+  )
+}
+
+/** Ô nhập ĐỒNG (lương 8h/ngày): gõ "260.000" hoặc "260"; rời ô thì tự định dạng thành 260.000. */
+function VndInput({ value, onChange, placeholder }: { value: number | null; onChange: (v: number | null) => void; placeholder: string }) {
+  const [text, setText] = useState(formatDong(value))
+  useEffect(() => {
+    if (parseDongInput(text) !== value) setText(formatDong(value))
+  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <input
+      inputMode="numeric" value={text} placeholder={placeholder}
+      onChange={e => { setText(e.target.value); onChange(parseDongInput(e.target.value)) }}
+      onBlur={() => setText(formatDong(value))}
+      className={`${INPUT} w-full min-w-0 text-[14px] font-semibold px-2.5 py-2 text-center`}
     />
   )
 }
@@ -329,11 +345,15 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, industri
                     <span>Chưa có Lương TT của ngành này ở {zoneName} — thêm ở tab Lương TT, hoặc nhập tay ở đây.</span>
                   </div>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-[1.15fr_1.4fr_1fr] gap-2 md:gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1.3fr_1fr] gap-2 md:gap-3">
                   {/* Mức căn cứ chính — nổi nhất trên dòng */}
                   <div className="min-w-0 rounded-[10px] bg-[#0071E3]/[0.07] p-2">
-                    <div className="text-[11px] font-semibold text-[#0066CC] mb-1">Lương cơ bản 8h (tr/tháng)</div>
-                    <TrInput value={e.base_wage_8h} onChange={v => set(i, { base_wage_8h: v })} placeholder="vd 7.5" strong />
+                    <div className="text-[11px] font-semibold text-[#0066CC] mb-1">Lương cơ bản 8h (đồng/ngày)</div>
+                    <div className="flex items-center gap-1.5">
+                      <VndInput value={e.base_wage_8h_min} onChange={v => set(i, { base_wage_8h_min: v })} placeholder="từ 260.000" />
+                      <span className="text-[#AEAEB2]">–</span>
+                      <VndInput value={e.base_wage_8h_max} onChange={v => set(i, { base_wage_8h_max: v })} placeholder="đến 280.000" />
+                    </div>
                   </div>
                   <div className="min-w-0 p-2 md:p-0 md:pt-2">
                     <div className="text-[10.5px] text-[#86868B] mb-1">Thực nhận TB – Thời vụ (tr)</div>
@@ -385,11 +405,11 @@ export function WageSnapshotView({ entries }: { entries: SurveyWageEntry[] }) {
   if (entries.length === 0) return <div className="text-[11.5px] text-[#86868B]">Lúc khảo sát không có dòng lương nào.</div>
   // Báo cáo cũ (trước khi có lương cơ bản 8h) không hiện cột 8h trống; cột Phổ thông/Chính thức chỉ hiện khi báo cáo có số.
   const legacy = entries.some(hasLegacyUnskilled)
-  const showBase = entries.some(e => e.base_wage_8h != null) || !legacy
+  const showBase = entries.some(e => e.base_wage_8h_min != null || e.base_wage_8h_max != null) || !legacy
   const showSkilled = entries.some(e => e.skilled_min != null || e.skilled_max != null)
   const headers = [
     'Ngành nghề',
-    ...(showBase ? ['Lương cơ bản 8h (tr)'] : []),
+    ...(showBase ? ['Lương cơ bản 8h (đ/ngày)'] : []),
     'Thực nhận TB – Thời vụ (tr)',
     ...(showSkilled ? ['Chính thức (tr)'] : []),
     ...(legacy ? ['Phổ thông (tr) · cũ'] : []),
@@ -411,7 +431,7 @@ export function WageSnapshotView({ entries }: { entries: SurveyWageEntry[] }) {
                 {e.edited && <span className={`${chip} ${TINT.orange} ml-1.5`}>đã chỉnh</span>}
                 {e.source === 'manual' && <span className={`${chip} ${TINT.gray} ml-1.5`}>nhập tay</span>}
               </td>
-              {showBase && <td className="px-3 py-1.5 whitespace-nowrap font-semibold text-[#0066CC]">{formatWageValue(e.base_wage_8h)}</td>}
+              {showBase && <td className="px-3 py-1.5 whitespace-nowrap font-semibold text-[#0066CC]">{formatDongRange(e.base_wage_8h_min, e.base_wage_8h_max)}</td>}
               <td className="px-3 py-1.5 whitespace-nowrap">{formatWageRange(e.seasonal_min, e.seasonal_max)}</td>
               {showSkilled && <td className="px-3 py-1.5 whitespace-nowrap text-[#1E7B34]">{formatWageRange(e.skilled_min, e.skilled_max)}</td>}
               {legacy && <td className="px-3 py-1.5 whitespace-nowrap text-[#86868B]">{formatWageRange(e.unskilled_min, e.unskilled_max)}</td>}

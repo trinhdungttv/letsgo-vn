@@ -166,9 +166,9 @@ export function parseCompetitorSnapshot(raw: unknown): SurveyCompetitorEntry[] |
 /* ───────────────────────────── Lương TT ───────────────────────────── */
 
 /** Các ô số NHẬP được trên form. Lương phổ thông (unskilled_*) đã bỏ khỏi form — chỉ còn nằm trong báo cáo cũ để xem lại. */
-export type WageField = 'base_wage_8h' | 'seasonal_min' | 'seasonal_max' | 'skilled_min' | 'skilled_max'
+export type WageField = 'base_wage_8h_min' | 'base_wage_8h_max' | 'seasonal_min' | 'seasonal_max' | 'skilled_min' | 'skilled_max'
 
-export const WAGE_FIELDS: WageField[] = ['base_wage_8h', 'seasonal_min', 'seasonal_max', 'skilled_min', 'skilled_max']
+export const WAGE_FIELDS: WageField[] = ['base_wage_8h_min', 'base_wage_8h_max', 'seasonal_min', 'seasonal_max', 'skilled_min', 'skilled_max']
 
 /** 1 dòng lương theo ngành. Giá trị bằng ĐỒNG, giống cột market_surveys.wage_* (giao diện hiện/nhập bằng triệu). */
 export interface SurveyWageEntry {
@@ -176,8 +176,10 @@ export interface SurveyWageEntry {
   industry_id: string | null
   /** Tên ngành LÚC khảo sát — giữ lại để báo cáo cũ vẫn đọc được khi sau này ngành bị đổi tên. */
   industry: string
-  /** Lương cơ bản 8h (đồng/tháng) — mức căn cứ chính, số có cấu trúc để sau này cảnh báo / gợi ý giá Báo giá. Thị trường chưa có cột này nên chỉ nằm trong báo cáo. */
-  base_wage_8h: number | null
+  /** Lương cơ bản 8h — khoảng ĐỒNG / NGÀY (vd 260.000 – 280.000), mức căn cứ chính. Số có cấu trúc để sau này cảnh báo / gợi ý giá
+   *  Báo giá. Khác các khoảng lương còn lại (triệu/tháng). Thị trường chưa có cột này nên chỉ nằm trong báo cáo. */
+  base_wage_8h_min: number | null
+  base_wage_8h_max: number | null
   /** LEGACY: lương phổ thông của báo cáo lưu trước khi bỏ khỏi form. Dòng mới luôn null; chỉ đọc để hiển thị lịch sử, không bao giờ xoá. */
   unskilled_min: number | null
   unskilled_max: number | null
@@ -226,7 +228,7 @@ const entryFromSurvey = (s: SurveyLike, industry: IndustryOption | null): Survey
   industry_id: industry?.id ?? null,
   industry: industry?.name ?? (s.industry ?? '').trim(),
   // Thị trường chưa có cột lương cơ bản 8h → để trống cho nhập tay; lương phổ thông không đưa vào dòng mới.
-  base_wage_8h: null, unskilled_min: null, unskilled_max: null,
+  base_wage_8h_min: null, base_wage_8h_max: null, unskilled_min: null, unskilled_max: null,
   seasonal_min: s.wage_seasonal_min, seasonal_max: s.wage_seasonal_max,
   skilled_min: s.wage_skilled_min, skilled_max: s.wage_skilled_max,
   labor_availability: s.labor_availability || 'Trung bình',
@@ -237,7 +239,7 @@ const entryFromSurvey = (s: SurveyLike, industry: IndustryOption | null): Survey
 /** Dòng trống cho 1 ngành chưa có Lương TT ở KCN này — nhập tay. */
 export const emptyWageEntry = (industry: IndustryOption): SurveyWageEntry => ({
   industry_id: industry.id, industry: industry.name,
-  base_wage_8h: null, unskilled_min: null, unskilled_max: null,
+  base_wage_8h_min: null, base_wage_8h_max: null, unskilled_min: null, unskilled_max: null,
   seasonal_min: null, seasonal_max: null, skilled_min: null, skilled_max: null,
   labor_availability: 'Trung bình', survey_date: null, source: 'manual',
 })
@@ -316,8 +318,27 @@ const hasWage = (e: SurveyWageEntry) => WAGE_FIELDS.some(f => e[f] != null)
 /** Dòng mang số liệu cũ (lương phổ thông) — chỉ để xem lại lịch sử. */
 export const hasLegacyUnskilled = (e: SurveyWageEntry) => e.unskilled_min != null || e.unskilled_max != null
 
-/** "7.5tr"; không có → "—". */
-export const formatWageValue = (v: number | null | undefined) => (v == null ? '—' : `${vndToTrInput(v)}tr`)
+/** Đồng → chuỗi có dấu chấm ngăn nghìn: 260000 → "260.000"; null → "". */
+export const formatDong = (v: number | null | undefined) =>
+  v == null ? '' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+
+/** Ô nhập ĐỒNG ("260.000", "260,000", "260000"). Lương 8h/ngày không thể dưới 1.000đ nên số < 1.000 hiểu là NGHÌN đồng
+ *  ("260" → 260.000, "260,5" → 260.500). Rỗng / 0 / không có số → null. */
+export function parseDongInput(text: string): number | null {
+  const t = text.trim()
+  if (!/\d/.test(t)) return null
+  const n = /^\d+[.,]\d{1,2}$/.test(t) ? Number(t.replace(',', '.')) : Number(t.replace(/\D/g, ''))
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.round(n < 1000 ? n * 1000 : n)
+}
+
+/** "260.000 – 280.000đ"; chỉ 1 đầu thì hiện 1 số; không có → "—". */
+export function formatDongRange(min: number | null, max: number | null): string {
+  const a = formatDong(min); const b = formatDong(max)
+  if (a && b) return a === b ? `${a}đ` : `${a} – ${b}đ`
+  if (a || b) return `${a || b}đ`
+  return '—'
+}
 
 /** "6.5 – 7.2tr"; chỉ có 1 đầu thì hiện 1 số; không có gì → "—". */
 export function formatWageRange(min: number | null, max: number | null): string {
@@ -334,7 +355,7 @@ export const cleanWageEntries = (entries: SurveyWageEntry[]) =>
 export function wageSnapshotToText(entries: SurveyWageEntry[]): string {
   return entries.map(e => {
     const parts = [
-      `lương cơ bản 8h ${formatWageValue(e.base_wage_8h)}`,
+      `lương cơ bản 8h ${formatDongRange(e.base_wage_8h_min, e.base_wage_8h_max)}${e.base_wage_8h_min != null || e.base_wage_8h_max != null ? '/ngày' : ''}`,
       `thực nhận TB thời vụ ${formatWageRange(e.seasonal_min, e.seasonal_max)}`,
       e.skilled_min != null || e.skilled_max != null ? `chính thức ${formatWageRange(e.skilled_min, e.skilled_max)}` : '',
       hasLegacyUnskilled(e) ? `phổ thông ${formatWageRange(e.unskilled_min, e.unskilled_max)}` : '',
@@ -355,7 +376,7 @@ export function parseWageSnapshot(raw: unknown): SurveyWageEntry[] | null {
     out.push({
       industry_id: typeof o.industry_id === 'string' && o.industry_id ? o.industry_id : null,
       industry: typeof o.industry === 'string' ? o.industry : '',
-      base_wage_8h: numOrNull(o.base_wage_8h),
+      base_wage_8h_min: numOrNull(o.base_wage_8h_min), base_wage_8h_max: numOrNull(o.base_wage_8h_max),
       unskilled_min: numOrNull(o.unskilled_min), unskilled_max: numOrNull(o.unskilled_max),
       seasonal_min: numOrNull(o.seasonal_min), seasonal_max: numOrNull(o.seasonal_max),
       skilled_min: numOrNull(o.skilled_min), skilled_max: numOrNull(o.skilled_max),

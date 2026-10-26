@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   addCompetitorEntry, addIndustryEntry, assignIndustryEntry, buildInitialCompetitorEntries, buildWageSnapshot,
   cleanWageEntries, competitorPresence, competitorSnapshotToText, competitorsToRecord, emptyWageEntry,
-  foldSnapshotIntoNote, formatWageRange, formatWageValue, hasLegacyUnskilled, industryKey, isMissingSnapshotColumnError, matchIndustry,
-  parseCompetitorSnapshot, parseWageSnapshot, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
+  foldSnapshotIntoNote, formatDong, formatDongRange, formatWageRange, hasLegacyUnskilled, industryKey,
+  isMissingSnapshotColumnError, matchIndustry, parseCompetitorSnapshot, parseDongInput, parseWageSnapshot, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
   setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput, wageSnapshotToText,
   type IndustryOption, type SurveyCompetitorEntry,
 } from './kcnSurveySnapshot'
@@ -127,7 +127,7 @@ describe('Lương TT của KCN', () => {
     expect(rows.map(r => r.industry)).toEqual(['Dệt may', 'Điện tử'])
     expect(rows[1]).toMatchObject({ seasonal_min: 6_500_000, seasonal_max: 7_500_000, skilled_min: 8_500_000, survey_date: '2026-09-01', source: 'market' })
     // Thị trường chưa có cột lương cơ bản 8h → để trống; lương phổ thông không đưa vào dòng mới
-    expect(rows[1]).toMatchObject({ base_wage_8h: null, unskilled_min: null, unskilled_max: null })
+    expect(rows[1]).toMatchObject({ base_wage_8h_min: null, base_wage_8h_max: null, unskilled_min: null, unskilled_max: null })
     expect(rows[0].labor_availability).toBe('Khan hiếm')
   })
 
@@ -154,10 +154,10 @@ describe('Lương TT của KCN', () => {
 
   it('sửa số trong báo cáo: đánh dấu đã chỉnh, không đụng bản gốc; dòng nhập tay thêm / dọn dòng trống', () => {
     const base = buildWageSnapshot('KCN Tân Bình', [survey('KCN Tân Bình', 'Điện tử', '2026-09-01')])
-    const next = setWageEntryField(base, 0, { seasonal_max: 7_200_000, base_wage_8h: 7_000_000 })
-    expect(next[0]).toMatchObject({ seasonal_max: 7_200_000, base_wage_8h: 7_000_000, edited: true })
+    const next = setWageEntryField(base, 0, { seasonal_max: 7_200_000, base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
+    expect(next[0]).toMatchObject({ seasonal_max: 7_200_000, base_wage_8h_min: 260_000, base_wage_8h_max: 280_000, edited: true })
     expect(base[0].seasonal_max).toBe(7_500_000)
-    expect(base[0].base_wage_8h).toBeNull()
+    expect(base[0].base_wage_8h_min).toBeNull()
     expect(base[0].edited).toBeUndefined()
     const manual = emptyWageEntry({ id: 'i-ck', name: 'Cơ khí & Chế tạo' })
     const withManual = [...next, manual, { ...emptyWageEntry({ id: null, name: '   ' }) }, { ...emptyWageEntry({ id: null, name: '' }), seasonal_min: 5_000_000 }]
@@ -176,7 +176,7 @@ describe('Lương TT của KCN', () => {
   it('xuất chữ', () => {
     const rows = buildWageSnapshot('KCN Tân Bình', [survey('KCN Tân Bình', 'Điện tử', '2026-09-01')])
     expect(wageSnapshotToText(rows)).toBe('• Điện tử: lương cơ bản 8h — · thực nhận TB thời vụ 6.5 – 7.5tr · chính thức 8.5tr · nguồn LĐ Dồi dào')
-    expect(wageSnapshotToText(setWageEntryField(rows, 0, { base_wage_8h: 7_500_000, skilled_min: null, skilled_max: null }))).toBe('• Điện tử: lương cơ bản 8h 7.5tr · thực nhận TB thời vụ 6.5 – 7.5tr · nguồn LĐ Dồi dào')
+    expect(wageSnapshotToText(setWageEntryField(rows, 0, { base_wage_8h_min: 260_000, base_wage_8h_max: 280_000, skilled_min: null, skilled_max: null }))).toBe('• Điện tử: lương cơ bản 8h 260.000 – 280.000đ/ngày · thực nhận TB thời vụ 6.5 – 7.5tr · nguồn LĐ Dồi dào')
   })
 })
 
@@ -244,7 +244,7 @@ describe('chọn ngành từ Ngành Nghề + Lương TT đúng KCN và ngành', 
     // Cơ khí chỉ có số ở KCN khác → KHÔNG mượn số của KCN khác
     const noData = addIndustryEntry([], INDUSTRIES[2], ZONE_TB, wsurveys)
     expect(noData[0]).toEqual(emptyWageEntry(INDUSTRIES[2]))
-    expect(noData[0]).toMatchObject({ source: 'manual', base_wage_8h: null, seasonal_min: null })
+    expect(noData[0]).toMatchObject({ source: 'manual', base_wage_8h_min: null, base_wage_8h_max: null, seasonal_min: null })
     // Dược phẩm: không có ở đâu cả
     expect(addIndustryEntry([], INDUSTRIES[3], ZONE_TB, wsurveys)[0].source).toBe('manual')
   })
@@ -281,15 +281,35 @@ describe('chọn ngành từ Ngành Nghề + Lương TT đúng KCN và ngành', 
 })
 
 describe('lương cơ bản 8h + bỏ lương phổ thông', () => {
-  it('8h là số có cấu trúc (đồng), lưu và đọc lại đúng; nhập bằng triệu', () => {
-    const rows = setWageEntryField(addIndustryEntry([], INDUSTRIES[0], ZONE_TB, wsurveys), 0, { base_wage_8h: trInputToVnd('7,5') })
-    expect(rows[0].base_wage_8h).toBe(7_500_000)
+  it('8h là khoảng ĐỒNG/ngày có cấu trúc, lưu và đọc lại đúng (số, không phải chữ)', () => {
+    const rows = setWageEntryField(addIndustryEntry([], INDUSTRIES[0], ZONE_TB, wsurveys), 0, {
+      base_wage_8h_min: parseDongInput('260.000'), base_wage_8h_max: parseDongInput('280.000'),
+    })
+    expect(rows[0]).toMatchObject({ base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
     const stored = JSON.parse(JSON.stringify(rows))
-    expect(stored[0].base_wage_8h).toBe(7_500_000)                      // số, không phải chữ
-    expect(parseWageSnapshot(stored)?.[0].base_wage_8h).toBe(7_500_000)
-    expect(parseWageSnapshot([{ industry: 'X', base_wage_8h: '7,5' }])?.[0].base_wage_8h).toBeNull()   // chữ rác → null
-    expect(formatWageValue(7_500_000)).toBe('7.5tr')
-    expect(formatWageValue(null)).toBe('—')
+    expect(stored[0].base_wage_8h_min).toBe(260_000)
+    expect(stored[0].base_wage_8h_max).toBe(280_000)
+    expect(parseWageSnapshot(stored)?.[0]).toMatchObject({ base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
+    expect(parseWageSnapshot([{ industry: 'X', base_wage_8h_min: '260.000', base_wage_8h_max: null }])?.[0]).toMatchObject({ base_wage_8h_min: null, base_wage_8h_max: null })   // chữ rác → null
+  })
+
+  it('ô nhập đồng: nhận 260.000 / 260,000 / 260000 / 260 (= 260 nghìn); rỗng, 0, chữ → null', () => {
+    for (const t of ['260.000', '260,000', '260000', ' 260 000 ', '260']) expect(parseDongInput(t), t).toBe(260_000)
+    expect(parseDongInput('260,5')).toBe(260_500)
+    expect(parseDongInput('1.250.000')).toBe(1_250_000)
+    for (const t of ['', '   ', '0', 'abc', '-']) expect(parseDongInput(t), t).toBeNull()
+  })
+
+  it('định dạng đồng có dấu chấm ngăn nghìn; khoảng 1 đầu / 2 đầu / trống', () => {
+    expect(formatDong(260_000)).toBe('260.000')
+    expect(formatDong(1_250_000)).toBe('1.250.000')
+    expect(formatDong(950)).toBe('950')
+    expect(formatDong(null)).toBe('')
+    expect(parseDongInput(formatDong(1_250_000))).toBe(1_250_000)   // định dạng rồi đọc lại không đổi số
+    expect(formatDongRange(260_000, 280_000)).toBe('260.000 – 280.000đ')
+    expect(formatDongRange(260_000, 260_000)).toBe('260.000đ')
+    expect(formatDongRange(null, 280_000)).toBe('280.000đ')
+    expect(formatDongRange(null, null)).toBe('—')
   })
 
   it('dòng mới (từ Lương TT hoặc nhập tay) không còn mang lương phổ thông', () => {
@@ -309,7 +329,7 @@ describe('lương cơ bản 8h + bỏ lương phổ thông', () => {
       labor_availability: 'Dồi dào', survey_date: '2026-09-01', source: 'market',
     }]
     const parsed = parseWageSnapshot(old)!
-    expect(parsed[0]).toMatchObject({ unskilled_min: 6_000_000, unskilled_max: 7_000_000, seasonal_min: 7_000_000, skilled_max: 10_000_000, base_wage_8h: null })
+    expect(parsed[0]).toMatchObject({ unskilled_min: 6_000_000, unskilled_max: 7_000_000, seasonal_min: 7_000_000, skilled_max: 10_000_000, base_wage_8h_min: null, base_wage_8h_max: null })
     expect(hasLegacyUnskilled(parsed[0])).toBe(true)
     expect(wageSnapshotToText(parsed)).toContain('phổ thông 6 – 7tr')
     expect(cleanWageEntries(parsed)[0].unskilled_max).toBe(7_000_000)                  // lưu lại không làm rơi trường cũ
@@ -317,8 +337,8 @@ describe('lương cơ bản 8h + bỏ lương phổ thông', () => {
   })
 
   it('gắn lại ngành: dòng chỉ có 8h/thời vụ do người dùng nhập thì giữ số, không bị Lương TT đè', () => {
-    const typed = setWageEntryField([emptyWageEntry({ id: null, name: 'Chưa rõ' })], 0, { base_wage_8h: 7_000_000 })
+    const typed = setWageEntryField([emptyWageEntry({ id: null, name: 'Chưa rõ' })], 0, { base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
     const re = assignIndustryEntry(typed, 0, INDUSTRIES[1], ZONE_TB, wsurveys)
-    expect(re[0]).toMatchObject({ industry_id: 'i-mm', base_wage_8h: 7_000_000, source: 'manual', seasonal_min: null })
+    expect(re[0]).toMatchObject({ industry_id: 'i-mm', base_wage_8h_min: 260_000, base_wage_8h_max: 280_000, source: 'manual', seasonal_min: null })
   })
 })
