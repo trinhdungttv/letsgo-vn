@@ -95,7 +95,7 @@ export default function CskhInteractionLog() {
   const q = normalizeSearch(search);
   const filtered = logs.filter(i => {
     if (person !== 'all' && i.contactId !== person) return false;
-    if (openOnly && (!i.followUpAction.trim() || i.followUpDone)) return false;
+    if (openOnly && !((i.followUpAction.trim() && !i.followUpDone) || i.extraTasks.some(t => !t.done))) return false;
     if (recorder !== 'all' && i.createdBy !== recorder) return false;
     if (type !== 'all' && i.type !== type) return false;
     if (branch !== 'all' && branchIdOf(i) !== branch) return false;
@@ -105,7 +105,7 @@ export default function CskhInteractionLog() {
     }
     return true;
   });
-  const openCount = logs.filter(i => i.followUpAction.trim() && !i.followUpDone).length;
+  const openCount = logs.reduce((n, i) => n + (i.followUpAction.trim() && !i.followUpDone ? 1 : 0) + i.extraTasks.filter(t => !t.done).length, 0);
   const filtersOn = person !== 'all' || openOnly || recorder !== 'all' || type !== 'all' || branch !== 'all' || !!q;
 
   const toggleDone = async (i: CskhInteraction) => {
@@ -299,6 +299,34 @@ export default function CskhInteractionLog() {
                         </span>
                       </div>
                     )}
+                    {i.extraTasks.map(t => {
+                      const tLate = !t.done && t.due ? diffDays(t.due, today) : null;
+                      const row: CskhInteraction = { ...i, id: `${i.id}#${t.id}`, followUpAction: t.action, followUpDue: t.due, followUpDone: t.done, followUpTaskId: t.id, extraTaskIds: [], extraTasks: [] };
+                      return (
+                        <div key={t.id} className={`mt-2 flex items-start gap-2.5 rounded-[12px] px-3 py-2 ${t.done ? 'bg-[#F5F5F7]' : tLate !== null && tLate > 0 ? 'bg-[#FF3B30]/[0.07]' : 'bg-[#FF9500]/[0.09]'}`}>
+                          <button type="button" disabled={busyId === row.id} onClick={() => toggleDone(row)}
+                            aria-label={t.done ? `Mở lại: ${t.action}` : `Đánh dấu xong: ${t.action}`} title={t.done ? 'Mở lại' : 'Đánh dấu xong'}
+                            className="group w-8 h-8 md:w-6 md:h-6 -m-1 md:m-0 shrink-0 flex items-center justify-center disabled:opacity-50">
+                            <span className={`w-[22px] h-[22px] rounded-full flex items-center justify-center transition ${t.done
+                              ? 'bg-[#34C759] text-white'
+                              : 'border-[1.5px] border-[#C7C7CC] bg-white text-transparent group-hover:border-[#34C759] group-hover:text-[#34C759]'}`}>
+                              <Check size={12} strokeWidth={3} />
+                            </span>
+                          </button>
+                          <span className="min-w-0 flex-1 text-[13.5px] leading-snug pt-0.5">
+                            <span className={t.done ? 'text-[#86868B] line-through' : 'text-[#1D1D1F] font-medium'}>{t.action}</span>
+                            <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {t.done ? <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.green}`}>Đã xong</span>
+                                : <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.orange}`}>Đang chờ</span>}
+                              {tLate !== null && tLate > 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.red}`}>Trễ hạn {tLate} ngày</span>}
+                              {tLate === 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.orange}`}>Hạn hôm nay</span>}
+                              {t.due && (tLate === null || tLate < 0) && <span className="text-[11.5px] text-[#86868B]">hạn {formatDateVN(t.due)}</span>}
+                              <span className="text-[11.5px] text-[#86868B]">· có việc trong Workspace</span>
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                   <span className="shrink-0 flex flex-col md:flex-row gap-0.5">
                     <button type="button" disabled={busyId === i.id} onClick={() => setEditing(i)} title="Sửa dòng nhật ký" aria-label={`Sửa nhật ký ngày ${formatDateVN(i.occurredAt)} với ${w.name}`}

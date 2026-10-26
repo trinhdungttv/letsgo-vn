@@ -17,7 +17,7 @@ import { diffDays, nextOccurrenceIso } from '../../lib/cskh/lunar';
 import { SCORE_GRADE_LABEL, scoreGrade } from '../../lib/cskh/score';
 import type { CskhInteraction } from '../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../lib/cskh/types';
-import { addInteraction, setFollowUpDone } from './data/api';
+import { addInteraction, setFollowUpDone, expandOpenExtras } from './data/api';
 import { useCskhData } from './data/useCskhData';
 import {
   CARE_STATUS_COLOR, chipStyle, groupDisplayOf, LINK, PANEL, ROUND_ADD, scoreColor,
@@ -69,7 +69,7 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
       caredCount: cared.length,
       avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
       overdue: cared.filter(c => stats.get(c.id)?.status === 'overdue').length,
-      openFollowUps: logs.filter(i => i.followUpAction.trim() && !i.followUpDone),
+      openFollowUps: [...logs, ...expandOpenExtras(logs)].filter(i => i.followUpAction.trim() && !i.followUpDone),
       recent: logs.slice(0, 5),
       upcoming,
       giftsYear,
