@@ -59,6 +59,7 @@ export interface CskhLogColumns {
   initiated_by: string | null;
   followup_due: string | null;
   followup_task_id: string | null;
+  extra_task_ids: string[];
   created_by: string | null;
   created_by_name: string | null;
   is_archived: boolean;
@@ -215,6 +216,8 @@ export function mapLogRow(row: CskhLogRow): CskhInteraction {
     followUpDue: row.followup_due ?? null,
     followUpDone: !!row.followup_done,
     followUpTaskId: row.followup_task_id ?? null,
+    extraTaskIds: Array.isArray(row.extra_task_ids) ? row.extra_task_ids : [],
+    extraTasks: [],
     createdBy: row.created_by ?? null,
     createdByName: text(row.created_by_name),
     isArchived: !!row.is_archived,

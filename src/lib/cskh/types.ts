@@ -230,6 +230,13 @@ export interface CskhContact {
   updatedAt: string;
 }
 
+export interface CskhExtraTask {
+  id: string;
+  action: string;
+  due: string | null;
+  done: boolean;
+}
+
 export interface CskhInteraction {
   id: string;
   /** null = dòng nhật ký cũ chỉ có tên công ty / người liên hệ dạng chữ. */
@@ -247,6 +254,10 @@ export interface CskhInteraction {
   followUpDue: string | null;
   followUpDone: boolean;
   followUpTaskId: string | null;
+  /** Id các việc THÊM trong Workspace tạo từ dòng này (migration 175). */
+  extraTaskIds: string[];
+  /** Việc thêm đã nạp từ work_tasks (chưa xoá) — loadCskhData điền. */
+  extraTasks: CskhExtraTask[];
   createdBy: string | null;
   createdByName: string;
   isArchived: boolean;

@@ -11,13 +11,14 @@ function builder(table: string) {
   const call: Call = { table, op: 'select', filters: [] };
   const result = () => (failOn.has(`${table}:${call.op}`)
     ? { data: null, error: { message: 'lỗi giả' } }
-    : { data: call.op === 'insert' ? { id: 'task-new' } : { id: 'row' }, error: null });
+    : { data: call.op === 'insert' ? (Array.isArray(call.payload) ? (call.payload as unknown[]).map((_, i) => ({ id: `task-new-${i}` })) : { id: 'task-new' }) : { id: 'row' }, error: null });
   const b: Record<string, unknown> = {
     insert: (p: unknown) => { call.op = 'insert'; call.payload = p; calls.push(call); return b; },
     update: (p: unknown) => { call.op = 'update'; call.payload = p; calls.push(call); return b; },
     delete: () => { call.op = 'delete'; calls.push(call); return b; },
     select: () => b,
     eq: (k: string, v: unknown) => { call.filters.push(`${k}=${v}`); return b; },
+    in: (k: string, v: unknown[]) => { call.filters.push(`${k} in ${v.join(',')}`); return b; },
     neq: (k: string, v: unknown) => { call.filters.push(`${k}!=${v}`); return b; },
     single: () => Promise.resolve(result()),
     then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(result()).then(res, rej),
@@ -95,6 +96,32 @@ describe('updateInteraction', () => {
     const it0 = makeInteraction('c1');
     await expect(updateInteraction(it0, { ...baseEdit, followUpAction: 'Hẹn gặp', followUpDue: '2026-10-25' }, contact, ctx)).rejects.toThrow('lỗi giả');
     expect(of('work_tasks', 'delete')[0].filters).toContain('id=task-new');
+  });
+
+  it('việc thêm: sửa việc cũ, bỏ việc chưa xong, giữ việc đã xong, thêm việc mới có tên công ty', async () => {
+    const it0 = makeInteraction('c1', {
+      extraTaskIds: ['e1', 'e2', 'e3'],
+      extraTasks: [
+        { id: 'e1', action: 'Gọi lại', due: '2026-10-20', done: false },
+        { id: 'e2', action: 'Gửi mẫu', due: '2026-10-21', done: false },
+        { id: 'e3', action: 'Đã ký', due: '2026-10-15', done: true },
+      ],
+    });
+    await updateInteraction(it0, {
+      ...baseEdit,
+      extraFollowUps: [
+        { taskId: 'e1', action: 'Gọi lại chị Lan', due: '2026-10-22' },
+        { action: 'Nhắc phụ lục', due: '2026-10-30' },
+      ],
+    }, { ...contact, organization: 'SUNDUCK' }, ctx);
+    const wt = calls.filter(c => c.table === 'work_tasks');
+    expect(wt.find(c => c.op === 'update' && c.filters.includes('id=e1'))?.payload)
+      .toMatchObject({ title: 'CSKH: Gọi lại chị Lan — Chị Lan'.replace('CSKH', '[SUNDUCK] CSKH'), due_date: '2026-10-22' });
+    expect(wt.find(c => c.op === 'update' && c.filters.some(f => f.startsWith('id in')))?.payload).toHaveProperty('deleted_at');
+    expect(wt.find(c => c.op === 'insert')?.payload).toMatchObject([{ title: '[SUNDUCK] CSKH: Nhắc phụ lục — Chị Lan', due_date: '2026-10-30' }]);
+    const ids = of('cskh_logs', 'update').map(c => c.payload).find(p => p && 'extra_task_ids' in (p as object)) as { extra_task_ids: string[] };
+    expect(ids.extra_task_ids).toEqual(expect.arrayContaining(['e1', 'e3']));
+    expect(ids.extra_task_ids).not.toContain('e2');
   });
 
   it('có việc mà thiếu hạn → báo lỗi, không ghi gì', async () => {

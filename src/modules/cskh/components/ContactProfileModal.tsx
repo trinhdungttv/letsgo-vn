@@ -41,7 +41,7 @@ import AvatarUpload from '../../../components/contacts/AvatarUpload';
 import RoleSelect from '../../../components/contacts/RoleSelect';
 import ContactDeleteDialog from '../../../components/contacts/ContactDeleteDialog';
 import ContactFormModal from '../../../components/contacts/ContactFormModal';
-import { saveProfile, setFollowUpDone, type CskhData } from '../data/api';
+import { expandOpenExtras, saveProfile, setFollowUpDone, type CskhData } from '../data/api';
 import { mapLinkCoords, useMapLink } from '../data/mapLink';
 import { markContactLaunched } from '../launch';
 import {
@@ -268,7 +268,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     [current, data, today],
   );
   const recent = useMemo(() => data.interactions.filter(i => i.contactId === current.id && !i.isArchived), [data.interactions, current.id]);
-  const openFollowUps = recent.filter(i => i.followUpAction.trim() && !i.followUpDone);
+  const openFollowUps = [...recent, ...expandOpenExtras(recent)].filter(i => i.followUpAction.trim() && !i.followUpDone);
   const introduced = data.contacts.filter(c => c.introducedBy === current.id);
   const introducerOptions = useMemo(
     () => others.slice().sort((a, b) => compareVnName(a.fullName, b.fullName)),
