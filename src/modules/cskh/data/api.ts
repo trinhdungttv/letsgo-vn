@@ -333,9 +333,9 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
  * Mỗi việc THÊM chưa xong của 1 dòng nhật ký → 1 "dòng việc" riêng (id `<logId>#<taskId>`) để Dashboard /
  * tóm tắt / hồ sơ liệt kê chung với việc đầu. Chỉ dùng để HIỂN THỊ việc đang mở — không đưa vào thống kê.
  */
-export function expandOpenExtras(list: readonly CskhInteraction[]): CskhInteraction[] {
-  return list.flatMap(i => (i.isArchived ? [] : i.extraTasks.filter(t => !t.done).map(t => ({
-    ...i, id: `${i.id}#${t.id}`, followUpAction: t.action, followUpDue: t.due, followUpDone: false,
+export function expandOpenExtras(list: readonly CskhInteraction[], includeDone = false): CskhInteraction[] {
+  return list.flatMap(i => (i.isArchived ? [] : i.extraTasks.filter(t => includeDone || !t.done).map(t => ({
+    ...i, id: `${i.id}#${t.id}`, followUpAction: t.action, followUpDue: t.due, followUpDone: t.done,
     followUpTaskId: t.id, extraTaskIds: [], extraTasks: [],
   }))));
 }
