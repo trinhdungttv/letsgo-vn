@@ -23,9 +23,16 @@ export function errorText(e: unknown, prefix = ''): string {
 export function reloadApp() { window.location.reload(); }
 
 const BANNER_ID = 'lgvn-update-banner';
+/** Popup "Có phiên bản mới" (components/ReleaseUpdatePrompt) đang hiện → không cần thêm thanh báo này. */
+export const RELEASE_PROMPT_ID = 'lgvn-release-prompt';
+/** Phát khi gặp lỗi "trang cũ": popup phiên bản mới nghe sự kiện này để kiểm tra server ngay và hiện kèm tên chức năng mới. */
+export const STALE_BUILD_EVENT = 'lgvn:stale-build';
+
+export function hideUpdateBanner() { document.getElementById(BANNER_ID)?.remove(); }
 
 function showUpdateBanner() {
-  if (document.getElementById(BANNER_ID)) return;
+  if (document.getElementById(BANNER_ID) || document.getElementById(RELEASE_PROMPT_ID)) return;
+  window.dispatchEvent(new Event(STALE_BUILD_EVENT));
   const bar = document.createElement('div');
   bar.id = BANNER_ID;
   bar.setAttribute('role', 'status');

@@ -33,6 +33,7 @@ import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
+import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
 import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme';
 
@@ -444,6 +445,8 @@ export default function App() {
   return (
     <AuthProvider>
       <AppInner />
+      {/* Ngoài AppInner để hiện ở mọi màn hình (kể cả đăng nhập / đang tải), không phụ thuộc đăng nhập */}
+      <ReleaseUpdatePrompt />
     </AuthProvider>
   );
 }
