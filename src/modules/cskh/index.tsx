@@ -14,7 +14,7 @@ import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
-import { addGroup, addInteraction, archiveGroup, assignGroups, saveGroupLog, setGender, updateGroup } from './data/api';
+import { addGroup, addInteraction, archiveGroup, assignGroups, logToast, saveGroupLog, setGender, updateGroup } from './data/api';
 import { automationMessage, runCareAutomationOnce } from './automationRunner';
 import { useCskhData } from './data/useCskhData';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
@@ -109,6 +109,8 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
         <LogInteractionModal
           contacts={data.contacts}
           clients={clients}
+          gifts={data.gifts}
+          occasions={data.occasions}
           initialContactId={logFor || undefined}
           today={todayVN()}
           onClose={() => setLogFor(null)}
@@ -120,7 +122,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
             }
             setLogFor(null);
             emitCskhDataChanged();
-            toast(input.followUpAction.trim() ? 'Đã ghi nhật ký + tạo việc trong Workspace' : 'Đã ghi nhật ký tương tác');
+            toast(logToast(input));
             return null;
           }}
         />

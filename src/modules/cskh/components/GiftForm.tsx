@@ -1,6 +1,7 @@
 // Form ghi quà (port PRM OccasionsPage — "tránh tặng trùng, thể hiện sự tinh tế"):
 // Mình tặng / Họ tặng · món quà · giá trị (VND, tuỳ chọn) · ngày · gắn sự kiện · ghi chú.
 // Quà gắn với công ty của người đó (client_gifts) — người kiêm nhiều công ty thì chọn.
+// Ghi quà = 1 lần liên hệ: ghi mới cũng ghi 1 dòng "Quà tặng" vào Nhật ký; sửa quà thì dòng nhật ký đi kèm đổi theo.
 import { useMemo, useState } from 'react';
 import { formatCurrencyFull } from '../../../lib/format';
 import { todayVN } from '../../../lib/cskh/dates';
@@ -14,13 +15,15 @@ import { ChoiceChip, Sheet } from './Sheet';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function GiftForm({ contacts, clients, occasions, gifts, existing, initialContactId, onSave, onClose }: {
+export function GiftForm({ contacts, clients, occasions, gifts, existing, linkedLog = false, initialContactId, onSave, onClose }: {
   contacts: readonly CskhContact[];
   clients: readonly Client[];
   occasions: readonly CskhOccasion[];
   /** Quà đã ghi — hiện "đã tặng gì trước đây" để tránh tặng trùng. */
   gifts: readonly CskhGift[];
   existing: CskhGift | null;
+  /** Món quà đang sửa có dòng "Quà tặng" trong Nhật ký (sửa ngày / ghi chú ở đây thì dòng đó đổi theo). */
+  linkedLog?: boolean;
   initialContactId?: string;
   onSave: (input: GiftInput) => Promise<string | null>;
   onClose: () => void;
@@ -36,6 +39,7 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
   const [note, setNote] = useState(existing?.note ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const today = todayVN();
 
   const myOccasions = occasions.filter(o => o.contactId === contactId && o.source === 'special_date' && !o.isArchived);
   const past = useMemo(
@@ -47,6 +51,7 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
 
   const handleSave = async () => {
     if (!contact) { setError('Chọn người liên hệ'); return; }
+    if (givenAt > today && givenAt !== existing?.givenAt) { setError('Ngày tặng không được ở tương lai'); return; }
     setSaving(true);
     setError('');
     const err = await onSave({
@@ -99,7 +104,7 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
           </div>
           <div>
             <label className={labelCls}>Ngày</label>
-            <input type="date" value={givenAt} onChange={e => setGivenAt(e.target.value)} className={inputCls} />
+            <input type="date" value={givenAt} max={today} onChange={e => setGivenAt(e.target.value)} className={inputCls} />
           </div>
         </div>
         {myOccasions.length > 0 && (
@@ -115,6 +120,13 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, initia
           <label className={labelCls}>Ghi chú</label>
           <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} className={`${inputCls} resize-y`} placeholder="VD: anh ấy rất thích, nên tặng lại loại này" />
         </div>
+        {(!existing || linkedLog) && (
+          <p className="text-[11.5px] text-[#86868B] leading-snug">
+            {existing
+              ? 'Món quà này có dòng “Quà tặng” trong Nhật ký — sửa ngày, người, công ty hay ghi chú ở đây thì dòng nhật ký đổi theo.'
+              : 'Ghi quà cũng ghi 1 dòng “Quà tặng” vào Nhật ký (tính là đã liên hệ lần này) — ghi chú dùng chung cho cả hai.'}
+          </p>
+        )}
       </div>
       {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
       <div className="flex gap-2 mt-4">

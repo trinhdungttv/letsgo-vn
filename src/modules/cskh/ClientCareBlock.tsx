@@ -17,7 +17,7 @@ import { diffDays, nextOccurrenceIso } from '../../lib/cskh/lunar';
 import { SCORE_GRADE_LABEL, scoreGrade } from '../../lib/cskh/score';
 import type { CskhInteraction } from '../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../lib/cskh/types';
-import { addInteraction, setFollowUpDone, expandOpenExtras } from './data/api';
+import { addInteraction, setFollowUpDone, expandOpenExtras, logToast } from './data/api';
 import { useCskhData } from './data/useCskhData';
 import {
   CARE_STATUS_COLOR, chipStyle, groupDisplayOf, LINK, PANEL, ROUND_ADD, scoreColor,
@@ -197,6 +197,8 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
         <LogInteractionModal
           contacts={data.contacts}
           clients={clients}
+          gifts={data.gifts}
+          occasions={data.occasions}
           initialContactId={logFor}
           today={today}
           onClose={() => setLogFor(null)}
@@ -208,7 +210,7 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
             }
             setLogFor(null);
             emitCskhDataChanged();
-            toast(input.followUpAction.trim() ? 'Đã ghi nhật ký + tạo việc trong Workspace' : 'Đã ghi nhật ký tương tác');
+            toast(logToast(input));
             return null;
           }}
         />

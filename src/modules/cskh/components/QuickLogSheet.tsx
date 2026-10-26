@@ -4,11 +4,13 @@
 import { useState } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { interactionTypeOfChannel, type ContactActionChannel } from '../../../lib/cskh/contactActions';
+import { EMPTY_GIFT_DRAFT, giftInputOf, type LogGiftDraft, type LogGiftInput } from '../../../lib/cskh/logGift';
 import { rememberDisplayRows } from '../../../lib/cskh/remember';
 import type { CskhContact, InitiatedBy, InteractionChannel, InteractionType } from '../../../lib/cskh/types';
 import { CHANNEL_LABEL, INTERACTION_LABEL, REMEMBER_LABEL } from '../../../lib/cskh/types';
 import { EMPTY_FOLLOW_UP, inputCls, type FollowUpValue } from '../ui';
 import { FollowUpPicker } from './FollowUpPicker';
+import { LogGiftFields } from './LogGiftFields';
 import { ChoiceChip, Sheet } from './Sheet';
 
 export interface QuickLogInput {
@@ -18,6 +20,8 @@ export interface QuickLogInput {
   content: string;
   followUpAction: string;
   followUpDue: string | null;
+  /** Món quà — có khi hình thức là "Quà tặng" (ghi luôn vào Lịch sử quà). */
+  gift?: LogGiftInput;
 }
 
 /** Hình thức khi ghi thủ công (gặp trực tiếp…). */
@@ -60,6 +64,7 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
   const [outcome, setOutcome] = useState<string | null>(null);
   const [theyInitiated, setTheyInitiated] = useState(false);
   const [followUp, setFollowUp] = useState<FollowUpValue>(EMPTY_FOLLOW_UP);
+  const [giftDraft, setGiftDraft] = useState<LogGiftDraft>(EMPTY_GIFT_DRAFT);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -70,6 +75,10 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       setExpanded(true);
       return;
     }
+    const isGift = channel === null && manualType === 'gift';
+    const gift = isGift ? giftInputOf(giftDraft) : undefined;
+    if (gift && !gift.item) { setError('Nhập món quà (sẽ ghi vào Lịch sử quà)'); return; }
+    if (gift && contact.clientIds.length === 0) { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
     const outcomeLabel = OUTCOMES.find(o => o.id === outcome)?.label;
     const content = [outcomeLabel ? `Kết quả: ${outcomeLabel}` : '', note.trim()].filter(Boolean).join(' — ');
     setSaving(true);
@@ -81,6 +90,7 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       content,
       followUpAction: action,
       followUpDue: action !== '' ? followUp.due : null,
+      gift,
     });
     setSaving(false);
     if (err) setError(err);
@@ -105,6 +115,13 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
           {MANUAL_TYPES.map(t => (
             <ChoiceChip key={t} active={manualType === t} onClick={() => setManualType(t)}>{INTERACTION_LABEL[t]}</ChoiceChip>
           ))}
+        </div>
+      )}
+
+      {channel === null && manualType === 'gift' && (
+        <div className="mt-3">
+          <LogGiftFields draft={giftDraft} onChange={setGiftDraft}
+            notice={contact.clientIds.length === 0 ? { tone: 'warn', text: 'Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.' } : null} />
         </div>
       )}
 

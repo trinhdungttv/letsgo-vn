@@ -18,15 +18,19 @@ import { QuoteModal } from '../components/workspace/QuoteModal';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
+import { BranchVisitSettings } from '../components/workspace/BranchVisitSettings';
+import { Switch } from '../components/workspace/Switch';
+import { BranchAvatar } from '../components/branches/BranchAvatar';
 import { CARD, POPOVER, BTN_PRIMARY, BTN_SECONDARY, BTN_TINTED, BTN_ICON, FIELD, INPUT, TINT, ICON_TILE, DOT } from '../components/workspace/wsTheme';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
-import type { Client, FinanceRecord, CRMPipelineEntry, CRMProduct, Page, KCNSummary, Branch } from '../lib/types';
+import type { Client, FinanceRecord, CRMPipelineEntry, CRMProduct, Page, KCNSummary, Branch, BranchTypeHistory } from '../lib/types';
 import { ROLE_LABELS, CRM_STAGES } from '../lib/constants';
 import { formatDate, daysUntil } from '../lib/format';
 import { branchOf, resolveBranchByLegacyText } from '../lib/branchRef';
+import { companyProjectBranchIds, currentMonthKey, groupTypeHistory, visibleVisitBranches } from '../lib/branchVisitRail';
 
 interface WorkspaceProps {
   clients: Client[];
@@ -91,20 +95,12 @@ function RailCard({ title, icon, tile, count, action, children }: {
 /** Dòng trong danh sách kiểu iOS: vạch ngăn thụt lề, dòng đầu không có vạch. */
 const ROW = 'relative flex items-center gap-3 px-4 py-2.5 before:absolute before:left-4 before:right-0 before:top-0 before:h-px before:bg-black/[0.06] first:before:hidden';
 const ROW_HOVER = 'hover:bg-black/[0.025] cursor-pointer transition-colors';
+/** Dòng có avatar 34px đứng đầu: vạch ngăn thụt tới chỗ bắt đầu chữ (16 + 34 + 12). */
+const ROW_AVATAR = 'relative flex items-center gap-3 px-4 py-2.5 before:absolute before:left-[62px] before:right-0 before:top-0 before:h-px before:bg-black/[0.06] first:before:hidden';
 
 const RailEmpty = ({ children }: { children: React.ReactNode }) => (
   <div className="px-4 py-4 text-center text-[13px] text-[#86868B]">{children}</div>
 );
-
-/** Công tắc kiểu iOS. */
-function Switch({ on, onToggle, label }: { on: boolean; onToggle: () => void; label: string }) {
-  return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={onToggle}
-      className={`relative w-[42px] h-[26px] rounded-full transition-colors duration-200 shrink-0 ${on ? 'bg-[#34C759]' : 'bg-black/[0.12]'}`}>
-      <span className={`absolute top-[2px] left-[2px] w-[22px] h-[22px] rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.2)] transition-transform duration-200 ${on ? 'translate-x-4' : ''}`} />
-    </button>
-  );
-}
 
 /** Popover cài đặt ngưỡng nhỏ (dùng cho 2 thẻ rail). */
 function ThresholdPopover({ label, value, onChange, hint, onClose }: {
@@ -240,6 +236,19 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [showVisitSettings, setShowVisitSettings] = useState(false);
   const [branchActivity, setBranchActivity] = useState<Record<string, string>>({});
   const [openBranchPanel, setOpenBranchPanel] = useState<Branch | null>(null);
+  // Chi nhánh bị ẩn khỏi khung (vd. Dự án công ty — công ty tự quản lý, không có liên hệ để chăm sóc).
+  const [hiddenVisitIds, setHiddenVisitIds] = usePersistedState<string[]>('lgvn_visit_hidden_branches', []);
+  const [branchTypeHistory, setBranchTypeHistory] = useState<Record<string, BranchTypeHistory[]>>({});
+
+  // Chưa chạy migration 074 / lỗi mạng → bỏ qua, gợi ý rơi về cột branches.branch_type.
+  useEffect(() => {
+    supabase.from('branch_type_history').select('*').order('effective_from', { ascending: false })
+      .then(({ data }) => { if (data) setBranchTypeHistory(groupTypeHistory(data as BranchTypeHistory[])); });
+  }, []);
+  const companyBranchIds = useMemo(
+    () => companyProjectBranchIds(branches, branchTypeHistory, currentMonthKey()),
+    [branches, branchTypeHistory],
+  );
 
   // morning_priorities.target_name = `Chi nhánh ${tên}`. Các phiên GHI TRƯỚC ĐÂY dùng
   // tên chi nhánh cũ (branches.region), phiên mới dùng tên chuẩn (branches.name). Ta ĐỌC
@@ -277,6 +286,8 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
     return { branch: b, daysSince };
   }).sort((a, b) => (b.daysSince ?? 9999) - (a.daysSince ?? 9999)),
   [branches, branchActivity]);
+  const shownVisitSuggests = useMemo(() => visibleVisitBranches(visitSuggests, hiddenVisitIds), [visitSuggests, hiddenVisitIds]);
+  const hiddenVisitCount = visitSuggests.length - shownVisitSuggests.length;
 
   function visitDotColor(daysSince: number | null) {
     if (daysSince === null || daysSince > 2 * visitThreshold) return DOT.red;
@@ -661,34 +672,48 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
               <RailCard
                 title="Cập nhật chi nhánh" tile="indigo" icon={<Building2 size={13} />}
                 action={
-                  <div className="relative">
-                    <button onClick={() => setShowVisitSettings(v => !v)} title="Cài đặt ngưỡng cảnh báo" className={BTN_ICON}><Settings size={14} /></button>
-                    {showVisitSettings && (
-                      <ThresholdPopover
-                        label="Ngưỡng nhắc liên hệ (ngày)" value={visitThreshold} onChange={setVisitThreshold} onClose={() => setShowVisitSettings(false)}
-                        hint={<>≤ {visitThreshold} ngày: xanh · {visitThreshold}–{2 * visitThreshold} ngày: cam · &gt; {2 * visitThreshold} ngày: đỏ</>}
-                      />
-                    )}
-                  </div>
+                  <button onClick={() => setShowVisitSettings(v => !v)} title="Cài đặt: ngưỡng nhắc & hiện / ẩn chi nhánh" aria-expanded={showVisitSettings}
+                    className={`${BTN_ICON} ${showVisitSettings ? 'bg-black/[0.05] text-[#1D1D1F]' : ''}`}><Settings size={14} /></button>
                 }
               >
-                <div className="flex flex-col max-h-72 overflow-y-auto">
-                  {visitSuggests.length === 0 ? (
-                    <RailEmpty>Chưa có dữ liệu</RailEmpty>
-                  ) : visitSuggests.map(s => (
-                    <div key={s.branch.id} onClick={() => openBranchProfile(s.branch)} className={`${ROW} ${ROW_HOVER}`}>
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${visitDotColor(s.daysSince)}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-medium text-[#1D1D1F] truncate">{s.branch.name}</div>
-                        <div className="text-[11.5px] text-[#86868B] flex items-center gap-1"><Phone size={10} />Gọi điện / nhắn tin hỏi thăm</div>
-                      </div>
-                      <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 tabular-nums ${visitColor(s.daysSince)}`}>
-                        {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày`}
-                      </span>
-                      <ChevronRight size={14} className="text-[#C7C7CC] shrink-0 -mr-1" />
+                {showVisitSettings ? (
+                  <BranchVisitSettings
+                    branches={branches} hiddenIds={hiddenVisitIds} companyIds={companyBranchIds}
+                    threshold={visitThreshold} onThreshold={setVisitThreshold}
+                    onHiddenChange={setHiddenVisitIds} onClose={() => setShowVisitSettings(false)}
+                  />
+                ) : (
+                  <>
+                    <div className="flex flex-col max-h-72 overflow-y-auto">
+                      {shownVisitSuggests.length === 0 ? (
+                        <RailEmpty>{visitSuggests.length === 0 ? 'Chưa có dữ liệu' : 'Đã ẩn hết chi nhánh'}</RailEmpty>
+                      ) : shownVisitSuggests.map(s => (
+                        <div key={s.branch.id} role="button" tabIndex={0}
+                          onClick={() => openBranchProfile(s.branch)}
+                          onKeyDown={e => { if (e.key === 'Enter') openBranchProfile(s.branch); }}
+                          className={`${ROW_AVATAR} ${ROW_HOVER}`}>
+                          <div className="relative shrink-0">
+                            <BranchAvatar branch={s.branch} size={34} />
+                            <span className={`absolute -right-0.5 -bottom-0.5 w-[11px] h-[11px] rounded-full ring-2 ring-white ${visitDotColor(s.daysSince)}`} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13.5px] font-medium text-[#1D1D1F] truncate">{s.branch.name}</div>
+                            {s.branch.manager_name && <div className="text-[11.5px] text-[#86868B] truncate">{s.branch.manager_name}</div>}
+                          </div>
+                          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 tabular-nums ${visitColor(s.daysSince)}`}>
+                            {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày`}
+                          </span>
+                          <ChevronRight size={14} className="text-[#C7C7CC] shrink-0 -mr-1" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    {hiddenVisitCount > 0 && (
+                      <button onClick={() => setShowVisitSettings(true)} className="w-full px-4 pt-2 pb-1 text-left text-[12px] text-[#86868B] hover:text-[#0066CC] transition-colors">
+                        Đang ẩn {hiddenVisitCount} chi nhánh
+                      </button>
+                    )}
+                  </>
+                )}
               </RailCard>
             )}
 

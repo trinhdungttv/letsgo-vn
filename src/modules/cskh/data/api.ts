@@ -11,11 +11,14 @@ import { branchOf } from '../../../lib/branchRef';
 import { contactToForm, saveContact, selectContacts, type ContactFormValues } from '../../../lib/contactOps';
 import { cleanRememberNotes } from '../../../lib/cskh/remember';
 import { planCareReminders } from '../../../lib/cskh/automation';
-import { isValidDayMonth } from '../../../lib/cskh/dates';
+import { isValidDayMonth, todayVN } from '../../../lib/cskh/dates';
 import { sameEducation } from '../../../lib/cskh/education';
 import {
   buildGroupLogRows, canEditBatch, planBatchEdit, type BatchEdit, type GroupLogPlan, type InteractionBatch,
 } from '../../../lib/cskh/groupLog';
+import {
+  giftOfLog, logGiftFields, logGiftInsertRow, logOfGift, NO_LOG_GIFT, planLogGift, sanitizeLogGift, type LogGiftInput,
+} from '../../../lib/cskh/logGift';
 import { planGeo } from '../../../lib/cskh/mapPoints';
 import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
 import { isEmptyPlan, type OccasionFields, type OccasionWritePlan } from '../../../lib/cskh/occasions';
@@ -193,6 +196,11 @@ export interface InteractionInput {
   followUpDue: string | null;
   /** Việc tiếp theo THÊM (ngoài việc đầu): chỉ tạo việc trong Workspace, không gắn vào dòng nhật ký. */
   extraFollowUps?: { action: string; due: string }[];
+  /**
+   * Món quà — BẮT BUỘC khi type = 'gift': ghi luôn vào Lịch sử quà (client_gifts) cùng dấu created_at
+   * với dòng nhật ký. Cần công ty (client_gifts.client_id NOT NULL). Hình thức khác thì bỏ qua.
+   */
+  gift?: LogGiftInput | null;
 }
 
 /**
@@ -207,6 +215,15 @@ export function cskhTaskTitle(companyName: string | null | undefined, action: st
 /** Phần "việc" trong tên việc Workspace: bỏ "[Công ty] CSKH: " ở đầu và " — người" ở cuối. */
 export function taskActionOf(title: string): string {
   return title.replace(/^\s*(\[[^\]]*\]\s*)?CSKH:\s*/, '').replace(/\s+—\s+[^—]*$/, '').trim();
+}
+
+/** Câu báo sau khi ghi tương tác: nói rõ đã ghi thêm việc trong Workspace / món quà trong Lịch sử quà. */
+export function logToast(input: Pick<InteractionInput, 'type' | 'followUpAction' | 'gift'>): string {
+  const parts = [
+    input.type === 'gift' && input.gift ? 'món quà vào Lịch sử quà' : '',
+    input.followUpAction.trim() ? 'việc trong Workspace' : '',
+  ].filter(Boolean);
+  return parts.length ? `Đã ghi nhật ký + ${parts.join(' + ')}` : 'Đã ghi nhật ký tương tác';
 }
 
 export interface WriteCtx {
@@ -262,10 +279,31 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
   if ((input.extraFollowUps ?? []).some(e => e.action.trim() && !e.due)) throw new Error('Mỗi việc cần có hạn');
   const client = input.clientId ? ctx.clients.find(c => c.id === input.clientId) ?? null : null;
 
+  // Hình thức "Quà tặng" = ghi cả món quà vào Lịch sử quà. Kiểm tra TRƯỚC khi ghi bất cứ gì.
+  const gift = input.type === 'gift' ? sanitizeLogGift(input.gift ?? NO_LOG_GIFT) : null;
+  if (gift && !gift.item) throw new Error('Nhập món quà (hình thức "Quà tặng" sẽ ghi vào Lịch sử quà)');
+  if (gift && !input.clientId) throw new Error(`"${contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
+  // Dấu created_at chung của dòng nhật ký và món quà — cách liên kết 2 dòng (xem lib/cskh/logGift)
+  const stamp = new Date().toISOString();
+
+  let giftId: string | null = null;
+  if (gift && input.clientId) {
+    const { data: g, error } = await supabase.from('client_gifts')
+      .insert(logGiftInsertRow({ contact, clientId: input.clientId, gift, occurredAt: input.occurredAt, content: input.content }, stamp, ctx.user?.full_name ?? null))
+      .select('id').single();
+    if (error) throw writeError(error);
+    giftId = (g as { id: string }).id;
+  }
+
   let taskId: string | null = null;
+  // Bước sau lỗi thì đừng để lại việc / món quà mồ côi
+  const undo = async () => {
+    if (taskId) await supabase.from('work_tasks').delete().eq('id', taskId);
+    if (giftId) await supabase.from('client_gifts').update({ is_archived: true }).eq('id', giftId);
+  };
   if (action && input.followUpDue) {
     const assignee = contact.ownerId ?? ctx.user?.id;
-    if (!assignee) throw new Error('Chưa đăng nhập');
+    if (!assignee) { await undo(); throw new Error('Chưa đăng nhập'); }
     const { data: task, error } = await supabase.from('work_tasks').insert({
       user_id: assignee,
       client_id: client?.id ?? null,
@@ -277,7 +315,7 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
       status: 'pending',
       notes: input.content.trim() || null,
     }).select('id').single();
-    if (error) throw writeError(error);
+    if (error) { await undo(); throw writeError(error); }
     taskId = (task as { id: string }).id;
   }
 
@@ -297,11 +335,11 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
     followup_task_id: taskId,
     created_by: ctx.user?.id ?? null,
     created_by_name: ctx.user?.full_name ?? null,
+    ...(gift ? { created_at: stamp } : {}),
   }).select().single();
 
   if (error) {
-    // Đừng để lại việc mồ côi trong Workspace khi dòng nhật ký không lưu được
-    if (taskId) await supabase.from('work_tasks').delete().eq('id', taskId);
+    await undo();
     throw writeError(error);
   }
 
@@ -318,7 +356,7 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
 
   await logActivity({
     user: ctx.user, action: 'insert', table: 'cskh_logs', recordId: (data as { id: string }).id,
-    description: `Ghi nhận chăm sóc "${contact.fullName}"${action ? ` — hứa: ${action}` : ''}`,
+    description: `Ghi nhận chăm sóc "${contact.fullName}"${gift ? ` — ${gift.direction === 'given' ? 'tặng' : 'nhận'} quà: ${gift.item}` : ''}${action ? ` — hứa: ${action}` : ''}`,
     newData: data,
   });
   return mapLogRow(data as CskhLogRow);
@@ -377,6 +415,11 @@ export interface InteractionEdit {
    * sách cũ = bỏ việc (xoá mềm nếu chưa xong; việc đã xong luôn giữ). undefined = không đụng.
    */
   extraFollowUps?: { taskId?: string; action: string; due: string }[];
+  /**
+   * Món quà của dòng "Quà tặng": undefined = không đụng; null = dòng không còn là quà → bỏ món quà
+   * đang có khỏi Lịch sử quà; có món = sửa món đang có / tạo món (dòng cũ chưa từng có quà).
+   */
+  gift?: LogGiftInput | null;
 }
 
 /**
@@ -385,6 +428,8 @@ export interface InteractionEdit {
  *   • trước chưa hứa, nay thêm → tạo việc mới (như lúc ghi);
  *   • đổi chữ / hạn → sửa tên + hạn việc đi kèm;
  *   • xoá trắng → xoá mềm việc đi kèm nếu chưa xong (việc đã xong thì giữ).
+ * Món quà (hình thức "Quà tặng") đi theo dòng: sửa ngày / nội dung thì quà đổi theo, đổi sang hình
+ * thức khác thì món quà bị bỏ khỏi Lịch sử quà (`gifts` = quà đã tải, để tìm món của dòng này).
  * Đổi ngày → trigger DB tự tính lại "ngày tương tác cuối" của người liên hệ.
  */
 export async function updateInteraction(
@@ -392,6 +437,7 @@ export async function updateInteraction(
   edit: InteractionEdit,
   contact: CskhContact | null,
   ctx: WriteCtx,
+  gifts: readonly CskhGift[] = [],
 ): Promise<void> {
   const action = edit.followUpAction.trim();
   if (action && !edit.followUpDue) throw new Error('Việc tiếp theo cần có hạn');
@@ -401,7 +447,26 @@ export async function updateInteraction(
   // Dòng cũ chưa gắn người: giữ nguyên công ty đã lưu dạng chữ
   const client = contact && edit.clientId ? ctx.clients.find(c => c.id === edit.clientId) ?? null : null;
 
+  // Món quà của dòng: kiểm tra TRƯỚC khi ghi bất cứ gì
+  const existingGift = giftOfLog(gifts, it);
+  const giftPlan = planLogGift(edit.gift, existingGift);
+  const giftClientId = edit.clientId ?? it.clientId ?? existingGift?.clientId ?? null;
+  if ((giftPlan.kind === 'create' || giftPlan.kind === 'update') && !contact) {
+    throw new Error('Dòng này chưa gắn người liên hệ nên không ghi được quà');
+  }
+  if ((giftPlan.kind === 'create' || giftPlan.kind === 'update') && !giftClientId) {
+    throw new Error(`"${who}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
+  }
+  if (giftPlan.kind === 'create' && !Number.isFinite(Date.parse(it.createdAt))) {
+    throw new Error('Dòng nhật ký thiếu dấu thời gian nên chưa ghi được quà');
+  }
+
   let createdTaskId: string | null = null;
+  let createdGiftId: string | null = null;
+  const undo = async () => {
+    if (createdTaskId) await supabase.from('work_tasks').delete().eq('id', createdTaskId);
+    if (createdGiftId) await supabase.from('client_gifts').update({ is_archived: true }).eq('id', createdGiftId);
+  };
   if (action && edit.followUpDue && !hadAction) {
     const assignee = contact?.ownerId ?? ctx.user?.id;
     if (!assignee) throw new Error('Chưa đăng nhập');
@@ -421,6 +486,30 @@ export async function updateInteraction(
     createdTaskId = (task as { id: string }).id;
   }
 
+  // Món quà: tạo (dòng cũ chưa có) / sửa theo ngày + nội dung mới / bỏ khi không còn là "Quà tặng"
+  if (giftPlan.kind !== 'none') {
+    try {
+      if (giftPlan.kind === 'archive') {
+        const { error } = await supabase.from('client_gifts').update({ is_archived: true }).eq('id', giftPlan.giftId);
+        if (error) throw writeError(error);
+      } else if (contact && giftClientId) {
+        const rowCtx = { contact, clientId: giftClientId, gift: giftPlan.gift, occurredAt: edit.occurredAt, content: edit.content };
+        if (giftPlan.kind === 'update') {
+          const { error } = await supabase.from('client_gifts').update(logGiftFields(rowCtx)).eq('id', giftPlan.giftId);
+          if (error) throw writeError(error);
+        } else {
+          const { data: g, error } = await supabase.from('client_gifts')
+            .insert(logGiftInsertRow(rowCtx, it.createdAt, ctx.user?.full_name ?? null)).select('id').single();
+          if (error) throw writeError(error);
+          createdGiftId = (g as { id: string }).id;
+        }
+      }
+    } catch (e) {
+      await undo();
+      throw e;
+    }
+  }
+
   const patch = {
     contact_type: edit.type,
     // Đổi hình thức thì kênh theo hình thức mới; giữ nguyên thì giữ kênh cũ (VD Zalo từ ghi nhận nhanh)
@@ -436,7 +525,7 @@ export async function updateInteraction(
   };
   const { data, error } = await supabase.from('cskh_logs').update(patch).eq('id', it.id).select().single();
   if (error) {
-    if (createdTaskId) await supabase.from('work_tasks').delete().eq('id', createdTaskId);
+    await undo();
     throw writeError(error);
   }
 
@@ -478,7 +567,7 @@ export async function updateInteraction(
 
   await logActivity({
     user: ctx.user, action: 'update', table: 'cskh_logs', recordId: it.id,
-    description: `Sửa nhật ký CSKH ngày ${edit.occurredAt} — ${who}`,
+    description: `Sửa nhật ký CSKH ngày ${edit.occurredAt} — ${who}${giftPlan.kind === 'none' ? '' : giftPlan.kind === 'archive' ? ' — bỏ món quà' : ` — quà: ${giftPlan.gift.item}`}`,
     oldData: it, newData: data,
   });
 }
@@ -696,9 +785,15 @@ export async function archiveGroup(group: CskhGroup, user: AppUser | null): Prom
  * tác cuối. Việc đã hứa đi kèm còn mở trong Workspace thì xoá mềm luôn (không để
  * việc mồ côi); việc đã xong thì giữ nguyên.
  */
-export async function archiveInteraction(it: CskhInteraction, user: AppUser | null): Promise<void> {
+export async function archiveInteraction(it: CskhInteraction, user: AppUser | null, gifts: readonly CskhGift[] = []): Promise<void> {
   const { error } = await supabase.from('cskh_logs').update({ is_archived: true }).eq('id', it.id);
   if (error) throw writeError(error);
+  // Món quà ghi kèm dòng "Quà tặng" cũng ra khỏi Lịch sử quà (xoá mềm, khôi phục được ở trang Lịch sử)
+  const gift = giftOfLog(gifts, it);
+  if (gift) {
+    const { error: giftError } = await supabase.from('client_gifts').update({ is_archived: true }).eq('id', gift.id);
+    if (giftError) throw new Error(`Đã xoá nhật ký nhưng chưa xoá được món quà "${gift.item}" trong Lịch sử quà: ${writeError(giftError).message}`);
+  }
   if (it.followUpTaskId && !it.followUpDone) {
     const now = new Date().toISOString();
     const { error: taskError } = await supabase.from('work_tasks')
@@ -707,7 +802,7 @@ export async function archiveInteraction(it: CskhInteraction, user: AppUser | nu
   }
   await logActivity({
     user, action: 'update', table: 'cskh_logs', recordId: it.id,
-    description: `Xoá dòng nhật ký CSKH ngày ${it.occurredAt} — ${it.contactPerson || it.clientName || 'không rõ người'}`,
+    description: `Xoá dòng nhật ký CSKH ngày ${it.occurredAt} — ${it.contactPerson || it.clientName || 'không rõ người'}${gift ? ` (kèm quà "${gift.item}")` : ''}`,
     oldData: it,
   });
 }
@@ -821,13 +916,30 @@ export interface GiftInput {
   note: string;
 }
 
-export async function saveGift(input: GiftInput, existing: CskhGift | null, user: AppUser | null): Promise<void> {
+/**
+ * Ghi / sửa 1 món quà ở Sự kiện & Quà tặng. Món quà là 1 lần liên hệ nên đi kèm 1 dòng nhật ký
+ * "Quà tặng" cùng người + cùng dấu created_at (xem lib/cskh/logGift):
+ *   • ghi mới → quà ghi trước, rồi dòng nhật ký mang đúng dấu đó (lỗi thì gỡ quà vừa ghi);
+ *   • sửa → quà đổi, dòng nhật ký đi kèm (nếu có) đổi theo ngày / người / công ty / ghi chú.
+ *     Quà ghi từ trước khi có liên kết (chưa có dòng nhật ký) giữ nguyên như cũ — không tự bổ sung.
+ * Ngày tặng không được ở tương lai: dòng nhật ký tính là "đã liên hệ", ngày tương lai sẽ làm ngày
+ * liên hệ lần cuối của người đó nhảy sang tương lai.
+ */
+export async function saveGift(
+  input: GiftInput,
+  existing: CskhGift | null,
+  ctx: WriteCtx,
+  interactions: readonly CskhInteraction[] = [],
+): Promise<void> {
+  const { user } = ctx;
   const item = input.item.trim();
   if (!item) throw new Error('Nhập món quà');
   if (!input.clientId) throw new Error(`"${input.contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
   if (input.estimatedValue !== null && (!Number.isFinite(input.estimatedValue) || input.estimatedValue < 0)) throw new Error('Giá trị không hợp lệ');
+  if (input.givenAt > todayVN() && (!existing || existing.givenAt !== input.givenAt)) throw new Error('Ngày tặng không được ở tương lai');
   // occasion_id chỉ trỏ được tới dòng contact_special_dates (sinh nhật trong hồ sơ là sự kiện ảo)
   const occasionId = input.occasionId && !input.occasionId.startsWith('birthday:') ? input.occasionId : null;
+  const note = input.note.trim() || null;
   const row = {
     client_id: input.clientId,
     recipient_contact_id: input.contact.id,
@@ -837,24 +949,70 @@ export async function saveGift(input: GiftInput, existing: CskhGift | null, user
     value: input.estimatedValue,
     gift_date: input.givenAt,
     occasion_id: occasionId,
-    notes: input.note.trim() || null,
+    notes: note,
+  };
+  // Phần dòng nhật ký đi kèm đổi theo món quà
+  const logFields = {
+    contact_id: input.contact.id,
+    contact_person: input.contact.fullName,
+    client_id: input.clientId,
+    client_name: ctx.clients.find(c => c.id === input.clientId)?.name ?? (input.contact.organization || null),
+    log_date: input.givenAt,
+    content: note,
   };
   if (existing) {
     const { error } = await supabase.from('client_gifts').update(row).eq('id', existing.id);
     if (error) throw writeError(error);
-    await logActivity({ user, action: 'update', table: 'client_gifts', recordId: existing.id, description: `Sửa quà "${item}" — ${input.contact.fullName}`, oldData: existing, newData: row });
+    const log = logOfGift(interactions, existing);
+    if (log) {
+      const { error: logError } = await supabase.from('cskh_logs').update(logFields).eq('id', log.id);
+      if (logError) throw new Error(`Đã sửa món quà nhưng chưa sửa được dòng nhật ký đi kèm: ${writeError(logError).message}`);
+    }
+    await logActivity({ user, action: 'update', table: 'client_gifts', recordId: existing.id, description: `Sửa quà "${item}" — ${input.contact.fullName}${log ? ' (kèm dòng nhật ký)' : ''}`, oldData: existing, newData: row });
     return;
   }
+  const stamp = new Date().toISOString();
   const { data, error } = await supabase.from('client_gifts')
-    .insert({ ...row, created_by: user?.full_name ?? null }).select('id').single();
+    .insert({ ...row, created_by: user?.full_name ?? null, created_at: stamp }).select('id').single();
   if (error) throw writeError(error);
-  await logActivity({ user, action: 'insert', table: 'client_gifts', recordId: (data as { id: string }).id, description: `${input.direction === 'given' ? 'Tặng' : 'Nhận'} quà "${item}" — ${input.contact.fullName}`, newData: row });
+  const giftId = (data as { id: string }).id;
+  const { error: logError } = await supabase.from('cskh_logs').insert({
+    ...logFields,
+    contact_type: 'gift',
+    channel: '',
+    // Họ tặng mình = họ chủ động
+    initiated_by: input.direction === 'received' ? 'them' : 'me',
+    followup: null,
+    followup_due: null,
+    followup_done: false,
+    created_by: user?.id ?? null,
+    created_by_name: user?.full_name ?? null,
+    created_at: stamp,
+  });
+  if (logError) {
+    // Ghi đủ 2 thứ hoặc không gì — đừng để quà mồ côi khi người dùng bấm lưu lại
+    await supabase.from('client_gifts').update({ is_archived: true }).eq('id', giftId);
+    throw writeError(logError);
+  }
+  await logActivity({ user, action: 'insert', table: 'client_gifts', recordId: giftId, description: `${input.direction === 'given' ? 'Tặng' : 'Nhận'} quà "${item}" — ${input.contact.fullName}`, newData: row });
 }
 
-export async function archiveGift(g: CskhGift, user: AppUser | null): Promise<void> {
+/**
+ * Xoá mềm món quà. Dòng nhật ký "Quà tặng" ghi kèm cũng bị xoá mềm (kéo theo việc đã hứa chưa xong
+ * của dòng đó, như xoá nhật ký) — dòng thuộc hình thức khác thì giữ.
+ */
+export async function archiveGift(g: CskhGift, user: AppUser | null, interactions: readonly CskhInteraction[] = []): Promise<void> {
   const { error } = await supabase.from('client_gifts').update({ is_archived: true }).eq('id', g.id);
   if (error) throw writeError(error);
-  await logActivity({ user, action: 'update', table: 'client_gifts', recordId: g.id, description: `Xoá quà "${g.item}"`, oldData: g });
+  const log = logOfGift(interactions, g);
+  if (log) {
+    try {
+      await archiveInteraction(log, user);
+    } catch (e) {
+      throw new Error(`Đã xoá món quà nhưng chưa xoá được dòng nhật ký đi kèm: ${(e as Error).message}`);
+    }
+  }
+  await logActivity({ user, action: 'update', table: 'client_gifts', recordId: g.id, description: `Xoá quà "${g.item}"${log ? ' (kèm dòng nhật ký)' : ''}`, oldData: g });
 }
 
 // ── Tự động tạo việc nhắc ───────────────────────────────────────────────────
