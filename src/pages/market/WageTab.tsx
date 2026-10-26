@@ -7,6 +7,7 @@ import { Plus, Trash2, ExternalLink, Coins, X, Pencil, Check, List, LayoutGrid, 
 import { supabase } from '../../lib/supabase';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+import { formatDongRange } from '../../lib/kcnSurveySnapshot';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
 
@@ -1053,7 +1054,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E8E7E2]">
-              {['Khu vực / Ngành nghề', 'Phổ thông (tr)', 'Thời vụ (tr)', 'Chính thức (tr)', 'Nguồn LĐ', 'Lấp đầy', 'Ngày', ''].map(h => (
+              {['Khu vực / Ngành nghề', 'Phổ thông (tr)', 'Thời vụ (tr)', 'Chính thức (tr)', 'Lương 8h (đ/ngày)', 'Nguồn LĐ', 'Lấp đầy', 'Ngày', ''].map(h => (
                 <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
               ))}
             </tr></thead>
@@ -1066,7 +1067,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
                 return (
                   <Fragment key={zone}>
                     <tr className="bg-[#F9F9F7]">
-                      <td colSpan={8} className="px-3 py-1.5 font-medium text-[11.5px]">
+                      <td colSpan={9} className="px-3 py-1.5 font-medium text-[11.5px]">
                         <span className="inline-flex items-center gap-2 flex-wrap">
                           {zone}
                           {regionZoneLabel(zoneRegion) ? (
@@ -1126,6 +1127,7 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
                         <td className="px-3 py-2">{fmtTr(d.wage_unskilled_min)}–{fmtTr(d.wage_unskilled_max)}tr</td>
                         <td className="px-3 py-2 text-blue-700 font-medium">{fmtTr(d.wage_seasonal_min)}–{fmtTr(d.wage_seasonal_max)}tr</td>
                         <td className="px-3 py-2 text-emerald-700 font-medium">{fmtTr(d.wage_skilled_min)}–{fmtTr(d.wage_skilled_max)}tr</td>
+                        <td className="px-3 py-2 text-[#0066CC] font-semibold whitespace-nowrap">{formatDongRange(d.wage_base_8h_min ?? null, d.wage_base_8h_max ?? null)}</td>
                         <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${availPillCls(d.labor_availability)}`}>{d.labor_availability}</span></td>
                         <td className="px-3 py-2">{d.occupancy || '—'}</td>
                         <td className="px-3 py-2 text-[11px] text-[#aaa]">{new Date(d.survey_date).toLocaleDateString('vi-VN')}</td>
@@ -1143,17 +1145,18 @@ export default function WageTab({ marketZones, marketSurveys, marketLeads, clien
                         <td className="px-3 py-2 text-[#ccc]">—</td>
                         <td className="px-3 py-2 text-[#ccc]">—</td>
                         <td className="px-3 py-2 text-emerald-700 font-medium">{fmtTr(e.wageMin)}–{fmtTr(e.wageMax)}tr</td>
+                        <td className="px-3 py-2 text-[#ccc]">—</td>
                         <td colSpan={4} className="px-3 py-2 text-[11px] text-[#aaa]">Từ Công ty/Dự án</td>
                       </tr>
                     ))}
                     {rows.length === 0 && clientLeadRows.length === 0 && (
-                      <tr><td colSpan={8} className="px-3 py-2 pl-6 text-[#aaa] text-[11.5px]">Chưa có dữ liệu lương cho khu vực này</td></tr>
+                      <tr><td colSpan={9} className="px-3 py-2 pl-6 text-[#aaa] text-[11.5px]">Chưa có dữ liệu lương cho khu vực này</td></tr>
                     )}
                   </Fragment>
                 );
               })}
               {zonesToShow.length === 0 && (
-                <tr><td colSpan={8} className="text-center py-6 text-[#aaa]">Chưa có khảo sát lương nào</td></tr>
+                <tr><td colSpan={9} className="text-center py-6 text-[#aaa]">Chưa có khảo sát lương nào</td></tr>
               )}
             </tbody>
           </table>

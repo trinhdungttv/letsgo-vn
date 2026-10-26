@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { MarketZone } from '../../lib/types';
 import { fmtTr, occColor, availPillCls, LABOR_AVAIL_OPTIONS, type MarketTabProps } from './shared';
+import { formatDongRange } from '../../lib/kcnSurveySnapshot';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend);
 
@@ -871,7 +872,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="border-b border-[#E8E7E2]">
-                {['Ngành nghề', 'Phổ thông (tr)', 'Thời vụ (tr)', 'Chính thức (tr)', 'Nguồn LĐ'].map(h => (
+                {['Ngành nghề', 'Phổ thông (tr)', 'Thời vụ (tr)', 'Chính thức (tr)', 'Lương 8h (đ/ngày)', 'Nguồn LĐ'].map(h => (
                   <th key={h} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
@@ -882,10 +883,11 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
                     <td className="px-3 py-2">{fmtTr(d.wage_unskilled_min)} – {fmtTr(d.wage_unskilled_max)}</td>
                     <td className="px-3 py-2 text-blue-700">{fmtTr(d.wage_seasonal_min)} – {fmtTr(d.wage_seasonal_max)}</td>
                     <td className="px-3 py-2 text-emerald-700">{fmtTr(d.wage_skilled_min)} – {fmtTr(d.wage_skilled_max)}</td>
+                    <td className="px-3 py-2 text-[#0066CC] font-semibold whitespace-nowrap">{formatDongRange(d.wage_base_8h_min ?? null, d.wage_base_8h_max ?? null)}</td>
                     <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${availPillCls(d.labor_availability)}`}>{d.labor_availability}</span></td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={5} className="text-center py-4 text-[#aaa]">Chưa có dữ liệu lương. Thêm ở tab Lương TT.</td></tr>
+                  <tr><td colSpan={6} className="text-center py-4 text-[#aaa]">Chưa có dữ liệu lương. Thêm ở tab Lương TT.</td></tr>
                 )}
               </tbody>
             </table>

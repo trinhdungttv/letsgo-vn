@@ -3,8 +3,8 @@ import {
   addCompetitorEntry, addIndustryEntry, assignIndustryEntry, buildInitialCompetitorEntries, buildWageSnapshot,
   cleanWageEntries, competitorPresence, competitorSnapshotToText, competitorsToRecord, emptyWageEntry,
   foldSnapshotIntoNote, formatDong, formatDongRange, formatWageRange, hasLegacyUnskilled, industryKey,
-  isMissingSnapshotColumnError, matchIndustry, parseCompetitorSnapshot, parseDongInput, parseWageSnapshot, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
-  setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput, wageSnapshotToText,
+  isMissingBase8hColumnError, isMissingSnapshotColumnError, isSyncableWageEntry, matchIndustry, parseCompetitorSnapshot, parseDongInput, planWageSync, parseWageSnapshot, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
+  setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput, wageSnapshotToText, withoutBase8h,
   type IndustryOption, type SurveyCompetitorEntry,
 } from './kcnSurveySnapshot'
 
@@ -340,5 +340,75 @@ describe('lương cơ bản 8h + bỏ lương phổ thông', () => {
     const typed = setWageEntryField([emptyWageEntry({ id: null, name: 'Chưa rõ' })], 0, { base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
     const re = assignIndustryEntry(typed, 0, INDUSTRIES[1], ZONE_TB, wsurveys)
     expect(re[0]).toMatchObject({ industry_id: 'i-mm', base_wage_8h_min: 260_000, base_wage_8h_max: 280_000, source: 'manual', seasonal_min: null })
+  })
+})
+
+describe('ghi lương của báo cáo sang Lương TT', () => {
+  const noiThat: IndustryOption = { id: 'i-nt', name: 'Sản xuất nội thất' }
+  // đúng như báo cáo thật của KCN Tân Bình: nhập tay, 8h 240–270k, thời vụ 9–11tr, khan hiếm
+  const typed = setWageEntryField([emptyWageEntry(noiThat)], 0, {
+    base_wage_8h_min: 240_000, base_wage_8h_max: 270_000, seasonal_min: 9_000_000, seasonal_max: 11_000_000,
+  }).map(e => ({ ...e, labor_availability: 'Khan hiếm' }))
+  const NOTE = 'Từ báo cáo khảo sát KCN ngày 16/10/2026'
+
+  it('dòng nhập tay có số → thêm 1 dòng Lương TT đúng KCN + ngành + ngày đi, đúng đơn vị', () => {
+    const plan = planWageSync(typed, [], ZONE_TB, '2026-10-16', NOTE)
+    expect(plan.updates).toEqual([])
+    expect(plan.inserts).toEqual([{
+      zone_name: ZONE_TB, industry: 'Sản xuất nội thất', survey_date: '2026-10-16', labor_availability: 'Khan hiếm', notes: NOTE,
+      wage_seasonal_min: 9_000_000, wage_seasonal_max: 11_000_000, wage_skilled_min: null, wage_skilled_max: null,
+      wage_base_8h_min: 240_000, wage_base_8h_max: 270_000,
+    }])
+  })
+
+  it('chỉ ghi dòng người dùng nhập / chỉnh: dòng lấy nguyên từ Lương TT hoặc dòng trống thì bỏ qua', () => {
+    const fromMarket = addIndustryEntry([], INDUSTRIES[1], ZONE_TB, wsurveys)                       // lấy nguyên từ Lương TT
+    const empty = [emptyWageEntry(INDUSTRIES[3])]                                                   // chọn ngành nhưng chưa nhập số
+    expect(planWageSync([...fromMarket, ...empty], [], ZONE_TB, '2026-10-16', NOTE)).toEqual({ inserts: [], updates: [] })
+    expect(isSyncableWageEntry(fromMarket[0])).toBe(false)
+    expect(isSyncableWageEntry(empty[0])).toBe(false)
+    const edited = setWageEntryField(fromMarket, 0, { base_wage_8h_min: 250_000 })                   // lấy từ Lương TT rồi thêm số 8h
+    expect(isSyncableWageEntry(edited[0])).toBe(true)
+    expect(planWageSync(edited, [], ZONE_TB, '2026-10-16', NOTE).inserts[0]).toMatchObject({
+      industry: 'May mặc & Giày da', wage_base_8h_min: 250_000, wage_seasonal_min: 6_500_000,        // giữ cả số thời vụ lấy từ Lương TT
+    })
+  })
+
+  it('ghi lần 2 (hoặc báo cáo khác cùng ngày) → cập nhật đúng dòng cũ, không sinh dòng trùng; dòng ngày khác / KCN khác không đụng', () => {
+    const existing = [
+      { id: 'r-same', zone_name: 'KCN Tân Bình', industry: 'sản xuất  NỘI THẤT', survey_date: '2026-10-16' },   // lệch hoa thường, khoảng trắng
+      { id: 'r-other-day', zone_name: 'KCN Tân Bình', industry: 'Sản xuất nội thất', survey_date: '2026-09-01' },
+      { id: 'r-other-zone', zone_name: 'KCN Khác', industry: 'Sản xuất nội thất', survey_date: '2026-10-16' },
+    ]
+    const plan = planWageSync(typed, existing, ZONE_TB, '2026-10-16', NOTE)
+    expect(plan.inserts).toEqual([])
+    expect(plan.updates).toHaveLength(1)
+    expect(plan.updates[0].id).toBe('r-same')
+  })
+
+  it('cập nhật chỉ ghi ô báo cáo có số — số trống không xoá số đã có trên dòng Lương TT', () => {
+    const only8h = setWageEntryField([emptyWageEntry(noiThat)], 0, { base_wage_8h_min: 260_000, base_wage_8h_max: 280_000 })
+    const plan = planWageSync(only8h, [{ id: 'r1', zone_name: ZONE_TB, industry: 'Sản xuất nội thất', survey_date: '2026-10-16' }], ZONE_TB, '2026-10-16', NOTE)
+    expect(plan.updates[0].patch).toEqual({ wage_base_8h_min: 260_000, wage_base_8h_max: 280_000, labor_availability: 'Trung bình' })
+    expect(plan.updates[0].patch).not.toHaveProperty('wage_seasonal_min')
+  })
+
+  it('không ghi lương phổ thông; 2 dòng cùng ngành chỉ ghi 1 dòng', () => {
+    const legacy = [{ ...typed[0], unskilled_min: 6_000_000, unskilled_max: 7_000_000 }, { ...typed[0], industry: 'sản xuất nội thất' }]
+    const plan = planWageSync(legacy, [], ZONE_TB, '2026-10-16', NOTE)
+    expect(plan.inserts).toHaveLength(1)
+    expect(Object.keys(plan.inserts[0]).some(k => k.includes('unskilled'))).toBe(false)
+  })
+
+  it('chưa chạy migration 177: nhận ra lỗi thiếu cột 8h và bỏ 2 cột đó khỏi dữ liệu ghi', () => {
+    expect(isMissingBase8hColumnError({ code: '42703', message: 'column "wage_base_8h_min" of relation "market_surveys" does not exist' })).toBe(true)
+    expect(isMissingBase8hColumnError({ code: 'PGRST204', message: "Could not find the 'wage_base_8h_max' column of 'market_surveys' in the schema cache" })).toBe(true)
+    expect(isMissingBase8hColumnError({ code: '23505', message: 'duplicate key' })).toBe(false)
+    expect(isMissingBase8hColumnError(null)).toBe(false)
+    const row = planWageSync(typed, [], ZONE_TB, '2026-10-16', NOTE).inserts[0]
+    const stripped = withoutBase8h(row)
+    expect(stripped).not.toHaveProperty('wage_base_8h_min')
+    expect(stripped).not.toHaveProperty('wage_base_8h_max')
+    expect(stripped).toMatchObject({ industry: 'Sản xuất nội thất', wage_seasonal_min: 9_000_000 })
   })
 })
