@@ -42,6 +42,7 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
   const [followUp, setFollowUp] = useState<FollowUpValue>(
     existing ? { action: existing.followUpAction, due: existing.followUpDue ?? '' } : EMPTY_FOLLOW_UP,
   );
+  const [extras, setExtras] = useState<FollowUpValue[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -56,6 +57,8 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
   const handleSave = async () => {
     if (!editing && !contact) { setError('Chọn người liên hệ'); return; }
     if (followUp.action.trim() && !followUp.due) { setError('Việc tiếp theo cần có hạn'); return; }
+    if (!followUp.action.trim() && extras.some(e => e.action.trim())) { setError('Điền việc tiếp theo ở ô đầu trước, rồi mới thêm việc khác'); return; }
+    if (extras.some(e => e.action.trim() && !e.due)) { setError('Mỗi việc cần có hạn'); return; }
     if (!occurredAt) { setError('Chọn ngày tương tác'); return; }
     if (occurredAt > today) { setError('Ngày tương tác không được ở tương lai'); return; }
     setSaving(true);
@@ -86,6 +89,7 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
       content,
       followUpAction: followUp.action,
       followUpDue: followUp.due || null,
+      extraFollowUps: extras.filter(e => e.action.trim()),
     });
     setSaving(false);
     if (err) setError(err);
@@ -160,6 +164,23 @@ export function LogInteractionModal({ contacts, clients, initialContactId, exist
               : 'Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace, giao cho người phụ trách'}
           </p>
           <FollowUpPicker value={followUp} onChange={setFollowUp} today={today} />
+          {!editing && extras.map((e, i) => (
+            <div key={i} className="mt-2.5 pt-2.5 border-t border-dashed border-black/[0.1]">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11.5px] text-[#86868B]">Việc thứ {i + 2}</span>
+                <button type="button" onClick={() => setExtras(list => list.filter((_, j) => j !== i))}
+                  className="text-[12px] font-medium text-[#D70015] hover:opacity-70">Bỏ việc này</button>
+              </div>
+              <FollowUpPicker value={e} today={today} placeholder="VD: nhắc ký phụ lục hợp đồng…"
+                onChange={v => setExtras(list => list.map((x, j) => (j === i ? v : x)))} />
+            </div>
+          ))}
+          {!editing && followUp.action.trim() !== '' && extras.length < 5 && (
+            <button type="button" onClick={() => setExtras(list => [...list, EMPTY_FOLLOW_UP])}
+              className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-[#0066CC] hover:opacity-70 min-h-[32px]">
+              + Thêm việc khác
+            </button>
+          )}
           {existing?.followUpDone && followUp.action.trim() !== '' && (
             <p className="text-[11.5px] text-[#248A3D] mt-1.5">Việc này đã đánh dấu xong — sửa chữ không mở lại việc.</p>
           )}
