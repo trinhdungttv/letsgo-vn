@@ -389,6 +389,91 @@ export function parseWageSnapshot(raw: unknown): SurveyWageEntry[] | null {
   return out
 }
 
+/* ─────────────────── Ghi lương của báo cáo sang Lương TT (market_surveys) ─────────────────── */
+
+/** Dòng market_surveys đã có — chỉ cần để biết dòng nào trùng (KCN + ngành + ngày). */
+export interface MarketSurveyKey {
+  id: string
+  zone_name: string
+  industry: string | null
+  survey_date: string | null
+}
+
+/** Cột của market_surveys mà báo cáo được phép ghi (lương bằng ĐỒNG; 8h là đồng/ngày, còn lại đồng/tháng). Không có cột phổ thông. */
+export interface MarketSurveyWrite {
+  zone_name: string
+  industry: string
+  survey_date: string
+  labor_availability: string
+  notes: string
+  wage_seasonal_min: number | null
+  wage_seasonal_max: number | null
+  wage_skilled_min: number | null
+  wage_skilled_max: number | null
+  wage_base_8h_min: number | null
+  wage_base_8h_max: number | null
+}
+
+export interface WageSyncPlan {
+  inserts: MarketSurveyWrite[]
+  /** `patch` chỉ chứa ô báo cáo có số — số trống KHÔNG ghi đè số đã có trên dòng Lương TT. */
+  updates: { id: string; patch: Partial<MarketSurveyWrite> }[]
+}
+
+/** Dòng nào của báo cáo đáng ghi sang Lương TT: có ngành + có số, và là số do người dùng nhập / chỉnh trong báo cáo.
+ *  Dòng lấy nguyên từ Lương TT mà chưa sửa gì thì BỎ QUA — đó vốn đã là dữ liệu Lương TT, ghi lại chỉ sinh dòng trùng. */
+export const isSyncableWageEntry = (e: SurveyWageEntry) =>
+  e.industry.trim() !== '' && hasWage(e) && (e.source === 'manual' || e.edited === true)
+
+const WRITE_NUMBERS = [
+  ['seasonal_min', 'wage_seasonal_min'], ['seasonal_max', 'wage_seasonal_max'],
+  ['skilled_min', 'wage_skilled_min'], ['skilled_max', 'wage_skilled_max'],
+  ['base_wage_8h_min', 'wage_base_8h_min'], ['base_wage_8h_max', 'wage_base_8h_max'],
+] as const
+
+/** Lên kế hoạch ghi lương của báo cáo vào Lương TT: mỗi ngành MỘT dòng ở ngày khảo sát (survey_date = ngày đi).
+ *  Chưa có dòng cùng KCN + ngành + ngày → thêm mới; đã có (bấm ghi lần 2, hoặc báo cáo khác cùng ngày) → cập nhật đúng dòng đó.
+ *  Dòng của ngày khác không bao giờ bị sửa / xoá, nên lịch sử Lương TT giữ nguyên. */
+export function planWageSync(
+  entries: SurveyWageEntry[], existing: MarketSurveyKey[], zoneName: string, visitDate: string, note: string,
+): WageSyncPlan {
+  const plan: WageSyncPlan = { inserts: [], updates: [] }
+  const used = new Set<string>()
+  for (const e of entries) {
+    if (!isSyncableWageEntry(e)) continue
+    const key = industryKey(e.industry)
+    if (used.has(key)) continue   // 2 dòng cùng ngành trong 1 báo cáo → chỉ ghi dòng đầu
+    used.add(key)
+    const numbers: Partial<MarketSurveyWrite> = {}
+    for (const [from, to] of WRITE_NUMBERS) if (e[from] != null) numbers[to] = e[from]
+    const same = existing.find(r => sameZone(r.zone_name, zoneName) && r.survey_date === visitDate && industryKey(r.industry) === key)
+    if (same) {
+      plan.updates.push({ id: same.id, patch: { ...numbers, labor_availability: e.labor_availability } })
+    } else {
+      plan.inserts.push({
+        zone_name: zoneName, industry: e.industry.trim(), survey_date: visitDate, labor_availability: e.labor_availability, notes: note,
+        wage_seasonal_min: null, wage_seasonal_max: null, wage_skilled_min: null, wage_skilled_max: null,
+        wage_base_8h_min: null, wage_base_8h_max: null, ...numbers,
+      })
+    }
+  }
+  return plan
+}
+
+/** Bỏ 2 cột lương 8h khỏi dữ liệu ghi — dùng khi market_surveys chưa có cột (chưa chạy migration 177). */
+export function withoutBase8h<T extends Partial<MarketSurveyWrite>>(row: T): Omit<T, 'wage_base_8h_min' | 'wage_base_8h_max'> {
+  const { wage_base_8h_min: _a, wage_base_8h_max: _b, ...rest } = row
+  void _a; void _b
+  return rest
+}
+
+/** Lỗi khi market_surveys chưa có cột lương 8h. */
+export function isMissingBase8hColumnError(error: { message?: string; code?: string } | null | undefined): boolean {
+  if (!error) return false
+  const msg = error.message ?? ''
+  return msg.includes('wage_base_8h') && (error.code === 'PGRST204' || error.code === '42703' || /column|schema cache/i.test(msg))
+}
+
 /* ─────────────────── Chạy khi database chưa có cột mới ─────────────────── */
 
 export const SNAPSHOT_COLUMNS = ['competitors_snapshot', 'wage_snapshot'] as const

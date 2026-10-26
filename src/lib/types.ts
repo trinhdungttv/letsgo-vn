@@ -360,6 +360,9 @@ export interface MarketSurvey {
   wage_skilled_min: number | null;
   wage_skilled_max: number | null;
   wage_tech: number | null;
+  // Lương cơ bản 8h — ĐỒNG / NGÀY (migration 177); ghi từ báo cáo khảo sát KCN
+  wage_base_8h_min?: number | null;
+  wage_base_8h_max?: number | null;
   labor_availability: string;
   occupancy: string | null;
   surveyed_by: string | null;

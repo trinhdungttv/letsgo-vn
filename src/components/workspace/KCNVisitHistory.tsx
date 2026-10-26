@@ -8,12 +8,14 @@ import type { Client, Competitor, CompetitorClient, KCNVisit, MarketLead, Market
 import { deriveSupplyFromCompanies } from '../../pages/market/supplierLink'
 import {
   addIndustryEntry, assignIndustryEntry, buildInitialCompetitorEntries, buildWageSnapshot, cleanWageEntries,
-  competitorSnapshotToText, competitorsToRecord, foldSnapshotIntoNote, industryKey, isMissingSnapshotColumnError,
-  parseCompetitorSnapshot, parseWageSnapshot, wageSnapshotToText,
+  competitorSnapshotToText, competitorsToRecord, foldSnapshotIntoNote, industryKey, isMissingBase8hColumnError,
+  isMissingSnapshotColumnError, isSyncableWageEntry, parseCompetitorSnapshot, parseWageSnapshot, planWageSync,
+  wageSnapshotToText, withoutBase8h,
   type IndustryOption, type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry,
 } from '../../lib/kcnSurveySnapshot'
 import { sameZone } from '../../lib/zoneMatch'
-import { BTN_PRIMARY, BTN_SECONDARY, INPUT } from './wsTheme'
+import { notifyMarketChanged } from '../crm/MarketSupplyBlock'
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_TINTED, INPUT } from './wsTheme'
 import { CompetitorEditor, CompetitorSnapshotView, WageEditor, WageSnapshotView } from './KCNSurveyParts'
 
 const emptyReport = {
@@ -107,6 +109,9 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
   const [wageEntries, setWageEntries] = useState<SurveyWageEntry[]>([])
   const [hadMarketWage, setHadMarketWage] = useState(false)
   const [recordBack, setRecordBack] = useState(false)
+  // Ghi lương của báo cáo sang Thị trường → Lương TT khi lưu (mặc định bật vì đây là nơi mọi người tra mức lương KCN)
+  const [syncToMarket, setSyncToMarket] = useState(true)
+  const [syncingId, setSyncingId] = useState<string | null>(null)
   const reportingRef = useRef<string | null>(null)
 
   useEffect(() => { load() }, [zoneId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -157,6 +162,7 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
       notes: v.notes || '',
     })
     setRecordBack(false)
+    setSyncToMarket(true)
     setMarket(null)
     setSuggested([]); setCompEntries([]); setWageEntries([])
     setMarketLoading(true)
@@ -215,6 +221,68 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     if (recorded) toast(`Đã ghi nhận ${recorded} đối thủ vào ${zoneName} trên Thị trường`)
   }
 
+  /** Ghi lương của báo cáo vào Lương TT (market_surveys): mỗi ngành 1 dòng ở ngày đi — chưa có thì thêm, có rồi thì cập nhật dòng đó.
+   *  KHÔNG sửa / xoá dòng của ngày khác. Chưa có cột lương 8h (chưa chạy migration 177) thì ghi các ô còn lại và báo rõ. */
+  const syncWageToMarket = async (entries: SurveyWageEntry[], visitDate: string) => {
+    const { data: existing, error: ee } = await supabase
+      .from('market_surveys').select('id, zone_name, industry, survey_date').eq('survey_date', visitDate)
+    if (ee) return { inserted: 0, updated: 0, no8h: false, error: ee.message }
+    const plan = planWageSync(entries, existing ?? [], zoneName, visitDate, `Từ báo cáo khảo sát KCN ngày ${formatDate(visitDate)}`)
+    let inserted = 0
+    let updated = 0
+    let no8h = false
+    const why = `từ báo cáo khảo sát KCN ngày ${formatDate(visitDate)}`
+    if (plan.inserts.length) {
+      let res = await supabase.from('market_surveys').insert(plan.inserts).select()
+      if (res.error && isMissingBase8hColumnError(res.error)) {
+        no8h = true
+        res = await supabase.from('market_surveys').insert(plan.inserts.map(withoutBase8h)).select()
+      }
+      if (res.error) return { inserted, updated, no8h, error: res.error.message }
+      inserted = res.data?.length ?? 0
+      for (const row of res.data ?? []) {
+        await logActivity({
+          user, action: 'insert', table: 'market_surveys', recordId: row.id,
+          description: `Ghi lương ngành "${row.industry}" của KCN "${zoneName}" vào Lương TT ${why}`, newData: row,
+        })
+      }
+    }
+    for (const u of plan.updates) {
+      let patch: Record<string, unknown> = u.patch
+      let res = await supabase.from('market_surveys').update(patch).eq('id', u.id)
+      if (res.error && isMissingBase8hColumnError(res.error)) {
+        no8h = true
+        patch = withoutBase8h(u.patch)
+        res = await supabase.from('market_surveys').update(patch).eq('id', u.id)
+      }
+      if (res.error) return { inserted, updated, no8h, error: res.error.message }
+      updated++
+      await logActivity({
+        user, action: 'update', table: 'market_surveys', recordId: u.id,
+        description: `Cập nhật lương của KCN "${zoneName}" trong Lương TT ${why}`, newData: patch,
+      })
+    }
+    return { inserted, updated, no8h }
+  }
+
+  /** Câu báo kết quả ghi sang Lương TT (dùng cho cả lúc lưu báo cáo và nút ghi lại ở lịch sử). */
+  const syncMessage = (r: { inserted: number; updated: number; no8h: boolean; error?: string }) => {
+    if (r.error) return `ghi vào Lương TT bị lỗi: ${r.error} (bấm "Ghi vào Lương TT" ở lịch sử để thử lại)`
+    const n = r.inserted + r.updated
+    const base = n ? `đã ghi ${n} ngành vào Lương TT` : 'không có ngành nào cần ghi vào Lương TT'
+    return r.no8h ? `${base} — chưa chạy migration 177 nên lương cơ bản 8h chưa vào Lương TT (vẫn lưu trong báo cáo)` : base
+  }
+
+  /** Nút ở lịch sử: ghi (lại) lương của 1 báo cáo đã lưu sang Lương TT — dùng cho báo cáo lưu từ trước khi có tính năng này. */
+  const resyncReport = async (v: KCNVisit, wage: SurveyWageEntry[]) => {
+    setSyncingId(v.id)
+    const r = await syncWageToMarket(wage, v.visit_date)
+    setSyncingId(null)
+    notifyMarketChanged()
+    onChanged?.()
+    toast(syncMessage(r).replace(/^./, c => c.toUpperCase()))
+  }
+
   const saveReport = async (v: KCNVisit) => {
     const wageSnap = cleanWageEntries(wageEntries)
     const marketOk = !!market && !market.failed
@@ -255,12 +323,16 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
       oldData: v, newData: { ...v, ...updates },
     })
     if (recordIds.length) await recordCompetitorsToZone(recordIds)
+    // Ghi lương sang Lương TT sau khi báo cáo đã lưu xong — lỗi ở bước này không làm mất báo cáo
+    const syncResult = syncToMarket && wageSnap.some(isSyncableWageEntry) ? await syncWageToMarket(wageSnap, v.visit_date) : null
+    if (syncResult) notifyMarketChanged()
     cancelReport()
     await load()
     onChanged?.()
-    toast(folded
+    const saved = folded
       ? 'Đã lưu báo cáo — chưa chạy migration 176 nên đối thủ + lương được lưu dạng chữ trong ghi chú'
-      : 'Đã lưu báo cáo khảo sát')
+      : 'Đã lưu báo cáo khảo sát'
+    toast(syncResult ? `${saved}; ${syncMessage(syncResult)}` : saved)
   }
 
   const removeVisit = async (v: KCNVisit) => {
@@ -300,6 +372,7 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
             onChange={setWageEntries}
             onAddIndustry={i => setWageEntries(es => addIndustryEntry(es, i, zoneName, market?.surveys ?? []))}
             onAssignIndustry={(idx, i) => setWageEntries(es => assignIndustryEntry(es, idx, i, zoneName, market?.surveys ?? []))}
+            syncableCount={wageEntries.filter(isSyncableWageEntry).length} syncToMarket={syncToMarket} onSyncToMarket={setSyncToMarket}
           />
         )}
         {f.key === 'competitor_note' && (
@@ -330,6 +403,14 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
       <div key={f.key}>
         <div className="text-[11.5px] text-[#6E6E73] font-medium mb-1">{f.label}</div>
         {f.key === 'wage_note' && wage && <WageSnapshotView entries={wage} />}
+        {f.key === 'wage_note' && wage && wage.some(isSyncableWageEntry) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => resyncReport(v, wage)} disabled={syncingId === v.id} className={`${BTN_TINTED} px-2.5 py-1 text-[11.5px]`}>
+              {syncingId === v.id ? 'Đang ghi…' : 'Ghi vào Lương TT'}
+            </button>
+            <span className="text-[10.5px] text-[#86868B]">Thêm / cập nhật dòng lương ngày {formatDate(v.visit_date)} của KCN này trong Thị trường → Lương TT.</span>
+          </div>
+        )}
         {f.key === 'competitor_note' && comp && <CompetitorSnapshotView entries={comp} />}
         {text && (
           <div className={`text-[#1D1D1F] whitespace-pre-wrap ${snapshot ? 'mt-1.5 pt-1.5 border-t border-black/[0.06]' : ''}`}>

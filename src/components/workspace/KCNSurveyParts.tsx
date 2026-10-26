@@ -283,9 +283,13 @@ interface WageEditorProps {
   onAddIndustry: (i: IndustryOption) => void
   /** Gắn lại ngành cho 1 dòng chưa khớp danh sách. */
   onAssignIndustry: (index: number, i: IndustryOption) => void
+  /** Số ngành do người dùng nhập / chỉnh — những ngành sẽ được ghi sang Lương TT khi lưu báo cáo. */
+  syncableCount: number
+  syncToMarket: boolean
+  onSyncToMarket: (v: boolean) => void
 }
 
-export function WageEditor({ zoneName, entries, loading, hadMarketData, industries, industriesFallback, onChange, onAddIndustry, onAssignIndustry }: WageEditorProps) {
+export function WageEditor({ zoneName, entries, loading, hadMarketData, industries, industriesFallback, onChange, onAddIndustry, onAssignIndustry, syncableCount, syncToMarket, onSyncToMarket }: WageEditorProps) {
   const [picking, setPicking] = useState(false)
   const [assigning, setAssigning] = useState<number | null>(null)
   // Lương chính thức ít dùng (chỉ một số dự án giới thiệu LĐ) → ẩn mặc định, mở tay cho từng ngành; dòng đã có số thì luôn hiện.
@@ -390,7 +394,16 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, industri
               </div>
             )
           })}
-          <div className="text-[10.5px] text-[#86868B]">Lấy bản Lương TT mới nhất của từng ngành. Sửa ở đây chỉ đổi trong báo cáo này, không ghi đè dữ liệu Thị trường.</div>
+          {syncableCount > 0 && (
+            <label className="flex items-start gap-2 text-[11.5px] text-[#6E6E73] rounded-[12px] bg-[#34C759]/[0.1] px-3 py-2 cursor-pointer">
+              <input type="checkbox" checked={syncToMarket} onChange={e => onSyncToMarket(e.target.checked)} className="mt-0.5 accent-[#0071E3]" />
+              <span>
+                Ghi {syncableCount} ngành vừa nhập vào Thị trường → Lương TT của {zoneName}
+                <span className="block text-[10.5px] text-[#86868B]">Thêm 1 dòng lương mới (ngày đi) cho từng ngành. Lưu lại lần nữa cùng ngày chỉ cập nhật dòng đó, không sửa hay xoá dòng Lương TT của ngày khác.</span>
+              </span>
+            </label>
+          )}
+          <div className="text-[10.5px] text-[#86868B]">Lấy bản Lương TT mới nhất của từng ngành. Số lấy sẵn mà chưa sửa thì không ghi lại. Bỏ tick ở trên nếu chỉ muốn lưu trong báo cáo này.</div>
         </>
       )}
     </div>
