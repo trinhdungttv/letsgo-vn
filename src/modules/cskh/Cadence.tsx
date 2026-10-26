@@ -15,7 +15,7 @@ import {
 } from './ui';
 import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
-import { MoreButton, PageTitle, Panel, Quiet, Row } from './components/apple';
+import { CompanyTag, MoreButton, PageTitle, Panel, Quiet, Row } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { ContactAvatar } from './components/ContactAvatar';
 
@@ -102,9 +102,9 @@ export default function CskhCadence() {
                               <span className="px-2 py-px rounded-full text-[11px] font-medium whitespace-nowrap" style={chipStyle(CARE_STATUS_COLOR[sec.key])}>{dueLabel(st)}</span>
                               {st.score && <span className="text-[11px] font-semibold tabular-nums" style={{ color: scoreColor(st.score.total) }}>{st.score.total} điểm</span>}
                             </span>
+                            {c.organization && <span className="block mt-0.5"><CompanyTag name={c.organization} /></span>}
                             <span className="block text-[12px] text-[#86868B] truncate">
                               {c.lastInteractionAt ? `Lần cuối ${formatDateVN(c.lastInteractionAt)}` : 'Chưa có tương tác nào'} · {st.cadence} ngày/lần
-                              {c.organization ? ` · ${c.organization}` : ''}
                             </span>
                           </span>
                         </button>

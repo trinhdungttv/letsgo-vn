@@ -35,7 +35,7 @@ import {
   CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
-import { FilterChip, MoreButton, Panel, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
+import { CompanyTag, FilterChip, MoreButton, Panel, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
 import { ContactAvatar } from './components/ContactAvatar';
 import { GroupOptions, QuickGroupSelect } from './components/GroupSelect';
 
@@ -643,8 +643,9 @@ export default function CskhMatrix() {
                             {isPrimary && <Star size={12} className="text-[#FF9500] fill-[#FF9500] shrink-0" aria-label="Liên hệ chính" />}
                             {c.isArchived && <span className="px-2 rounded-full text-[11px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
                           </span>
-                          <span className="block text-[12px] text-[#86868B] truncate max-w-[240px]">
-                            {[c.organization || 'Chưa gắn công ty', c.jobTitle].filter(Boolean).join(' · ')}
+                          <span className="flex items-center gap-1.5 max-w-[260px]">
+                            {c.organization ? <CompanyTag name={c.organization} /> : <span className="text-[12px] text-[#86868B]">Chưa gắn công ty</span>}
+                            {c.jobTitle && <span className="text-[12px] text-[#86868B] truncate">{c.jobTitle}</span>}
                           </span>
                         </span>
                       </button>

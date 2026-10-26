@@ -30,7 +30,7 @@ import {
   CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
-import { Panel, PageTitle, Quiet, Row, Segmented } from './components/apple';
+import { CompanyTag, Panel, PageTitle, Quiet, Row, Segmented } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { ContactAvatar } from './components/ContactAvatar';
 import { ContactBriefSheet } from './components/ContactBriefSheet';
@@ -207,6 +207,7 @@ export default function CskhDashboard() {
     if (it) void completeFollowUp(it);
   };
 
+  const companyOf = (i: CskhInteraction) => i.clientName || (i.contactId ? contactById.get(i.contactId)?.organization : '') || '';
   const nameOf = (i: CskhInteraction) => (i.contactId ? contactById.get(i.contactId)?.fullName ?? i.contactPerson : i.contactPerson);
 
   const careCountAll = contacts.filter(c => c.tier !== 'unclassified' && !c.isArchived).length;
@@ -411,6 +412,7 @@ export default function CskhDashboard() {
                           </button>
                           <button type="button" onClick={() => i.contactId && setBrief({ contactId: i.contactId, item: null })} className="min-w-0 flex-1 text-left">
                             <span className="block text-[14px] text-[#1D1D1F] leading-snug line-clamp-2">{i.followUpAction}</span>
+                            <span className="block mt-0.5"><CompanyTag name={companyOf(i)} /></span>
                             <span className={`block ${caption} truncate`}>
                               {nameOf(i)}
                               {i.followUpDue && late !== null && (
