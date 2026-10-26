@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-26-kcn-survey-base-wage',
+    date: '2026-10-26',
+    title: 'Báo cáo khảo sát KCN',
+    features: [
+      'Khảo sát KCN: thêm lương cơ bản 8h, bỏ lương phổ thông',
+    ],
+  },
+  {
     id: '2026-10-26-kcn-survey-industry',
     date: '2026-10-26',
     title: 'Báo cáo khảo sát KCN',
