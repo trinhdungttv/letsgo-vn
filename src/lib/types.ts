@@ -1126,6 +1126,10 @@ export interface KCNVisit {
   wage_note: string | null
   competitor_note: string | null
   notes: string | null
+  // Ảnh chụp đối thủ + Lương TT lúc khảo sát (migration 176) — null/undefined = báo cáo cũ dạng chữ tự do.
+  // Đọc qua parseCompetitorSnapshot / parseWageSnapshot (lib/kcnSurveySnapshot.ts), không dùng trực tiếp.
+  competitors_snapshot?: unknown
+  wage_snapshot?: unknown
   completed_at: string | null
   created_at: string
   updated_at: string

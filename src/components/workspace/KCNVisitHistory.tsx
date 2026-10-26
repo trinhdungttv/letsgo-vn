@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarPlus, Check, Trash2, ClipboardList, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logActivity } from '../../lib/audit'
 import { formatDate } from '../../lib/format'
-import type { KCNVisit } from '../../lib/types'
+import type { Client, Competitor, CompetitorClient, KCNVisit, MarketLead, MarketSurvey } from '../../lib/types'
+import { deriveSupplyFromCompanies } from '../../pages/market/supplierLink'
+import {
+  buildInitialCompetitorEntries, buildWageSnapshot, cleanWageEntries, competitorSnapshotToText, competitorsToRecord,
+  foldSnapshotIntoNote, isMissingSnapshotColumnError, parseCompetitorSnapshot, parseWageSnapshot, wageSnapshotToText,
+  type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry,
+} from '../../lib/kcnSurveySnapshot'
+import { sameZone } from '../../lib/zoneMatch'
+import { BTN_PRIMARY, BTN_SECONDARY, INPUT } from './wsTheme'
+import { CompetitorEditor, CompetitorSnapshotView, WageEditor, WageSnapshotView } from './KCNSurveyParts'
 
 const emptyReport = {
   report_summary: '',
@@ -15,6 +24,8 @@ const emptyReport = {
   notes: '',
 }
 
+type ReportKey = keyof typeof emptyReport
+
 interface Props {
   zoneId: string
   zoneName: string
@@ -22,10 +33,47 @@ interface Props {
   onChanged?: () => void
 }
 
+/** Dữ liệu Thị trường cần để điền sẵn báo cáo — tải khi mở form (Workspace không có sẵn các bảng này). */
+interface MarketData {
+  competitors: Competitor[]
+  supplyRows: SupplyRowLike[]
+  surveys: MarketSurvey[]
+  failed: boolean
+}
+
+async function fetchMarketData(): Promise<MarketData> {
+  const [cr, ccr, clr, lr, sr] = await Promise.all([
+    supabase.from('competitors').select('*'),
+    supabase.from('competitor_clients').select('*'),
+    supabase.from('clients').select('id, name, industrial_zones, market_suppliers'),
+    supabase.from('market_leads').select('id, company_name, region, suppliers'),
+    supabase.from('market_surveys').select('*'),
+  ])
+  const competitors = (cr.data ?? []) as Competitor[]
+  const ccRows = (ccr.data ?? []) as CompetitorClient[]
+  // Dòng "đang cung ứng" suy ra từ thẻ Công ty/Dự án — để khớp đúng danh sách bên Thị trường.
+  const derived = deriveSupplyFromCompanies(
+    competitors,
+    (clr.data ?? []) as Pick<Client, 'id' | 'name' | 'industrial_zones' | 'market_suppliers'>[],
+    (lr.data ?? []) as Pick<MarketLead, 'id' | 'company_name' | 'region' | 'suppliers'>[],
+    ccRows,
+  )
+  return {
+    competitors,
+    supplyRows: [...ccRows, ...derived],
+    surveys: (sr.data ?? []) as MarketSurvey[],
+    // Đối thủ + lương là 2 nguồn chính; lỗi 2 bảng này mới coi là không tải được.
+    failed: !!(cr.error || sr.error),
+  }
+}
+
 /**
  * Lịch khảo sát + báo cáo cho 1 KCN (market_zones.id).
  * Dùng chung giữa Workspace > KCN Grid và Market > Hồ sơ khu vực — cùng đọc/ghi
  * bảng kcn_visits theo zone_id nên dữ liệu luôn đồng bộ ở cả 2 nơi.
+ *
+ * Form báo cáo tự điền sẵn từ Thị trường (đối thủ đang hoạt động tại KCN + Lương TT) dưới dạng
+ * ẢNH CHỤP lưu riêng trong từng báo cáo — xem lib/kcnSurveySnapshot.ts.
  */
 export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
   const { user } = useAuth()
@@ -37,6 +85,16 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
   const [reportingId, setReportingId] = useState<string | null>(null)
   const [reportForm, setReportForm] = useState(emptyReport)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // Ảnh chụp đang soạn trong form báo cáo
+  const [market, setMarket] = useState<MarketData | null>(null)
+  const [marketLoading, setMarketLoading] = useState(false)
+  const [suggested, setSuggested] = useState<SurveyCompetitorEntry[]>([])
+  const [compEntries, setCompEntries] = useState<SurveyCompetitorEntry[]>([])
+  const [wageEntries, setWageEntries] = useState<SurveyWageEntry[]>([])
+  const [hadMarketWage, setHadMarketWage] = useState(false)
+  const [recordBack, setRecordBack] = useState(false)
+  const reportingRef = useRef<string | null>(null)
 
   useEffect(() => { load() }, [zoneId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -74,7 +132,8 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     toast('Đã lên lịch khảo sát')
   }
 
-  const startReport = (v: KCNVisit) => {
+  const startReport = async (v: KCNVisit) => {
+    reportingRef.current = v.id
     setReportingId(v.id)
     setReportForm({
       report_summary: v.report_summary || '',
@@ -84,14 +143,97 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
       competitor_note: v.competitor_note || '',
       notes: v.notes || '',
     })
+    setRecordBack(false)
+    setMarket(null)
+    setSuggested([]); setCompEntries([]); setWageEntries([])
+    setMarketLoading(true)
+    let data: MarketData
+    try {
+      data = await fetchMarketData()
+    } catch {
+      data = { competitors: [], supplyRows: [], surveys: [], failed: true }
+    }
+    if (reportingRef.current !== v.id) return // đã Huỷ / mở lịch khác trong lúc tải
+    const initial = buildInitialCompetitorEntries(zoneName, data.competitors, data.supplyRows)
+    const wages = buildWageSnapshot(zoneName, data.surveys)
+    setMarket(data)
+    setSuggested(initial)
+    setCompEntries(initial)
+    setWageEntries(wages)
+    setHadMarketWage(wages.length > 0)
+    setMarketLoading(false)
+    if (data.failed) toast('Không tải đủ dữ liệu Thị trường — có thể nhập tay đối thủ / lương')
   }
 
-  const cancelReport = () => { setReportingId(null); setReportForm(emptyReport) }
+  const cancelReport = () => {
+    reportingRef.current = null
+    setReportingId(null)
+    setReportForm(emptyReport)
+    setMarket(null)
+    setMarketLoading(false)
+    setCompEntries([]); setSuggested([]); setWageEntries([]); setRecordBack(false)
+  }
+
+  // Đối thủ trong báo cáo mà Thị trường chưa ghi nhận ở KCN này (ứng viên cho tuỳ chọn ghi nhận ngược).
+  const toRecord = useMemo(
+    () => (market ? competitorsToRecord(compEntries, market.competitors, zoneName) : []),
+    [market, compEntries, zoneName],
+  )
+
+  /** Ghi nhận ngược: CHỈ thêm tên KCN vào competitors.active_zones, đọc lại dữ liệu mới nhất ngay
+   *  trước khi ghi để không đè lên thay đổi của người khác; không bao giờ gỡ tên KCN nào. */
+  const recordCompetitorsToZone = async (ids: string[]) => {
+    const { data, error } = await supabase.from('competitors').select('id, company_name, active_zones').in('id', ids)
+    if (error || !data) { toast('Đã lưu báo cáo, nhưng không ghi nhận được đối thủ vào Thị trường: ' + (error?.message ?? '')); return }
+    let recorded = 0
+    for (const c of data as Pick<Competitor, 'id' | 'company_name' | 'active_zones'>[]) {
+      const zones = c.active_zones ?? []
+      if (zones.some(z => sameZone(z, zoneName))) continue
+      const next = [...zones, zoneName]
+      const { error: ue } = await supabase.from('competitors').update({ active_zones: next }).eq('id', c.id)
+      if (ue) { toast(`Lỗi ghi nhận "${c.company_name}": ${ue.message}`); continue }
+      recorded++
+      await logActivity({
+        user, action: 'update', table: 'competitors', recordId: c.id,
+        description: `Ghi nhận đối thủ "${c.company_name}" đang hoạt động tại "${zoneName}" (từ báo cáo khảo sát)`,
+        oldData: { active_zones: zones }, newData: { active_zones: next },
+      })
+    }
+    if (recorded) toast(`Đã ghi nhận ${recorded} đối thủ vào ${zoneName} trên Thị trường`)
+  }
 
   const saveReport = async (v: KCNVisit) => {
+    const wageSnap = cleanWageEntries(wageEntries)
+    const marketOk = !!market && !market.failed
+    const recordIds = recordBack ? toRecord.map(t => t.id) : []
+    if (recordIds.length && !confirm(
+      `Ghi nhận ${recordIds.length} đối thủ vào "${zoneName}" trên Thị trường?\n\n`
+      + toRecord.map(t => `• ${t.name}`).join('\n')
+      + `\n\nChỉ THÊM tên KCN này vào ô "Khu vực hoạt động" trong hồ sơ từng đối thủ. Không ai bị gỡ khỏi KCN nào, `
+      + `kể cả đối thủ bạn đã bỏ chọn trong báo cáo này.`,
+    )) return
+
     setSaving(true)
-    const updates = { ...reportForm, status: 'done', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-    const { error } = await supabase.from('kcn_visits').update(updates).eq('id', v.id)
+    const now = new Date().toISOString()
+    const base = { ...reportForm, status: 'done', completed_at: now, updated_at: now }
+    let updates: Record<string, unknown> = {
+      ...base,
+      // null = không có gì đáng tin để chụp (không tải được Thị trường và người dùng chưa nhập gì)
+      competitors_snapshot: marketOk || compEntries.length ? compEntries : null,
+      wage_snapshot: marketOk || wageSnap.length ? wageSnap : null,
+    }
+    let { error } = await supabase.from('kcn_visits').update(updates).eq('id', v.id)
+    let folded = false
+    if (error && isMissingSnapshotColumnError(error)) {
+      // Chưa chạy migration 176: gộp danh sách đối thủ + lương thành chữ vào 2 ô ghi chú cũ → không mất dữ liệu.
+      folded = true
+      updates = {
+        ...base,
+        competitor_note: foldSnapshotIntoNote(reportForm.competitor_note, 'Đối thủ ghi nhận lúc khảo sát', competitorSnapshotToText(compEntries)),
+        wage_note: foldSnapshotIntoNote(reportForm.wage_note, 'Lương TT lúc khảo sát', wageSnapshotToText(wageSnap)),
+      }
+      ;({ error } = await supabase.from('kcn_visits').update(updates).eq('id', v.id))
+    }
     setSaving(false)
     if (error) { toast('Lỗi: ' + error.message); return }
     await logActivity({
@@ -99,10 +241,13 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
       description: `Hoàn thành khảo sát KCN "${zoneName}" (${formatDate(v.visit_date)}) và ghi báo cáo`,
       oldData: v, newData: { ...v, ...updates },
     })
+    if (recordIds.length) await recordCompetitorsToZone(recordIds)
     cancelReport()
     await load()
     onChanged?.()
-    toast('Đã lưu báo cáo khảo sát')
+    toast(folded
+      ? 'Đã lưu báo cáo — chưa chạy migration 176 nên đối thủ + lương được lưu dạng chữ trong ghi chú'
+      : 'Đã lưu báo cáo khảo sát')
   }
 
   const removeVisit = async (v: KCNVisit) => {
@@ -119,7 +264,7 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     toast('Đã xoá')
   }
 
-  const REPORT_FIELDS: { key: keyof typeof emptyReport; label: string }[] = [
+  const REPORT_FIELDS: { key: ReportKey; label: string }[] = [
     { key: 'report_summary',  label: 'Tổng quan chuyến khảo sát' },
     { key: 'occupancy_note',  label: 'Tình hình lấp đầy / mở rộng' },
     { key: 'labor_note',      label: 'Nguồn lao động' },
@@ -127,6 +272,55 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     { key: 'competitor_note', label: 'Đối thủ ghi nhận' },
     { key: 'notes',           label: 'Ghi chú khác' },
   ]
+
+  const textareaCls = `${INPUT} text-[12.5px] px-2.5 py-1.5 resize-none`
+
+  /** Ô văn bản của form. Với 2 ô có ảnh chụp (lương / đối thủ) thì khối ảnh chụp nằm trên, ô chữ thành "ghi chú thêm". */
+  const renderField = (f: { key: ReportKey; label: string }) => {
+    const hasSnapshotBlock = f.key === 'wage_note' || f.key === 'competitor_note'
+    return (
+      <div key={f.key} className="flex flex-col gap-1.5">
+        {f.key === 'wage_note' && (
+          <WageEditor zoneName={zoneName} entries={wageEntries} loading={marketLoading} hadMarketData={hadMarketWage} onChange={setWageEntries} />
+        )}
+        {f.key === 'competitor_note' && (
+          <CompetitorEditor
+            zoneName={zoneName} entries={compEntries} suggested={suggested}
+            allCompetitors={market?.competitors ?? []} supplyRows={market?.supplyRows ?? []} loading={marketLoading}
+            onChange={setCompEntries}
+            unrecorded={toRecord} recordBack={recordBack} onRecordBack={setRecordBack}
+          />
+        )}
+        <label className="text-[11.5px] font-medium text-[#6E6E73]">{hasSnapshotBlock ? `${f.label} — ghi chú thêm` : f.label}</label>
+        <textarea
+          value={reportForm[f.key]}
+          onChange={e => setReportForm(r => ({ ...r, [f.key]: e.target.value }))}
+          rows={2}
+          className={textareaCls}
+        />
+      </div>
+    )
+  }
+
+  /** Báo cáo đã lưu: ảnh chụp đúng lúc khảo sát + chữ tự do (báo cáo cũ chỉ có chữ vẫn xem được). */
+  const renderSavedField = (v: KCNVisit, f: { key: ReportKey; label: string }, comp: SurveyCompetitorEntry[] | null, wage: SurveyWageEntry[] | null) => {
+    const snapshot = f.key === 'wage_note' ? wage : f.key === 'competitor_note' ? comp : null
+    const text = v[f.key]
+    if (!text && !snapshot) return null
+    return (
+      <div key={f.key}>
+        <div className="text-[11.5px] text-[#6E6E73] font-medium mb-1">{f.label}</div>
+        {f.key === 'wage_note' && wage && <WageSnapshotView entries={wage} />}
+        {f.key === 'competitor_note' && comp && <CompetitorSnapshotView entries={comp} />}
+        {text && (
+          <div className={`text-[#1D1D1F] whitespace-pre-wrap ${snapshot ? 'mt-1.5 pt-1.5 border-t border-black/[0.06]' : ''}`}>
+            {snapshot && <span className="block text-[10.5px] text-[#86868B] mb-0.5">Ghi chú thêm</span>}
+            {text}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
@@ -146,7 +340,7 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
         </div>
       )}
 
-      <div className="p-4 space-y-3">
+      <div className="p-3 md:p-4 space-y-3">
         {loading ? (
           <div className="text-[11.5px] text-[#aaa] text-center py-2">Đang tải...</div>
         ) : (
@@ -170,21 +364,11 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
                       </div>
                     </div>
                     {reportingId === v.id && (
-                      <div className="p-3 space-y-2 bg-white">
-                        {REPORT_FIELDS.map(f => (
-                          <div key={f.key} className="flex flex-col gap-1">
-                            <label className="text-[11px] text-[#888]">{f.label}</label>
-                            <textarea
-                              value={reportForm[f.key]}
-                              onChange={e => setReportForm(r => ({ ...r, [f.key]: e.target.value }))}
-                              rows={2}
-                              className="text-[12.5px] px-2 py-1 rounded border border-gray-200 outline-none focus:border-blue-400 resize-none"
-                            />
-                          </div>
-                        ))}
+                      <div className="p-3 space-y-3 bg-white">
+                        {REPORT_FIELDS.map(renderField)}
                         <div className="flex justify-end gap-2 pt-1">
-                          <button onClick={cancelReport} className="px-3 py-1.5 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]">Huỷ</button>
-                          <button onClick={() => saveReport(v)} disabled={saving} className="px-3 py-1.5 rounded-lg text-[11.5px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] disabled:opacity-60">{saving ? 'Đang lưu...' : 'Lưu báo cáo'}</button>
+                          <button onClick={cancelReport} className={`${BTN_SECONDARY} px-4 py-1.5 text-[12px]`}>Huỷ</button>
+                          <button onClick={() => saveReport(v)} disabled={saving || marketLoading} className={`${BTN_PRIMARY} px-4 py-1.5 text-[12px]`}>{saving ? 'Đang lưu...' : 'Lưu báo cáo'}</button>
                         </div>
                       </div>
                     )}
@@ -198,27 +382,28 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
               <div className="text-[11px] font-medium text-[#888]">Lịch sử khảo sát & báo cáo</div>
               {done.length === 0 ? (
                 <div className="text-[11.5px] text-[#aaa] text-center py-2">Chưa có chuyến khảo sát nào hoàn thành.</div>
-              ) : done.map(v => (
-                <div key={v.id} className="border border-[#E8E7E2] rounded-lg overflow-hidden">
-                  <button onClick={() => setExpandedId(id => id === v.id ? null : v.id)} className="w-full flex items-center gap-2 px-3 py-2 bg-[#F9F9F7] text-left hover:bg-[#F3F2EE]">
-                    <span className="text-[12px] font-medium text-[#333]">{formatDate(v.visit_date)}</span>
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Đã khảo sát</span>
-                    {v.report_summary && <span className="text-[11px] text-[#888] truncate flex-1">{v.report_summary}</span>}
-                    <Trash2 size={12} className="ml-auto text-[#ccc] hover:text-red-500" onClick={e => { e.stopPropagation(); removeVisit(v); }} />
-                  </button>
-                  {expandedId === v.id && (
-                    <div className="p-3 space-y-2 bg-white text-[12.5px]">
-                      {REPORT_FIELDS.map(f => v[f.key] && (
-                        <div key={f.key}>
-                          <div className="text-[11px] text-[#888] font-medium mb-0.5">{f.label}</div>
-                          <div className="text-[#333] whitespace-pre-wrap">{v[f.key]}</div>
-                        </div>
-                      ))}
-                      {!REPORT_FIELDS.some(f => v[f.key]) && <div className="text-[11.5px] text-[#aaa]">Không có nội dung báo cáo.</div>}
-                    </div>
-                  )}
-                </div>
-              ))}
+              ) : done.map(v => {
+                const comp = parseCompetitorSnapshot(v.competitors_snapshot)
+                const wage = parseWageSnapshot(v.wage_snapshot)
+                const hasContent = REPORT_FIELDS.some(f => v[f.key]) || !!comp || !!wage
+                return (
+                  <div key={v.id} className="border border-[#E8E7E2] rounded-lg overflow-hidden">
+                    <button onClick={() => setExpandedId(id => id === v.id ? null : v.id)} className="w-full flex items-center gap-2 px-3 py-2 bg-[#F9F9F7] text-left hover:bg-[#F3F2EE]">
+                      <span className="text-[12px] font-medium text-[#333]">{formatDate(v.visit_date)}</span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Đã khảo sát</span>
+                      {comp && comp.length > 0 && <span className="hidden sm:inline text-[11px] text-[#888] shrink-0">{comp.length} đối thủ</span>}
+                      {v.report_summary && <span className="text-[11px] text-[#888] truncate flex-1">{v.report_summary}</span>}
+                      <Trash2 size={12} className="ml-auto text-[#ccc] hover:text-red-500" onClick={e => { e.stopPropagation(); removeVisit(v); }} />
+                    </button>
+                    {expandedId === v.id && (
+                      <div className="p-3 space-y-3 bg-white text-[12.5px]">
+                        {REPORT_FIELDS.map(f => renderSavedField(v, f, comp, wage))}
+                        {!hasContent && <div className="text-[11.5px] text-[#aaa]">Không có nội dung báo cáo.</div>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </>
         )}
