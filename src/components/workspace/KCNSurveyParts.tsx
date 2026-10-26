@@ -5,8 +5,8 @@ import { formatDate } from '../../lib/format'
 import { LABOR_AVAIL_OPTIONS } from '../../pages/market/shared'
 import { INPUT, TINT, BTN_TINTED, BTN_ICON } from './wsTheme'
 import {
-  SIGNAL_LABEL, addCompetitorEntry, formatWageRange, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
-  removeWageEntry, setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput,
+  SIGNAL_LABEL, addCompetitorEntry, formatDong, formatDongRange, formatWageRange, hasLegacyUnskilled, parseDongInput, pickableCompetitors,
+  pickableIndustries, removeCompetitorEntry, removeWageEntry, setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput,
   type IndustryOption, type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry, type WageField,
 } from '../../lib/kcnSurveySnapshot'
 
@@ -198,11 +198,32 @@ function TrInput({ value, onChange, placeholder }: { value: number | null; onCha
   )
 }
 
-const WAGE_GROUPS: { label: string; min: WageField; max: WageField }[] = [
-  { label: 'Phổ thông (tr)', min: 'unskilled_min', max: 'unskilled_max' },
-  { label: 'Thời vụ (tr)', min: 'seasonal_min', max: 'seasonal_max' },
-  { label: 'Chính thức (tr)', min: 'skilled_min', max: 'skilled_max' },
-]
+/** Ô nhập ĐỒNG (lương 8h/ngày): gõ "260.000" hoặc "260"; rời ô thì tự định dạng thành 260.000. */
+function VndInput({ value, onChange, placeholder }: { value: number | null; onChange: (v: number | null) => void; placeholder: string }) {
+  const [text, setText] = useState(formatDong(value))
+  useEffect(() => {
+    if (parseDongInput(text) !== value) setText(formatDong(value))
+  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <input
+      inputMode="numeric" value={text} placeholder={placeholder}
+      onChange={e => { setText(e.target.value); onChange(parseDongInput(e.target.value)) }}
+      onBlur={() => setText(formatDong(value))}
+      className={`${INPUT} w-full min-w-0 text-[14px] font-semibold px-2.5 py-2 text-center`}
+    />
+  )
+}
+
+/** Một khoảng "từ – đến" (triệu). */
+function RangeInputs({ min, max, onMin, onMax }: { min: number | null; max: number | null; onMin: (v: number | null) => void; onMax: (v: number | null) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <TrInput value={min} onChange={onMin} placeholder="từ" />
+      <span className="text-[#AEAEB2]">–</span>
+      <TrInput value={max} onChange={onMax} placeholder="đến" />
+    </div>
+  )
+}
 
 /** Bộ chọn ngành lấy từ Thị trường → Ngành Nghề (không gõ tay): có tìm không dấu, ẩn ngành đã có trong báo cáo. */
 function IndustryPicker({ industries, entries, onPick, onClose, fallback }: {
@@ -267,6 +288,9 @@ interface WageEditorProps {
 export function WageEditor({ zoneName, entries, loading, hadMarketData, industries, industriesFallback, onChange, onAddIndustry, onAssignIndustry }: WageEditorProps) {
   const [picking, setPicking] = useState(false)
   const [assigning, setAssigning] = useState<number | null>(null)
+  // Lương chính thức ít dùng (chỉ một số dự án giới thiệu LĐ) → ẩn mặc định, mở tay cho từng ngành; dòng đã có số thì luôn hiện.
+  const [skilledOpen, setSkilledOpen] = useState<Set<string>>(new Set())
+  const set = (i: number, patch: Partial<Record<WageField, number | null>>) => onChange(setWageEntryField(entries, i, patch))
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -296,8 +320,9 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, industri
           {entries.map((e, i) => {
             // Dòng lấy từ Lương TT nhưng tên ngành không có trong Ngành Nghề → báo để gắn lại cho khớp hệ thống.
             const unmatched = e.industry_id === null && !industriesFallback
+            const rowKey = e.industry_id ?? e.industry
             return (
-              <div key={e.industry_id ?? e.industry} className="rounded-[12px] bg-black/[0.03] p-3 space-y-2">
+              <div key={rowKey} className="rounded-[12px] bg-black/[0.03] p-3 space-y-2">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-[12.5px] font-medium text-[#1D1D1F]">{e.industry || '(Chưa ghi ngành)'}</span>
                   {e.source === 'market' && e.survey_date && <span className={`${chip} ${TINT.blue}`}>Lương TT {formatDate(e.survey_date)}</span>}
@@ -320,18 +345,21 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, industri
                     <span>Chưa có Lương TT của ngành này ở {zoneName} — thêm ở tab Lương TT, hoặc nhập tay ở đây.</span>
                   </div>
                 )}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {WAGE_GROUPS.map(g => (
-                    <div key={g.label} className="min-w-0">
-                      <div className="text-[10.5px] text-[#86868B] mb-1">{g.label}</div>
-                      <div className="flex items-center gap-1">
-                        <TrInput value={e[g.min]} onChange={v => onChange(setWageEntryField(entries, i, { [g.min]: v }))} placeholder="từ" />
-                        <span className="text-[#AEAEB2]">–</span>
-                        <TrInput value={e[g.max]} onChange={v => onChange(setWageEntryField(entries, i, { [g.max]: v }))} placeholder="đến" />
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1.3fr_1fr] gap-2 md:gap-3">
+                  {/* Mức căn cứ chính — nổi nhất trên dòng */}
+                  <div className="min-w-0 rounded-[10px] bg-[#0071E3]/[0.07] p-2">
+                    <div className="text-[11px] font-semibold text-[#0066CC] mb-1">Lương cơ bản 8h (đồng/ngày)</div>
+                    <div className="flex items-center gap-1.5">
+                      <VndInput value={e.base_wage_8h_min} onChange={v => set(i, { base_wage_8h_min: v })} placeholder="từ 260.000" />
+                      <span className="text-[#AEAEB2]">–</span>
+                      <VndInput value={e.base_wage_8h_max} onChange={v => set(i, { base_wage_8h_max: v })} placeholder="đến 280.000" />
                     </div>
-                  ))}
-                  <div className="min-w-0">
+                  </div>
+                  <div className="min-w-0 p-2 md:p-0 md:pt-2">
+                    <div className="text-[10.5px] text-[#86868B] mb-1">Thực nhận TB – Thời vụ (tr)</div>
+                    <RangeInputs min={e.seasonal_min} max={e.seasonal_max} onMin={v => set(i, { seasonal_min: v })} onMax={v => set(i, { seasonal_max: v })} />
+                  </div>
+                  <div className="min-w-0 p-2 md:p-0 md:pt-2">
                     <div className="text-[10.5px] text-[#86868B] mb-1">Nguồn LĐ</div>
                     <select
                       value={e.labor_availability}
@@ -342,6 +370,23 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, industri
                     </select>
                   </div>
                 </div>
+                {(e.skilled_min != null || e.skilled_max != null || skilledOpen.has(rowKey)) ? (
+                  <div className="p-2 md:px-0 md:pb-0 md:pt-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="text-[10.5px] text-[#86868B]">Chính thức (tr) · dự án giới thiệu LĐ</div>
+                      {e.skilled_min == null && e.skilled_max == null && (
+                        <button type="button" onClick={() => setSkilledOpen(o => { const n = new Set(o); n.delete(rowKey); return n })} className="text-[10.5px] text-[#86868B] hover:underline">Ẩn</button>
+                      )}
+                    </div>
+                    <div className="max-w-[280px]">
+                      <RangeInputs min={e.skilled_min} max={e.skilled_max} onMin={v => set(i, { skilled_min: v })} onMax={v => set(i, { skilled_max: v })} />
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setSkilledOpen(o => new Set(o).add(rowKey))} className="text-[11px] font-medium text-[#0066CC] hover:underline px-2 md:px-0">
+                    + Lương chính thức (dự án giới thiệu LĐ)
+                  </button>
+                )}
               </div>
             )
           })}
@@ -358,12 +403,24 @@ const availCls = (v: string) => (v === 'Dồi dào' ? TINT.green : v === 'Khan h
 
 export function WageSnapshotView({ entries }: { entries: SurveyWageEntry[] }) {
   if (entries.length === 0) return <div className="text-[11.5px] text-[#86868B]">Lúc khảo sát không có dòng lương nào.</div>
+  // Báo cáo cũ (trước khi có lương cơ bản 8h) không hiện cột 8h trống; cột Phổ thông/Chính thức chỉ hiện khi báo cáo có số.
+  const legacy = entries.some(hasLegacyUnskilled)
+  const showBase = entries.some(e => e.base_wage_8h_min != null || e.base_wage_8h_max != null) || !legacy
+  const showSkilled = entries.some(e => e.skilled_min != null || e.skilled_max != null)
+  const headers = [
+    'Ngành nghề',
+    ...(showBase ? ['Lương cơ bản 8h (đ/ngày)'] : []),
+    'Thực nhận TB – Thời vụ (tr)',
+    ...(showSkilled ? ['Chính thức (tr)'] : []),
+    ...(legacy ? ['Phổ thông (tr) · cũ'] : []),
+    'Nguồn LĐ',
+  ]
   return (
     <div className="rounded-[12px] bg-black/[0.03] overflow-x-auto">
       <table className="w-full text-[12px] min-w-[460px]">
         <thead>
           <tr className="text-left text-[10.5px] text-[#86868B]">
-            {['Ngành nghề', 'Phổ thông (tr)', 'Thời vụ (tr)', 'Chính thức (tr)', 'Nguồn LĐ'].map(h => <th key={h} className="px-3 py-1.5 font-medium whitespace-nowrap">{h}</th>)}
+            {headers.map(h => <th key={h} className="px-3 py-1.5 font-medium whitespace-nowrap">{h}</th>)}
           </tr>
         </thead>
         <tbody className="divide-y divide-black/[0.06]">
@@ -374,9 +431,10 @@ export function WageSnapshotView({ entries }: { entries: SurveyWageEntry[] }) {
                 {e.edited && <span className={`${chip} ${TINT.orange} ml-1.5`}>đã chỉnh</span>}
                 {e.source === 'manual' && <span className={`${chip} ${TINT.gray} ml-1.5`}>nhập tay</span>}
               </td>
-              <td className="px-3 py-1.5 whitespace-nowrap">{formatWageRange(e.unskilled_min, e.unskilled_max)}</td>
-              <td className="px-3 py-1.5 whitespace-nowrap text-[#0066CC]">{formatWageRange(e.seasonal_min, e.seasonal_max)}</td>
-              <td className="px-3 py-1.5 whitespace-nowrap text-[#1E7B34]">{formatWageRange(e.skilled_min, e.skilled_max)}</td>
+              {showBase && <td className="px-3 py-1.5 whitespace-nowrap font-semibold text-[#0066CC]">{formatDongRange(e.base_wage_8h_min, e.base_wage_8h_max)}</td>}
+              <td className="px-3 py-1.5 whitespace-nowrap">{formatWageRange(e.seasonal_min, e.seasonal_max)}</td>
+              {showSkilled && <td className="px-3 py-1.5 whitespace-nowrap text-[#1E7B34]">{formatWageRange(e.skilled_min, e.skilled_max)}</td>}
+              {legacy && <td className="px-3 py-1.5 whitespace-nowrap text-[#86868B]">{formatWageRange(e.unskilled_min, e.unskilled_max)}</td>}
               <td className="px-3 py-1.5"><span className={`${chip} ${availCls(e.labor_availability)}`}>{e.labor_availability}</span></td>
             </tr>
           ))}
