@@ -5,14 +5,14 @@ import { formatDate } from '../../lib/format'
 import { LABOR_AVAIL_OPTIONS } from '../../pages/market/shared'
 import { INPUT, TINT, BTN_TINTED, BTN_ICON } from './wsTheme'
 import {
-  SIGNAL_LABEL, addCompetitorEntry, formatWageRange, newManualWageEntry, pickableCompetitors, removeCompetitorEntry,
+  SIGNAL_LABEL, addCompetitorEntry, formatWageRange, pickableCompetitors, pickableIndustries, removeCompetitorEntry,
   removeWageEntry, setCompetitorEntryNote, setWageEntryField, trInputToVnd, vndToTrInput,
-  type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry, type WageField,
+  type IndustryOption, type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry, type WageField,
 } from '../../lib/kcnSurveySnapshot'
 
 /**
- * Các khối "ảnh chụp Thị trường" trong báo cáo khảo sát KCN: đối thủ đang hoạt động tại KCN và Lương TT.
- * Dữ liệu được sao ra lúc mở form (xem lib/kcnSurveySnapshot.ts) nên sửa ở đây KHÔNG đổi dữ liệu Thị trường.
+ * Các khối dữ liệu Thị trường lưu theo từng báo cáo khảo sát KCN: đối thủ đang hoạt động tại KCN và Lương TT.
+ * Dữ liệu được sao ra (bản lưu tại thời điểm khảo sát) lúc mở form (xem lib/kcnSurveySnapshot.ts) nên sửa ở đây KHÔNG đổi dữ liệu Thị trường.
  */
 
 const chip = 'px-2 py-0.5 rounded-full text-[10.5px] font-medium whitespace-nowrap'
@@ -204,24 +204,84 @@ const WAGE_GROUPS: { label: string; min: WageField; max: WageField }[] = [
   { label: 'Chính thức (tr)', min: 'skilled_min', max: 'skilled_max' },
 ]
 
+/** Bộ chọn ngành lấy từ Thị trường → Ngành Nghề (không gõ tay): có tìm không dấu, ẩn ngành đã có trong báo cáo. */
+function IndustryPicker({ industries, entries, onPick, onClose, fallback }: {
+  industries: IndustryOption[]; entries: SurveyWageEntry[]; fallback: boolean
+  onPick: (i: IndustryOption) => void; onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const options = useMemo(() => pickableIndustries(industries, entries, query), [industries, entries, query])
+  return (
+    <div className="rounded-[12px] border border-black/[0.08] bg-white p-2.5 space-y-2">
+      <div className="relative">
+        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#AEAEB2]" />
+        <input
+          autoFocus value={query} onChange={e => setQuery(e.target.value)}
+          placeholder="Tìm ngành nghề…"
+          className={`${INPUT} w-full text-[12px] pl-7 pr-2.5 py-1.5`}
+        />
+      </div>
+      <div className="max-h-[200px] overflow-y-auto -mx-1">
+        {options.length === 0 ? (
+          <div className="text-[11.5px] text-[#86868B] text-center py-3">
+            {query.trim() ? 'Không có ngành khớp.' : 'Đã chọn hết các ngành.'}
+          </div>
+        ) : options.map(i => (
+          <button
+            key={i.id ?? i.name} type="button" onClick={() => onPick(i)}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-black/[0.04]"
+          >
+            <Plus size={11} className="text-[#0066CC] shrink-0" />
+            <span className="text-[12.5px] text-[#1D1D1F] truncate">{i.name}</span>
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-[10.5px] text-[#86868B]">
+          {fallback
+            ? 'Chưa tải được danh sách Ngành Nghề — đang dùng tạm các ngành có trong Lương TT.'
+            : 'Thiếu ngành? Thêm ở Thị trường → Ngành Nghề.'}
+        </span>
+        <button type="button" onClick={onClose} className="ml-auto shrink-0 text-[11.5px] font-medium text-[#0066CC] px-2 py-1 rounded-full hover:bg-[#0071E3]/10">Xong</button>
+      </div>
+    </div>
+  )
+}
+
 interface WageEditorProps {
   zoneName: string
   entries: SurveyWageEntry[]
   loading: boolean
   /** Thị trường có dòng Lương TT nào của KCN này lúc mở form không. */
   hadMarketData: boolean
+  /** Danh sách ngành của Thị trường → Ngành Nghề; fallback = phải dựng tạm từ Lương TT (chưa có bảng industries). */
+  industries: IndustryOption[]
+  industriesFallback: boolean
   onChange: (next: SurveyWageEntry[]) => void
+  /** Chọn ngành → thêm dòng mới và tự điền Lương TT của đúng KCN + ngành (logic ở lib, người gọi truyền dữ liệu Thị trường). */
+  onAddIndustry: (i: IndustryOption) => void
+  /** Gắn lại ngành cho 1 dòng chưa khớp danh sách. */
+  onAssignIndustry: (index: number, i: IndustryOption) => void
 }
 
-export function WageEditor({ zoneName, entries, loading, hadMarketData, onChange }: WageEditorProps) {
+export function WageEditor({ zoneName, entries, loading, hadMarketData, industries, industriesFallback, onChange, onAddIndustry, onAssignIndustry }: WageEditorProps) {
+  const [picking, setPicking] = useState(false)
+  const [assigning, setAssigning] = useState<number | null>(null)
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <label className={labelCls}>Mức lương khu vực <span className="font-normal text-[#86868B]">· Lương TT của {zoneName}</span></label>
-        <button type="button" onClick={() => onChange([...entries, newManualWageEntry('')])} className={`${BTN_TINTED} ml-auto shrink-0 whitespace-nowrap px-2.5 py-1 text-[11.5px]`}>
+        <button type="button" onClick={() => setPicking(p => !p)} className={`${BTN_TINTED} ml-auto shrink-0 whitespace-nowrap px-2.5 py-1 text-[11.5px]`}>
           <Plus size={11} /> Thêm ngành
         </button>
       </div>
+
+      {picking && (
+        <IndustryPicker
+          industries={industries} entries={entries} fallback={industriesFallback}
+          onPick={i => onAddIndustry(i)} onClose={() => setPicking(false)}
+        />
+      )}
 
       {loading ? (
         <div className="text-[11.5px] text-[#86868B] py-3 text-center rounded-[12px] bg-black/[0.03]">Đang lấy Lương TT từ Thị trường…</div>
@@ -230,49 +290,61 @@ export function WageEditor({ zoneName, entries, loading, hadMarketData, onChange
           {!hadMarketData && (
             <div className="flex items-start gap-1.5 text-[11.5px] text-[#B25000] rounded-[12px] bg-[#FF9500]/[0.1] px-3 py-2">
               <Info size={12} className="mt-0.5 shrink-0" />
-              <span>Chưa có dữ liệu lương — thêm ở tab Lương TT. Vẫn có thể nhập tay bên dưới, số nhập chỉ nằm trong báo cáo này.</span>
+              <span>Chưa có dữ liệu lương — thêm ở tab Lương TT. Bấm "Thêm ngành" để chọn ngành và nhập tay, số nhập chỉ nằm trong báo cáo này.</span>
             </div>
           )}
-          {entries.map((e, i) => (
-            <div key={i} className="rounded-[12px] bg-black/[0.03] p-3 space-y-2">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                {e.source === 'manual' ? (
-                  <input
-                    value={e.industry} onChange={ev => onChange(setWageEntryField(entries, i, { industry: ev.target.value }))}
-                    placeholder="Tên ngành nghề" className={`${INPUT} flex-1 min-w-[140px] text-[12.5px] px-2.5 py-1.5`}
-                  />
-                ) : (
+          {entries.map((e, i) => {
+            // Dòng lấy từ Lương TT nhưng tên ngành không có trong Ngành Nghề → báo để gắn lại cho khớp hệ thống.
+            const unmatched = e.industry_id === null && !industriesFallback
+            return (
+              <div key={e.industry_id ?? e.industry} className="rounded-[12px] bg-black/[0.03] p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-[12.5px] font-medium text-[#1D1D1F]">{e.industry || '(Chưa ghi ngành)'}</span>
+                  {e.source === 'market' && e.survey_date && <span className={`${chip} ${TINT.blue}`}>Lương TT {formatDate(e.survey_date)}</span>}
+                  {e.edited && <span className={`${chip} ${TINT.orange}`}>Đã chỉnh trong báo cáo</span>}
+                  {unmatched && <span className={`${chip} ${TINT.orange}`}>Chưa khớp danh sách Ngành Nghề</span>}
+                  {unmatched && (
+                    <button type="button" onClick={() => setAssigning(a => (a === i ? null : i))} className="text-[11px] font-medium text-[#0066CC] hover:underline">Gắn ngành</button>
+                  )}
+                  <button type="button" onClick={() => { onChange(removeWageEntry(entries, i)); setAssigning(null) }} className={`${BTN_ICON} ml-auto`} title="Bỏ dòng này khỏi báo cáo (không đổi Lương TT)"><Trash2 size={12} /></button>
+                </div>
+                {assigning === i && (
+                  <IndustryPicker
+                    industries={industries} entries={entries} fallback={industriesFallback}
+                    onPick={ind => { onAssignIndustry(i, ind); setAssigning(null) }} onClose={() => setAssigning(null)}
+                  />
                 )}
-                {e.source === 'market' && e.survey_date && <span className={`${chip} ${TINT.blue}`}>Lương TT {formatDate(e.survey_date)}</span>}
-                {e.source === 'manual' && <span className={`${chip} ${TINT.gray}`}>Nhập tay</span>}
-                {e.edited && <span className={`${chip} ${TINT.orange}`}>Đã chỉnh trong báo cáo</span>}
-                <button type="button" onClick={() => onChange(removeWageEntry(entries, i))} className={`${BTN_ICON} ml-auto`} title="Bỏ dòng này khỏi báo cáo (không đổi Lương TT)"><Trash2 size={12} /></button>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {WAGE_GROUPS.map(g => (
-                  <div key={g.label} className="min-w-0">
-                    <div className="text-[10.5px] text-[#86868B] mb-1">{g.label}</div>
-                    <div className="flex items-center gap-1">
-                      <TrInput value={e[g.min]} onChange={v => onChange(setWageEntryField(entries, i, { [g.min]: v }))} placeholder="từ" />
-                      <span className="text-[#AEAEB2]">–</span>
-                      <TrInput value={e[g.max]} onChange={v => onChange(setWageEntryField(entries, i, { [g.max]: v }))} placeholder="đến" />
-                    </div>
+                {e.source === 'manual' && (
+                  <div className="flex items-start gap-1.5 text-[11px] text-[#B25000]">
+                    <Info size={11} className="mt-0.5 shrink-0" />
+                    <span>Chưa có Lương TT của ngành này ở {zoneName} — thêm ở tab Lương TT, hoặc nhập tay ở đây.</span>
                   </div>
-                ))}
-                <div className="min-w-0">
-                  <div className="text-[10.5px] text-[#86868B] mb-1">Nguồn LĐ</div>
-                  <select
-                    value={e.labor_availability}
-                    onChange={ev => onChange(setWageEntryField(entries, i, { labor_availability: ev.target.value }))}
-                    className={`${INPUT} w-full text-[12px] px-2 py-1.5`}
-                  >
-                    {[...new Set([...LABOR_AVAIL_OPTIONS, e.labor_availability])].map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {WAGE_GROUPS.map(g => (
+                    <div key={g.label} className="min-w-0">
+                      <div className="text-[10.5px] text-[#86868B] mb-1">{g.label}</div>
+                      <div className="flex items-center gap-1">
+                        <TrInput value={e[g.min]} onChange={v => onChange(setWageEntryField(entries, i, { [g.min]: v }))} placeholder="từ" />
+                        <span className="text-[#AEAEB2]">–</span>
+                        <TrInput value={e[g.max]} onChange={v => onChange(setWageEntryField(entries, i, { [g.max]: v }))} placeholder="đến" />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="min-w-0">
+                    <div className="text-[10.5px] text-[#86868B] mb-1">Nguồn LĐ</div>
+                    <select
+                      value={e.labor_availability}
+                      onChange={ev => onChange(setWageEntryField(entries, i, { labor_availability: ev.target.value }))}
+                      className={`${INPUT} w-full text-[12px] px-2 py-1.5`}
+                    >
+                      {[...new Set([...LABOR_AVAIL_OPTIONS, e.labor_availability])].map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           <div className="text-[10.5px] text-[#86868B]">Lấy bản Lương TT mới nhất của từng ngành. Sửa ở đây chỉ đổi trong báo cáo này, không ghi đè dữ liệu Thị trường.</div>
         </>
       )}

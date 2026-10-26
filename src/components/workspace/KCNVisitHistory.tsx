@@ -7,9 +7,10 @@ import { formatDate } from '../../lib/format'
 import type { Client, Competitor, CompetitorClient, KCNVisit, MarketLead, MarketSurvey } from '../../lib/types'
 import { deriveSupplyFromCompanies } from '../../pages/market/supplierLink'
 import {
-  buildInitialCompetitorEntries, buildWageSnapshot, cleanWageEntries, competitorSnapshotToText, competitorsToRecord,
-  foldSnapshotIntoNote, isMissingSnapshotColumnError, parseCompetitorSnapshot, parseWageSnapshot, wageSnapshotToText,
-  type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry,
+  addIndustryEntry, assignIndustryEntry, buildInitialCompetitorEntries, buildWageSnapshot, cleanWageEntries,
+  competitorSnapshotToText, competitorsToRecord, foldSnapshotIntoNote, industryKey, isMissingSnapshotColumnError,
+  parseCompetitorSnapshot, parseWageSnapshot, wageSnapshotToText,
+  type IndustryOption, type SupplyRowLike, type SurveyCompetitorEntry, type SurveyWageEntry,
 } from '../../lib/kcnSurveySnapshot'
 import { sameZone } from '../../lib/zoneMatch'
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT } from './wsTheme'
@@ -38,16 +39,21 @@ interface MarketData {
   competitors: Competitor[]
   supplyRows: SupplyRowLike[]
   surveys: MarketSurvey[]
+  /** Ngành của Thị trường → Ngành Nghề (bảng industries) — nguồn DUY NHẤT để chọn ngành trong báo cáo. */
+  industries: IndustryOption[]
+  /** true = bảng industries không đọc được (chưa chạy migration 099?) nên danh sách dựng tạm từ tên ngành trong Lương TT. */
+  industriesFallback: boolean
   failed: boolean
 }
 
 async function fetchMarketData(): Promise<MarketData> {
-  const [cr, ccr, clr, lr, sr] = await Promise.all([
+  const [cr, ccr, clr, lr, sr, ir] = await Promise.all([
     supabase.from('competitors').select('*'),
     supabase.from('competitor_clients').select('*'),
     supabase.from('clients').select('id, name, industrial_zones, market_suppliers'),
     supabase.from('market_leads').select('id, company_name, region, suppliers'),
     supabase.from('market_surveys').select('*'),
+    supabase.from('industries').select('id, name').order('name'),
   ])
   const competitors = (cr.data ?? []) as Competitor[]
   const ccRows = (ccr.data ?? []) as CompetitorClient[]
@@ -58,10 +64,17 @@ async function fetchMarketData(): Promise<MarketData> {
     (lr.data ?? []) as Pick<MarketLead, 'id' | 'company_name' | 'region' | 'suppliers'>[],
     ccRows,
   )
+  const surveys = (sr.data ?? []) as MarketSurvey[]
+  const industriesFallback = !!ir.error || !ir.data
+  const industries: IndustryOption[] = industriesFallback
+    ? [...new Map(surveys.filter(s => s.industry?.trim()).map(s => [industryKey(s.industry), { id: null, name: s.industry!.trim() }])).values()]
+    : (ir.data as { id: string; name: string }[]).map(i => ({ id: i.id, name: i.name }))
   return {
     competitors,
     supplyRows: [...ccRows, ...derived],
-    surveys: (sr.data ?? []) as MarketSurvey[],
+    surveys,
+    industries,
+    industriesFallback,
     // Đối thủ + lương là 2 nguồn chính; lỗi 2 bảng này mới coi là không tải được.
     failed: !!(cr.error || sr.error),
   }
@@ -72,8 +85,8 @@ async function fetchMarketData(): Promise<MarketData> {
  * Dùng chung giữa Workspace > KCN Grid và Market > Hồ sơ khu vực — cùng đọc/ghi
  * bảng kcn_visits theo zone_id nên dữ liệu luôn đồng bộ ở cả 2 nơi.
  *
- * Form báo cáo tự điền sẵn từ Thị trường (đối thủ đang hoạt động tại KCN + Lương TT) dưới dạng
- * ẢNH CHỤP lưu riêng trong từng báo cáo — xem lib/kcnSurveySnapshot.ts.
+ * Form báo cáo tự điền sẵn từ Thị trường (đối thủ đang hoạt động tại KCN + Lương TT, ngành chọn từ Ngành Nghề)
+ * dưới dạng bản lưu tại thời điểm khảo sát, riêng trong từng báo cáo — xem lib/kcnSurveySnapshot.ts.
  */
 export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
   const { user } = useAuth()
@@ -151,11 +164,11 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     try {
       data = await fetchMarketData()
     } catch {
-      data = { competitors: [], supplyRows: [], surveys: [], failed: true }
+      data = { competitors: [], supplyRows: [], surveys: [], industries: [], industriesFallback: true, failed: true }
     }
     if (reportingRef.current !== v.id) return // đã Huỷ / mở lịch khác trong lúc tải
     const initial = buildInitialCompetitorEntries(zoneName, data.competitors, data.supplyRows)
-    const wages = buildWageSnapshot(zoneName, data.surveys)
+    const wages = buildWageSnapshot(zoneName, data.surveys, data.industries)
     setMarket(data)
     setSuggested(initial)
     setCompEntries(initial)
@@ -281,7 +294,13 @@ export function KCNVisitHistory({ zoneId, zoneName, toast, onChanged }: Props) {
     return (
       <div key={f.key} className="flex flex-col gap-1.5">
         {f.key === 'wage_note' && (
-          <WageEditor zoneName={zoneName} entries={wageEntries} loading={marketLoading} hadMarketData={hadMarketWage} onChange={setWageEntries} />
+          <WageEditor
+            zoneName={zoneName} entries={wageEntries} loading={marketLoading} hadMarketData={hadMarketWage}
+            industries={market?.industries ?? []} industriesFallback={market?.industriesFallback ?? false}
+            onChange={setWageEntries}
+            onAddIndustry={i => setWageEntries(es => addIndustryEntry(es, i, zoneName, market?.surveys ?? []))}
+            onAssignIndustry={(idx, i) => setWageEntries(es => assignIndustryEntry(es, idx, i, zoneName, market?.surveys ?? []))}
+          />
         )}
         {f.key === 'competitor_note' && (
           <CompetitorEditor
