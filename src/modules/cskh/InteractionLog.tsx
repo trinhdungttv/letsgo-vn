@@ -33,7 +33,7 @@ import {
 import { MigrationBanner, Spinner } from './components/Card';
 import { BatchEditModal } from './components/BatchEditModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
-import { MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
+import { CompanyTag, MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
 
 const PAGE = 50;
 
@@ -265,7 +265,7 @@ export default function CskhInteractionLog() {
                       {i.contactId && contactById.has(i.contactId) ? (
                         <button type="button" onClick={() => openProfile(i.contactId as string)} className="text-[15px] font-semibold text-[#1D1D1F] hover:text-[#0066CC] transition-colors">{w.name}</button>
                       ) : <span className="text-[15px] font-semibold text-[#1D1D1F]">{w.name}</span>}
-                      {w.company && <span className="text-[12.5px] text-[#86868B]">{w.company}</span>}
+                      <CompanyTag name={w.company} />
                     </div>
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5 text-[12px] text-[#86868B]">
                       <span className="font-medium text-[#3A3A3C]">{INTERACTION_LABEL[i.type]}</span>

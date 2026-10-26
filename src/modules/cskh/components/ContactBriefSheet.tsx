@@ -9,6 +9,7 @@ import type { CskhContact, CskhInteraction } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../../lib/cskh/types';
 import { CHANNEL_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
+import { CompanyTag } from './apple';
 import { expandOpenExtras } from '../data/api';
 import { RememberList } from './QuickLogSheet';
 import { Sheet } from './Sheet';
@@ -39,9 +40,10 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
         <ContactAvatar name={contact.fullName} url={contact.avatarUrl} tier={contact.tier} size={44} />
         <div className="min-w-0">
           <p className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] truncate">{contact.fullName}</p>
-          <p className="text-[12px] text-[#86868B] truncate">
-            {[contact.jobTitle, contact.organization].filter(Boolean).join(' · ')}
-          </p>
+          <div className="mt-0.5 flex items-center gap-1.5 min-w-0">
+            <CompanyTag name={contact.organization} />
+            {contact.jobTitle && <span className="text-[12px] text-[#86868B] truncate">{contact.jobTitle}</span>}
+          </div>
           <p className="text-[11.5px] text-[#86868B]">
             {groupLabel}{ownerName ? ` · Phụ trách: ${ownerName}` : ''}
             {' · '}

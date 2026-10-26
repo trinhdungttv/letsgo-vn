@@ -24,7 +24,7 @@ import {
 } from './ui';
 import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
-import { MoreButton, PageTitle, Panel, Quiet, Row, Segmented, Switch } from './components/apple';
+import { CompanyTag, MoreButton, PageTitle, Panel, Quiet, Row, Segmented, Switch } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { GiftForm } from './components/GiftForm';
 import { OccasionForm } from './components/OccasionForm';
@@ -154,7 +154,7 @@ export default function CskhEvents() {
                       </p>
                       <p className="text-[12px] text-[#86868B] truncate mt-0.5">
                         <button type="button" onClick={() => openProfile(o.contactId)} className="text-[#3A3A3C] font-medium hover:text-[#0066CC] transition-colors">{c?.fullName}</button>
-                        {c?.organization ? ` · ${c.organization}` : ''}
+                        {c?.organization && <>{' '}<CompanyTag name={c.organization} /></>}
                         {o.year ? ` · từ ${o.year}` : ''} · nhắc trước {o.remindDaysBefore} ngày
                         {o.source === 'birthday' ? ' · ngày sinh trong hồ sơ' : ''}
                       </p>

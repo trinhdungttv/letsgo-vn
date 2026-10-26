@@ -5,7 +5,7 @@
 // công tắc iOS. Viết đủ chữ từng class (không ghép chuỗi động) để Tailwind sinh đúng CSS.
 // ============================================================================
 import type { ReactNode } from 'react';
-import { ChevronDown, Search, X } from 'lucide-react';
+import { Building2, ChevronDown, Search, X } from 'lucide-react';
 import { CAPTION, PANEL } from '../ui';
 
 /** Đầu trang kiểu Apple: nhãn nhỏ in hoa · tiêu đề lớn · câu tóm tắt · nút viên. */
@@ -187,5 +187,20 @@ export function MoreButton({ onClick, children }: { onClick: () => void; childre
       className="w-full min-h-[40px] md:min-h-[32px] text-[13px] font-medium text-[#0066CC] hover:opacity-70 transition">
       {children}
     </button>
+  );
+}
+
+/**
+ * Tên công ty khách hàng nổi bật: viên xanh nhạt + icon toà nhà + chữ đậm — nhìn là biết ngay khách nào.
+ * Người kiêm nhiều công ty thì tên nối bằng ", " (cắt gọn, xem đủ khi rê chuột).
+ */
+export function CompanyTag({ name, className = '' }: { name: string | null | undefined; className?: string }) {
+  const n = (name ?? '').trim();
+  if (!n) return null;
+  return (
+    <span title={n} className={`inline-flex items-center gap-1 max-w-full align-middle rounded-full bg-[#0071E3]/[0.10] text-[#0058B0] px-2 py-[1px] text-[12.5px] font-semibold leading-[18px] ${className}`}>
+      <Building2 size={12} strokeWidth={2.3} className="shrink-0" />
+      <span className="truncate">{n}</span>
+    </span>
   );
 }

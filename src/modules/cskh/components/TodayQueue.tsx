@@ -2,6 +2,7 @@
 // avatar, tên, lý do (màu + icon theo mức khẩn, luôn kèm chữ), nhóm · công ty; bên phải nút tròn
 // Gọi / Zalo / SMS + Xong (việc đã hứa) + Đã liên hệ. Điện thoại thì nút xuống hàng dưới (Xong chỉ
 // còn icon, Đã liên hệ dạt phải), vùng chạm ≥ 40px. Chạm vào dòng → tóm tắt nhanh.
+import { CompanyTag } from './apple';
 import { Check, CheckCheck } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import type { TodayQueueItem } from '../../../lib/cskh/todayQueue';
@@ -56,7 +57,10 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
                 className="flex items-center gap-3 min-w-0 flex-1 basis-full md:basis-auto text-left">
                 <ContactAvatar name={contact.fullName} url={contact.avatarUrl} tier={contact.tier} size={40} />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-semibold text-[#1D1D1F] truncate">{contact.fullName}</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-[15px] font-semibold text-[#1D1D1F] truncate shrink-0 max-w-[55%]">{contact.fullName}</span>
+                    <CompanyTag name={contact.organization} className="min-w-0" />
+                  </span>
                   <span className="flex items-start gap-1 text-[13px] font-medium leading-snug" style={{ color: reason.color }}>
                     <reason.Icon size={13} strokeWidth={2.3} className="shrink-0 mt-[3px]" />
                     <span className="line-clamp-2">{item.label}</span>
@@ -65,7 +69,6 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
                     {group.key !== 'unclassified' && (
                       <><i className="inline-block w-1.5 h-1.5 rounded-full align-middle mr-1 -mt-px" style={{ background: group.color }} />{group.label}</>
                     )}
-                    {contact.organization ? `${group.key !== 'unclassified' ? ' · ' : ''}${contact.organization}` : ''}
                     {item.alsoLabels.length > 0 && ` · Còn: ${item.alsoLabels.join(' · ')}`}
                   </span>
                 </span>
