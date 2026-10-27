@@ -28,7 +28,6 @@ import { isCooperatingClient } from '../../lib/cskh/seedTiers';
 import type { CskhContact, Gender } from '../../lib/cskh/types';
 import { CLASSIFIED_TIERS, GENDER_LABEL, TIER_LABEL } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
-import ContactFormModal from '../../components/contacts/ContactFormModal';
 import { assignGroups, setGender, setOwner } from './data/api';
 import { useCskh } from './context';
 import {
@@ -102,7 +101,7 @@ function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): 
 }
 
 export default function CskhMatrix() {
-  const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroups, openGroupLog } = useCskh();
+  const { data, loading, clients, toast, openProfile, openNewContact, openLog, openPicker, openGroups, openGroupLog } = useCskh();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const { branches } = useBranchLookup();
@@ -115,7 +114,6 @@ export default function CskhMatrix() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [showMatrix, setShowMatrix] = usePersistedState('cskh_matrix_heat_open', true);
-  const [creating, setCreating] = useState(false);
   const today = todayVN();
 
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
@@ -382,7 +380,7 @@ export default function CskhMatrix() {
             <button type="button" onClick={openPicker} className={PILL_TINTED}>
               <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn người</span><span className="hidden md:inline">Chọn người chăm sóc</span>
             </button>
-            <button type="button" onClick={() => setCreating(true)} className={PILL_PRIMARY}>
+            <button type="button" onClick={openNewContact} className={PILL_PRIMARY}>
               <Plus size={15} strokeWidth={2.4} /> Thêm liên hệ
             </button>
           </>
@@ -701,11 +699,6 @@ export default function CskhMatrix() {
         )}
       </div>
 
-      {/* ── Thêm liên hệ (form chung với hồ sơ Khách hàng) → mở luôn hồ sơ CSKH ── */}
-      {creating && (
-        <ContactFormModal contact={null} clients={clients} toast={toast} onClose={() => setCreating(false)}
-          onSaved={saved => { setCreating(false); emitCskhDataChanged(); openProfile(saved.id); }} />
-      )}
     </div>
   );
 }

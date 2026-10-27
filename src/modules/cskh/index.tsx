@@ -43,6 +43,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   const { branches } = useBranchLookup();
   const { data, loading } = useCskhData(toast);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [creatingContact, setCreatingContact] = useState(false);
   /** '' = form chưa chọn người; id = chọn sẵn; null = đóng. */
   const [logFor, setLogFor] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
@@ -68,6 +69,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
     clients,
     toast,
     openProfile: setProfileId,
+    openNewContact: () => setCreatingContact(true),
     openLog,
     openPicker: () => setPicking(true),
     openGroups,
@@ -102,6 +104,17 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
           onClose={() => setProfileId(null)}
           onLog={openLog}
           onOpenClient={onOpenClient}
+          onManageGroups={openGroups}
+        />
+      )}
+      {data && creatingContact && (
+        <ContactProfileModal
+          contactId={null}
+          data={data}
+          clients={clients}
+          toast={toast}
+          onClose={() => setCreatingContact(false)}
+          onLog={openLog}
           onManageGroups={openGroups}
         />
       )}

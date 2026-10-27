@@ -6,6 +6,8 @@
 // ============================================================================
 import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
+import SocialBadge from '../SocialBadge';
+import { socialLinkList } from '../../lib/socialLinks';
 import {
   Building2, Cake, CalendarHeart, Edit2, ExternalLink, FileText, Gift,
   Link2, Mail, MapPin, Phone, Radio, Share2, Star, X,
@@ -123,11 +125,15 @@ export default function ContactPreviewPopup({ contact: c, branches, onClose, onE
 
           {c.birthday && <Row icon={Cake} label="Ngày sinh">{new Date(c.birthday).toLocaleDateString('vi-VN')}</Row>}
 
-          {c.social_link && (
-            <Row icon={Share2} label="Facebook / LinkedIn">
-              <a href={c.social_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">
-                {c.social_link}
-              </a>
+          {socialLinkList(c.social_link).length > 0 && (
+            <Row icon={Share2} label="Mạng xã hội">
+              <div className="flex flex-col gap-1">
+                {socialLinkList(c.social_link).map(l => (
+                  <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-blue-600 hover:underline break-all">
+                    <SocialBadge kind={l.kind} size={18} iconSize={10} /> {l.url.replace(/^https?:\/\/(www\.)?/i, '')}
+                  </a>
+                ))}
+              </div>
             </Row>
           )}
 

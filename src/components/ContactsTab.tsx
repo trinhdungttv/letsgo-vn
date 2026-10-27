@@ -4,12 +4,14 @@
 // Danh sách liên hệ, chỉ khác là ở đây công ty được gắn sẵn.
 // ============================================================================
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, ExternalLink, MapPin } from 'lucide-react';
+import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, MapPin } from 'lucide-react';
 import type { Client, Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import ContactFormModal from './contacts/ContactFormModal';
+import SocialBadge, { SOCIAL_META } from './SocialBadge';
+import { socialLinkList } from '../lib/socialLinks';
 import { AvatarCircle } from './contacts/AvatarUpload';
 import ContactDeleteDialog from './contacts/ContactDeleteDialog';
 import {
@@ -153,12 +155,11 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
                             Kiêm {linksOf(c).length - 1} nơi
                           </span>
                         )}
-                        {c.social_link && (
-                          <a href={c.social_link} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex text-blue-500 hover:text-blue-700" title="Mở Facebook / LinkedIn">
-                            <ExternalLink size={11} />
+                        {socialLinkList(c.social_link).map(l => (
+                          <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex" title={`Mở ${SOCIAL_META[l.kind].label}`}>
+                            <SocialBadge kind={l.kind} size={16} iconSize={9} />
                           </a>
-                        )}
+                        ))}
                         {c.map_link && (
                           <a href={c.map_link} target="_blank" rel="noopener noreferrer"
                             className="inline-flex text-emerald-600 hover:text-emerald-800" title="Mở địa chỉ nhà trên Google Maps">

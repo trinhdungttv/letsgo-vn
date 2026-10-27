@@ -13,6 +13,8 @@ export interface CskhContextValue {
   toast: (msg: string) => void;
   /** Mở hồ sơ người liên hệ. */
   openProfile: (contactId: string) => void;
+  /** Mở hồ sơ trống để thêm liên hệ mới (cùng form với hồ sơ). */
+  openNewContact: () => void;
   /** Mở form Ghi tương tác (chọn sẵn người nếu có). */
   openLog: (contactId?: string) => void;
   openPicker: () => void;

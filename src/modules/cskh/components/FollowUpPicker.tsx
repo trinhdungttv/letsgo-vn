@@ -11,11 +11,13 @@ const PRESETS: ReadonlyArray<{ days: number; label: string }> = [
   { days: 7, label: '1 tuần' },
 ];
 
-export function FollowUpPicker({ value, onChange, today, placeholder }: {
+export function FollowUpPicker({ value, onChange, today, minDate, placeholder }: {
   value: FollowUpValue;
   onChange: (next: FollowUpValue) => void;
   /** Hôm nay (giờ VN) để tính hạn nhanh. */
   today: string;
+  /** Ngày sớm nhất chọn được cho hạn (mặc định hôm nay). Ghi bù việc đã xảy ra → truyền ngày tương tác để chọn được hạn từ ngày đó. */
+  minDate?: string;
   placeholder?: string;
 }) {
   const [customOpen, setCustomOpen] = useState(false);
@@ -52,7 +54,7 @@ export function FollowUpPicker({ value, onChange, today, placeholder }: {
             <input
               type="date"
               value={value.due}
-              min={today}
+              min={minDate && minDate < today ? minDate : today}
               onChange={e => onChange({ ...value, due: e.target.value })}
               aria-label="Hạn xử lý"
               className="text-[13px] px-2 py-1 rounded-[10px] border border-black/[0.12] bg-white outline-none focus:border-[#0071E3] focus:ring-4 focus:ring-[#0071E3]/15"

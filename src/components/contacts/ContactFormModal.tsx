@@ -504,7 +504,7 @@ export default function ContactFormModal({
                 <div>
                   <label className={label}>Facebook / LinkedIn</label>
                   <input type="text" value={form.social_link} onChange={e => setForm(prev => ({ ...prev, social_link: e.target.value }))}
-                    placeholder="https://facebook.com/..." className={field} />
+                    placeholder="Dán link Facebook, LinkedIn (cách nhau dấu cách)" className={field} />
                 </div>
               </div>
               <div>

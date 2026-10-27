@@ -9,7 +9,7 @@
 // quan trọng nhập ngay trong hồ sơ (tuổi âm, hợp/kỵ), địa chỉ nhà hiện tại + link Maps +
 // ghim chấm tay (Chính xác / Tương đối), quê quán theo tỉnh, tìm hiểu vùng miền (AI), học vấn
 // "cùng trường", gia đình có cấu trúc, đặc điểm dạng thẻ dùng chung, phần chuyên sâu thu gọn.
-// Ghi chú chi tiết, Facebook/LinkedIn vẫn ở form đầy đủ (nút "Form đầy đủ").
+// Ghi chú chi tiết vẫn ở form đầy đủ (nút "Form đầy đủ").
 // ============================================================================
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { useProvinces } from '../../../hooks/useProvinces';
-import { CONTACT_CHANNELS, deactivateContact, reactivateContact } from '../../../lib/contactOps';
+import { CONTACT_CHANNELS, deactivateContact, emptyContactForm, reactivateContact, saveContact } from '../../../lib/contactOps';
 import { buildContactStats, dueLabel } from '../../../lib/cskh/cadence';
 import { contactActionLinks } from '../../../lib/cskh/contactActions';
 import { formatDateVN, todayVN } from '../../../lib/cskh/dates';
@@ -36,11 +36,14 @@ import { buildTagStats, joinTags, splitTags, TRAIT_FIELDS, TRAIT_LABEL, TRAIT_PR
 import type { CskhContext, CskhInteraction, EducationLevel, FamilyMember, FamilyRole, Gender, RememberNotes } from '../../../lib/cskh/types';
 import { EDUCATION_LEVEL_LABEL, EDUCATION_LEVELS, GENDER_LABEL, MBTI_TYPES, REMEMBER_LABEL } from '../../../lib/cskh/types';
 import { compareVnName } from '../../../lib/vnName';
+import { joinSocialLinks, parseSocialLinks, socialKind, withScheme, type SocialKind } from '../../../lib/socialLinks';
+import SocialBadge, { SOCIAL_META } from '../../../components/SocialBadge';
 import type { Client, Contact } from '../../../lib/types';
 import AvatarUpload from '../../../components/contacts/AvatarUpload';
 import RoleSelect from '../../../components/contacts/RoleSelect';
 import ContactDeleteDialog from '../../../components/contacts/ContactDeleteDialog';
-import ContactFormModal from '../../../components/contacts/ContactFormModal';
+import ContactFormModal, { RichTextEditor } from '../../../components/contacts/ContactFormModal';
+import { mapContactRow } from '../../../lib/cskh/mappers';
 import { expandOpenExtras, saveProfile, setFollowUpDone, type CskhData } from '../data/api';
 import { mapLinkCoords, useMapLink } from '../data/mapLink';
 import { markContactLaunched } from '../launch';
@@ -157,8 +160,20 @@ const AddRow = ({ onClick, children }: { onClick: () => void; children: ReactNod
   </button>
 );
 
+/** Hồ sơ trống để dựng form "Thêm liên hệ" — cùng form với sửa hồ sơ, chỉ khác lúc lưu (tạo mới rồi lưu phần CSKH). */
+function blankContactRaw(): Contact {
+  const f = emptyContactForm();
+  const now = new Date().toISOString();
+  return {
+    id: '', client_id: null, name: '', phone: null, email: null, role: f.role, start_date: f.start_date, end_date: null,
+    is_active: true, is_primary: false, notes: null, address: null, birthday: null, hobbies: null, social_link: null,
+    channel: null, rich_notes: null, map_link: null, avatar_url: null, created_at: now, updated_at: now, contact_clients: [],
+  };
+}
+
 export function ContactProfileModal({ contactId, data, clients, toast, onClose, onLog, onOpenClient, onManageGroups }: {
-  contactId: string;
+  /** null = thêm liên hệ mới (form trống, lưu xong là tạo người + hồ sơ chăm sóc trong 1 lần). */
+  contactId: string | null;
   data: CskhData;
   clients: readonly Client[];
   toast: (m: string) => void;
@@ -172,8 +187,16 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 }) {
   const { user, token } = useAuth();
   const { provinces } = useProvinces();
-  const raw = data.rawContacts.get(contactId) as Contact;
-  const current = data.contacts.find(c => c.id === contactId)!;
+  const isNew = contactId === null;
+  const [blank] = useState(() => {
+    if (!isNew) return null;
+    const r = blankContactRaw();
+    return { raw: r, current: mapContactRow(r) };
+  });
+  // Tạo xong mà lưu phần CSKH lỗi → bấm lưu lại phải dùng đúng người đã tạo, không tạo trùng
+  const createdRaw = useRef<Contact | null>(null);
+  const raw = (blank ? blank.raw : data.rawContacts.get(contactId as string)) as Contact;
+  const current = blank ? blank.current : data.contacts.find(c => c.id === contactId)!;
   const today = todayVN();
   const thisYear = Number(today.slice(0, 4));
   const groupById = useMemo(() => new Map(data.groups.map(g => [g.id, g])), [data.groups]);
@@ -186,6 +209,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [name, setName] = useState(current.fullName);
   const [phone, setPhone] = useState(raw.phone ?? '');
   const [email, setEmail] = useState(raw.email ?? '');
+  const [social, setSocial] = useState(() => parseSocialLinks(raw.social_link));
   const [role, setRole] = useState(raw.role ?? '');
   const [clientIds, setClientIds] = useState<string[]>(current.clientIds);
   const [primaryIds, setPrimaryIds] = useState<string[]>(current.primaryClientIds);
@@ -196,6 +220,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [interests, setInterests] = useState(joinTags(current.interests));
   const [avatarUrl, setAvatarUrl] = useState(raw.avatar_url ?? '');
   const [notes, setNotes] = useState(raw.notes ?? '');
+  const [richNotes, setRichNotes] = useState(raw.rich_notes ?? '');
   // ── Trường CSKH ──
   const [groupKey, setGroupKey] = useState(groupDisplayOf(current, groupById).key);
   const [cadenceDays, setCadenceDays] = useState(current.cadenceDays === null ? '' : String(current.cadenceDays));
@@ -328,6 +353,13 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       setError('Nhịp riêng phải là số ngày nguyên dương (bỏ trống = theo nhóm)');
       return;
     }
+    for (const kind of ['facebook', 'linkedin'] as const) {
+      const v = social[kind].trim();
+      if (v && socialKind(v) !== kind) {
+        setError(`Link ${SOCIAL_META[kind].label} không đúng — dán đường dẫn trang ${SOCIAL_META[kind].label} (có ${kind}.com)`);
+        return;
+      }
+    }
     if (mapLink.trim() && !/^https?:\/\//i.test(mapLink.trim())) {
       setError('Link Google Maps phải bắt đầu bằng http(s):// — dán từ nút Chia sẻ trên Google Maps');
       return;
@@ -341,19 +373,29 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     setError('');
     try {
       const linkCoords = mapLink.trim() ? await mapLinkCoords(mapLink, token) : null;
+      const shared = {
+        name, phone, email, role,
+        client_ids: clientIds,
+        primary_client_ids: primaryIds.filter(id => clientIds.includes(id)),
+        start_date: startDate, channel, address, map_link: mapLink,
+        social_link: joinSocialLinks({ ...social, facebook: withScheme(social.facebook), linkedin: withScheme(social.linkedin) }),
+        hobbies: splitTags(interests),
+        avatar_url: avatarUrl, notes, rich_notes: richNotes,
+      };
+      let saveRaw = raw;
+      let saveCurrent = current;
+      if (isNew) {
+        // Bước 1: tạo người (cùng đường lưu với form Khách hàng); bước 2: lưu phần chăm sóc như sửa hồ sơ
+        createdRaw.current ??= await saveContact({ ...emptyContactForm(), ...shared }, null, { user, clientName });
+        saveRaw = createdRaw.current;
+        saveCurrent = { ...current, id: saveRaw.id };
+      }
       const { partial174 } = await saveProfile({
-        raw,
-        current,
+        raw: saveRaw,
+        current: saveCurrent,
         user,
         clientName,
-        shared: {
-          name, phone, email, role,
-          client_ids: clientIds,
-          primary_client_ids: primaryIds.filter(id => clientIds.includes(id)),
-          start_date: startDate, channel, address, map_link: mapLink,
-          hobbies: splitTags(interests),
-          avatar_url: avatarUrl, notes,
-        },
+        shared,
         cskh: {
           tier: target.tier,
           groupId: target.groupId,
@@ -372,7 +414,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       });
       setSaving(false);
       emitCskhDataChanged();
-      toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : 'Đã cập nhật hồ sơ');
+      toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : isNew ? `Đã thêm liên hệ "${name.trim()}"` : 'Đã cập nhật hồ sơ');
       onClose();
     } catch (e) {
       setSaving(false);
@@ -410,14 +452,14 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   };
 
   return (
-    <Sheet label={`Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
+    <Sheet label={isNew ? 'Thêm liên hệ' : `Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
       {/* ── Đầu hồ sơ ── */}
       <div className="flex items-center gap-4 pr-8">
         <ContactAvatar name={name || current.fullName} url={avatarUrl || undefined} tier={current.tier} size={64} />
         <div className="min-w-0 flex-1">
-          <p className="text-[22px] md:text-[24px] font-bold tracking-[-0.02em] leading-tight text-[#1D1D1F] truncate">{current.fullName}</p>
-          <p className="text-[13.5px] text-[#6E6E73] truncate mt-0.5">{[current.jobTitle, current.organization].filter(Boolean).join(' · ') || 'Chưa gắn công ty'}</p>
-          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <p className="text-[22px] md:text-[24px] font-bold tracking-[-0.02em] leading-tight text-[#1D1D1F] truncate">{isNew ? (name.trim() || 'Liên hệ mới') : current.fullName}</p>
+          <p className="text-[13.5px] text-[#6E6E73] truncate mt-0.5">{isNew ? 'Thêm liên hệ mới — điền xong bấm "Thêm liên hệ"' : [current.jobTitle, current.organization].filter(Boolean).join(' · ') || 'Chưa gắn công ty'}</p>
+          {!isNew && <div className="flex flex-wrap items-center gap-1.5 mt-2">
             <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(display.color)}>{display.label}</span>
             {!current.isActive && <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
             {stats && stats.status !== 'unclassified' && (
@@ -429,12 +471,12 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
                 {stats.score.total} điểm · {SCORE_GRADE_LABEL[scoreGrade(stats.score.total)]}
               </span>
             )}
-          </div>
+          </div>}
         </div>
       </div>
 
       {/* Hàng nút liên hệ kiểu ứng dụng Danh bạ của Apple: ô vuông bo, icon + nhãn xanh */}
-      <div className="grid grid-cols-4 gap-2 mt-4 md:max-w-[440px]">
+      {!isNew && <div className="grid grid-cols-4 gap-2 mt-4 md:max-w-[440px]">
         {links.map(l => {
           const meta = CHANNEL_META[l.channel];
           return (
@@ -448,7 +490,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         <button type="button" onClick={() => onLog(current.id)} className={`${ACTION_TILE} !bg-[#0071E3] !text-white hover:!bg-[#0077ED]`}>
           <PenLine size={19} strokeWidth={2.1} /> Ghi lại
         </button>
-      </div>
+      </div>}
 
       {openFollowUps.length > 0 && (
         <div className="mt-4 rounded-[14px] bg-[#FF9500]/[0.1] px-3.5 py-2.5">
@@ -522,6 +564,21 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </Field>
         <Field label="Zalo (nếu khác số chính)"><input value={zaloPhone} onChange={e => setZaloPhone(e.target.value)} className={inputCls} inputMode="tel" /></Field>
         <Field label="Email" full><input value={email} onChange={e => setEmail(e.target.value)} className={inputCls} inputMode="email" /></Field>
+        {(['facebook', 'linkedin'] as const satisfies readonly SocialKind[]).map(kind => (
+          <Field key={kind} label={SOCIAL_META[kind].label}>
+            <div className="flex items-center gap-1.5">
+              <SocialBadge kind={kind} size={32} />
+              <input value={social[kind]} onChange={e => setSocial(m => ({ ...m, [kind]: e.target.value }))} className={inputCls}
+                inputMode="url" placeholder={kind === 'facebook' ? 'facebook.com/…' : 'linkedin.com/in/…'} aria-label={`Link ${SOCIAL_META[kind].label}`} />
+              {social[kind].trim() && (
+                <a href={withScheme(social[kind])} target="_blank" rel="noopener noreferrer" title={`Mở ${SOCIAL_META[kind].label}`}
+                  className="shrink-0 w-10 md:w-9 h-10 md:h-9 rounded-[10px] bg-[rgba(118,118,128,0.12)] flex items-center justify-center text-[#0066CC] hover:bg-[rgba(118,118,128,0.2)] transition">
+                  <ExternalLink size={14} />
+                </a>
+              )}
+            </div>
+          </Field>
+        ))}
       </Section>
 
       {/* ── Ngày sinh & ngày quan trọng ── */}
@@ -629,6 +686,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         <Field label="Ghi chú ngắn" full>
           <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={`${inputCls} resize-y`} />
         </Field>
+        <Field label="Ghi chú chi tiết" full><RichTextEditor value={richNotes} onChange={setRichNotes} /></Field>
       </Section>
 
       {/* ── Học vấn ── */}
@@ -728,22 +786,22 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 
       <div className={`${SHEET_FOOTER} mt-5 bg-[#F2F2F7]/90 md:bg-white/90`}>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setFullForm(true)} title="Ghi chú chi tiết, Facebook/LinkedIn"
+          {!isNew && <button type="button" onClick={() => setFullForm(true)} title="Các trường ít dùng"
             className={`${FOOT_BTN} bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>
             <FileText size={14} /> Form đầy đủ
-          </button>
-          <button type="button" onClick={toggleActive}
+          </button>}
+          {!isNew && <button type="button" onClick={toggleActive}
             className={`${FOOT_BTN} ${raw.is_active ? 'bg-[#FF9500]/[0.14] text-[#B25000] hover:bg-[#FF9500]/[0.2]' : 'bg-[#34C759]/[0.14] text-[#248A3D] hover:bg-[#34C759]/[0.2]'}`}>
             {raw.is_active ? <><UserX size={14} /> Đánh dấu nghỉ</> : <><UserCheck size={14} /> Mở lại</>}
-          </button>
-          <button type="button" onClick={() => setDeleting(true)} className={`${FOOT_BTN} bg-[#FF3B30]/10 text-[#D70015] hover:bg-[#FF3B30]/[0.16]`}>
+          </button>}
+          {!isNew && <button type="button" onClick={() => setDeleting(true)} className={`${FOOT_BTN} bg-[#FF3B30]/10 text-[#D70015] hover:bg-[#FF3B30]/[0.16]`}>
             <Trash2 size={14} /> Xoá
-          </button>
+          </button>}
           <span className="flex-1" />
           <button type="button" onClick={onClose} className={`${FOOT_BTN} px-4 bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>Huỷ</button>
           <button type="button" onClick={handleSave} disabled={saving}
             className={`${FOOT_BTN} px-5 bg-[#0071E3] text-white font-semibold hover:bg-[#0077ED] disabled:opacity-40`}>
-            {saving ? 'Đang lưu…' : 'Lưu hồ sơ'}
+            {saving ? 'Đang lưu…' : isNew ? 'Thêm liên hệ' : 'Lưu hồ sơ'}
           </button>
         </div>
       </div>

@@ -207,7 +207,7 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
               ? 'Việc tiếp theo — sửa chữ / hạn thì việc trong Workspace đổi theo; xoá trắng / bỏ việc thì việc chưa xong bị xoá'
               : 'Việc tiếp theo (tuỳ chọn) — tự tạo việc trong Workspace, giao cho người phụ trách'}
           </p>
-          <FollowUpPicker value={followUp} onChange={setFollowUp} today={today} />
+          <FollowUpPicker value={followUp} onChange={setFollowUp} today={today} minDate={occurredAt} />
           {extras.map((e, i) => (
             <div key={e.taskId ?? `new-${i}`} className="mt-2.5 pt-2.5 border-t border-dashed border-black/[0.1]">
               <div className="flex items-center justify-between mb-1">
@@ -220,7 +220,7 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
               {e.done ? (
                 <p className="text-[13px] text-[#86868B]"><span className="line-through">{e.action}</span> <span className="text-[#248A3D] font-medium">· Đã xong</span></p>
               ) : (
-                <FollowUpPicker value={e} today={today} placeholder="VD: nhắc ký phụ lục hợp đồng…"
+                <FollowUpPicker value={e} today={today} minDate={occurredAt} placeholder="VD: nhắc ký phụ lục hợp đồng…"
                   onChange={v => setExtras(list => list.map((x, j) => (j === i ? { ...x, ...v } : x)))} />
               )}
             </div>

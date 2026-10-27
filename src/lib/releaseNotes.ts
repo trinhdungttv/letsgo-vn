@@ -16,6 +16,30 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-27-cskh-new-contact-one-form',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'Thêm liên hệ ở Ma trận: dùng luôn hồ sơ CSKH, lưu 1 lần (có Ghi chú chi tiết)',
+    ],
+  },
+  {
+    id: '2026-10-27-contact-social-links',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'Hồ sơ liên hệ: thêm link Facebook và LinkedIn kèm logo',
+    ],
+  },
+  {
+    id: '2026-10-27-cskh-backdated-due',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'Ghi tương tác bù: hạn việc tiếp theo chọn được từ ngày tương tác',
+    ],
+  },
+  {
     id: '2026-10-27-cskh-agenda-avatar',
     date: '2026-10-27',
     title: 'CSKH',
