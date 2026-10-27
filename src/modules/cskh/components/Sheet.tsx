@@ -2,7 +2,7 @@
 // máy tính = hộp thoại giữa màn hình. Bấm nền hoặc Esc để đóng.
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 
 export function Sheet({ label, onClose, children, wide = false }: {
   /** Đọc bởi trình đọc màn hình. */
@@ -28,8 +28,17 @@ export function Sheet({ label, onClose, children, wide = false }: {
         onClick={e => e.stopPropagation()}
         className={`relative w-full ${wide === 'xl' ? 'md:max-w-[760px]' : wide ? 'md:max-w-[560px]' : 'md:max-w-[440px]'} bg-[#F2F2F7] md:bg-white rounded-t-[22px] md:rounded-[22px] shadow-[0_-8px_40px_rgba(0,0,0,0.16)] md:shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_24px_64px_-12px_rgba(0,0,0,0.28)] max-h-[92dvh] overflow-y-auto px-4 md:px-6 pt-2 md:pt-5 pb-[max(16px,env(safe-area-inset-bottom))] animate-fade-in`}
       >
-        <div className="md:hidden flex justify-center pb-2">
-          <div className="w-9 h-[5px] rounded-full bg-[#C7C7CC]" />
+        {/* Điện thoại: thanh "‹ Quay lại" dính đầu sheet (cuộn nội dung vẫn thấy) — trên iPhone
+            không có nút back của trình duyệt, sheet cao gần hết màn hình nên cũng khó bấm nền để đóng. */}
+        <div className="md:hidden sticky top-0 z-10 -mx-4 -mt-2 px-2 pt-2 pb-1 mb-1 bg-[#F2F2F7]/95 backdrop-blur-xl">
+          <div className="mx-auto w-9 h-[5px] rounded-full bg-[#C7C7CC]" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center h-10 pl-1 pr-3 -mt-1 rounded-full text-[#0071E3] text-[16px] font-medium active:bg-black/[0.06] transition-colors"
+          >
+            <ChevronLeft size={24} strokeWidth={2.2} /> Quay lại
+          </button>
         </div>
         <button
           type="button"

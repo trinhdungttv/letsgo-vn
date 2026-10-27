@@ -14,7 +14,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  BadgeCheck, CheckCheck, ChevronDown, ExternalLink, FileText, Minus, PenLine, Plus, RotateCcw, Star, Trash2, UserCheck, UserX, X,
+  BadgeCheck, ChevronDown, ExternalLink, FileText, Minus, PenLine, Plus, RotateCcw, Star, Trash2, UserCheck, UserX, X,
 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { useProvinces } from '../../../hooks/useProvinces';
@@ -48,6 +48,7 @@ import {
   CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, inputCls, NEW_GROUP_VALUE, resolveGroupKey, scoreColor,
 } from '../ui';
 import { AddressPinMap } from './AddressPinMap';
+import { TaskCheck } from './apple';
 import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
 import { OccasionEditor } from './OccasionEditor';
@@ -454,14 +455,11 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#C93400] mb-1">Việc đang mở · {openFollowUps.length}</p>
           <div className="space-y-1">
             {openFollowUps.map(i => (
-              <div key={i.id} className="flex items-center gap-2">
+              <div key={i.id} className="flex items-center gap-1 -ml-1.5">
+                <TaskCheck busy={busyId === i.id} onDone={() => completeFollowUp(i)} label={`Đánh dấu xong: ${i.followUpAction}`} />
                 <span className="flex-1 min-w-0 text-[13.5px] text-[#1D1D1F]">
                   {i.followUpAction}{i.followUpDue && <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>}
                 </span>
-                <button type="button" disabled={busyId === i.id} onClick={() => completeFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[13px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
-                  <CheckCheck size={14} /> Xong
-                </button>
               </div>
             ))}
           </div>

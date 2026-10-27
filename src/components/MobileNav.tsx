@@ -26,9 +26,10 @@ const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode; tile: key
   { page: 'market',         label: 'Thị trường', icon: <MapPin size={21} />,          tile: 'red' },
   { page: 'loans',          label: 'Khoản vay',  icon: <Landmark size={21} />,        tile: 'green' },
   { page: 'history',        label: 'Lịch sử',    icon: <History size={21} />,         tile: 'gray' },
-  { page: 'crm-dash',       label: 'CRM',        icon: <LayoutDashboard size={21} />, tile: 'purple' },
+  // "CRM" mở thẳng Leads (trang CSKH) — trước đây mở Dashboard CRM rồi phải bấm thêm nút Leads
+  { page: 'crm-leads',      label: 'CRM',        icon: <UserCircle2 size={21} />,     tile: 'purple' },
+  { page: 'crm-dash',       label: 'Tổng quan CRM', icon: <LayoutDashboard size={21} />, tile: 'purple' },
   { page: 'crm-pipeline',   label: 'Pipeline',   icon: <Network size={21} />,         tile: 'purple' },
-  { page: 'crm-leads',      label: 'CSKH',       icon: <UserCircle2 size={21} />,     tile: 'purple' },
   { page: 'crm-prods',      label: 'Sản phẩm',   icon: <Package size={21} />,         tile: 'purple' },
   // Văn phòng Orient (chỉ admin) — gộp 10 trang thành 1 mục; bấm vào mở danh sách trang (xem OFFICE_NAV)
   { page: 'office',         label: 'VP Orient',  icon: <Building size={21} />,        tile: 'orange' },
@@ -71,8 +72,9 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
     try {
       const raw = localStorage.getItem(pinsKey(user?.username));
       if (raw) {
-        // Ghim cũ của từng trang Văn phòng Orient → quy về mục gộp 'office' (bỏ trùng)
-        const saved = (JSON.parse(raw) as Page[]).map(p => (isOfficePage(p) ? 'office' : p) as Page);
+        // Ghim cũ của từng trang Văn phòng Orient → quy về mục gộp 'office' (bỏ trùng);
+        // ghim "CRM" cũ (Dashboard CRM) → nay "CRM" là Leads nên chuyển sang 'crm-leads'
+        const saved = (JSON.parse(raw) as Page[]).map(p => (isOfficePage(p) ? 'office' : p === 'crm-dash' ? 'crm-leads' : p) as Page);
         const parsed = saved.filter((p, i) => saved.indexOf(p) === i && MOBILE_MENU.some(m => m.page === p));
         if (parsed.length) setPins(parsed.slice(0, MAX_PINS));
       }

@@ -5,7 +5,7 @@
 // công tắc iOS. Viết đủ chữ từng class (không ghép chuỗi động) để Tailwind sinh đúng CSS.
 // ============================================================================
 import type { ReactNode } from 'react';
-import { Building2, ChevronDown, Search, X } from 'lucide-react';
+import { Building2, Check, ChevronDown, Search, X } from 'lucide-react';
 import { CAPTION, PANEL } from '../ui';
 
 /** Đầu trang kiểu Apple: nhãn nhỏ in hoa · tiêu đề lớn · câu tóm tắt · nút viên. */
@@ -202,5 +202,34 @@ export function CompanyTag({ name, className = '' }: { name: string | null | und
       <Building2 size={12} strokeWidth={2.3} className="shrink-0" />
       <span className="truncate">{n}</span>
     </span>
+  );
+}
+
+/**
+ * Ô tròn tích "xong việc" kiểu TickTick: vòng rỗng = chưa xong (bấm để hoàn thành), vòng xanh có dấu ✓ = đã xong.
+ * Vòng 22px nhưng vùng bấm 36px trên điện thoại. `busy` = đang lưu → tô xanh ngay để thấy phản hồi.
+ */
+export function TaskCheck({ done = false, busy = false, onDone, label }: {
+  done?: boolean;
+  busy?: boolean;
+  onDone?: () => void;
+  /** Đọc bởi trình đọc màn hình, vd "Đánh dấu xong: Gọi lại báo giá". */
+  label: string;
+}) {
+  const filled = done || busy;
+  const ring = `w-[22px] h-[22px] rounded-full border-2 inline-flex items-center justify-center transition ${
+    filled
+      ? 'bg-[#34C759] border-[#34C759] text-white'
+      : 'border-[#AEAEB2] text-transparent group-hover:border-[#34C759] group-hover:text-[#34C759] group-active:bg-[#34C759]/20'
+  }`;
+  const box = 'shrink-0 w-9 h-9 md:w-7 md:h-7 inline-flex items-center justify-center';
+  if (done || !onDone) {
+    return <span role="img" aria-label={label} className={box}><span className={ring}><Check size={13} strokeWidth={3.2} /></span></span>;
+  }
+  return (
+    <button type="button" role="checkbox" aria-checked={busy} aria-label={label} title="Bấm để đánh dấu xong"
+      disabled={busy} onClick={onDone} className={`group ${box} rounded-full disabled:cursor-default`}>
+      <span className={ring}><Check size={13} strokeWidth={3.2} /></span>
+    </button>
   );
 }

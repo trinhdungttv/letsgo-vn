@@ -16,6 +16,25 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-27-cskh-task-check',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'CSKH: việc chưa xong có ô tròn để tích xong (kiểu TickTick)',
+      'CSKH: bấm "Xem thêm" để đọc đủ nội dung cuộc trao đổi gần đây',
+    ],
+  },
+  {
+    id: '2026-10-27-mobile-back',
+    date: '2026-10-27',
+    title: 'Điện thoại',
+    features: [
+      'Điện thoại: bấm CRM mở thẳng Leads (Tổng quan CRM là mục riêng bên cạnh)',
+      'Điện thoại: nút "Quay lại" ở đầu mọi hộp thoại CSKH (hồ sơ, nhật ký, quà tặng…)',
+      'Điện thoại: thanh "Quay lại" khi mở trang từ liên kết (Dashboard → Chi nhánh…)',
+    ],
+  },
+  {
     id: '2026-10-26-kcn-survey-wage-sync',
     date: '2026-10-26',
     title: 'Báo cáo khảo sát KCN',

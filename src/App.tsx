@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
+import MobileBackBar from './components/MobileBackBar';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
 import { useAuth, AuthProvider, canAccess } from './lib/auth';
@@ -201,17 +202,40 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, user, rolePermissions]);
 
-  const navigate = useCallback((p: Page) => {
+  // Điện thoại không có nút back của trình duyệt: trang mở bằng liên kết trong trang khác (không phải bấm
+  // thanh điều hướng) nhớ trang vừa rời để hiện thanh "‹ Trang trước". Bấm thanh điều hướng thì xoá.
+  const [backCtx, setBackCtx] = useState<{ from: Page; to: Page } | null>(null);
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const rememberBack = useCallback((to: Page) => {
+    const from = pageRef.current;
+    setBackCtx(from === to ? null : { from, to });
+  }, []);
+
+  const goTo = useCallback((p: Page) => {
     setPage(p);
     if (p === 'finance' || p === 'workspace') loadFinance('2026-06');
     if (p === 'market') loadMarket();
-  }, [loadFinance, loadMarket]);
+  }, [setPage, loadFinance, loadMarket]);
+
+  // Liên kết trong trang (Workspace, CRM…) → nhớ trang trước
+  const navigate = useCallback((p: Page) => {
+    rememberBack(p);
+    goTo(p);
+  }, [rememberBack, goTo]);
+
+  // Thanh bên / thanh điều hướng dưới → chuyển mục chính, không có "trang trước"
+  const navigateTop = useCallback((p: Page) => {
+    setBackCtx(null);
+    goTo(p);
+  }, [goTo]);
 
   const [branchFocusRegion, setBranchFocusRegion] = useState<string | null>(null);
   const openBranch = useCallback((region: string) => {
     setBranchFocusRegion(region);
+    rememberBack('branches');
     setPage('branches');
-  }, []);
+  }, [setPage, rememberBack]);
 
   const handleSelectClient = useCallback((id: string) => {
     setSelectedClientId(id);
@@ -223,8 +247,9 @@ function AppInner() {
   const [pipelineFocusId, setPipelineFocusId] = useState<string | null>(null);
   const openPipelineEntry = useCallback((crmId: string) => {
     setPipelineFocusId(crmId);
+    rememberBack('crm-pipeline');
     setPage('crm-pipeline');
-  }, []);
+  }, [setPage, rememberBack]);
 
   const handleSelectDeal = useCallback((id: string) => {
     setSelectedDealId(id);
@@ -327,11 +352,12 @@ function AppInner() {
     // 100dvh: chiều cao viewport động — tự khớp khi thanh địa chỉ Safari ẩn/hiện; h-screen là fallback cho trình duyệt cũ
     <div className="flex h-screen overflow-hidden bg-[#F5F5F7]" style={{ height: '100dvh' }}>
       <div className="hidden md:flex shrink-0">
-        <Sidebar currentPage={page} onNavigate={navigate} />
+        <Sidebar currentPage={page} onNavigate={navigateTop} />
       </div>
-      <MobileNav currentPage={page} onNavigate={navigate} />
+      <MobileNav currentPage={page} onNavigate={navigateTop} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F7] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
-        {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} managerHistory={managerHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => setPage('workspace')} onClientUpdate={handleClientUpdate} />}
+        {backCtx && backCtx.to === page && <MobileBackBar from={backCtx.from} onBack={() => window.history.back()} />}
+        {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} managerHistory={managerHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => navigate('workspace')} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
             clients={clients}

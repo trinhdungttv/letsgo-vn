@@ -1,6 +1,7 @@
 // Tóm tắt trước khi liên hệ (port PRM ContactBriefSheet): Điều cần nhớ, việc đang mở
-// (Xong ngay tại chỗ), 2 lần trao đổi gần nhất, nút Gọi / Zalo / SMS + Đã liên hệ.
-import { Check, CheckCheck, Contact2 } from 'lucide-react';
+// (ô tròn tích xong ngay tại chỗ), 2 lần trao đổi gần nhất (bấm "Xem thêm" để đọc đủ), nút Gọi / Zalo / SMS + Đã liên hệ.
+import { useState } from 'react';
+import { Check, Contact2 } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import { formatDateVN } from '../../../lib/cskh/dates';
 import { hasRememberNotes } from '../../../lib/cskh/remember';
@@ -9,10 +10,35 @@ import type { CskhContact, CskhInteraction } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL } from '../../../lib/cskh/types';
 import { CHANNEL_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
-import { CompanyTag } from './apple';
+import { CompanyTag, TaskCheck } from './apple';
 import { expandOpenExtras } from '../data/api';
 import { RememberList } from './QuickLogSheet';
 import { Sheet } from './Sheet';
+
+/** Quá số ký tự này thì gập lại, có nút "Xem thêm" để đọc đủ nội dung cuộc trao đổi. */
+const RECENT_PREVIEW_CHARS = 160;
+
+/** 1 lần trao đổi gần đây: nội dung dài gập lại, bấm "Xem thêm" mở đủ (giữ nguyên xuống dòng). */
+function RecentEntry({ i }: { i: CskhInteraction }) {
+  const [open, setOpen] = useState(false);
+  const long = i.content.length > RECENT_PREVIEW_CHARS;
+  return (
+    <p className={`text-[12.5px] leading-snug mb-1.5 text-[#1D1D1F] ${open ? 'whitespace-pre-wrap break-words' : ''}`}>
+      <span className="text-[#86868B]">
+        {formatDateVN(i.occurredAt)} · {INTERACTION_LABEL[i.type]}
+        {i.initiatedBy === 'them' ? ' (họ chủ động)' : ''}
+        {i.content ? ' — ' : ''}
+      </span>
+      {long && !open ? `${i.content.slice(0, RECENT_PREVIEW_CHARS - 1)}…` : i.content}
+      {long && (
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+          className="ml-1 px-1 py-1.5 -my-1.5 text-[12.5px] font-medium text-[#0071E3] hover:underline">
+          {open ? 'Thu gọn' : 'Xem thêm'}
+        </button>
+      )}
+    </p>
+  );
+}
 
 export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName, onLaunch, onMarkContacted, onDoneFollowUp, onOpenProfile, busyId, onClose }: {
   contact: CskhContact;
@@ -74,15 +100,12 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
           <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#C93400] mb-1.5">Việc đang mở ({openFollowUps.length})</p>
           <div className="space-y-1">
             {openFollowUps.map(i => (
-              <div key={i.id} className="flex items-center gap-2 bg-[#FF9500]/[0.1] rounded-[12px] px-3 py-2">
-                <span className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug">
+              <div key={i.id} className="flex items-center gap-1 bg-[#FF9500]/[0.1] rounded-[12px] pl-1.5 pr-3 py-1">
+                <TaskCheck busy={busyId === i.id} onDone={() => onDoneFollowUp(i)} label={`Đánh dấu xong: ${i.followUpAction}`} />
+                <span className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug py-1">
                   {i.followUpAction}
                   {i.followUpDue && <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>}
                 </span>
-                <button type="button" disabled={busyId === i.id} onClick={() => onDoneFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-9 md:h-8 px-3 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[13px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
-                  <CheckCheck size={13} /> Xong
-                </button>
               </div>
             ))}
           </div>
@@ -94,13 +117,11 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
           <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#248A3D] mb-1.5">Đã hoàn thành ({doneFollowUps.length})</p>
           <div className="space-y-1">
             {doneFollowUps.map(i => (
-              <div key={i.id} className="flex items-center gap-2 bg-[#F5F5F7] rounded-[12px] px-3 py-2">
-                <span className="flex-1 min-w-0 text-[12.5px] leading-snug text-[#86868B]">
+              <div key={i.id} className="flex items-center gap-1 bg-[#F5F5F7] rounded-[12px] pl-1.5 pr-3 py-1">
+                <TaskCheck done label={`Đã xong: ${i.followUpAction}`} />
+                <span className="flex-1 min-w-0 text-[12.5px] leading-snug text-[#86868B] py-1">
                   <span className="line-through">{i.followUpAction}</span>
                   {i.followUpDue && <span> — hạn {formatDateVN(i.followUpDue)}</span>}
-                </span>
-                <span className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[12px] font-semibold">
-                  <Check size={12} strokeWidth={3} /> Đã xong
                 </span>
               </div>
             ))}
@@ -111,16 +132,7 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
       {lastTwo.length > 0 && (
         <div className="mt-3">
           <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">Gần đây</p>
-          {lastTwo.map(i => (
-            <p key={i.id} className="text-[12.5px] leading-snug mb-1 text-[#1D1D1F]">
-              <span className="text-[#86868B]">
-                {formatDateVN(i.occurredAt)} · {INTERACTION_LABEL[i.type]}
-                {i.initiatedBy === 'them' ? ' (họ chủ động)' : ''}
-                {i.content ? ' — ' : ''}
-              </span>
-              {i.content.length > 160 ? `${i.content.slice(0, 159)}…` : i.content}
-            </p>
-          ))}
+          {lastTwo.map(i => <RecentEntry key={i.id} i={i} />)}
         </div>
       )}
 

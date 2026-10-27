@@ -5,7 +5,7 @@
 // Bấm người → hồ sơ; nút + → ghi tương tác ngay tại đây.
 // ============================================================================
 import { useMemo, useState } from 'react';
-import { CheckCheck, ChevronRight, HeartPulse, Plus } from 'lucide-react';
+import { ChevronRight, HeartPulse, Plus } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { formatCurrencyFull } from '../../lib/format';
@@ -24,6 +24,7 @@ import {
 } from './ui';
 import { ICON_TILE } from '../../components/workspace/wsTheme';
 import { ContactAvatar } from './components/ContactAvatar';
+import { TaskCheck } from './components/apple';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
 
@@ -158,15 +159,12 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
           <div>
             <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] mb-1.5">Việc đã hứa đang mở</p>
             {view.openFollowUps.length === 0 ? <p className="text-[12px] text-[#C7C7CC]">Không có</p> : view.openFollowUps.map(i => (
-              <div key={i.id} className="flex items-center gap-2 py-1">
+              <div key={i.id} className="flex items-center gap-1 -ml-1.5">
+                <TaskCheck busy={busyId === i.id} onDone={() => completeFollowUp(i)} label={`Đánh dấu xong: ${i.followUpAction}`} />
                 <span className="flex-1 min-w-0 text-[12px] text-[#1D1D1F]">
                   {i.followUpAction}
                   <span className="text-[#86868B]"> — {i.contactPerson}{i.followUpDue ? `, hạn ${formatDateVN(i.followUpDue)}` : ''}</span>
                 </span>
-                <button type="button" disabled={busyId === i.id} onClick={() => completeFollowUp(i)}
-                  className="shrink-0 inline-flex items-center gap-1 h-8 md:h-7 px-2.5 rounded-full bg-[#34C759]/[0.16] text-[#248A3D] text-[12px] font-semibold hover:bg-[#34C759]/[0.24] disabled:opacity-50 transition">
-                  <CheckCheck size={12} /> Xong
-                </button>
               </div>
             ))}
           </div>
