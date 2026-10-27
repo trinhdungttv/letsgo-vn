@@ -280,7 +280,7 @@ export default function CskhInteractionLog() {
                       {i.initiatedBy === 'them' && <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.purple}`}>Họ chủ động</span>}
                       {i.createdByName && <span>· ghi bởi {i.createdByName}</span>}
                     </div>
-                    {i.content && <p className="text-[14px] text-[#1D1D1F] leading-relaxed mt-1.5 whitespace-pre-line break-words">{i.content}</p>}
+                    {i.content && <LogContent text={i.content} />}
                     {gift && (
                       <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] px-3 py-2 bg-[#FF3B30]/[0.07] text-[13px]">
                         <Gift size={14} className="text-[#D70015] shrink-0" strokeWidth={2.2} />
@@ -439,6 +439,25 @@ export default function CskhInteractionLog() {
 }
 
 /** "Hôm nay" / "Hôm qua" / "Thứ Hai, 12 tháng 10". */
+/** Nội dung nhật ký: dài thì mặc định gập 4 dòng, bấm "Xem thêm" mới mở đủ (đỡ rối trang). */
+const LOG_COLLAPSE_CHARS = 220;
+const LOG_COLLAPSE_LINES = 5;
+function LogContent({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > LOG_COLLAPSE_CHARS || text.split('\n').length > LOG_COLLAPSE_LINES;
+  return (
+    <div className="mt-1.5">
+      <p className={`text-[14px] text-[#1D1D1F] leading-relaxed whitespace-pre-line break-words ${long && !open ? 'line-clamp-4' : ''}`}>{text}</p>
+      {long && (
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+          className="mt-0.5 py-1.5 text-[13px] font-medium text-[#0066CC] hover:underline">
+          {open ? 'Thu gọn' : 'Xem thêm'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function dayHeading(iso: string, today: string): string {
   const d = diffDays(iso, today);
   if (d === 0) return 'Hôm nay';

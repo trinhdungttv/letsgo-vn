@@ -208,6 +208,11 @@ export default function CskhDashboard() {
   };
 
   const companyOf = (i: CskhInteraction) => i.clientName || (i.contactId ? contactById.get(i.contactId)?.organization : '') || '';
+  // Avatar của chính người trong dòng nhật ký / việc đã hứa (chưa có ảnh → chữ cái đầu; dòng cũ không gắn người → xám)
+  const avatarOf = (i: CskhInteraction, size: number) => {
+    const c = i.contactId ? contactById.get(i.contactId) : undefined;
+    return <ContactAvatar name={c?.fullName ?? i.contactPerson} url={c?.avatarUrl} tier={c?.tier ?? 'unclassified'} size={size} />;
+  };
   const nameOf = (i: CskhInteraction) => (i.contactId ? contactById.get(i.contactId)?.fullName ?? i.contactPerson : i.contactPerson);
 
   const careCountAll = contacts.filter(c => c.tier !== 'unclassified' && !c.isArchived).length;
@@ -402,7 +407,7 @@ export default function CskhDashboard() {
                     : view.followUps.slice(0, LIST_LIMIT).map((i, idx) => {
                       const late = i.followUpDue !== null ? diffDays(i.followUpDue, today) : null;
                       return (
-                        <Row key={i.id} first={idx === 0} inset={36}>
+                        <Row key={i.id} first={idx === 0} inset={88}>
                           <button type="button" disabled={busyId === i.id} onClick={() => completeFollowUp(i)}
                             aria-label={`Đánh dấu xong: ${i.followUpAction}`} title="Đánh dấu xong"
                             className="group w-9 h-9 -ml-1.5 -my-1 shrink-0 flex items-center justify-center disabled:opacity-50">
@@ -410,6 +415,7 @@ export default function CskhDashboard() {
                               <Check size={12} strokeWidth={3} />
                             </span>
                           </button>
+                          {avatarOf(i, 40)}
                           <button type="button" onClick={() => i.contactId && setBrief({ contactId: i.contactId, item: null })} className="min-w-0 flex-1 text-left">
                             <span className="block text-[14px] text-[#1D1D1F] leading-snug line-clamp-2">{i.followUpAction}</span>
                             <span className="block mt-0.5"><CompanyTag name={companyOf(i)} /></span>
@@ -462,10 +468,9 @@ export default function CskhDashboard() {
                         );
                       }
                       const i = entry.item;
-                      const Icon = INTERACTION_ICON[i.type];
                       return (
-                        <Row key={i.id} first={idx === 0} inset={44}>
-                          <span className="w-8 h-8 shrink-0 rounded-full bg-[#F2F2F7] text-[#0071E3] flex items-center justify-center"><Icon size={15} /></span>
+                        <Row key={i.id} first={idx === 0} inset={52}>
+                          {avatarOf(i, 40)}
                           <button type="button" onClick={() => i.contactId && setBrief({ contactId: i.contactId, item: null })} className="min-w-0 flex-1 text-left">
                             <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{nameOf(i)}</span>
                             <span className={`block ${caption} truncate`}>

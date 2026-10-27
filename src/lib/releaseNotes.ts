@@ -16,6 +16,22 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-27-cskh-agenda-avatar',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'CSKH Tổng quan: avatar người liên hệ ở Việc đã hứa và Gần đây',
+    ],
+  },
+  {
+    id: '2026-10-27-cskh-log-collapse',
+    date: '2026-10-27',
+    title: 'CSKH',
+    features: [
+      'Nhật ký CSKH: nội dung dài tự thu gọn, bấm "Xem thêm" để mở đủ',
+    ],
+  },
+  {
     id: '2026-10-27-cskh-task-check',
     date: '2026-10-27',
     title: 'CSKH',
