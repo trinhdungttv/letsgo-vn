@@ -64,6 +64,8 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
   const contact = contacts.find(c => c.id === contactId) ?? null;
   // Dòng cũ chưa gắn người (contact = null) không ghi quà được
   const giftActive = type === 'gift' && !!contact;
+  // Sale (Mạng lưới Sale) không gắn công ty khách — quà ghi không cần công ty
+  const giftNeedsClient = contact?.kind !== 'sale';
   const clientName = (id: string) => clients.find(c => c.id === id)?.name ?? 'Công ty';
 
   const pick = (c: CskhContact | null) => {
@@ -84,7 +86,7 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
       setError(editing ? 'Nhập món quà — hoặc đổi sang hình thức khác để bỏ món quà này khỏi Lịch sử quà' : 'Nhập món quà (sẽ ghi vào Lịch sử quà)');
       return;
     }
-    if (giftActive && giftInput.item && !clientId) { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
+    if (giftActive && giftInput.item && !clientId && giftNeedsClient) { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
     // Đổi dòng "Quà tặng" sang hình thức khác = bỏ món quà khỏi Lịch sử quà → hỏi trước (xoá mềm, khôi phục được)
     const dropGift = editing && existing.type === 'gift' && type !== 'gift' && !!existingGift;
     if (dropGift && !confirm(`Đổi sang hình thức khác “Quà tặng” thì món quà “${existingGift.item}” sẽ bị bỏ khỏi Lịch sử quà.\n\nKhôi phục được ở trang Lịch sử. Tiếp tục?`)) return;
@@ -180,7 +182,7 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
             onChange={setGiftDraft}
             past={gifts.filter(g => g.contactId === contactId && !g.isArchived && g.id !== existingGift?.id)}
             occasions={occasions.filter(o => o.contactId === contactId && o.source === 'special_date' && !o.isArchived)}
-            notice={!clientId
+            notice={!clientId && giftNeedsClient
               ? { tone: 'warn', text: 'Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà (Lịch sử quà tính theo công ty).' }
               : editing && !existingGift
                 ? { tone: 'info', text: 'Nhật ký này chưa có món quà trong Lịch sử quà — điền món quà để ghi bổ sung (bỏ trống thì giữ nguyên).' }

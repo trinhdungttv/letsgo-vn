@@ -38,8 +38,11 @@ export function planCareReminders(input: {
   cadence: CadenceConfig;
   today: string;
   maxReconnect?: number;
+  /** Tiền tố tên việc: 'CSKH' (khách, mặc định) / 'Sale' (Mạng lưới Sale). */
+  prefix?: string;
 }): { gifts: GiftReminder[]; reconnect: ReconnectReminder[] } {
   const { today } = input;
+  const prefix = input.prefix ?? 'CSKH';
   const byId = new Map(input.contacts.map(c => [c.id, c]));
   const cared = (c: CskhContact | undefined): c is CskhContact => !!c && !c.isArchived && c.tier !== 'unclassified';
 
@@ -55,7 +58,7 @@ export function planCareReminders(input: {
       ? `${o.title} của ${o.relatedPerson}` : o.title;
     gifts.push({
       occasion: o, contact, nextIso, eventYear,
-      title: `CSKH: Chuẩn bị quà ${what} — ${contact.fullName} (${nextIso.slice(8, 10)}/${nextIso.slice(5, 7)})`,
+      title: `${prefix}: Chuẩn bị quà ${what} — ${contact.fullName} (${nextIso.slice(8, 10)}/${nextIso.slice(5, 7)})`,
     });
   }
 
@@ -66,7 +69,7 @@ export function planCareReminders(input: {
     .filter(x => x.overdue > 0)
     .sort((a, b) => b.overdue - a.overdue || a.contact.fullName.localeCompare(b.contact.fullName, 'vi'))
     .slice(0, input.maxReconnect ?? RECONNECT_MAX_PER_RUN)
-    .map(x => ({ ...x, title: `CSKH: Kết nối lại với ${x.contact.fullName} — quá hạn ${x.overdue} ngày` }));
+    .map(x => ({ ...x, title: `${prefix}: Kết nối lại với ${x.contact.fullName} — quá hạn ${x.overdue} ngày` }));
 
   return { gifts, reconnect };
 }

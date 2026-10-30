@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { branchOf } from '../../lib/branchRef';
+import { SPACE_INFO, type CskhSpace } from '../../lib/cskh/space';
 import type { CskhContact } from '../../lib/cskh/types';
 import type { Branch, Client } from '../../lib/types';
 
@@ -24,16 +25,19 @@ export interface CareScope {
   setFilters: (f: ScopeFilters) => void;
   /** Người liên hệ khớp bộ lọc. */
   scoped: CskhContact[];
+  /** Người liên hệ thấy được sau khi bấm "Xoá lọc" (bộ lọc mặc định) — để báo "N mục ngoài bộ lọc". */
+  base: CskhContact[];
   isFiltered: boolean;
   isAdmin: boolean;
   options: { branches: Branch[]; managers: string[] };
 }
 
-export function useCareScope(contacts: readonly CskhContact[], clients: readonly Client[]): CareScope {
+export function useCareScope(contacts: readonly CskhContact[], clients: readonly Client[], space: CskhSpace = 'client'): CareScope {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const { branches } = useBranchLookup();
-  const [stored, setFilters] = usePersistedState<ScopeFilters>('cskh_scope_filters', DEFAULT_SCOPE);
+  // Khách và Sale nhớ bộ lọc riêng
+  const [stored, setFilters] = usePersistedState<ScopeFilters>(SPACE_INFO[space].storageKey('cskh_scope_filters'), DEFAULT_SCOPE);
   const filters: ScopeFilters = { ...DEFAULT_SCOPE, ...stored };
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
 
@@ -64,26 +68,30 @@ export function useCareScope(contacts: readonly CskhContact[], clients: readonly
   }, [index, branches]);
 
   const { branch, owner, manager } = filters;
-  const scoped = useMemo(() => contacts.filter(c => {
+  const isFiltered = branch !== 'all' || manager !== 'all' || owner !== 'mine';
+  const pick = useMemo(() => (f: ScopeFilters) => contacts.filter(c => {
     const ix = index.get(c.id);
-    if (branch !== 'all' && !ix?.branchIds.has(branch)) return false;
-    if (manager !== 'all' && !ix?.managers.has(manager)) return false;
-    if (owner === 'mine') {
+    if (f.branch !== 'all' && !ix?.branchIds.has(f.branch)) return false;
+    if (f.manager !== 'all' && !ix?.managers.has(f.manager)) return false;
+    if (f.owner === 'mine') {
       // Admin xem cả người chưa giao — lúc đầu mọi người liên hệ đều chưa có người phụ trách
       if (!(c.ownerId === user?.id || (c.ownerId === null && isAdmin))) return false;
-    } else if (owner === 'none') {
+    } else if (f.owner === 'none') {
       if (c.ownerId !== null) return false;
-    } else if (owner !== 'all' && c.ownerId !== owner) {
+    } else if (f.owner !== 'all' && c.ownerId !== f.owner) {
       return false;
     }
     return true;
-  }), [contacts, index, branch, owner, manager, user?.id, isAdmin]);
+  }), [contacts, index, user?.id, isAdmin]);
+  const scoped = useMemo(() => pick({ branch, owner, manager }), [pick, branch, owner, manager]);
+  const base = useMemo(() => (isFiltered ? pick(DEFAULT_SCOPE) : scoped), [pick, isFiltered, scoped]);
 
   return {
     filters,
     setFilters,
     scoped,
-    isFiltered: branch !== 'all' || manager !== 'all' || owner !== 'mine',
+    base,
+    isFiltered,
     isAdmin,
     options,
   };

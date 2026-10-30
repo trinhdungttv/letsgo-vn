@@ -12,12 +12,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
+import type { CskhSpace } from '../../lib/cskh/space';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
 import { addGroup, addInteraction, archiveGroup, assignGroups, logToast, saveGroupLog, setGender, updateGroup } from './data/api';
 import { automationMessage, runCareAutomationOnce } from './automationRunner';
 import { useCskhData } from './data/useCskhData';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
+import { SpaceContext } from './space';
 import CskhDashboard from './Dashboard';
 import CskhMatrix from './Matrix';
 import CskhMap from './MapView';
@@ -25,13 +27,16 @@ import CskhCadence from './Cadence';
 import CskhInteractionLog from './InteractionLog';
 import CskhEvents from './Events';
 import QuickLogHost from './components/QuickLogHost';
+import { SaleMigrationBanner } from './components/Card';
 import { CarePickerModal } from './components/CarePickerModal';
 import { GroupLogModal } from './components/GroupLogModal';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
 
-export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace, onOpenClient }: {
+export default function CskhModule({ space = 'client', tab, onTab, clients, toast, onOpenWorkspace, onOpenClient }: {
+  /** Khu vực: 'client' = trang CSKH (mặc định), 'sale' = trang Mạng lưới Sale — dữ liệu 2 bên không lẫn. */
+  space?: CskhSpace;
   tab: CskhTabKey;
   onTab: (tab: CskhTabKey) => void;
   clients: Client[];
@@ -41,7 +46,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
 }) {
   const { user } = useAuth();
   const { branches } = useBranchLookup();
-  const { data, loading } = useCskhData(toast);
+  const { data, loading } = useCskhData(toast, space);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [creatingContact, setCreatingContact] = useState(false);
   /** '' = form chưa chọn người; id = chọn sẵn; null = đóng. */
@@ -54,8 +59,9 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   // ── Việc nhắc tự động: 1 lần mỗi phiên, sau khi dữ liệu tải xong (App có thể đã chạy trước) ──
   useEffect(() => {
     if (!data?.migrationReady || !user || !branches.length) return;
+    if (data.space === 'sale' && !data.saleReady) return;
     runCareAutomationOnce({ ctx: { user, clients, branches }, today: todayVN(), data })
-      .then(r => { const msg = automationMessage(r); if (msg) toast(msg); })
+      .then(r => { const msg = automationMessage(r, data.space); if (msg) toast(msg); })
       .catch(e => toast('Lỗi tạo việc nhắc CSKH: ' + (e as Error).message));
   }, [data, user, clients, branches, toast]);
 
@@ -64,6 +70,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   const openGroupLog = useCallback((ids?: readonly string[]) => { setProfileId(null); setGroupLogFor(ids ?? []); }, []);
 
   const ctx = useMemo<CskhContextValue>(() => ({
+    space,
     data,
     loading,
     clients,
@@ -77,7 +84,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
     goTab: onTab,
     openWorkspace: onOpenWorkspace,
     openClient: onOpenClient,
-  }), [data, loading, clients, toast, openLog, openGroups, openGroupLog, onTab, onOpenWorkspace, onOpenClient]);
+  }), [space, data, loading, clients, toast, openLog, openGroups, openGroupLog, onTab, onOpenWorkspace, onOpenClient]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -86,7 +93,10 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
   }, [data]);
 
   return (
+    <SpaceContext.Provider value={space}>
     <CskhContext.Provider value={ctx}>
+      {/* Mạng lưới Sale cần migration 178 — báo 1 lần ở đầu mọi tab */}
+      {space === 'sale' && data && data.migrationReady && !data.saleReady && <SaleMigrationBanner />}
       {tab === 'dashboard' && <CskhDashboard />}
       {tab === 'matrix' && <CskhMatrix />}
       {tab === 'map' && <CskhMap />}
@@ -199,7 +209,7 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
           cadence={data.settings.cadence}
           onClose={() => setManagingGroups(false)}
           onAdd={async d => {
-            try { await addGroup(d.name, d.color, d.baseTier, user); } catch (e) { return (e as Error).message; }
+            try { await addGroup(d.name, d.color, d.baseTier, user, space); } catch (e) { return (e as Error).message; }
             emitCskhDataChanged();
             toast(`Đã tạo nhóm "${d.name.trim()}"`);
             return null;
@@ -221,5 +231,6 @@ export default function CskhModule({ tab, onTab, clients, toast, onOpenWorkspace
 
       <QuickLogHost clients={clients} toast={toast} />
     </CskhContext.Provider>
+    </SpaceContext.Provider>
   );
 }

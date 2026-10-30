@@ -21,22 +21,25 @@ import { addContactClient, deactivateContact, deleteContact } from '../../lib/co
 import { buildContactStats, CARE_STATUS_LABEL, dueLabel, type CareStatus, type ContactStats } from '../../lib/cskh/cadence';
 import { relativeDayLabel, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
-import { contactSearchHaystack, matchesQuery } from '../../lib/cskh/search';
+import { contactSearchHaystack, matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import { GENDER_FILTER_LABEL, matchesGender, type GenderFilter } from '../../lib/cskh/gender';
 import { buildTagStats, hasTrait, parseTraitFilter, TRAIT_FIELDS, TRAIT_LABEL, traitFilterValue } from '../../lib/cskh/traits';
 import { isCooperatingClient } from '../../lib/cskh/seedTiers';
-import type { CskhContact, Gender } from '../../lib/cskh/types';
-import { CLASSIFIED_TIERS, GENDER_LABEL, TIER_LABEL } from '../../lib/cskh/types';
+import type { CskhContact, Gender, SaleStage } from '../../lib/cskh/types';
+import { CLASSIFIED_TIERS, GENDER_LABEL, SALE_STAGES } from '../../lib/cskh/types';
+import { SALE_STAGE_LABEL } from '../../lib/cskh/space';
+import { MIGRATION_178_HINT } from '../../lib/contactOps';
 import { compareVnName } from '../../lib/vnName';
-import { assignGroups, setGender, setOwner } from './data/api';
+import { assignGroups, setGender, setOwner, setSaleStage } from './data/api';
 import { useCskh } from './context';
 import {
-  CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, scoreColor, TIER_COLOR,
+  CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, SALE_STAGE_COLOR, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, FilterChip, MoreButton, Panel, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
 import { ContactAvatar } from './components/ContactAvatar';
 import { GroupOptions, QuickGroupSelect } from './components/GroupSelect';
+import { useSpace } from './space';
 
 type ActiveStatus = Exclude<CareStatus, 'unclassified'>;
 const STATUSES: readonly ActiveStatus[] = ['overdue', 'due_soon', 'ok'];
@@ -84,11 +87,17 @@ interface Filters {
   province: string;     // 'all' | tên tỉnh
   gender: GenderFilter;
   trait: string;        // 'all' | "<mục>:<khoá thẻ>"
+  /** Chỉ Mạng lưới Sale: tiến độ chiêu mộ. */
+  stage: 'all' | SaleStage;
+  /** Chỉ Mạng lưới Sale: nơi làm ('all' | khoá tên nơi làm đã chuẩn hoá). */
+  workplace: string;
 }
 const DEFAULT_FILTERS: Filters = {
   scope: 'care', group: 'all', status: 'all', branch: 'all', owner: 'all', kind: 'cooperating', company: 'all', province: 'all',
-  gender: 'all', trait: 'all',
+  gender: 'all', trait: 'all', stage: 'all', workplace: 'all',
 };
+/** Sale không có công ty khách / loại khách / chi nhánh — bỏ các bộ lọc đó. */
+const SALE_DEFAULTS: Partial<Filters> = { kind: 'all', company: 'all', branch: 'all' };
 type Dim = keyof Filters | 'search';
 
 function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): number | string | null {
@@ -101,19 +110,21 @@ function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): 
 }
 
 export default function CskhMatrix() {
-  const { data, loading, clients, toast, openProfile, openNewContact, openLog, openPicker, openGroups, openGroupLog } = useCskh();
+  const { space, data, loading, clients, toast, openProfile, openNewContact, openLog, openPicker, openGroups, openGroupLog } = useCskh();
+  const isSale = space === 'sale';
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const { branches } = useBranchLookup();
-  const [storedFilters, setFilters] = usePersistedState<Filters>('cskh_matrix_filters', DEFAULT_FILTERS);
+  const { tierLabel, storageKey, listTitle } = useSpace();
+  const [storedFilters, setFilters] = usePersistedState<Filters>(storageKey('cskh_matrix_filters'), isSale ? { ...DEFAULT_FILTERS, ...SALE_DEFAULTS } : DEFAULT_FILTERS);
   // Bộ lọc lưu từ phiên bản cũ có thể thiếu khoá mới → luôn trộn với mặc định
-  const filters: Filters = { ...DEFAULT_FILTERS, ...storedFilters };
+  const filters: Filters = { ...DEFAULT_FILTERS, ...storedFilters, ...(isSale ? SALE_DEFAULTS : {}) };
   const [search, setSearch] = useState('');
-  const [sort, setSort] = usePersistedState<{ key: SortKey; dir: SortDir }>('cskh_matrix_sort', { key: 'due', dir: 'asc' });
+  const [sort, setSort] = usePersistedState<{ key: SortKey; dir: SortDir }>(storageKey('cskh_matrix_sort'), { key: 'due', dir: 'asc' });
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
-  const [showMatrix, setShowMatrix] = usePersistedState('cskh_matrix_heat_open', true);
+  const [showMatrix, setShowMatrix] = usePersistedState(storageKey('cskh_matrix_heat_open'), true);
   const today = todayVN();
 
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
@@ -144,13 +155,15 @@ export default function CskhMatrix() {
     }
     if (!c.clientIds.length) kinds.add('unlinked');
     return [c.id, {
-      groupKey: groupDisplayOf(c, groupById).key,
+      groupKey: groupDisplayOf(c, groupById, tierLabel).key,
       branchIds,
       branchNames,
       kinds,
-      haystack: contactSearchHaystack(c, branchNames),
+      workplace: normalizeSearch(c.organization),
+      // Sale: tìm được theo khu vực / ngành quen / tiến độ chiêu mộ
+      haystack: contactSearchHaystack(c, c.kind === 'sale' ? [c.saleArea, c.saleIndustries, SALE_STAGE_LABEL[c.saleStage]] : branchNames),
     }] as const;
-  })), [contacts, clientById, branches, groupById]);
+  })), [contacts, clientById, branches, groupById, tierLabel]);
 
   const trait = filters.trait === 'all' ? null : parseTraitFilter(filters.trait);
   const passes = (c: CskhContact, skip: readonly Dim[] = []): boolean => {
@@ -171,6 +184,8 @@ export default function CskhMatrix() {
     if (on('province') && filters.province !== 'all' && c.province !== filters.province && c.originProvince !== filters.province) return false;
     if (on('gender') && filters.gender !== 'all' && !matchesGender(c, filters.gender)) return false;
     if (on('trait') && trait && !hasTrait(c, trait.field, trait.key)) return false;
+    if (on('stage') && filters.stage !== 'all' && c.saleStage !== filters.stage) return false;
+    if (on('workplace') && filters.workplace !== 'all' && d.workplace !== filters.workplace) return false;
     if (on('search') && search.trim() && !matchesQuery(d.haystack, search)) return false;
     return true;
   };
@@ -192,12 +207,12 @@ export default function CskhMatrix() {
   });
   const visible = sorted.slice(0, limit);
   // Đang tìm mà người cần tìm nằm ở phạm vi / loại khách khác → gợi ý mở rộng
-  const outside = search.trim() ? contacts.filter(c => passes(c, ['scope', 'kind'])).length - filtered.length : 0;
+  const outside = search.trim() ? contacts.filter(c => passes(c, ['scope', 'kind', 'stage', 'workplace'])).length - filtered.length : 0;
 
   // ── Bảng nhiệt Nhóm × Trạng thái: người đang chăm sóc, theo các bộ lọc trừ nhóm/trạng thái/tìm ──
   const matrix = (() => {
     const rows = [
-      ...CLASSIFIED_TIERS.map(t => ({ key: t as string, label: TIER_LABEL[t], color: TIER_COLOR[t] })),
+      ...CLASSIFIED_TIERS.map(t => ({ key: t as string, label: tierLabel[t], color: TIER_COLOR[t] })),
       ...groups.map(g => ({ key: `g:${g.id}`, label: g.name, color: GROUP_COLOR[g.color] })),
     ].map(r => ({ ...r, cells: { overdue: 0, due_soon: 0, ok: 0 } as Record<ActiveStatus, number>, total: 0, sum: 0, n: 0 }));
     const byKey = new Map(rows.map(r => [r.key, r]));
@@ -223,16 +238,20 @@ export default function CskhMatrix() {
     const bIds = new Set<string>();
     const cIds = new Set<string>();
     const provinces = new Set<string>();
+    const workplaces = new Map<string, { label: string; n: number }>();
     for (const c of contacts) {
       derived.get(c.id)?.branchIds.forEach(id => bIds.add(id));
       c.clientIds.forEach(id => cIds.add(id));
       if (c.province) provinces.add(c.province);
       if (c.originProvince) provinces.add(c.originProvince);
+      const w = derived.get(c.id)?.workplace;
+      if (c.kind === 'sale' && w) workplaces.set(w, { label: workplaces.get(w)?.label ?? c.organization, n: (workplaces.get(w)?.n ?? 0) + 1 });
     }
     return {
       branches: branches.filter(b => bIds.has(b.id)),
       companies: clients.filter(c => cIds.has(c.id)).sort((a, b) => a.name.localeCompare(b.name, 'vi')),
       provinces: [...provinces].sort((a, b) => a.localeCompare(b, 'vi')),
+      workplaces: [...workplaces.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, 'vi')),
     };
   }, [contacts, derived, branches, clients]);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
@@ -282,7 +301,7 @@ export default function CskhMatrix() {
   /** Xếp 1 hoặc nhiều người vào 1 nhóm (nhóm mặc định hoặc nhóm tự tạo). */
   const assignGroup = (ids: readonly string[], key: string, oneName?: string) => {
     if (key === NEW_GROUP_VALUE) { openGroups(); return; }
-    const t = resolveGroupKey(key, groupById);
+    const t = resolveGroupKey(key, groupById, tierLabel);
     if (!t || !ids.length) return;
     const who = oneName ?? `${ids.length} người`;
     if (t.tier === 'unclassified' && ids.length > 1 && !confirm(
@@ -305,7 +324,9 @@ export default function CskhMatrix() {
     });
   };
   const bulkDeactivate = () => {
-    if (!confirm(`Đánh dấu ${selectedIds.length} người đã nghỉ (rời công ty khách)?\nHọ ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử.`)) return;
+    if (!confirm(isSale
+      ? `Ngừng theo dõi ${selectedIds.length} Sale?\nHọ ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử.`
+      : `Đánh dấu ${selectedIds.length} người đã nghỉ (rời công ty khách)?\nHọ ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử.`)) return;
     void run(async () => {
       for (const raw of rawOf(selectedIds)) if (raw.is_active) await deactivateContact(raw, opCtx);
       return `Đã đánh dấu nghỉ ${selectedIds.length} người`;
@@ -316,8 +337,10 @@ export default function CskhMatrix() {
     const names = list.slice(0, 5).map(c => `• ${c.name}`).join('\n');
     if (!confirm(
       `XOÁ VĨNH VIỄN ${list.length} liên hệ?\n\n${names}${list.length > 5 ? `\n… và ${list.length - 5} người nữa` : ''}\n\n` +
-      'Nhật ký CSKH, thương vụ, quà tặng KHÔNG bị xoá (chỉ mất liên kết người), nhưng NGÀY ĐẶC BIỆT / SỰ KIỆN của họ SẼ BỊ XOÁ THEO.\n' +
-      'Khôi phục được ở trang Lịch sử (Hoàn tác).\n\nMuốn giữ lại thì bấm Huỷ và chọn "Đánh dấu nghỉ".',
+      (isSale
+        ? 'Nhật ký của Sale được LƯU TRỮ (ẩn khỏi Nhật ký, không lẫn sang khách), NGÀY ĐẶC BIỆT / SỰ KIỆN của họ SẼ BỊ XOÁ THEO.\n'
+        : 'Nhật ký CSKH, thương vụ, quà tặng KHÔNG bị xoá (chỉ mất liên kết người), nhưng NGÀY ĐẶC BIỆT / SỰ KIỆN của họ SẼ BỊ XOÁ THEO.\n') +
+      `Khôi phục được ở trang Lịch sử (Hoàn tác).\n\nMuốn giữ lại thì bấm Huỷ và chọn "${isSale ? 'Ngừng theo dõi' : 'Đánh dấu nghỉ'}".`,
     )) return;
     void run(async () => {
       for (const raw of list) await deleteContact(raw, opCtx);
@@ -342,7 +365,7 @@ export default function CskhMatrix() {
   };
 
   const chips: { label: string; clear: () => void }[] = [];
-  if (filters.group !== 'all') chips.push({ label: `Nhóm: ${resolveGroupKey(filters.group, groupById)?.label ?? '?'}`, clear: () => setFilter({ group: 'all' }) });
+  if (filters.group !== 'all') chips.push({ label: `Nhóm: ${resolveGroupKey(filters.group, groupById, tierLabel)?.label ?? '?'}`, clear: () => setFilter({ group: 'all' }) });
   if (filters.status !== 'all') chips.push({ label: `Trạng thái: ${CARE_STATUS_LABEL[filters.status]}`, clear: () => setFilter({ status: 'all' }) });
   if (filters.branch !== 'all') chips.push({ label: `Chi nhánh: ${branches.find(b => b.id === filters.branch)?.name ?? '?'}`, clear: () => setFilter({ branch: 'all' }) });
   if (filters.owner !== 'all') chips.push({ label: `Phụ trách: ${filters.owner === 'none' ? 'chưa giao' : userName.get(filters.owner) ?? '?'}`, clear: () => setFilter({ owner: 'all' }) });
@@ -350,6 +373,8 @@ export default function CskhMatrix() {
   if (filters.company !== 'all') chips.push({ label: `Công ty: ${clientById.get(filters.company)?.name ?? '?'}`, clear: () => setFilter({ company: 'all' }) });
   if (filters.province !== 'all') chips.push({ label: filters.province, clear: () => setFilter({ province: 'all' }) });
   if (filters.gender !== 'all') chips.push({ label: GENDER_FILTER_LABEL[filters.gender], clear: () => setFilter({ gender: 'all' }) });
+  if (filters.stage !== 'all') chips.push({ label: `Chiêu mộ: ${SALE_STAGE_LABEL[filters.stage]}`, clear: () => setFilter({ stage: 'all' }) });
+  if (filters.workplace !== 'all') chips.push({ label: `Nơi làm: ${options.workplaces.find(w => w.key === filters.workplace)?.label ?? '?'}`, clear: () => setFilter({ workplace: 'all' }) });
   if (trait) {
     const label = traitOptions.find(g => g.field === trait.field)?.stats.find(t => t.key === trait.key)?.label ?? trait.key;
     chips.push({ label: `${TRAIT_LABEL[trait.field]}: ${label}`, clear: () => setFilter({ trait: 'all' }) });
@@ -369,9 +394,9 @@ export default function CskhMatrix() {
   return (
     <div className="space-y-4 md:space-y-5">
       <PageTitle
-        eyebrow="Danh bạ chăm sóc"
-        title="Ma trận Khách hàng"
-        subtitle={<>{careCount} người đang chăm sóc — chọn từ danh bạ {contacts.length} người{avgCare !== null && <> · sức khỏe TB {avgCare}/100</>}</>}
+        eyebrow={isSale ? 'Mạng lưới Sale' : 'Danh bạ chăm sóc'}
+        title={listTitle}
+        subtitle={<>{careCount} {isSale ? 'Sale' : 'người'} đang chăm sóc — chọn từ danh bạ {contacts.length} người{avgCare !== null && <> · sức khỏe TB {avgCare}/100</>}</>}
         actions={(
           <>
             <button type="button" onClick={openGroups} className={`${PILL_GRAY} !flex-none`} aria-label="Quản lý nhóm">
@@ -380,8 +405,8 @@ export default function CskhMatrix() {
             <button type="button" onClick={openPicker} className={PILL_TINTED}>
               <UserPlus size={15} strokeWidth={2.2} /> <span className="md:hidden">Chọn người</span><span className="hidden md:inline">Chọn người chăm sóc</span>
             </button>
-            <button type="button" onClick={openNewContact} className={PILL_PRIMARY}>
-              <Plus size={15} strokeWidth={2.4} /> Thêm liên hệ
+            <button type="button" onClick={isSale && !data?.saleReady ? () => toast(MIGRATION_178_HINT) : openNewContact} className={PILL_PRIMARY}>
+              <Plus size={15} strokeWidth={2.4} /> {isSale ? 'Thêm Sale' : 'Thêm liên hệ'}
             </button>
           </>
         )}
@@ -469,10 +494,10 @@ export default function CskhMatrix() {
       <div className={`${PANEL} p-3 md:p-4 space-y-3`}>
         <div className="flex flex-wrap items-center gap-2">
           <SearchField value={search} onChange={v => { setSearch(v); setLimit(PAGE); }}
-            placeholder="Tìm tên, công ty, SĐT, email, chi nhánh… (gõ không dấu được)" className="flex-1 min-w-[220px] max-w-md" />
+            placeholder={isSale ? 'Tìm tên, nơi làm, khu vực, ngành, SĐT… (gõ không dấu được)' : 'Tìm tên, công ty, SĐT, email, chi nhánh… (gõ không dấu được)'} className="flex-1 min-w-[220px] max-w-md" />
           <Segmented label="Phạm vi" fit value={filters.scope}
             onChange={s => { setFilter({ scope: s, ...(s === 'other' || s === 'left' ? { group: 'all', status: 'all' } : {}) }); setSelected(new Set()); }}
-            options={SCOPES.map(s => ({ key: s, label: SCOPE_LABEL[s] }))} />
+            options={SCOPES.map(s => ({ key: s, label: isSale && s === 'left' ? 'Ngừng theo dõi' : SCOPE_LABEL[s] }))} />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -508,14 +533,31 @@ export default function CskhMatrix() {
             <option value="none">Chưa giao</option>
             {data.users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
           </PillSelect>
-          <PillSelect value={filters.kind} active={filters.kind !== 'all'} label="Lọc theo loại khách" onChange={v => setFilter({ kind: v as Filters['kind'] })}>
-            <option value="all">Mọi loại khách</option>
-            {(Object.keys(KIND_LABEL) as ClientKind[]).map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-          </PillSelect>
-          <PillSelect value={filters.company} active={filters.company !== 'all'} label="Lọc theo công ty" onChange={v => setFilter({ company: v })}>
-            <option value="all">Mọi công ty</option>
-            {options.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </PillSelect>
+          {isSale ? (
+            <>
+              <PillSelect value={filters.stage} active={filters.stage !== 'all'} label="Lọc theo tiến độ chiêu mộ" onChange={v => setFilter({ stage: v as Filters['stage'] })}>
+                <option value="all">Mọi tiến độ chiêu mộ</option>
+                {SALE_STAGES.map(st => <option key={st} value={st}>{SALE_STAGE_LABEL[st]}</option>)}
+              </PillSelect>
+              {options.workplaces.length > 0 && (
+                <PillSelect value={filters.workplace} active={filters.workplace !== 'all'} label="Lọc theo nơi làm" onChange={v => setFilter({ workplace: v })}>
+                  <option value="all">Mọi nơi làm</option>
+                  {options.workplaces.map(w => <option key={w.key} value={w.key}>{`${w.label} (${w.n})`}</option>)}
+                </PillSelect>
+              )}
+            </>
+          ) : (
+            <>
+              <PillSelect value={filters.kind} active={filters.kind !== 'all'} label="Lọc theo loại khách" onChange={v => setFilter({ kind: v as Filters['kind'] })}>
+                <option value="all">Mọi loại khách</option>
+                {(Object.keys(KIND_LABEL) as ClientKind[]).map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+              </PillSelect>
+              <PillSelect value={filters.company} active={filters.company !== 'all'} label="Lọc theo công ty" onChange={v => setFilter({ company: v })}>
+                <option value="all">Mọi công ty</option>
+                {options.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </PillSelect>
+            </>
+          )}
           {options.provinces.length > 0 && (
             <PillSelect value={filters.province} active={filters.province !== 'all'} label="Lọc theo tỉnh (nơi ở hoặc quê)" onChange={v => setFilter({ province: v })}>
               <option value="all">Mọi tỉnh / quê</option>
@@ -582,12 +624,24 @@ export default function CskhMatrix() {
             <option value="male">Nam</option>
             <option value="none">Chưa rõ</option>
           </PillSelect>
-          <PillSelect value="" active={false} disabled={busy} label="Gắn thêm công ty" onChange={bulkLink}>
-            <option value="">Gắn thêm công ty…</option>
-            {clientsSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </PillSelect>
+          {isSale ? (
+            <PillSelect value="" active={false} disabled={busy} label="Đặt tiến độ chiêu mộ"
+              onChange={v => {
+                if (!v) return;
+                const st = v as SaleStage;
+                void run(async () => { await setSaleStage(selectedIds, st, user); return `Đã đặt "${SALE_STAGE_LABEL[st]}" cho ${selectedIds.length} Sale`; });
+              }}>
+              <option value="">Tiến độ chiêu mộ…</option>
+              {SALE_STAGES.map(st => <option key={st} value={st}>{SALE_STAGE_LABEL[st]}</option>)}
+            </PillSelect>
+          ) : (
+            <PillSelect value="" active={false} disabled={busy} label="Gắn thêm công ty" onChange={bulkLink}>
+              <option value="">Gắn thêm công ty…</option>
+              {clientsSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </PillSelect>
+          )}
           <button type="button" disabled={busy} onClick={bulkDeactivate}
-            className="h-9 md:h-8 px-3.5 rounded-full bg-[#FF9500]/[0.14] text-[#B25000] text-[13px] font-medium hover:bg-[#FF9500]/[0.2] disabled:opacity-40 transition">Đánh dấu nghỉ</button>
+            className="h-9 md:h-8 px-3.5 rounded-full bg-[#FF9500]/[0.14] text-[#B25000] text-[13px] font-medium hover:bg-[#FF9500]/[0.2] disabled:opacity-40 transition">{isSale ? 'Ngừng theo dõi' : 'Đánh dấu nghỉ'}</button>
           {isAdmin && (
             <button type="button" disabled={busy} onClick={bulkDelete}
               className="h-9 md:h-8 px-3.5 rounded-full bg-[#FF3B30]/10 text-[#D70015] text-[13px] font-medium hover:bg-[#FF3B30]/[0.16] disabled:opacity-40 transition">Xoá vĩnh viễn</button>
@@ -608,7 +662,7 @@ export default function CskhMatrix() {
                 </th>
                 <th className="text-left font-medium px-2 py-2.5">{sortHead('name', 'Liên hệ')}</th>
                 <th className="text-left font-medium px-2 py-2.5 hidden md:table-cell">Nhóm</th>
-                <th className="text-left font-medium px-2 py-2.5 hidden lg:table-cell">Chi nhánh / Tỉnh</th>
+                <th className="text-left font-medium px-2 py-2.5 hidden lg:table-cell">{isSale ? 'Khu vực mạnh / Tỉnh' : 'Chi nhánh / Tỉnh'}</th>
                 <th className="text-left font-medium px-2 py-2.5 hidden md:table-cell">{sortHead('recent', 'Tương tác cuối')}</th>
                 <th className="text-left font-medium px-2 py-2.5 hidden sm:table-cell">{sortHead('due', 'Hạn chăm sóc')}</th>
                 <th className="text-right font-medium px-2 py-2.5">{sortHead('score', 'Điểm')}</th>
@@ -620,7 +674,7 @@ export default function CskhMatrix() {
               {visible.length === 0 ? (
                 <tr><td colSpan={9}>
                   <Quiet icon={<Users size={18} />}>
-                    {contacts.length === 0 ? 'Chưa có người liên hệ nào — bấm "Thêm liên hệ".' : 'Không có ai khớp bộ lọc.'}
+                    {contacts.length === 0 ? (isSale ? 'Chưa có Sale nào — bấm "Thêm Sale".' : 'Chưa có người liên hệ nào — bấm "Thêm liên hệ".') : 'Không có ai khớp bộ lọc.'}
                   </Quiet>
                 </td></tr>
               ) : visible.map(c => {
@@ -639,10 +693,13 @@ export default function CskhMatrix() {
                           <span className="flex items-center gap-1">
                             <b className="text-[14px] font-semibold text-[#1D1D1F] group-hover/name:text-[#0066CC] truncate max-w-[200px] transition-colors">{c.fullName}</b>
                             {isPrimary && <Star size={12} className="text-[#FF9500] fill-[#FF9500] shrink-0" aria-label="Liên hệ chính" />}
-                            {c.isArchived && <span className="px-2 rounded-full text-[11px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
+                            {c.isArchived && <span className="px-2 rounded-full text-[11px] font-medium bg-black/[0.05] text-[#6E6E73]">{isSale ? 'Ngừng theo dõi' : 'Đã nghỉ'}</span>}
+                            {isSale && c.saleStage !== 'none' && (
+                              <span className="px-2 rounded-full text-[11px] font-medium whitespace-nowrap" style={chipStyle(SALE_STAGE_COLOR[c.saleStage])}>{SALE_STAGE_LABEL[c.saleStage]}</span>
+                            )}
                           </span>
                           <span className="flex items-center gap-1.5 max-w-[260px]">
-                            {c.organization ? <CompanyTag name={c.organization} /> : <span className="text-[12px] text-[#86868B]">Chưa gắn công ty</span>}
+                            {c.organization ? <CompanyTag name={c.organization} /> : <span className="text-[12px] text-[#86868B]">{isSale ? 'Chưa ghi nơi làm' : 'Chưa gắn công ty'}</span>}
                             {c.jobTitle && <span className="text-[12px] text-[#86868B] truncate">{c.jobTitle}</span>}
                           </span>
                         </span>
@@ -661,7 +718,7 @@ export default function CskhMatrix() {
                         onPick={k => assignGroup([c.id], k, c.fullName)} onCreate={openGroups} />
                     </td>
                     <td className="px-2 py-2.5 hidden lg:table-cell text-[12.5px] text-[#6E6E73]">
-                      {d?.branchNames.join(', ') || c.province || <span className="text-[#C7C7CC]">—</span>}
+                      {(isSale ? c.saleArea : d?.branchNames.join(', ')) || c.province || <span className="text-[#C7C7CC]">—</span>}
                     </td>
                     <td className="px-2 py-2.5 hidden md:table-cell text-[12.5px] text-[#6E6E73] whitespace-nowrap">
                       {c.lastInteractionAt ? relativeDayLabel(c.lastInteractionAt, today) : <span className="text-[#C7C7CC]">—</span>}

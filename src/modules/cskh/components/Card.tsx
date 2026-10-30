@@ -41,3 +41,14 @@ export const MigrationBanner = () => (
     </p>
   </div>
 );
+
+/** Mạng lưới Sale khi DB chưa chạy migration 178 — xem được (trống) nhưng chưa thêm được người. */
+export const SaleMigrationBanner = () => (
+  <div className="flex items-start gap-3 rounded-[14px] bg-[#FF9500]/[0.12] px-4 py-3 text-[13px] leading-snug text-[#7A3E00]">
+    <AlertTriangle size={17} className="shrink-0 mt-px text-[#C93400]" />
+    <p>
+      Database chưa chạy migration <b>178 (Mạng lưới Sale)</b> — chưa thêm được Sale, nhóm, quà tặng Sale.
+      Mở Supabase → SQL Editor, chạy file <code className="text-[12px]">20261031100000_178_sale_network.sql</code> rồi tải lại trang.
+    </p>
+  </div>
+);

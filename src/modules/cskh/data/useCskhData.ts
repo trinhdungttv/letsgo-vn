@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../../lib/auth';
 import { onCskhDataChanged } from '../../../lib/cskh/events';
+import type { CskhSpace } from '../../../lib/cskh/space';
 import { loadCskhData, type CskhData } from './api';
 
-export function useCskhData(toast: (msg: string) => void) {
+export function useCskhData(toast: (msg: string) => void, space: CskhSpace = 'client') {
   const { user } = useAuth();
   const userId = user?.id;
   const [data, setData] = useState<CskhData | null>(null);
@@ -20,13 +21,13 @@ export function useCskhData(toast: (msg: string) => void) {
     if (!userId) return;
     setLoading(true);
     try {
-      setData(await loadCskhData());
+      setData(await loadCskhData(space));
     } catch (e) {
       toastRef.current('Lỗi tải dữ liệu CSKH: ' + ((e as Error).message || 'không rõ'));
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, space]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => onCskhDataChanged(() => { void refresh(); }), [refresh]);

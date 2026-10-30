@@ -13,7 +13,7 @@ import { compareVnName } from '../../../lib/vnName';
 import { contactSearchHaystack, matchesQuery } from '../../../lib/cskh/search';
 import { buildSeedPlan, suggestTierForRole } from '../../../lib/cskh/seedTiers';
 import type { CadenceConfig, CskhContact, CskhGroup } from '../../../lib/cskh/types';
-import { CLASSIFIED_TIERS, TIER_HINT, TIER_LABEL } from '../../../lib/cskh/types';
+import { CLASSIFIED_TIERS } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
 import type { GroupAssignment } from '../data/api';
 import { chipStyle, GROUP_COLOR, resolveGroupKey, TIER_COLOR } from '../ui';
@@ -21,6 +21,7 @@ import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
 import { Sheet, SHEET_FOOTER } from './Sheet';
 import { SearchField } from './apple';
+import { useSpace } from '../space';
 
 interface Row {
   contact: CskhContact;
@@ -39,18 +40,22 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
   onApply: (rows: GroupAssignment[]) => Promise<string | null>;
   onClose: () => void;
 }) {
+  const { space, tierLabel, tierHint } = useSpace();
+  const isSale = space === 'sale';
   const groupById = useMemo(() => new Map(groups.map(g => [g.id, g])), [groups]);
   const colorOf = (key: string) => (key.startsWith('g:') ? GROUP_COLOR[groupById.get(key.slice(2))?.color ?? 'gray'] : TIER_COLOR[key as keyof typeof TIER_COLOR]);
   const [rows, setRows] = useState<Record<string, Row>>(() => {
     const byId = new Map(contacts.map(c => [c.id, c]));
     const out: Record<string, Row> = {};
-    for (const p of buildSeedPlan(contacts, clients)) {
+    // Sale không có công ty khách → không có gợi ý theo khách đang hợp tác
+    for (const p of isSale ? [] : buildSeedPlan(contacts, clients)) {
       const contact = byId.get(p.contactId);
       if (contact) out[contact.id] = { contact, groupKey: p.tier, reason: p.reason, checked: true };
     }
     for (const c of contacts) {
       if (out[c.id] || c.isArchived || c.tier !== 'unclassified') continue;
-      const s = suggestTierForRole(c.jobTitle, c.primaryClientIds.length > 0);
+      // Sale: mặc định "Trao đổi thông tin" (nhịp thưa) — chức vụ bên khách không nói lên mức quan trọng của Sale
+      const s = isSale ? { tier: 'partner' as const, reason: '' } : suggestTierForRole(c.jobTitle, c.primaryClientIds.length > 0);
       out[c.id] = { contact: c, groupKey: s.tier, reason: s.reason, checked: false };
     }
     return out;
@@ -73,7 +78,7 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
 
   const checked = Object.values(rows).filter(r => r.checked);
   const tally = [...new Set(checked.map(r => r.groupKey))]
-    .map(key => ({ key, label: resolveGroupKey(key, groupById)?.label ?? key, n: checked.filter(r => r.groupKey === key).length }));
+    .map(key => ({ key, label: resolveGroupKey(key, groupById, tierLabel)?.label ?? key, n: checked.filter(r => r.groupKey === key).length }));
   const setCheckedGroup = (key: string) => setRows(prev => {
     const next = { ...prev };
     for (const r of Object.values(prev)) if (r.checked) next[r.contact.id] = { ...r, groupKey: key };
@@ -93,7 +98,7 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
     setSaving(true);
     setError('');
     const err = await onApply(checked.flatMap(r => {
-      const t = resolveGroupKey(r.groupKey, groupById);
+      const t = resolveGroupKey(r.groupKey, groupById, tierLabel);
       return t && t.tier !== 'unclassified' ? [{ contactId: r.contact.id, tier: t.tier, groupId: t.groupId }] : [];
     }));
     setSaving(false);
@@ -105,7 +110,7 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
       <label className="flex items-center gap-2.5 min-w-0 flex-1 basis-full md:basis-auto cursor-pointer min-h-[40px] md:min-h-0">
         <input type="checkbox" checked={r.checked} onChange={e => update(r.contact.id, { checked: e.target.checked })}
           className="w-4 h-4 accent-[#0071E3] shrink-0" />
-        <ContactAvatar name={r.contact.fullName} url={r.contact.avatarUrl} tier={r.checked ? resolveGroupKey(r.groupKey, groupById)?.tier ?? 'unclassified' : 'unclassified'} size={30} />
+        <ContactAvatar name={r.contact.fullName} url={r.contact.avatarUrl} tier={r.checked ? resolveGroupKey(r.groupKey, groupById, tierLabel)?.tier ?? 'unclassified' : 'unclassified'} size={30} />
         <span className="min-w-0">
           <span className="block text-[13px] font-medium text-[#1D1D1F] truncate">{r.contact.fullName}</span>
           <span className="block text-[11px] text-[#86868B] truncate">
@@ -130,21 +135,21 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
     <Sheet label="Chọn người chăm sóc" onClose={onClose} wide>
       <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] pr-6">Chọn người chăm sóc</h2>
       <p className="text-[12px] text-[#86868B] mt-0.5">
-        Chỉ người được chọn mới được nhắc liên hệ, nhắc sinh nhật và chấm điểm. Hạng gợi ý theo chức vụ — sửa được từng dòng.
+        Chỉ người được chọn mới được nhắc liên hệ, nhắc sinh nhật và chấm điểm. {isSale ? 'Chọn hạng cho từng Sale — nhịp nhắc thưa hơn khách.' : 'Hạng gợi ý theo chức vụ — sửa được từng dòng.'}
       </p>
 
       <details className="mt-2 text-[11.5px] text-[#6E6E73]">
         <summary className="cursor-pointer text-[#0071E3] select-none">Ý nghĩa các hạng</summary>
         <ul className="mt-1.5 space-y-0.5">
           {CLASSIFIED_TIERS.map(t => (
-            <li key={t}><span className="px-1.5 py-0.5 rounded-full text-[10.5px] font-medium mr-1" style={chipStyle(TIER_COLOR[t])}>{TIER_LABEL[t]}</span>{TIER_HINT[t]}</li>
+            <li key={t}><span className="px-1.5 py-0.5 rounded-full text-[10.5px] font-medium mr-1" style={chipStyle(TIER_COLOR[t])}>{tierLabel[t]}</span>{tierHint[t]}</li>
           ))}
         </ul>
       </details>
 
       <SearchField value={query} onChange={setQuery} placeholder="Tìm tên, công ty, SĐT… (gõ không dấu được)" className="mt-3" />
 
-      <section className="mt-3">
+      {!isSale && <section className="mt-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11.5px] font-semibold text-[#1D1D1F] flex items-center gap-1">
             <Sparkles size={13} className="text-[#0071E3]" /> Gợi ý — người của khách đang hợp tác ({visible.suggested.length})
@@ -159,14 +164,14 @@ export function CarePickerModal({ contacts, clients, groups, cadence, onApply, o
         {visible.suggested.length === 0
           ? <p className="text-[12px] text-[#AEAEB2] py-2">Không còn ai cần gợi ý — mọi người của khách đang hợp tác đã có hạng.</p>
           : <div className="divide-y divide-black/[0.06]">{visible.suggested.map(renderRow)}</div>}
-      </section>
+      </section>}
 
       {visible.others.length > 0 && (
         <section className="mt-3 border-t border-black/[0.08] pt-2">
           <button type="button" onClick={() => setShowOthers(v => !v)}
             className="w-full flex items-center gap-1 text-[11.5px] font-semibold text-[#1D1D1F] min-h-[36px] md:min-h-0">
             {showOthers ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-            Người khác chưa chăm sóc ({visible.others.length}) — khách ngưng hợp tác, tiềm năng, chưa gắn công ty
+            {isSale ? `Sale chưa chăm sóc (${visible.others.length})` : `Người khác chưa chăm sóc (${visible.others.length}) — khách ngưng hợp tác, tiềm năng, chưa gắn công ty`}
           </button>
           {showOthers && <div className="divide-y divide-black/[0.06]">{visible.others.map(renderRow)}</div>}
         </section>

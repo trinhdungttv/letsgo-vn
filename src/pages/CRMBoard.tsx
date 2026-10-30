@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useBranchData } from '../hooks/useBranchData';
 import { branchOptions } from '../lib/branchRef';
+import { contactKindOf } from '../lib/cskh/space';
 import { useManagers } from '../hooks/useManagers';
 import type { Client, CRMProduct, CRMDeal, Contact } from '../lib/types';
 
@@ -100,8 +101,9 @@ export default function CRMBoard({ deals, products, onDealUpdate, onDealCreate, 
   const [draftSettings, setDraftSettings] = useState<PipelineSettings>(loadSettings);
 
   useEffect(() => {
-    supabase.from('contacts').select('id, name, phone, role, clients!contacts_client_id_fkey(name)').eq('is_active', true).order('name')
-      .then(({ data }) => { if (data) setContacts(data as unknown as Contact[]); });
+    // `*` để có cột kind (migration 178): người của Mạng lưới Sale không vào danh sách liên hệ khách
+    supabase.from('contacts').select('*, clients!contacts_client_id_fkey(name)').eq('is_active', true).order('name')
+      .then(({ data }) => { if (data) setContacts((data as unknown as Contact[]).filter(c => contactKindOf(c) === 'client')); });
   }, []);
 
   useEffect(() => {

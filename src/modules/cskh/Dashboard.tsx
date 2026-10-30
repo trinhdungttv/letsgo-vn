@@ -7,7 +7,7 @@
 // Bộ lọc Chi nhánh / Người phụ trách / Người quản lý KH thay cho "Cá nhân · Công việc" của PRM.
 // ============================================================================
 import { useMemo, useState, type ReactNode } from 'react';
-import { CalendarClock, Check, ChevronRight, PenLine, TrendingDown, TrendingUp, UserPlus, Users } from 'lucide-react';
+import { CalendarClock, Check, ChevronRight, ListFilter, PenLine, TrendingDown, TrendingUp, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { branchOf } from '../../lib/branchRef';
@@ -20,12 +20,12 @@ import { diffDays, nextOccurrenceIso } from '../../lib/cskh/lunar';
 import { SCORE_GRADE_LABEL, scoreGrade, weakestPart } from '../../lib/cskh/score';
 import { isCooperatingClient } from '../../lib/cskh/seedTiers';
 import { buildTodayQueue, TODAY_QUEUE_LIMIT, type TodayQueueItem } from '../../lib/cskh/todayQueue';
-import type { CskhContact, CskhInteraction, RelationshipScore } from '../../lib/cskh/types';
-import { CLASSIFIED_TIERS, INTERACTION_LABEL, TIER_LABEL } from '../../lib/cskh/types';
+import type { CskhContact, CskhInteraction, CskhOccasion, RelationshipScore } from '../../lib/cskh/types';
+import { CLASSIFIED_TIERS, INTERACTION_LABEL } from '../../lib/cskh/types';
 import { expandOpenExtras, setFollowUpDone } from './data/api';
 import { useCskh } from './context';
 import { markContactLaunched } from './launch';
-import { useCareScope } from './useCareScope';
+import { DEFAULT_SCOPE, useCareScope } from './useCareScope';
 import {
   CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
 } from './ui';
@@ -35,6 +35,8 @@ import { CareScopeBar } from './components/CareScopeBar';
 import { ContactAvatar } from './components/ContactAvatar';
 import { ContactBriefSheet } from './components/ContactBriefSheet';
 import { TodayQueue } from './components/TodayQueue';
+import { SaleNetworkPanel } from './components/SaleNetworkPanel';
+import { useSpace } from './space';
 
 /** Số tuần trên cột tuần của ô "Tương tác 30 ngày". */
 const SPARK_WEEKS = 8;
@@ -51,10 +53,14 @@ const linkCls = LINK;
 const caption = CAPTION;
 
 type AgendaKey = 'promises' | 'events' | 'recent';
+/** Đơn vị trong dòng "N … khác bị ẩn do bộ lọc". */
+const AGENDA_UNIT: Record<AgendaKey, string> = { promises: 'việc đã hứa', events: 'sự kiện', recent: 'tương tác' };
 type HealthKey = 'groups' | 'invest';
 
 export default function CskhDashboard() {
-  const { data, loading, clients, toast, openProfile, openLog, openPicker, openGroupLog, goTab, openWorkspace } = useCskh();
+  const { tierLabel, listShort } = useSpace();
+  const { space, data, loading, clients, toast, openProfile, openNewContact, openLog, openPicker, openGroupLog, goTab, openWorkspace } = useCskh();
+  const isSale = space === 'sale';
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const [brief, setBrief] = useState<{ contactId: string; item: TodayQueueItem | null } | null>(null);
@@ -74,7 +80,7 @@ export default function CskhDashboard() {
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
   const groupById = useMemo(() => new Map(groups.map(g => [g.id, g])), [groups]);
   const userName = useMemo(() => new Map((data?.users ?? []).map(u => [u.id, u.full_name])), [data]);
-  const scope = useCareScope(contacts, clients);
+  const scope = useCareScope(contacts, clients, space);
   const { scoped, filters } = scope;
 
   // ── Số liệu ───────────────────────────────────────────────────────────────
@@ -93,9 +99,7 @@ export default function CskhDashboard() {
   const hiddenCount = Math.max(0, fullQueue.length - TODAY_QUEUE_LIMIT);
 
   const view = useMemo(() => {
-    const scopedIds = new Set(scoped.map(c => c.id));
     const classified = scoped.filter(c => c.tier !== 'unclassified' && !c.isArchived);
-    const careIds = new Set(classified.map(c => c.id));
 
     const status = { overdue: 0, due_soon: 0, ok: 0 };
     const bands = { good: 0, attention: 0, weak: 0 };
@@ -114,10 +118,10 @@ export default function CskhDashboard() {
     worst.sort((a, b) => a.score.total - b.score.total);
 
     const groupRows = [
-      ...CLASSIFIED_TIERS.map(t => ({ key: t as string, label: TIER_LABEL[t], color: TIER_COLOR[t], cadence: cadence?.[t] ?? 0 })),
+      ...CLASSIFIED_TIERS.map(t => ({ key: t as string, label: tierLabel[t], color: TIER_COLOR[t], cadence: cadence?.[t] ?? 0 })),
       ...groups.map(g => ({ key: `g:${g.id}`, label: g.name, color: GROUP_COLOR[g.color], cadence: cadence?.[groupBaseTier(g)] ?? 0 })),
     ].map(row => {
-      const list = classified.filter(c => groupDisplayOf(c, groupById).key === row.key);
+      const list = classified.filter(c => groupDisplayOf(c, groupById, tierLabel).key === row.key);
       const scores = list.map(c => stats.get(c.id)?.score?.total).filter((s): s is number => typeof s === 'number');
       return {
         ...row,
@@ -127,25 +131,7 @@ export default function CskhDashboard() {
       };
     }).filter(r => r.count > 0);
 
-    // Sự kiện chỉ của người ĐANG CHĂM SÓC
-    const upcoming = occasions
-      .filter(o => careIds.has(o.contactId))
-      .map(o => {
-        const nextIso = nextOccurrenceIso(o.day, o.month, o.isLunar, today);
-        return { occasion: o, nextIso, daysUntil: diffDays(today, nextIso) };
-      })
-      .filter(x => x.daysUntil >= 0 && x.daysUntil <= 30)
-      .sort((a, b) => a.daysUntil - b.daysUntil);
-
-    const mine = interactions.filter(i => i.contactId !== null && scopedIds.has(i.contactId));
-    const followUps = [...mine, ...expandOpenExtras(mine)]
-      .filter(i => i.followUpAction.trim() !== '' && !i.followUpDone)
-      .sort((a, b) => {
-        if (a.followUpDue && b.followUpDue) return a.followUpDue.localeCompare(b.followUpDue);
-        if (a.followUpDue) return -1;
-        if (b.followUpDue) return 1;
-        return b.occurredAt.localeCompare(a.occurredAt);
-      });
+    const { mine, followUps, upcoming, recent } = agendaOf(scoped, interactions, occasions, today);
 
     let last30 = 0;
     let prev30 = 0;
@@ -172,21 +158,37 @@ export default function CskhDashboard() {
       upcoming,
       followUps,
       dueFollowUps: followUps.filter(i => i.followUpDue !== null && i.followUpDue <= today).length,
-      // Đợt "Ghi cho nhóm" gom thành 1 dòng
-      recent: groupBatches(mine).slice(0, LIST_LIMIT),
+      recent: recent.slice(0, LIST_LIMIT),
       last30,
       prev30,
       weeks,
       contactedToday: contactedToday.size,
     };
-  }, [scoped, stats, interactions, occasions, groups, groupById, cadence, today]);
+  }, [scoped, stats, interactions, occasions, groups, groupById, cadence, today, tierLabel]);
+
+  // Bộ lọc phạm vi nhớ theo TỪNG MÁY → điện thoại có thể đang lọc (vd 1 chi nhánh) mà máy tính thì không,
+  // nên "Sắp tới" 2 nơi khác nhau. Đếm mục "Xoá lọc" sẽ hiện thêm để báo ngay dưới danh sách.
+  const { isFiltered, base } = scope;
+  const hiddenByScope = useMemo(() => {
+    if (!isFiltered) return null;
+    const ids = new Set(scoped.map(c => c.id));
+    const outside = (contactId: string | null) => contactId === null || !ids.has(contactId);
+    const all = agendaOf(base, interactions, occasions, today);
+    return {
+      promises: all.followUps.filter(i => outside(i.contactId)).length,
+      events: all.upcoming.filter(u => outside(u.occasion.contactId)).length,
+      // So trong cùng LIST_LIMIT dòng đầu: dòng nào bỏ lọc mới thấy
+      recent: all.recent.slice(0, LIST_LIMIT)
+        .filter(e => (e.kind === 'batch' ? e.batch.items.every(i => outside(i.contactId)) : outside(e.item.contactId))).length,
+    } satisfies Record<AgendaKey, number>;
+  }, [isFiltered, base, scoped, interactions, occasions, today]);
 
   // "Sắp hết HĐ → Tái ký" đã có luồng riêng ở Workspace — chỉ nhắc 1 dòng, không tạo việc trùng
-  const expiringContracts = useMemo(() => clients.filter(c => {
+  const expiringContracts = useMemo(() => (isSale ? 0 : clients.filter(c => {
     if (!isCooperatingClient(c) || !c.contract_end) return false;
     if (filters.branch !== 'all' && branchOf(c, branches)?.id !== filters.branch) return false;
     return diffDays(today, c.contract_end.slice(0, 10)) <= RENEWAL_WINDOW_DAYS;
-  }).length, [clients, filters.branch, branches, today]);
+  }).length), [isSale, clients, filters.branch, branches, today]);
 
   // ── Thao tác ──────────────────────────────────────────────────────────────
   const completeFollowUp = async (it: CskhInteraction) => {
@@ -242,7 +244,9 @@ export default function CskhDashboard() {
         eyebrow={longDateVN(today)}
         title="Tổng quan"
         subtitle={careCountAll === 0
-          ? 'Chăm sóc người đại diện của các công ty đang ký hợp đồng cung ứng lao động.'
+          ? (isSale
+            ? 'Giữ quan hệ với Sale / CTV bên ngoài — trao đổi thông tin, giới thiệu khách, sau này mời về làm.'
+            : 'Chăm sóc người đại diện của các công ty đang ký hợp đồng cung ứng lao động.')
           : `Hôm nay: ${summary}.`}
         actions={contacts.length > 0 && (
           <>
@@ -264,14 +268,20 @@ export default function CskhDashboard() {
       <CareScopeBar scope={scope} users={data.users} total={contacts.length} />
 
       {/* ── Trạng thái trống có hướng dẫn ── */}
-      {contacts.length === 0 && !loading && (
+      {contacts.length === 0 && !loading && (isSale ? (
+        <Welcome icon={<Users size={22} />} title="Chưa có Sale nào"
+          text="Thêm Sale / CTV bạn đang giữ quan hệ: họ làm ở đâu, mạnh khu vực nào, tiến độ mời về làm. Mạng lưới Sale tách riêng — không lẫn vào khách hàng."
+          action="Thêm Sale" onAction={data.saleReady ? openNewContact : () => goTab('matrix')} />
+      ) : (
         <Welcome icon={<Users size={22} />} title="Chưa có người liên hệ nào"
           text="Thêm người đại diện của các công ty khách hàng ở tab Ma trận Khách hàng."
           action="Mở Ma trận Khách hàng" onAction={() => goTab('matrix')} />
-      )}
+      ))}
       {contacts.length > 0 && careCountAll === 0 && (
         <Welcome icon={<UserPlus size={22} />} title="Chưa chọn ai để chăm sóc"
-          text={`Danh bạ có ${contacts.length} người. Chỉ cần chọn những người quan trọng — hệ thống sẽ nhắc liên hệ, sinh nhật và việc đã hứa cho họ. Hạng được gợi ý sẵn theo chức vụ.`}
+          text={isSale
+            ? `Danh bạ Sale có ${contacts.length} người. Xếp hạng cho người bạn muốn giữ liên lạc — hệ thống sẽ nhắc liên hệ (thưa hơn khách), sinh nhật và việc đã hứa.`
+            : `Danh bạ có ${contacts.length} người. Chỉ cần chọn những người quan trọng — hệ thống sẽ nhắc liên hệ, sinh nhật và việc đã hứa cho họ. Hạng được gợi ý sẵn theo chức vụ.`}
           action="Chọn người chăm sóc" onAction={openPicker} />
       )}
 
@@ -396,6 +406,14 @@ export default function CskhDashboard() {
                   <button type="button" onClick={() => goTab(agenda === 'events' ? 'events' : 'log')} className={linkCls}>
                     {agenda === 'events' ? 'Sự kiện & Quà' : 'Nhật ký'} <ChevronRight size={14} />
                   </button>
+                )}
+                footer={hiddenByScope && hiddenByScope[agenda] > 0 && (
+                  <button type="button" onClick={() => scope.setFilters(DEFAULT_SCOPE)}
+                    className="w-full flex items-center gap-2 py-1.5 min-h-[40px] md:min-h-[32px] text-left text-[13px] hover:opacity-70 transition">
+                    <ListFilter size={15} className="shrink-0 text-[#86868B]" />
+                    <span className="flex-1 min-w-0 text-[#6E6E73]">{hiddenByScope[agenda]} {AGENDA_UNIT[agenda]} khác bị ẩn do bộ lọc</span>
+                    <span className="shrink-0 font-medium text-[#0071E3]">Xoá lọc</span>
+                  </button>
                 )}>
                 <Segmented label="Sắp tới" value={agenda} onChange={setAgendaTab} options={[
                   { key: 'promises', label: 'Việc đã hứa', badge: view.followUps.length },
@@ -451,7 +469,8 @@ export default function CskhDashboard() {
                       </Row>
                     )))}
 
-                  {agenda === 'recent' && (view.recent.length === 0 ? <Quiet>Chưa ghi nhận tương tác nào.</Quiet>
+                  {agenda === 'recent' && (view.recent.length === 0
+                    ? <Quiet>{isFiltered ? 'Chưa có tương tác nào trong phạm vi lọc.' : 'Chưa ghi nhận tương tác nào.'}</Quiet>
                     : view.recent.map((entry, idx) => {
                       if (entry.kind === 'batch') {
                         const b = entry.batch;
@@ -484,6 +503,12 @@ export default function CskhDashboard() {
                 </div>
               </Panel>
 
+              {/* ── Mạng lưới Sale: chiêu mộ + giới thiệu khách (chỉ trang Sale) ── */}
+              {isSale && (
+                <SaleNetworkPanel contacts={scoped} referrals={data.referrals}
+                  onOpenProfile={openProfile} onOpenList={() => goTab('matrix')} />
+              )}
+
               {/* ── Sức khỏe quan hệ ── */}
               <Panel id={HEALTH_PANEL_ID} title="Sức khỏe quan hệ"
                 meta={view.scored > 0 && (
@@ -493,7 +518,7 @@ export default function CskhDashboard() {
                     <span><Dot color={RED} />Yếu {view.bands.weak}</span>
                   </span>
                 )}
-                action={<button type="button" onClick={() => goTab('matrix')} className={linkCls}>Ma trận <ChevronRight size={14} /></button>}>
+                action={<button type="button" onClick={() => goTab('matrix')} className={linkCls}>{listShort} <ChevronRight size={14} /></button>}>
                 <Segmented label="Sức khỏe quan hệ" value={healthTab} onChange={setHealthTab} options={[
                   { key: 'groups', label: 'Theo nhóm' },
                   { key: 'invest', label: 'Cần đầu tư' },
@@ -555,7 +580,7 @@ export default function CskhDashboard() {
           contact={briefContact}
           item={brief.item}
           recent={interactions.filter(i => i.contactId === briefContact.id)}
-          groupLabel={groupDisplayOf(briefContact, groupById).label}
+          groupLabel={groupDisplayOf(briefContact, groupById, tierLabel).label}
           ownerName={briefContact.ownerId ? userName.get(briefContact.ownerId) ?? null : null}
           busyId={busyId}
           onLaunch={(c, channel) => markContactLaunched(c.id, channel)}
@@ -567,6 +592,37 @@ export default function CskhDashboard() {
       )}
     </div>
   );
+}
+
+/**
+ * 3 danh sách của thẻ "Sắp tới" cho 1 nhóm người liên hệ (đã sắp xếp, chưa cắt):
+ * việc đã hứa còn mở · sự kiện 30 ngày tới của người ĐANG CHĂM SÓC · nhật ký gần đây (đợt ghi nhóm gom 1 dòng).
+ * `mine` = mọi dòng nhật ký của nhóm này (để đếm tương tác 30 ngày).
+ */
+function agendaOf(people: readonly CskhContact[], interactions: readonly CskhInteraction[], occasions: readonly CskhOccasion[], today: string) {
+  const ids = new Set(people.map(c => c.id));
+  const careIds = new Set(people.filter(c => c.tier !== 'unclassified' && !c.isArchived).map(c => c.id));
+
+  const upcoming = occasions
+    .filter(o => careIds.has(o.contactId))
+    .map(o => {
+      const nextIso = nextOccurrenceIso(o.day, o.month, o.isLunar, today);
+      return { occasion: o, nextIso, daysUntil: diffDays(today, nextIso) };
+    })
+    .filter(x => x.daysUntil >= 0 && x.daysUntil <= 30)
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+
+  const mine = interactions.filter(i => i.contactId !== null && ids.has(i.contactId));
+  const followUps = [...mine, ...expandOpenExtras(mine)]
+    .filter(i => i.followUpAction.trim() !== '' && !i.followUpDone)
+    .sort((a, b) => {
+      if (a.followUpDue && b.followUpDue) return a.followUpDue.localeCompare(b.followUpDue);
+      if (a.followUpDue) return -1;
+      if (b.followUpDue) return 1;
+      return b.occurredAt.localeCompare(a.occurredAt);
+    });
+
+  return { mine, followUps, upcoming, recent: groupBatches(mine) };
 }
 
 // ── Khối giao diện nhỏ (chỉ dùng trong Dashboard) ───────────────────────────

@@ -57,7 +57,7 @@ export interface GroupLogPlan {
 export interface GroupLogCtx {
   userId: string | null;
   userName: string | null;
-  contactById: ReadonlyMap<string, Pick<CskhContact, 'id' | 'fullName' | 'clientIds' | 'primaryClientIds' | 'organization'>>;
+  contactById: ReadonlyMap<string, Pick<CskhContact, 'id' | 'fullName' | 'clientIds' | 'primaryClientIds' | 'organization'> & Partial<Pick<CskhContact, 'kind'>>>;
   clientName: (clientId: string) => string | null;
 }
 
@@ -68,7 +68,7 @@ const clientIdOf = (c: Pick<CskhContact, 'clientIds' | 'primaryClientIds'>): str
 export interface GroupLogRows {
   logs: Record<string, unknown>[];
   gifts: Record<string, unknown>[];
-  /** Người chưa gắn công ty → không có dòng quà (client_gifts.client_id bắt buộc). */
+  /** Người (khách) chưa gắn công ty → không có dòng quà (quà khách tính theo công ty). Sale không cần công ty. */
   noGiftNames: string[];
 }
 
@@ -106,7 +106,7 @@ export function buildGroupLogRows(plan: GroupLogPlan, ctx: GroupLogCtx, createdA
       created_at: createdAt,
     });
     if (!item) continue;
-    if (!clientId) {
+    if (!clientId && c.kind !== 'sale') {
       noGiftNames.push(c.fullName);
       continue;
     }

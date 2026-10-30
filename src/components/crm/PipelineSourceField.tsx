@@ -41,6 +41,11 @@ export const SOURCE_NAMES_CHANGED = 'lgvn:source-names-changed';
 function useSourceNameOptions() {
   const [rows, setRows] = useState<{ source_type: string | null; source_name: string | null }[]>([]);
   const [staff, setStaff] = useState<string[]>([]);
+  /** Tên người trong Mạng lưới Sale (migration 178) — gợi ý ở Sale / Đối tác giới thiệu; chọn đúng tên là tự nối hồ sơ Sale. */
+  const [network, setNetwork] = useState<string[]>([]);
+  // Mạng lưới Sale chỉ admin xem (canAccess 'crm-sales') — người khác không thấy tên Sale trong gợi ý
+  const { user } = useAuth();
+  const showNetwork = user?.role === 'admin';
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick(t => t + 1), []);
   useEffect(() => {
@@ -48,30 +53,36 @@ function useSourceNameOptions() {
     Promise.all([
       supabase.from('app_users').select('full_name').in('role', ['admin', 'kinhdoanh', 'bdh']),
       supabase.from('crm_pipeline').select('source_type, source_name').not('source_name', 'is', null),
-    ]).then(([u, p]) => {
+      // Chưa chạy migration 178 → lỗi cột kind → không có gợi ý Sale (bỏ qua)
+      showNetwork ? supabase.from('contacts').select('name').eq('kind', 'sale').eq('is_active', true) : Promise.resolve({ data: [], error: null }),
+    ]).then(([u, p, n]) => {
       if (!alive) return;
       setStaff(((u.data ?? []) as { full_name: string | null }[]).map(x => x.full_name ?? '').filter(Boolean));
       setRows((p.data ?? []) as { source_type: string | null; source_name: string | null }[]);
+      setNetwork(n.error ? [] : ((n.data ?? []) as { name: string | null }[]).map(x => x.name ?? '').filter(Boolean));
     }).catch(() => {});
     return () => { alive = false; };
-  }, [tick]);
+  }, [tick, showNetwork]);
   useEffect(() => {
     window.addEventListener(SOURCE_NAMES_CHANGED, reload);
     return () => window.removeEventListener(SOURCE_NAMES_CHANGED, reload);
   }, [reload]);
   const options = useMemo(() => ({
-    sale: sourceNameOptions(rows, 'sale', staff),
-    partner: sourceNameOptions(rows, 'partner'),
+    sale: sourceNameOptions(rows, 'sale', [...staff, ...network]),
+    partner: sourceNameOptions(rows, 'partner', network),
     company: sourceNameOptions(rows, 'company', DEFAULT_DEPARTMENTS),
-  }), [rows, staff]);
-  return { options, reload };
+  }), [rows, staff, network]);
+  const networkKeys = useMemo(() => new Set(network.map(normSourceName)), [network]);
+  return { options, networkKeys, reload };
 }
 
 const NOUN: Record<NamedSourceType, string> = { sale: 'sale', partner: 'đối tác', company: 'phòng ban' };
 
 /** Ô chọn xổ xuống: chọn người / phòng ban đã có (kèm số dự án), gõ để tìm, hoặc thêm tên mới. */
-function NameCombo({ kind, value, options, openSignal, onPick, onRename }: {
+function NameCombo({ kind, value, options, networkKeys, openSignal, onPick, onRename }: {
   kind: NamedSourceType;
+  /** Tên (đã chuẩn hoá) thuộc Mạng lưới Sale — ghi nhãn "Mạng lưới Sale" thay vì "gợi ý". */
+  networkKeys: ReadonlySet<string>;
   value: string | null;
   options: SourceNameOption[];
   /** Tăng lên để tự mở danh sách (vd vừa bấm nút "Đối tác giới thiệu") */
@@ -138,7 +149,7 @@ function NameCombo({ kind, value, options, openSignal, onPick, onRename }: {
               onMouseDown={e => { e.preventDefault(); pick(it.o.name); }}>
               <Check size={13} className={`shrink-0 ${normSourceName(value) === normSourceName(it.o.name) ? 'text-blue-600' : 'text-transparent'}`} />
               <span className="flex-1 min-w-0 truncate text-[#111]">{it.o.name}</span>
-              <span className="shrink-0 text-[11px] text-[#999]">{it.o.count > 0 ? `${it.o.count} dự án` : kind === 'sale' ? 'nhân viên' : 'gợi ý'}</span>
+              <span className="shrink-0 text-[11px] text-[#999]">{it.o.count > 0 ? `${it.o.count} dự án` : networkKeys.has(normSourceName(it.o.name)) ? 'Mạng lưới Sale' : kind === 'sale' ? 'nhân viên' : 'gợi ý'}</span>
               {it.o.count > 0 && (
                 <button type="button" title="Đổi tên / gộp trùng ở mọi dự án"
                   onMouseDown={e => { e.preventDefault(); e.stopPropagation(); setOpen(false); setQ(''); onRename(it.o); }}
@@ -170,7 +181,7 @@ export function PipelineSourcePicker({ value, onChange, onCommit, branches, defa
   defaultBranchId?: string | null;
 }) {
   const { user } = useAuth();
-  const { options, reload } = useSourceNameOptions();
+  const { options, networkKeys, reload } = useSourceNameOptions();
   const [openSignal, setOpenSignal] = useState(0);
 
   const pick = (t: PipelineSourceType) => {
@@ -255,6 +266,7 @@ export function PipelineSourcePicker({ value, onChange, onCommit, branches, defa
           kind={value.source_type}
           value={value.source_name}
           options={options[value.source_type]}
+          networkKeys={networkKeys}
           openSignal={openSignal}
           onPick={pickName}
           onRename={rename}

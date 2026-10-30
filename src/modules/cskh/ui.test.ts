@@ -3,8 +3,8 @@ import type { CskhGroup } from '../../lib/cskh/types';
 import { groupDisplayOf, hasToken, mapEmbedQuery, mapEmbedSrc, resolveGroupKey, splitList, toggleToken, TIER_COLOR, GROUP_COLOR } from './ui';
 
 const groups: CskhGroup[] = [
-  { id: 'g1', name: 'Khách Samsung', color: 'purple', baseTier: 'vip', isArchived: false },
-  { id: 'g2', name: 'Chưa chọn hạng', color: 'gray', baseTier: null, isArchived: false },
+  { id: 'g1', name: 'Khách Samsung', color: 'purple', baseTier: 'vip', kind: 'client', isArchived: false },
+  { id: 'g2', name: 'Chưa chọn hạng', color: 'gray', baseTier: null, kind: 'client', isArchived: false },
 ];
 const byId = new Map(groups.map(g => [g.id, g]));
 

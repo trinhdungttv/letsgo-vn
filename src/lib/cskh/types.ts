@@ -166,9 +166,29 @@ export const MBTI_TYPES: readonly string[] = [
 export type GroupColor = 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'gray';
 export const GROUP_COLORS: readonly GroupColor[] = ['blue', 'green', 'orange', 'red', 'purple', 'gray'];
 
+// ── Khu vực chăm sóc: khách hàng / Mạng lưới Sale (migration 178) ──────────
+/** contacts.kind — 'client' = người của công ty khách (mặc định), 'sale' = Sale / CTV bên ngoài. */
+export type ContactKind = 'client' | 'sale';
+export const CONTACT_KINDS: readonly ContactKind[] = ['client', 'sale'];
+
+/** Tiến độ chiêu mộ Sale về làm cho Let's Go (contacts.sale_stage). */
+export type SaleStage = 'none' | 'exploring' | 'invited' | 'negotiating' | 'joined' | 'declined';
+export const SALE_STAGES: readonly SaleStage[] = ['none', 'exploring', 'invited', 'negotiating', 'joined', 'declined'];
+
 // ── Đối tượng miền (camelCase) — mappers.ts dựng từ dòng DB ─────────────────
 export interface CskhContact {
   id: string;
+  /** Khu vực: khách hàng (mặc định) hay Mạng lưới Sale — chưa chạy migration 178 thì luôn 'client'. */
+  kind: ContactKind;
+  /** ── Riêng Sale (migration 178) ── nơi đang làm (gõ tự do / tên đối thủ). */
+  saleCompany: string;
+  /** Đối thủ trong Thị trường (competitors.id) nếu Sale đang làm cho đối thủ. */
+  competitorId: string | null;
+  saleStage: SaleStage;
+  /** Khu vực / KCN mạnh. */
+  saleArea: string;
+  /** Ngành quen. */
+  saleIndustries: string;
   fullName: string;
   nickname: string;
   avatarUrl: string;
@@ -289,7 +309,8 @@ export interface CskhOccasion {
 
 export interface CskhGift {
   id: string;
-  clientId: string;
+  /** null = quà tặng Sale (không gắn công ty khách, migration 178). */
+  clientId: string | null;
   /** Người liên hệ của món quà (người nhận khi mình tặng, người tặng khi họ tặng). */
   contactId: string | null;
   recipientName: string;
@@ -313,11 +334,16 @@ export interface CskhGroup {
   color: GroupColor;
   /** null = chưa chọn → coi như 'other'. */
   baseTier: CskhClassifiedTier | null;
+  /** Nhóm của khách hay của Sale (migration 178; chưa chạy = 'client'). */
+  kind: ContactKind;
   isArchived: boolean;
 }
 
 export interface CskhSettings {
+  /** Nhịp theo hạng của khu vực đang mở (trang Sale nạp = saleCadence). */
   cadence: CadenceConfig;
+  /** Nhịp theo hạng của Mạng lưới Sale (migration 178; chưa chạy = mặc định). */
+  saleCadence: CadenceConfig;
   digestEnabled: boolean;
   /** "HH:MM" */
   digestTime: string;

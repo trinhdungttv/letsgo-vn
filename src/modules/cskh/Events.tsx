@@ -37,14 +37,14 @@ import { OccasionForm } from './components/OccasionForm';
 const PAGE = 30;
 
 export default function CskhEvents() {
-  const { data, loading, clients, toast, openProfile } = useCskh();
+  const { space, data, loading, clients, toast, openProfile } = useCskh();
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const today = todayVN();
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
-  const clientName = (id: string) => clients.find(c => c.id === id)?.name ?? '';
-  const scope = useCareScope(contacts, clients);
+  const clientName = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? '' : '');
+  const scope = useCareScope(contacts, clients, space);
   const [showAllPeople, setShowAllPeople] = useState(false);
   const [eventLimit, setEventLimit] = useState(PAGE);
   const [giftLimit, setGiftLimit] = useState(PAGE);

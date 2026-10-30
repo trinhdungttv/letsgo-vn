@@ -5,9 +5,9 @@ import { Search } from 'lucide-react';
 import { compareVnName } from '../../../lib/vnName';
 import { contactSearchHaystack, matchesQuery } from '../../../lib/cskh/search';
 import type { CskhContact } from '../../../lib/cskh/types';
-import { TIER_LABEL } from '../../../lib/cskh/types';
 import { inputCls } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
+import { useSpace } from '../space';
 
 export function ContactPicker({ contacts, value, onChange, autoFocus = true }: {
   contacts: readonly CskhContact[];
@@ -15,6 +15,7 @@ export function ContactPicker({ contacts, value, onChange, autoFocus = true }: {
   onChange: (contact: CskhContact | null) => void;
   autoFocus?: boolean;
 }) {
+  const { tierLabel } = useSpace();
   const [query, setQuery] = useState('');
   const contact = contacts.find(c => c.id === value) ?? null;
 
@@ -31,7 +32,7 @@ export function ContactPicker({ contacts, value, onChange, autoFocus = true }: {
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-[#1D1D1F] truncate">{contact.fullName}</div>
           <div className="text-[11.5px] text-[#86868B] truncate">
-            {[contact.jobTitle, contact.organization].filter(Boolean).join(' · ') || TIER_LABEL[contact.tier]}
+            {[contact.jobTitle, contact.organization].filter(Boolean).join(' · ') || tierLabel[contact.tier]}
           </div>
         </div>
         <button type="button" onClick={() => onChange(null)} className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 px-1.5 min-h-[36px] transition">Đổi</button>
@@ -56,7 +57,7 @@ export function ContactPicker({ contacts, value, onChange, autoFocus = true }: {
               <span className="block text-[13px] text-[#1D1D1F] truncate">{c.fullName}</span>
               <span className="block text-[11px] text-[#86868B] truncate">{c.organization || 'Chưa gắn công ty'}</span>
             </span>
-            <span className="text-[11.5px] text-[#86868B] shrink-0">{TIER_LABEL[c.tier]}</span>
+            <span className="text-[11.5px] text-[#86868B] shrink-0">{tierLabel[c.tier]}</span>
           </button>
         ))}
       </div>

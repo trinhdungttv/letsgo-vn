@@ -2,8 +2,9 @@
 // Nhóm của tôi (nhóm tự tạo). Giá trị là khoá nhóm: hạng 'vvip'… hoặc 'g:<id>'.
 import { ChevronDown, Plus } from 'lucide-react';
 import type { CadenceConfig, CskhContact, CskhGroup } from '../../../lib/cskh/types';
-import { CLASSIFIED_TIERS, TIER_LABEL } from '../../../lib/cskh/types';
+import { CLASSIFIED_TIERS } from '../../../lib/cskh/types';
 import { chipStyle, groupDisplayOf, NEW_GROUP_VALUE } from '../ui';
+import { useSpace } from '../space';
 
 export function GroupOptions({ groups, cadence, includeUnclassified = true, allowCreate = false }: {
   groups: readonly CskhGroup[];
@@ -12,12 +13,13 @@ export function GroupOptions({ groups, cadence, includeUnclassified = true, allo
   includeUnclassified?: boolean;
   allowCreate?: boolean;
 }) {
+  const { tierLabel } = useSpace();
   const days = (t: (typeof CLASSIFIED_TIERS)[number]) => (cadence ? ` · ${cadence[t]} ngày` : '');
   return (
     <>
       {includeUnclassified && <option value="unclassified">Chưa chăm sóc</option>}
       <optgroup label="Nhóm mặc định">
-        {CLASSIFIED_TIERS.map(t => <option key={t} value={t}>{`${TIER_LABEL[t]}${days(t)}`}</option>)}
+        {CLASSIFIED_TIERS.map(t => <option key={t} value={t}>{`${tierLabel[t]}${days(t)}`}</option>)}
       </optgroup>
       {groups.length > 0 && (
         <optgroup label="Nhóm của tôi">
@@ -42,7 +44,8 @@ export function QuickGroupSelect({ contact, groups, groupById, cadence, disabled
   onPick: (key: string) => void;
   onCreate?: () => void;
 }) {
-  const d = groupDisplayOf(contact, groupById);
+  const { tierLabel } = useSpace();
+  const d = groupDisplayOf(contact, groupById, tierLabel);
   const unclassified = d.key === 'unclassified';
   return (
     <span

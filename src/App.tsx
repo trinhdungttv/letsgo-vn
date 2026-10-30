@@ -24,6 +24,7 @@ import History from './pages/History';
 import CRMDash from './pages/CRMDash';
 import CRMBoard from './pages/CRMBoard';
 import CRMLeads from './pages/CRMLeads';
+import CRMSales from './pages/CRMSales';
 import CRMProds from './pages/CRMProds';
 import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
@@ -41,7 +42,7 @@ import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme
 // Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
 const OfficeRental = lazy(() => import('./modules/office-rental'));
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...OFFICE_PAGES];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-sales', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -193,11 +194,11 @@ function AppInner() {
     setToastTimer(t);
   }, [toastTimer]);
 
-  // Chặn mở thẳng URL #/office… khi không có quyền (chỉ admin) → về trang chính + báo
+  // Chặn mở thẳng URL #/office… / #/crm-sales khi không có quyền (chỉ admin) → về trang chính + báo
   useEffect(() => {
-    if (user && isOfficePage(page) && !canAccess(user.role, page, rolePermissions)) {
+    if (user && (isOfficePage(page) || page === 'crm-sales') && !canAccess(user.role, page, rolePermissions)) {
       setPage('dashboard', true);
-      toast('Chỉ tài khoản admin được vào Văn phòng Orient');
+      toast(page === 'crm-sales' ? 'Chỉ tài khoản admin được vào Mạng lưới Sale' : 'Chỉ tài khoản admin được vào Văn phòng Orient');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, user, rolePermissions]);
@@ -430,6 +431,9 @@ function AppInner() {
         )}
         {page === 'crm-leads' && (
           <CRMLeads clients={clients} products={products} onSelectClient={handleSelectClient} onNavigate={navigate} toast={toast} />
+        )}
+        {page === 'crm-sales' && user && canAccess(user.role, page, rolePermissions) && (
+          <CRMSales clients={clients} onNavigate={navigate} toast={toast} />
         )}
         {page === 'crm-prods' && (
           <CRMProds

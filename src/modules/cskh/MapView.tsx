@@ -39,6 +39,7 @@ import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
 import { PageTitle, Segmented, Switch } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
+import { useSpace } from './space';
 
 interface Point extends MapPoint {
   group: GroupDisplay;
@@ -108,13 +109,16 @@ function PointPicker({ options, value, onChange, placeholder }: {
 }
 
 export default function CskhMap() {
-  const { data, loading, clients, toast, openProfile } = useCskh();
+  const { tierLabel, storageKey } = useSpace();
+  const { space, data, loading, clients, toast, openProfile } = useCskh();
   const { token } = useAuth();
   const { branches } = useBranchLookup();
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
-  const scope = useCareScope(contacts, clients);
+  const scope = useCareScope(contacts, clients, space);
   const groupById = useMemo(() => new Map((data?.groups ?? []).map(g => [g.id, g])), [data]);
-  const [layer, setLayer] = usePersistedState<MapLayer>('cskh_map_layer', 'company');
+  // Sale không gắn công ty khách → không có lớp "Công ty", mặc định nơi ở
+  const [storedLayer, setLayer] = usePersistedState<MapLayer>(storageKey('cskh_map_layer'), space === 'sale' ? 'current' : 'company');
+  const layer: MapLayer = space === 'sale' && storedLayer === 'company' ? 'current' : storedLayer;
   const [includeOthers, setIncludeOthers] = useState(false);
   const [hiddenGroups, setHiddenGroups] = useState<ReadonlySet<string>>(() => new Set());
   const [provinceGeo, setProvinceGeo] = useState<Map<string, LatLng>>(readProvinceCache);
@@ -144,9 +148,9 @@ export default function CskhMap() {
 
   const pointsOf = useCallback((l: MapLayer): Point[] => layerPoints(people, l, companyGeo, provinceGeo).map(p => ({
     ...p,
-    group: groupDisplayOf(p.contact, groupById),
+    group: groupDisplayOf(p.contact, groupById, tierLabel),
     verified: l === 'current' && addressPrecision(p.contact) === 'precise',
-  })), [people, companyGeo, provinceGeo, groupById]);
+  })), [people, companyGeo, provinceGeo, groupById, tierLabel]);
   const points = useMemo(() => pointsOf(layer), [pointsOf, layer]);
   const counts = useMemo(() => ({
     company: pointsOf('company').length, current: pointsOf('current').length, origin: pointsOf('origin').length,
@@ -286,7 +290,7 @@ export default function CskhMap() {
     <div className="space-y-4 md:space-y-5">
       <PageTitle
         eyebrow="Ai ở đâu"
-        title="Bản đồ Khách hàng"
+        title={space === 'sale' ? 'Bản đồ Sale' : 'Bản đồ Khách hàng'}
         subtitle={<>
           {points.length} người trên lớp {MAP_LAYER_LABEL[layer].toLowerCase()}
           {missing > 0 && layer === 'company' && ` — ${missing} người thuộc công ty chưa có toạ độ (định vị ở Thị trường → Bản đồ)`}
@@ -300,7 +304,7 @@ export default function CskhMap() {
         <Segmented label="Lớp vị trí" fit value={layer}
           onChange={l => { setLayer(l); setHiddenGroups(new Set()); setPair({ from: '', to: '' }); }}
           options={[
-            { key: 'company', label: 'Công ty', icon: <Building2 size={14} />, badge: counts.company },
+            ...(space === 'sale' ? [] : [{ key: 'company' as const, label: 'Công ty', icon: <Building2 size={14} />, badge: counts.company }]),
             { key: 'current', label: 'Nơi ở hiện tại', icon: <Home size={14} />, badge: counts.current },
             { key: 'origin', label: 'Quê quán', icon: <Sprout size={14} />, badge: counts.origin },
           ]} />

@@ -10,6 +10,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import type { Client, Contact, ContactClientHistory } from '../../lib/types';
 import { parseLatLngFromLink } from '../../lib/geo';
+import { contactKindOf } from '../../lib/cskh/space';
 import RoleSelect from './RoleSelect';
 import AvatarUpload from './AvatarUpload';
 import SpecialDatesEditor, { type SpecialDateDraft } from './SpecialDatesEditor';
@@ -154,7 +155,8 @@ export default function ContactFormModal({
   useEffect(() => {
     if (!allowPickExisting || contact) return;
     supabase.from('contacts').select('*, clients!contacts_client_id_fkey(name)').is('client_id', null).order('name')
-      .then(({ data }) => setPool((data || []) as Contact[]));
+      // Người của Mạng lưới Sale không gắn được vào công ty khách
+      .then(({ data }) => setPool(((data || []) as Contact[]).filter(c => contactKindOf(c) === 'client')));
   }, [allowPickExisting, contact]);
 
   // Lịch sử chuyển công ty của chính người này.

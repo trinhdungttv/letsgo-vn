@@ -10,7 +10,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { CareStatus } from '../../lib/cskh/cadence';
 import type { ContactActionChannel } from '../../lib/cskh/contactActions';
 import type { TodayReason } from '../../lib/cskh/todayQueue';
-import type { CskhContact, CskhGroup, CskhTier, GroupColor, InteractionType } from '../../lib/cskh/types';
+import type { CskhContact, CskhGroup, CskhTier, GroupColor, InteractionType, SaleStage } from '../../lib/cskh/types';
 import { TIER_LABEL } from '../../lib/cskh/types';
 import { BTN_ICON, BTN_PRIMARY, BTN_TINTED, CARD } from '../../components/workspace/wsTheme';
 
@@ -54,6 +54,16 @@ export const GROUP_COLOR: Readonly<Record<GroupColor, string>> = {
   red: RED,
   purple: PURPLE,
   gray: GRAY,
+};
+
+/** Màu tiến độ chiêu mộ Sale (Mạng lưới Sale). */
+export const SALE_STAGE_COLOR: Readonly<Record<SaleStage, string>> = {
+  none: GRAY,
+  exploring: '#0066CC',
+  invited: PURPLE,
+  negotiating: ORANGE,
+  joined: GREEN,
+  declined: '#8E8E93',
 };
 
 export const CARE_STATUS_COLOR: Readonly<Record<CareStatus, string>> = {
@@ -111,16 +121,19 @@ export interface GroupDisplay {
 export function groupDisplayOf(
   contact: Pick<CskhContact, 'tier' | 'groupId'>,
   groupById: ReadonlyMap<string, CskhGroup>,
+  /** Nhãn hạng của khu vực (Sale có nhãn riêng — useSpace().tierLabel); mặc định nhãn khách. */
+  tierLabel: Readonly<Record<CskhTier, string>> = TIER_LABEL,
 ): GroupDisplay {
   const g = contact.groupId ? groupById.get(contact.groupId) : undefined;
   if (g) return { key: `g:${g.id}`, label: g.name, color: GROUP_COLOR[g.color] };
-  return { key: contact.tier, label: TIER_LABEL[contact.tier], color: TIER_COLOR[contact.tier] };
+  return { key: contact.tier, label: tierLabel[contact.tier], color: TIER_COLOR[contact.tier] };
 }
 
 /** Khoá "Nhóm" hợp nhất → giá trị ghi DB: tier + group_id (null = nhóm mặc định). */
 export function resolveGroupKey(
   key: string,
   groupById: ReadonlyMap<string, CskhGroup>,
+  tierLabel: Readonly<Record<CskhTier, string>> = TIER_LABEL,
 ): { tier: CskhTier; groupId: string | null; label: string } | null {
   if (key.startsWith('g:')) {
     const g = groupById.get(key.slice(2));
@@ -128,7 +141,7 @@ export function resolveGroupKey(
   }
   if (!(key in TIER_LABEL)) return null;
   const tier = key as CskhTier;
-  return { tier, groupId: null, label: TIER_LABEL[tier] };
+  return { tier, groupId: null, label: tierLabel[tier] };
 }
 
 /** Ô nhập chuẩn trong các form CSKH (16px trên điện thoại do CSS chung lo). */

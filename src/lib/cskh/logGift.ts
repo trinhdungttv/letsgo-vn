@@ -128,7 +128,8 @@ export function planLogGift(wanted: LogGiftInput | null | undefined, existing: C
 // ── Dòng ghi DB ─────────────────────────────────────────────────────────────
 export interface LogGiftRowCtx {
   contact: { id: string; fullName: string };
-  clientId: string;
+  /** null = quà tặng Sale (không gắn công ty khách, migration 178). */
+  clientId: string | null;
   gift: LogGiftInput;
   /** Ngày tương tác = ngày tặng. */
   occurredAt: string;

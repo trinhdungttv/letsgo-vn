@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3, Home, Building2, Building, Briefcase, DollarSign, MapPin, Landmark, History,
-  LayoutDashboard, Network, UserCircle2, Package, Settings, Users,
+  LayoutDashboard, Network, UserCircle2, UsersRound, Package, Settings, Users,
   LogOut, MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin, Check,
 } from 'lucide-react';
 import type { Page } from '../lib/types';
@@ -30,6 +30,7 @@ const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode; tile: key
   { page: 'crm-leads',      label: 'CRM',        icon: <UserCircle2 size={21} />,     tile: 'purple' },
   { page: 'crm-dash',       label: 'Tổng quan CRM', icon: <LayoutDashboard size={21} />, tile: 'purple' },
   { page: 'crm-pipeline',   label: 'Pipeline',   icon: <Network size={21} />,         tile: 'purple' },
+  { page: 'crm-sales',      label: 'Mạng lưới Sale', icon: <UsersRound size={21} />,   tile: 'orange' },
   { page: 'crm-prods',      label: 'Sản phẩm',   icon: <Package size={21} />,         tile: 'purple' },
   // Văn phòng Orient (chỉ admin) — gộp 10 trang thành 1 mục; bấm vào mở danh sách trang (xem OFFICE_NAV)
   { page: 'office',         label: 'VP Orient',  icon: <Building size={21} />,        tile: 'orange' },

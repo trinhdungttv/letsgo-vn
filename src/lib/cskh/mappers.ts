@@ -13,12 +13,13 @@ import { splitPhones } from './contactActions';
 import { cleanEducation } from './education';
 import { DEFAULT_REMIND_DAYS } from './occasions';
 import { cleanRememberNotes } from './remember';
+import { contactKindOf, DEFAULT_SALE_CADENCE, parseSaleCadence } from './space';
 import type {
   CadenceConfig, CskhClassifiedTier, CskhContact, CskhContext, CskhGift, CskhGroup,
   CskhInteraction, CskhOccasion, CskhSettings, CskhTier, GeoSource, GiftDirection,
-  Gender, GroupColor, InitiatedBy, InteractionChannel, InteractionType, OccasionType, RememberNotes,
+  Gender, GroupColor, InitiatedBy, InteractionChannel, InteractionType, OccasionType, RememberNotes, SaleStage,
 } from './types';
-import { ALL_TIERS, CLASSIFIED_TIERS, DEFAULT_CADENCE, GEO_SOURCES, GROUP_COLORS, INTERACTION_TYPES } from './types';
+import { ALL_TIERS, CLASSIFIED_TIERS, DEFAULT_CADENCE, GEO_SOURCES, GROUP_COLORS, INTERACTION_TYPES, SALE_STAGES } from './types';
 
 // ── Kiểu dòng DB ────────────────────────────────────────────────────────────
 /** Cột CSKH thêm vào contacts (migration 169). */
@@ -50,7 +51,15 @@ export interface ContactProfileColumns {
   origin_province: string;
   birthday_remind_days: number | null;
 }
-export type ContactRow = Contact & Partial<ContactCskhColumns> & Partial<ContactProfileColumns>;
+/** Cột Mạng lưới Sale (migration 178) — chưa chạy thì không có (mọi người = khách). */
+export interface ContactSaleColumns {
+  sale_company: string;
+  competitor_id: string | null;
+  sale_stage: string;
+  sale_area: string;
+  sale_industries: string;
+}
+export type ContactRow = Contact & Partial<ContactCskhColumns> & Partial<ContactProfileColumns> & Partial<ContactSaleColumns>;
 
 /** Cột thêm vào cskh_logs (migration 170). */
 export interface CskhLogColumns {
@@ -98,6 +107,8 @@ export interface CskhGroupRow {
   name: string;
   color: string;
   base_tier: string | null;
+  /** Migration 178 — chưa chạy = nhóm của khách. */
+  kind?: string | null;
   is_archived?: boolean;
 }
 
@@ -112,6 +123,8 @@ export interface CskhSettingsRow {
   digest_time: string;
   digest_max_items: number;
   digest_last_sent_on: string | null;
+  /** Nhịp theo hạng của Mạng lưới Sale (migration 178, jsonb). */
+  sale_cadence?: unknown;
   updated_at: string;
 }
 
@@ -141,8 +154,16 @@ export function mapContactRow(row: ContactRow): CskhContact {
   const links = row.contact_clients
     ?? (row.client_id ? [{ client_id: row.client_id, is_primary: !!row.is_primary, clients: row.clients ?? null }] : []);
   const sorted = [...links].sort((a, b) => (a.clients?.name || '').localeCompare(b.clients?.name || '', 'vi'));
+  const kind = contactKindOf(row);
+  const saleCompany = text(row.sale_company).trim();
   return {
     id: row.id,
+    kind,
+    saleCompany,
+    competitorId: row.competitor_id ?? null,
+    saleStage: oneOf<SaleStage>(row.sale_stage, SALE_STAGES, 'none'),
+    saleArea: text(row.sale_area),
+    saleIndustries: text(row.sale_industries),
     fullName: row.name,
     nickname: text(row.nickname),
     avatarUrl: text(row.avatar_url),
@@ -151,7 +172,8 @@ export function mapContactRow(row: ContactRow): CskhContact {
     emails: row.email?.trim() ? [row.email.trim()] : [],
     clientIds: sorted.map(l => l.client_id),
     primaryClientIds: sorted.filter(l => l.is_primary).map(l => l.client_id),
-    organization: sorted.map(l => l.clients?.name).filter(Boolean).join(', '),
+    // Sale không gắn công ty khách — "công ty" hiển thị là nơi Sale đang làm
+    organization: kind === 'sale' ? saleCompany : sorted.map(l => l.clients?.name).filter(Boolean).join(', '),
     jobTitle: text(row.role),
     tier: oneOf<CskhTier>(row.tier, ALL_TIERS, 'unclassified'),
     groupId: row.group_id ?? null,
@@ -306,6 +328,7 @@ export function mapGroupRow(row: CskhGroupRow): CskhGroup {
     baseTier: row.base_tier && (CLASSIFIED_TIERS as readonly string[]).includes(row.base_tier)
       ? (row.base_tier as CskhClassifiedTier)
       : null,
+    kind: contactKindOf(row),
     isArchived: !!row.is_archived,
   };
 }
@@ -318,6 +341,7 @@ export function mapSettingsRow(row: CskhSettingsRow | null | undefined): CskhSet
   if (!row) {
     return {
       cadence: { ...DEFAULT_CADENCE },
+      saleCadence: { ...DEFAULT_SALE_CADENCE },
       digestEnabled: false,
       digestTime: '07:30',
       digestMaxItems: 7,
@@ -335,6 +359,7 @@ export function mapSettingsRow(row: CskhSettingsRow | null | undefined): CskhSet
   };
   return {
     cadence,
+    saleCadence: parseSaleCadence(row.sale_cadence),
     digestEnabled: !!row.digest_enabled,
     // Postgres trả "07:30:00" → giữ "HH:MM"
     digestTime: (row.digest_time ?? '07:30').slice(0, 5),

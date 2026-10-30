@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark } from 'lucide-react';
+import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark, UsersRound } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
@@ -27,10 +27,12 @@ const CRM_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'crm-dash',     label: 'Dashboard',   icon: <LayoutDashboard size={16} /> },
   { page: 'crm-pipeline', label: 'BD Pipeline', icon: <Network size={16} /> },
   { page: 'crm-leads',    label: 'CSKH',        icon: <UserCircle2 size={16} /> },
+  // Mạng lưới Sale — tách hẳn khỏi CSKH khách hàng (chỉ admin, xem canAccess)
+  { page: 'crm-sales',    label: 'Mạng lưới Sale', icon: <UsersRound size={16} /> },
   { page: 'crm-prods',    label: 'Sản phẩm',   icon: <Package size={16} /> },
 ];
 
-const CRM_PAGES: Page[] = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline'];
+const CRM_PAGES: Page[] = ['crm-dash', 'crm-board', 'crm-leads', 'crm-sales', 'crm-prods', 'crm-deal', 'crm-pipeline'];
 
 const ADMIN_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'admin-settings', label: 'Phân quyền & Tài khoản', icon: <Settings size={16} /> },

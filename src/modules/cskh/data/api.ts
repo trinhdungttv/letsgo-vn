@@ -8,7 +8,7 @@
 import { supabase } from '../../../lib/supabase';
 import { logActivity } from '../../../lib/audit';
 import { branchOf } from '../../../lib/branchRef';
-import { contactToForm, saveContact, selectContacts, type ContactFormValues } from '../../../lib/contactOps';
+import { contactToForm, MIGRATION_178_HINT, saveContact, selectContacts, type ContactFormValues } from '../../../lib/contactOps';
 import { cleanRememberNotes } from '../../../lib/cskh/remember';
 import { planCareReminders } from '../../../lib/cskh/automation';
 import { isValidDayMonth, todayVN } from '../../../lib/cskh/dates';
@@ -20,6 +20,8 @@ import {
   giftOfLog, logGiftFields, logGiftInsertRow, logOfGift, NO_LOG_GIFT, planLogGift, sanitizeLogGift, type LogGiftInput,
 } from '../../../lib/cskh/logGift';
 import { planGeo } from '../../../lib/cskh/mapPoints';
+import { mapReferralRows, type PipelineReferralRow, type SaleReferral } from '../../../lib/cskh/saleReferrals';
+import { sliceSpace, SPACE_INFO, type CskhSpace } from '../../../lib/cskh/space';
 import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
 import { isEmptyPlan, type OccasionFields, type OccasionWritePlan } from '../../../lib/cskh/occasions';
 import type { AppUser, Branch, Client, Contact } from '../../../lib/types';
@@ -28,8 +30,8 @@ import {
   type ClientGiftRow, type ContactRow, type CskhGroupRow, type CskhLogRow, type CskhSettingsRow, type SpecialDateRow,
 } from '../../../lib/cskh/mappers';
 import type {
-  CskhClassifiedTier, CskhContact, CskhExtraTask, CskhContext, CskhGift, CskhGroup, CskhInteraction, CskhOccasion, CskhSettings,
-  CskhTier, Education, Gender, GeoSource, GroupColor, InitiatedBy, InteractionChannel, InteractionType, RememberNotes,
+  CskhClassifiedTier, ContactKind, CskhContact, CskhExtraTask, CskhContext, CskhGift, CskhGroup, CskhInteraction, CskhOccasion, CskhSettings,
+  CskhTier, Education, Gender, GeoSource, GroupColor, InitiatedBy, InteractionChannel, InteractionType, RememberNotes, SaleStage,
 } from '../../../lib/cskh/types';
 
 export const MIGRATION_HINT =
@@ -46,6 +48,10 @@ const isMissingSchema = (err: DbError) =>
 
 /** Lỗi ghi → câu tiếng Việt đọc được (thiếu bảng/cột = chưa chạy migration). */
 function writeError(err: DbError): Error {
+  // Quà / người / nhóm của Sale ghi khi DB chưa chạy 178: client_id còn NOT NULL hoặc chưa có cột kind
+  if (err && ((err.code === '23502' && /client_id/.test(err.message || '')) || (isMissingSchema(err) && /\bkind\b|sale_/.test(err.message || '')))) {
+    return new Error(MIGRATION_178_HINT);
+  }
   return new Error(isMissingSchema(err) ? MIGRATION_HINT : (err?.message || 'Lỗi không rõ'));
 }
 
@@ -101,6 +107,8 @@ export interface AppUserLite {
 }
 
 export interface CskhData {
+  /** Khu vực đã nạp: khách hàng (CSKH) hay Mạng lưới Sale — các danh sách dưới chỉ gồm người của khu vực này. */
+  space: CskhSpace;
   contacts: CskhContact[];
   /** Dòng `contacts` gốc theo id — các thao tác chung với hồ sơ Khách hàng đi qua lib/contactOps. */
   rawContacts: Map<string, Contact>;
@@ -114,11 +122,28 @@ export interface CskhData {
   users: AppUserLite[];
   /** false = DB chưa chạy migration 168–173 (chỉ xem được, chưa lưu được). */
   migrationReady: boolean;
+  /** false = DB chưa chạy migration 178 (Mạng lưới Sale chưa lưu được người / nhóm / quà). */
+  saleReady: boolean;
+  /** Chỉ trang Sale: công ty trong BD Pipeline có nguồn Sale / Đối tác giới thiệu (để biết Sale nào giới thiệu khách nào). */
+  referrals: SaleReferral[];
+  /** Chỉ trang Sale: đối thủ trong Thị trường (chọn "Đang làm ở"). */
+  competitors: CompetitorLite[];
 }
 
-export async function loadCskhData(): Promise<CskhData> {
-  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes] = await Promise.all([
-    selectContacts(q => q.order('name')) as Promise<ContactRow[]>,
+export interface CompetitorLite {
+  id: string;
+  name: string;
+  zone: string;
+}
+
+/**
+ * Nạp dữ liệu của 1 khu vực: 'client' = CSKH khách hàng (mặc định), 'sale' = Mạng lưới Sale.
+ * Đọc chung rồi tách bằng lib/cskh/space.sliceSpace — Sale không bao giờ lẫn vào khách và ngược lại.
+ */
+export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhData> {
+  const sale = space === 'sale';
+  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes] = await Promise.all([
+    selectContacts(q => q.order('name'), 'all') as Promise<ContactRow[]>,
     fetchAll<CskhLogRow>((from, to) => supabase.from('cskh_logs').select('*')
       .order('log_date', { ascending: false }).order('created_at', { ascending: false }).order('id').range(from, to)),
     supabase.from('contact_special_dates').select('*'),
@@ -126,6 +151,9 @@ export async function loadCskhData(): Promise<CskhData> {
     supabase.from('cskh_settings').select('*').eq('id', 1).maybeSingle(),
     supabase.from('cskh_groups').select('*').order('name'),
     supabase.from('app_users').select('id, full_name').order('full_name'),
+    // Trang Sale: nguồn khách của BD Pipeline + danh sách đối thủ ('*' để DB chưa chạy 178 vẫn đọc được)
+    sale ? supabase.from('crm_pipeline').select('*') : Promise.resolve({ data: [], error: null }),
+    sale ? supabase.from('competitors').select('id, company_name, zone_name').order('company_name') : Promise.resolve({ data: [], error: null }),
   ]);
 
   // Bảng có sẵn trước CSKH mà lỗi → báo; bảng mới chưa có (chưa chạy migration) → bỏ qua
@@ -135,7 +163,9 @@ export async function loadCskhData(): Promise<CskhData> {
   if (groupRes.error && !isMissingSchema(groupRes.error)) throw groupRes.error;
 
   const migrationReady = !settingsRes.error && (contactRows.length === 0 || 'tier' in contactRows[0]);
-  const contacts = contactRows.map(mapContactRow);
+  // Migration 178 thêm cskh_settings.sale_cadence cùng lúc với contacts.kind
+  const saleReady = migrationReady && !!settingsRes.data && 'sale_cadence' in (settingsRes.data as object);
+  const allContacts = contactRows.map(mapContactRow);
 
   // Việc đã hứa đã được đánh dấu xong bên Workspace → coi như xong ở CSKH luôn
   let interactions = logRows.map(mapLogRow);
@@ -159,25 +189,38 @@ export async function loadCskhData(): Promise<CskhData> {
 
   const occasions: CskhOccasion[] = [
     ...((dateRes.data ?? []) as SpecialDateRow[]).map(mapSpecialDateRow).filter((o): o is CskhOccasion => o !== null),
-    ...contacts.map(birthdayOccasion).filter((o): o is CskhOccasion => o !== null),
+    ...allContacts.map(birthdayOccasion).filter((o): o is CskhOccasion => o !== null),
   ];
 
-  return {
-    contacts,
-    rawContacts: new Map(contactRows.map(r => [r.id, r as Contact])),
+  const slice = sliceSpace({
+    contacts: allContacts,
     interactions,
     occasions,
     gifts: ((giftRes.data ?? []) as ClientGiftRow[]).map(mapGiftRow),
-    settings: mapSettingsRow(settingsRes.data as CskhSettingsRow | null),
     groups: ((groupRes.data ?? []) as CskhGroupRow[]).map(mapGroupRow).filter(g => !g.isArchived),
+  }, space);
+  const settings = mapSettingsRow(settingsRes.data as CskhSettingsRow | null);
+  const ids = new Set(slice.contacts.map(c => c.id));
+
+  return {
+    space,
+    ...slice,
+    rawContacts: new Map(contactRows.filter(r => ids.has(r.id)).map(r => [r.id, r as Contact])),
+    // Trang Sale dùng nhịp của Sale cho mọi phép tính (hạn, điểm, hàng đợi)
+    settings: space === 'sale' ? { ...settings, cadence: settings.saleCadence } : settings,
     users: (userRes.data ?? []) as AppUserLite[],
     migrationReady,
+    saleReady,
+    // Lỗi đọc 2 bảng phụ này không làm hỏng trang — chỉ thiếu phần "đã giới thiệu" / gợi ý đối thủ
+    referrals: pipeRes.error ? [] : mapReferralRows((pipeRes.data ?? []) as PipelineReferralRow[]),
+    competitors: compRes.error ? [] : ((compRes.data ?? []) as { id: string; company_name: string | null; zone_name: string | null }[])
+      .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name),
   };
 }
 
-/** Một người liên hệ (dùng cho bottom sheet ghi nhận nhanh — không cần tải cả module). */
+/** Một người liên hệ (dùng cho bottom sheet ghi nhận nhanh — không cần tải cả module). Khu vực nào cũng được. */
 export async function loadContact(id: string): Promise<CskhContact | null> {
-  const rows = await selectContacts(q => q.eq('id', id)) as ContactRow[];
+  const rows = await selectContacts(q => q.eq('id', id), 'all') as ContactRow[];
   return rows[0] ? mapContactRow(rows[0]) : null;
 }
 
@@ -207,14 +250,17 @@ export interface InteractionInput {
  * Tên việc trong Workspace: "[Công ty] CSKH: <việc> — <người>" — tên công ty đứng đầu để biết
  * ngay việc của khách nào (người liên hệ có thể kiêm nhiều công ty).
  */
-export function cskhTaskTitle(companyName: string | null | undefined, action: string, who: string): string {
+export function cskhTaskTitle(companyName: string | null | undefined, action: string, who: string, kind: ContactKind = 'client'): string {
   const company = (companyName ?? '').trim();
-  return `${company ? `[${company}] ` : ''}CSKH: ${action} — ${who}`;
+  return `${company ? `[${company}] ` : ''}${SPACE_INFO[kind].taskPrefix}: ${action} — ${who}`;
 }
+
+/** Loại việc trong Workspace: 'CSKH' (khách) / 'Sale' (Mạng lưới Sale) — lọc riêng được ở Workspace. */
+export const taskTypeOf = (kind: ContactKind = 'client'): string => SPACE_INFO[kind].taskPrefix;
 
 /** Phần "việc" trong tên việc Workspace: bỏ "[Công ty] CSKH: " ở đầu và " — người" ở cuối. */
 export function taskActionOf(title: string): string {
-  return title.replace(/^\s*(\[[^\]]*\]\s*)?CSKH:\s*/, '').replace(/\s+—\s+[^—]*$/, '').trim();
+  return title.replace(/^\s*(\[[^\]]*\]\s*)?(CSKH|Sale):\s*/, '').replace(/\s+—\s+[^—]*$/, '').trim();
 }
 
 /** Câu báo sau khi ghi tương tác: nói rõ đã ghi thêm việc trong Workspace / món quà trong Lịch sử quà. */
@@ -250,8 +296,8 @@ async function insertExtraTasks(
     user_id: assignee,
     client_id: o.client?.id ?? null,
     branch_id: branchOf(o.client, o.ctx.branches)?.id ?? null,
-    title: cskhTaskTitle(o.client?.name ?? o.contact?.organization ?? o.fallbackCompany, e.action, o.who),
-    task_type: 'CSKH',
+    title: cskhTaskTitle(o.client?.name ?? o.contact?.organization ?? o.fallbackCompany, e.action, o.who, o.contact?.kind),
+    task_type: taskTypeOf(o.contact?.kind),
     due_date: e.due,
     priority: 'high',
     status: 'pending',
@@ -282,14 +328,15 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
   // Hình thức "Quà tặng" = ghi cả món quà vào Lịch sử quà. Kiểm tra TRƯỚC khi ghi bất cứ gì.
   const gift = input.type === 'gift' ? sanitizeLogGift(input.gift ?? NO_LOG_GIFT) : null;
   if (gift && !gift.item) throw new Error('Nhập món quà (hình thức "Quà tặng" sẽ ghi vào Lịch sử quà)');
-  if (gift && !input.clientId) throw new Error(`"${contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
+  if (gift && !input.clientId && contact.kind !== 'sale') throw new Error(`"${contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
   // Dấu created_at chung của dòng nhật ký và món quà — cách liên kết 2 dòng (xem lib/cskh/logGift)
   const stamp = new Date().toISOString();
 
   let giftId: string | null = null;
-  if (gift && input.clientId) {
+  if (gift) {
+    // Sale: quà không gắn công ty khách (client_id NULL, migration 178)
     const { data: g, error } = await supabase.from('client_gifts')
-      .insert(logGiftInsertRow({ contact, clientId: input.clientId, gift, occurredAt: input.occurredAt, content: input.content }, stamp, ctx.user?.full_name ?? null))
+      .insert(logGiftInsertRow({ contact, clientId: contact.kind === 'sale' ? null : input.clientId, gift, occurredAt: input.occurredAt, content: input.content }, stamp, ctx.user?.full_name ?? null))
       .select('id').single();
     if (error) throw writeError(error);
     giftId = (g as { id: string }).id;
@@ -308,8 +355,8 @@ export async function addInteraction(input: InteractionInput, ctx: WriteCtx): Pr
       user_id: assignee,
       client_id: client?.id ?? null,
       branch_id: branchOf(client, ctx.branches)?.id ?? null,
-      title: cskhTaskTitle(client?.name ?? contact.organization, action, contact.fullName),
-      task_type: 'CSKH',
+      title: cskhTaskTitle(client?.name ?? contact.organization, action, contact.fullName, contact.kind),
+      task_type: taskTypeOf(contact.kind),
       due_date: input.followUpDue,
       priority: 'high',
       status: 'pending',
@@ -454,7 +501,8 @@ export async function updateInteraction(
   if ((giftPlan.kind === 'create' || giftPlan.kind === 'update') && !contact) {
     throw new Error('Dòng này chưa gắn người liên hệ nên không ghi được quà');
   }
-  if ((giftPlan.kind === 'create' || giftPlan.kind === 'update') && !giftClientId) {
+  const giftNoClient = contact?.kind === 'sale';
+  if ((giftPlan.kind === 'create' || giftPlan.kind === 'update') && !giftClientId && !giftNoClient) {
     throw new Error(`"${who}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
   }
   if (giftPlan.kind === 'create' && !Number.isFinite(Date.parse(it.createdAt))) {
@@ -475,8 +523,8 @@ export async function updateInteraction(
       user_id: assignee,
       client_id: taskClient?.id ?? null,
       branch_id: branchOf(taskClient, ctx.branches)?.id ?? null,
-      title: cskhTaskTitle(taskClient?.name ?? contact?.organization ?? it.clientName, action, who),
-      task_type: 'CSKH',
+      title: cskhTaskTitle(taskClient?.name ?? contact?.organization ?? it.clientName, action, who, contact?.kind),
+      task_type: taskTypeOf(contact?.kind),
       due_date: edit.followUpDue,
       priority: 'high',
       status: 'pending',
@@ -492,8 +540,8 @@ export async function updateInteraction(
       if (giftPlan.kind === 'archive') {
         const { error } = await supabase.from('client_gifts').update({ is_archived: true }).eq('id', giftPlan.giftId);
         if (error) throw writeError(error);
-      } else if (contact && giftClientId) {
-        const rowCtx = { contact, clientId: giftClientId, gift: giftPlan.gift, occurredAt: edit.occurredAt, content: edit.content };
+      } else if (contact && (giftClientId || giftNoClient)) {
+        const rowCtx = { contact, clientId: giftNoClient ? null : giftClientId, gift: giftPlan.gift, occurredAt: edit.occurredAt, content: edit.content };
         if (giftPlan.kind === 'update') {
           const { error } = await supabase.from('client_gifts').update(logGiftFields(rowCtx)).eq('id', giftPlan.giftId);
           if (error) throw writeError(error);
@@ -544,7 +592,7 @@ export async function updateInteraction(
     for (const e of wanted) {
       const prev = e.taskId ? old.get(e.taskId) : undefined;
       if (!prev || prev.done || (prev.action === e.action && prev.due === e.due)) continue;
-      await supabase.from('work_tasks').update({ title: cskhTaskTitle(company, e.action, who), due_date: e.due, updated_at: now }).eq('id', prev.id);
+      await supabase.from('work_tasks').update({ title: cskhTaskTitle(company, e.action, who, contact?.kind), due_date: e.due, updated_at: now }).eq('id', prev.id);
     }
     const created = await insertExtraTasks(wanted.filter(e => !e.taskId), { contact, client: taskClient, content: edit.content, ctx, fallbackCompany: it.clientName, who });
     const doneKept = it.extraTasks.filter(t => t.done && !keepIds.has(t.id)).map(t => t.id);
@@ -556,7 +604,7 @@ export async function updateInteraction(
     const now = new Date().toISOString();
     const req = action
       ? (action !== it.followUpAction.trim() || edit.followUpDue !== it.followUpDue)
-        ? supabase.from('work_tasks').update({ title: cskhTaskTitle(client?.name ?? contact?.organization ?? it.clientName, action, who), due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
+        ? supabase.from('work_tasks').update({ title: cskhTaskTitle(client?.name ?? contact?.organization ?? it.clientName, action, who, contact?.kind), due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
         : null
       : supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', it.followUpTaskId).neq('status', 'done');
     if (req) {
@@ -615,6 +663,20 @@ export async function assignGroups(rows: readonly GroupAssignment[], user: AppUs
   });
 }
 
+/** Đặt tiến độ chiêu mộ cho 1 hoặc nhiều Sale (Mạng lưới Sale, migration 178). */
+export async function setSaleStage(ids: readonly string[], stage: SaleStage, user: AppUser | null): Promise<void> {
+  if (!ids.length) return;
+  for (const part of chunks(ids)) {
+    const { error } = await supabase.from('contacts').update({ sale_stage: stage }).in('id', part).eq('kind', 'sale');
+    if (error) throw writeError(error);
+  }
+  await logActivity({
+    user, action: 'update', table: 'contacts', recordId: ids[0],
+    description: `Đặt tiến độ chiêu mộ "${stage}" cho ${ids.length} Sale`,
+    newData: { ids, sale_stage: stage },
+  });
+}
+
 /** Đổi người phụ trách (null = chưa giao) cho 1 hoặc nhiều người liên hệ. */
 export async function setOwner(ids: readonly string[], ownerId: string | null, user: AppUser | null): Promise<void> {
   if (!ids.length) return;
@@ -649,6 +711,15 @@ export interface CskhProfilePatch {
   originProvince: string;
 }
 
+/** Trường riêng của Mạng lưới Sale (migration 178) — chỉ gửi khi hồ sơ là Sale. */
+export interface SaleProfilePatch {
+  saleCompany: string;
+  competitorId: string | null;
+  saleStage: SaleStage;
+  saleArea: string;
+  saleIndustries: string;
+}
+
 /** Toạ độ nhà hiện tại khi lưu: chấm tay > link Maps > tra chữ (xem lib/cskh/mapPoints.planGeo). */
 export interface ProfileGeoInput {
   /** Vừa chấm / kéo ghim trong lần sửa này. */
@@ -673,11 +744,15 @@ export async function saveProfile(opts: {
   geo: ProfileGeoInput;
   /** Kế hoạch lưu ngày quan trọng (lib/cskh/occasions.planOccasionSave); null = không đụng. */
   occasions: OccasionWritePlan | null;
+  /** Hồ sơ Sale: nơi làm, đối thủ, tiến độ chiêu mộ… (null = hồ sơ khách). */
+  sale?: SaleProfilePatch | null;
   user: AppUser | null;
   clientName: (id: string | null) => string | null;
 }): Promise<{ partial174: boolean }> {
   const { current, occasions } = opts;
   const form: ContactFormValues = { ...contactToForm(opts.raw), ...opts.shared };
+  // Sale không gắn công ty khách
+  if (opts.sale) { form.client_ids = []; form.primary_client_ids = []; }
   if (occasions?.birthday !== undefined) form.birthday = occasions.birthday ?? '';
   await saveContact(form, opts.raw, { user: opts.user, clientName: opts.clientName });
 
@@ -718,12 +793,24 @@ export async function saveProfile(opts: {
     ...(c.originProvince.trim() !== current.originProvince ? { origin_province: c.originProvince.trim() } : {}),
     ...(occasions?.birthdayRemindDays !== undefined ? { birthday_remind_days: occasions.birthdayRemindDays } : {}),
   };
+  // Cột Sale (migration 178): người Sale chỉ tạo được khi đã chạy 178 nên ghi thẳng
+  if (opts.sale) {
+    const sp = opts.sale;
+    const { error } = await supabase.from('contacts').update({
+      sale_company: sp.saleCompany.trim(),
+      competitor_id: sp.competitorId,
+      sale_stage: sp.saleStage,
+      sale_area: sp.saleArea.trim(),
+      sale_industries: sp.saleIndustries.trim(),
+    }).eq('id', opts.raw.id);
+    if (error) throw writeError(error);
+  }
   const full = await updateContactWith174([opts.raw.id], patch);
   if (occasions && !isEmptyPlan(occasions)) await applyOccasionPlan(opts.raw.id, occasions, opts.user);
   await logActivity({
     user: opts.user, action: 'update', table: 'contacts', recordId: opts.raw.id,
-    description: `Cập nhật hồ sơ chăm sóc "${form.name.trim()}"`,
-    newData: { ...c, geo, occasions },
+    description: `Cập nhật hồ sơ ${opts.sale ? 'Sale' : 'chăm sóc'} "${form.name.trim()}"`,
+    newData: { ...c, geo, occasions, ...(opts.sale ? { sale: opts.sale } : {}) },
   });
   return { partial174: !full };
 }
@@ -743,11 +830,12 @@ export async function setGender(ids: readonly string[], gender: Gender, user: Ap
 }
 
 // ── Nhóm tự tạo ─────────────────────────────────────────────────────────────
-export async function addGroup(name: string, color: GroupColor, baseTier: CskhClassifiedTier, user: AppUser | null): Promise<CskhGroup> {
+export async function addGroup(name: string, color: GroupColor, baseTier: CskhClassifiedTier, user: AppUser | null, kind: ContactKind = 'client'): Promise<CskhGroup> {
   const clean = name.trim();
   if (!clean) throw new Error('Nhập tên nhóm');
+  // Nhóm của Sale ghi kind (migration 178); nhóm khách không gửi cột này — DB chưa chạy 178 vẫn tạo được
   const { data, error } = await supabase.from('cskh_groups')
-    .insert({ name: clean, color, base_tier: baseTier, created_by: user?.id ?? null }).select().single();
+    .insert({ name: clean, color, base_tier: baseTier, created_by: user?.id ?? null, ...(kind === 'sale' ? { kind } : {}) }).select().single();
   if (error) throw new Error(error.code === '23505' ? `Đã có nhóm tên "${clean}"` : writeError(error).message);
   await logActivity({ user, action: 'insert', table: 'cskh_groups', recordId: (data as { id: string }).id, description: `Tạo nhóm CSKH "${clean}"`, newData: data });
   return mapGroupRow(data as CskhGroupRow);
@@ -906,7 +994,7 @@ export async function archiveOccasion(o: CskhOccasion, user: AppUser | null): Pr
 // ── Quà ─────────────────────────────────────────────────────────────────────
 export interface GiftInput {
   contact: CskhContact;
-  /** Công ty ghi kèm (bắt buộc — client_gifts.client_id NOT NULL). */
+  /** Công ty ghi kèm (bắt buộc với khách; Sale không có — client_id NULL, migration 178). */
   clientId: string | null;
   direction: CskhGift['direction'];
   item: string;
@@ -934,14 +1022,16 @@ export async function saveGift(
   const { user } = ctx;
   const item = input.item.trim();
   if (!item) throw new Error('Nhập món quà');
-  if (!input.clientId) throw new Error(`"${input.contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
+  const isSale = input.contact.kind === 'sale';
+  if (!input.clientId && !isSale) throw new Error(`"${input.contact.fullName}" chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà`);
+  const clientId = isSale ? null : input.clientId;
   if (input.estimatedValue !== null && (!Number.isFinite(input.estimatedValue) || input.estimatedValue < 0)) throw new Error('Giá trị không hợp lệ');
   if (input.givenAt > todayVN() && (!existing || existing.givenAt !== input.givenAt)) throw new Error('Ngày tặng không được ở tương lai');
   // occasion_id chỉ trỏ được tới dòng contact_special_dates (sinh nhật trong hồ sơ là sự kiện ảo)
   const occasionId = input.occasionId && !input.occasionId.startsWith('birthday:') ? input.occasionId : null;
   const note = input.note.trim() || null;
   const row = {
-    client_id: input.clientId,
+    client_id: clientId,
     recipient_contact_id: input.contact.id,
     recipient_name: input.contact.fullName,
     direction: input.direction,
@@ -955,8 +1045,8 @@ export async function saveGift(
   const logFields = {
     contact_id: input.contact.id,
     contact_person: input.contact.fullName,
-    client_id: input.clientId,
-    client_name: ctx.clients.find(c => c.id === input.clientId)?.name ?? (input.contact.organization || null),
+    client_id: clientId,
+    client_name: (clientId && ctx.clients.find(c => c.id === clientId)?.name) || input.contact.organization || null,
     log_date: input.givenAt,
     content: note,
   };
@@ -1038,12 +1128,17 @@ export async function runCareAutomation(data: CskhData, ctx: WriteCtx, today: st
       user_id: c.ownerId ?? ctx.user!.id,
       client_id: client?.id ?? null,
       branch_id: branchOf(client, ctx.branches)?.id ?? null,
-      task_type: 'CSKH',
+      task_type: taskTypeOf(c.kind),
       status: 'pending',
     };
   };
 
-  const plan = planCareReminders({ contacts: data.contacts, occasions: data.occasions, cadence: data.settings.cadence, today });
+  // Mạng lưới Sale quan trọng ít hơn khách: chỉ nhắc chuẩn bị quà (sinh nhật / ngày quan trọng), không tạo việc "Kết nối lại"
+  const plan = planCareReminders({
+    contacts: data.contacts, occasions: data.occasions, cadence: data.settings.cadence, today,
+    prefix: SPACE_INFO[data.space].taskPrefix,
+    ...(data.space === 'sale' ? { maxReconnect: 0 } : {}),
+  });
 
   for (const r of plan.gifts) {
     // Tính cả việc đã xoá: người dùng xoá việc nhắc thì đừng tạo lại hôm sau (sinh nhật trong hồ sơ
@@ -1076,7 +1171,7 @@ export async function runCareAutomation(data: CskhData, ctx: WriteCtx, today: st
   if (result.gift || result.reconnect) {
     await logActivity({
       user: ctx.user, action: 'insert', table: 'work_tasks', recordId: 'cskh-automation',
-      description: `CSKH tự tạo ${result.gift + result.reconnect} việc nhắc (${result.gift} chuẩn bị quà, ${result.reconnect} kết nối lại)`,
+      description: `${SPACE_INFO[data.space].title} tự tạo ${result.gift + result.reconnect} việc nhắc (${result.gift} chuẩn bị quà, ${result.reconnect} kết nối lại)`,
     });
   }
   return result;

@@ -70,7 +70,7 @@ export function GiftForm({ contacts, clients, occasions, gifts, existing, linked
           <label className={labelCls}>Người liên hệ</label>
           <ContactPicker contacts={contacts} value={contactId} autoFocus={!existing}
             onChange={c => { setContactId(c?.id ?? ''); setClientId(c ? defaultClientIdOf(c) : null); setOccasionId(''); }} />
-          {contact && contact.clientIds.length === 0 && (
+          {contact && contact.clientIds.length === 0 && contact.kind !== 'sale' && (
             <p className="text-[11.5px] text-[#B25000] mt-1">Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.</p>
           )}
         </div>

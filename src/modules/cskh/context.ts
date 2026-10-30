@@ -1,12 +1,15 @@
 // Ngữ cảnh dùng chung cho mọi tab CSKH: dữ liệu tải 1 lần ở khung module (index.tsx)
 // + các hộp thoại dùng chung (Hồ sơ, Ghi tương tác, Chọn người chăm sóc, Nhóm).
 import { createContext, useContext } from 'react';
+import type { CskhSpace } from '../../lib/cskh/space';
 import type { Client } from '../../lib/types';
 import type { CskhData } from './data/api';
 
 export type CskhTabKey = 'dashboard' | 'matrix' | 'map' | 'cadence' | 'log' | 'events';
 
 export interface CskhContextValue {
+  /** Khu vực đang mở: khách hàng (CSKH) / Mạng lưới Sale. */
+  space: CskhSpace;
   data: CskhData | null;
   loading: boolean;
   clients: Client[];

@@ -157,7 +157,12 @@ const FALLBACK_RULES: Record<string, string[]> = {
   bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', ...crm],
 };
 
+/** Mạng lưới Sale (migration 178): chốt 31/10/2026 chỉ admin — danh sách Sale muốn chiêu mộ là thông tin nhạy cảm. */
+export const SALE_PAGE = 'crm-sales';
+
 export function canAccess(role: string, page: string, rolePermissions?: RolePermission[]): boolean {
+  // Muốn mở cho phòng kinh doanh sau này: bỏ dòng này + thêm 'crm-sales' vào PAGE_MODULE / FALLBACK_RULES
+  if (page === SALE_PAGE) return role === 'admin';
   // Văn phòng Orient: chốt cứng chỉ admin (RLS bds_* cũng chỉ mở cho admin). Muốn cấp quyền hẹp sau này:
   // bỏ dòng này + thêm module vào ma trận phân quyền + đổi bds_is_admin() trong DB.
   if (isOfficePage(page)) {

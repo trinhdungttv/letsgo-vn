@@ -78,7 +78,7 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
     const isGift = channel === null && manualType === 'gift';
     const gift = isGift ? giftInputOf(giftDraft) : undefined;
     if (gift && !gift.item) { setError('Nhập món quà (sẽ ghi vào Lịch sử quà)'); return; }
-    if (gift && contact.clientIds.length === 0) { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
+    if (gift && contact.clientIds.length === 0 && contact.kind !== 'sale') { setError('Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà'); return; }
     const outcomeLabel = OUTCOMES.find(o => o.id === outcome)?.label;
     const content = [outcomeLabel ? `Kết quả: ${outcomeLabel}` : '', note.trim()].filter(Boolean).join(' — ');
     setSaving(true);
@@ -121,7 +121,7 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       {channel === null && manualType === 'gift' && (
         <div className="mt-3">
           <LogGiftFields draft={giftDraft} onChange={setGiftDraft}
-            notice={contact.clientIds.length === 0 ? { tone: 'warn', text: 'Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.' } : null} />
+            notice={contact.clientIds.length === 0 && contact.kind !== 'sale' ? { tone: 'warn', text: 'Người này chưa gắn công ty — gắn công ty trong hồ sơ trước khi ghi quà.' } : null} />
         </div>
       )}
 

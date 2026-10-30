@@ -10,6 +10,7 @@ import { supabase } from './supabase';
 import type { Contact } from './types';
 import { selectContacts } from './contactOps';
 import { todayVN } from './cskh/dates';
+import { contactKindOf } from './cskh/space';
 import { diffDays, nextOccurrenceIso } from './cskh/lunar';
 import { birthdayOccasion, mapContactRow, mapSpecialDateRow, type ContactRow, type SpecialDateRow } from './cskh/mappers';
 import { buildOccasionAlerts, type OccasionAlert } from './cskh/occasions';
@@ -157,7 +158,7 @@ function daysUntilNextOccurrence(dateStr: string, today: Date): number {
   return Math.round((next.getTime() - t0.getTime()) / 86400000);
 }
 
-type ContactLite = Pick<Contact, 'name' | 'avatar_url' | 'role' | 'is_active'> & { clients?: { name: string } | null };
+type ContactLite = Pick<Contact, 'name' | 'avatar_url' | 'role' | 'is_active' | 'kind'> & { clients?: { name: string } | null };
 type SpecialDateWithContact = SpecialDateRow & { contacts: ContactLite | null };
 
 /**
@@ -171,13 +172,14 @@ type SpecialDateWithContact = SpecialDateRow & { contacts: ContactLite | null };
  */
 export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN()): Promise<UpcomingEvent[]> {
   const [cRes, sRes] = await Promise.all([
+    // `*` để có cột kind (migration 178) khi đã chạy mà chưa chạy vẫn đọc được — popup này chỉ của khách hàng
     supabase.from('contacts')
-      .select('id, name, avatar_url, role, birthday, is_active, tier, clients!contacts_client_id_fkey(name)')
+      .select('*, clients!contacts_client_id_fkey(name)')
       .eq('is_active', true)
       .neq('tier', 'unclassified')
       .not('birthday', 'is', null),
     supabase.from('contact_special_dates')
-      .select('*, contacts(name, avatar_url, role, is_active, tier, clients!contacts_client_id_fkey(name))')
+      .select('*, contacts(*, clients!contacts_client_id_fkey(name))')
       .eq('is_archived', false),
   ]);
   if (isMissingColumnError(cRes.error) || isMissingColumnError(sRes.error)) return legacyUpcoming(withinDays);
@@ -193,13 +195,13 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN
   };
 
   for (const c of (cRes.data || []) as unknown as (ContactLite & { id: string; birthday: string | null })[]) {
-    if (!c.birthday) continue;
+    if (!c.birthday || contactKindOf(c) !== 'client') continue;
     push(c.id, c, 'Sinh nhật', nextOccurrenceIso(Number(c.birthday.slice(8, 10)), Number(c.birthday.slice(5, 7)), false, today), false);
   }
 
   for (const row of (sRes.data || []) as unknown as SpecialDateWithContact[]) {
     const contact = row.contacts as (ContactLite & { tier?: string }) | null;
-    if (!contact || contact.is_active === false || contact.tier === 'unclassified') continue;
+    if (!contact || contact.is_active === false || contact.tier === 'unclassified' || contactKindOf(contact) !== 'client') continue;
     const o = mapSpecialDateRow(row);
     if (!o) continue;
     const who = o.relatedPerson && !o.title.toLowerCase().includes(o.relatedPerson.toLowerCase()) ? ` của ${o.relatedPerson}` : '';

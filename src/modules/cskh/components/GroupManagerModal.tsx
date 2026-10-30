@@ -5,9 +5,10 @@
 import { useState } from 'react';
 import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { CadenceConfig, CskhClassifiedTier, CskhGroup, GroupColor } from '../../../lib/cskh/types';
-import { CLASSIFIED_TIERS, GROUP_COLORS, TIER_LABEL } from '../../../lib/cskh/types';
+import { CLASSIFIED_TIERS, GROUP_COLORS } from '../../../lib/cskh/types';
 import { GROUP_COLOR, inputCls } from '../ui';
 import { Sheet } from './Sheet';
+import { useSpace } from '../space';
 
 const COLOR_NAME: Readonly<Record<GroupColor, string>> = {
   blue: 'Xanh dương', green: 'Xanh lá', orange: 'Cam', red: 'Đỏ', purple: 'Tím', gray: 'Xám',
@@ -28,12 +29,13 @@ function ColorPicker({ value, onChange }: { value: GroupColor; onChange: (c: Gro
 }
 
 function BaseTierSelect({ value, cadence, onChange }: { value: CskhClassifiedTier; cadence: CadenceConfig; onChange: (t: CskhClassifiedTier) => void }) {
+  const { tierLabel } = useSpace();
   return (
     <label className="flex items-center gap-2 text-[12px] text-[#6E6E73]">
       <span className="shrink-0">Nhắc liên hệ như</span>
       <select value={value} onChange={e => onChange(e.target.value as CskhClassifiedTier)}
         className="flex-1 min-w-0 text-[13px] h-9 md:h-8 px-3 rounded-[10px] border border-black/[0.12] bg-white outline-none focus:border-[#0071E3] focus:ring-4 focus:ring-[#0071E3]/15">
-        {CLASSIFIED_TIERS.map(t => <option key={t} value={t}>{`${TIER_LABEL[t]} · ${cadence[t]} ngày`}</option>)}
+        {CLASSIFIED_TIERS.map(t => <option key={t} value={t}>{`${tierLabel[t]} · ${cadence[t]} ngày`}</option>)}
       </select>
     </label>
   );
@@ -56,6 +58,7 @@ export function GroupManagerModal({ groups, counts, cadence, onAdd, onUpdate, on
   onRemove: (g: CskhGroup) => Promise<string | null>;
   onClose: () => void;
 }) {
+  const { tierLabel } = useSpace();
   const [draft, setDraft] = useState<Draft>({ name: '', color: 'blue', baseTier: 'partner' });
   const [editing, setEditing] = useState<{ id: string; d: Draft } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,7 +92,7 @@ export function GroupManagerModal({ groups, counts, cadence, onAdd, onUpdate, on
                 <ColorPicker value={editing.d.color} onChange={c => setEditing({ id: g.id, d: { ...editing.d, color: c } })} />
                 <BaseTierSelect value={editing.d.baseTier} cadence={cadence} onChange={t => setEditing({ id: g.id, d: { ...editing.d, baseTier: t } })} />
                 {editing.d.baseTier !== (g.baseTier ?? 'other') && n > 0 && (
-                  <p className="text-[11.5px] text-[#B25000]">{n} thành viên sẽ đổi sang nhịp {TIER_LABEL[editing.d.baseTier]} ({cadence[editing.d.baseTier]} ngày).</p>
+                  <p className="text-[11.5px] text-[#B25000]">{n} thành viên sẽ đổi sang nhịp {tierLabel[editing.d.baseTier]} ({cadence[editing.d.baseTier]} ngày).</p>
                 )}
                 <div className="flex gap-2 justify-end">
                   <button type="button" onClick={() => setEditing(null)} className="h-9 md:h-8 px-3.5 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] transition">Huỷ</button>
@@ -105,7 +108,7 @@ export function GroupManagerModal({ groups, counts, cadence, onAdd, onUpdate, on
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-medium text-[#1D1D1F] truncate">{g.name}</span>
                 <span className="block text-[11px] text-[#86868B]">
-                  {n} người · nhắc như {TIER_LABEL[g.baseTier ?? 'other']} ({cadence[g.baseTier ?? 'other']} ngày)
+                  {n} người · nhắc như {tierLabel[g.baseTier ?? 'other']} ({cadence[g.baseTier ?? 'other']} ngày)
                 </span>
               </span>
               <button type="button" onClick={() => setEditing({ id: g.id, d: { name: g.name, color: g.color, baseTier: g.baseTier ?? 'other' } })}
@@ -114,7 +117,7 @@ export function GroupManagerModal({ groups, counts, cadence, onAdd, onUpdate, on
               </button>
               <button type="button" disabled={busy} aria-label={`Xoá nhóm ${g.name}`}
                 onClick={() => {
-                  if (!confirm(`Xoá nhóm "${g.name}"?${n ? `\n\n${n} người trong nhóm vẫn được chăm sóc, về nhóm mặc định ${TIER_LABEL[g.baseTier ?? 'other']}.` : ''}`)) return;
+                  if (!confirm(`Xoá nhóm "${g.name}"?${n ? `\n\n${n} người trong nhóm vẫn được chăm sóc, về nhóm mặc định ${tierLabel[g.baseTier ?? 'other']}.` : ''}`)) return;
                   void run(() => onRemove(g));
                 }}
                 className="w-9 h-9 md:w-8 md:h-8 rounded-full hover:bg-[#FF3B30]/10 flex items-center justify-center text-[#FF3B30] transition">

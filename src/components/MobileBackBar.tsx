@@ -17,6 +17,7 @@ const PAGE_LABEL: Partial<Record<Page, string>> = {
   'crm-dash': 'Tổng quan CRM',
   'crm-board': 'Pipeline',
   'crm-leads': 'CRM',
+  'crm-sales': 'Mạng lưới Sale',
   'crm-prods': 'Sản phẩm',
   'crm-deal': 'Chi tiết deal',
   'crm-pipeline': 'Pipeline',

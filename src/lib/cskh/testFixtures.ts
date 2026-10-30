@@ -8,6 +8,12 @@ export function makeContact(over: Partial<CskhContact> = {}): CskhContact {
   const id = over.id ?? next('c');
   return {
     id,
+    kind: 'client',
+    saleCompany: '',
+    competitorId: null,
+    saleStage: 'none',
+    saleArea: '',
+    saleIndustries: '',
     fullName: `Người ${id}`,
     nickname: '',
     avatarUrl: '',

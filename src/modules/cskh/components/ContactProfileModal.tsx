@@ -33,8 +33,10 @@ import { regionCandidates } from '../../../lib/cskh/regionInsight';
 import { cleanRememberNotes, FAMILY_MAX, familyAge, familyYearError, REMEMBER_MAX_CHARS, REMEMBER_PLACEHOLDER } from '../../../lib/cskh/remember';
 import { SCORE_GRADE_LABEL, scoreGrade, weakestPart } from '../../../lib/cskh/score';
 import { buildTagStats, joinTags, splitTags, TRAIT_FIELDS, TRAIT_LABEL, TRAIT_PRESETS, type TagStat, type TraitField } from '../../../lib/cskh/traits';
-import type { CskhContext, CskhInteraction, EducationLevel, FamilyMember, FamilyRole, Gender, RememberNotes } from '../../../lib/cskh/types';
-import { EDUCATION_LEVEL_LABEL, EDUCATION_LEVELS, GENDER_LABEL, MBTI_TYPES, REMEMBER_LABEL } from '../../../lib/cskh/types';
+import type { CskhContext, CskhInteraction, EducationLevel, FamilyMember, FamilyRole, Gender, RememberNotes, SaleStage } from '../../../lib/cskh/types';
+import { EDUCATION_LEVEL_LABEL, EDUCATION_LEVELS, GENDER_LABEL, MBTI_TYPES, REMEMBER_LABEL, SALE_STAGES } from '../../../lib/cskh/types';
+import { isWonReferral, referralsByContact, referralStageLabel } from '../../../lib/cskh/saleReferrals';
+import { SALE_STAGE_LABEL } from '../../../lib/cskh/space';
 import { compareVnName } from '../../../lib/vnName';
 import { joinSocialLinks, parseSocialLinks, socialKind, withScheme, type SocialKind } from '../../../lib/socialLinks';
 import SocialBadge, { SOCIAL_META } from '../../../components/SocialBadge';
@@ -48,7 +50,7 @@ import { expandOpenExtras, saveProfile, setFollowUpDone, type CskhData } from '.
 import { mapLinkCoords, useMapLink } from '../data/mapLink';
 import { markContactLaunched } from '../launch';
 import {
-  CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, inputCls, NEW_GROUP_VALUE, resolveGroupKey, scoreColor,
+  CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, inputCls, NEW_GROUP_VALUE, resolveGroupKey, SALE_STAGE_COLOR, scoreColor,
 } from '../ui';
 import { AddressPinMap } from './AddressPinMap';
 import { TaskCheck } from './apple';
@@ -60,6 +62,7 @@ import { RegionInsightPanel } from './RegionInsightPanel';
 import { SchoolInput } from './SchoolInput';
 import { Sheet, SHEET_FOOTER } from './Sheet';
 import { TagInput } from './TagInput';
+import { useSpace } from '../space';
 
 const CONTEXT_LABEL: Readonly<Record<CskhContext, string>> = { work: 'Công việc', both: 'Cả hai', personal: 'Cá nhân' };
 
@@ -185,6 +188,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   /** Mở màn quản lý nhóm (chọn "Tạo nhóm mới…"). */
   onManageGroups?: () => void;
 }) {
+  const { tierLabel } = useSpace();
   const { user, token } = useAuth();
   const { provinces } = useProvinces();
   const isNew = contactId === null;
@@ -199,6 +203,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const current = blank ? blank.current : data.contacts.find(c => c.id === contactId)!;
   const today = todayVN();
   const thisYear = Number(today.slice(0, 4));
+  const isSale = data.space === 'sale';
   const groupById = useMemo(() => new Map(data.groups.map(g => [g.id, g])), [data.groups]);
   const clientName = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? null : null);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
@@ -210,7 +215,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [phone, setPhone] = useState(raw.phone ?? '');
   const [email, setEmail] = useState(raw.email ?? '');
   const [social, setSocial] = useState(() => parseSocialLinks(raw.social_link));
-  const [role, setRole] = useState(raw.role ?? '');
+  // Sale mới: không lấy chức vụ mặc định của khách (HR Manager)
+  const [role, setRole] = useState(isNew && isSale ? '' : raw.role ?? '');
   const [clientIds, setClientIds] = useState<string[]>(current.clientIds);
   const [primaryIds, setPrimaryIds] = useState<string[]>(current.primaryClientIds);
   const [startDate, setStartDate] = useState(raw.start_date ?? '');
@@ -222,7 +228,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [notes, setNotes] = useState(raw.notes ?? '');
   const [richNotes, setRichNotes] = useState(raw.rich_notes ?? '');
   // ── Trường CSKH ──
-  const [groupKey, setGroupKey] = useState(groupDisplayOf(current, groupById).key);
+  // Thêm Sale mới: mặc định đã chăm sóc ở hạng "Trao đổi thông tin" (nhịp thưa) — thêm vào là để giữ liên lạc
+  const [groupKey, setGroupKey] = useState(isNew && isSale ? 'partner' : groupDisplayOf(current, groupById, tierLabel).key);
   const [cadenceDays, setCadenceDays] = useState(current.cadenceDays === null ? '' : String(current.cadenceDays));
   const [ownerId, setOwnerId] = useState(current.ownerId ?? '');
   const [nickname, setNickname] = useState(current.nickname);
@@ -249,6 +256,16 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     myOccasions.length ? myOccasions.map(o => toOccasionRow(draftFromOccasion(o), o.relatedPerson)) : [newOccasionRow()]);
   const [manualPin, setManualPin] = useState<LatLng | null>(null);
   const [deepOpen, setDeepOpen] = useState(false);
+  // ── Mạng lưới Sale (migration 178) ──
+  const [saleCompany, setSaleCompany] = useState(current.saleCompany);
+  const [competitorId, setCompetitorId] = useState(current.competitorId ?? '');
+  const [saleStage, setSaleStage] = useState<SaleStage>(current.saleStage);
+  const [saleArea, setSaleArea] = useState(current.saleArea);
+  const [saleIndustries, setSaleIndustries] = useState(current.saleIndustries);
+  const referrals = useMemo(
+    () => (isSale && !isNew ? referralsByContact([current], data.referrals).get(current.id) ?? [] : []),
+    [isSale, isNew, current, data.referrals],
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -300,10 +317,10 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     () => others.slice().sort((a, b) => compareVnName(a.fullName, b.fullName)),
     [others],
   );
-  const target = resolveGroupKey(groupKey, groupById);
+  const target = resolveGroupKey(groupKey, groupById, tierLabel);
   const effectiveCadence = target && target.tier !== 'unclassified' ? data.settings.cadence[target.tier] : null;
   const links = contactActionLinks(current);
-  const display = groupDisplayOf(current, groupById);
+  const display = groupDisplayOf(current, groupById, tierLabel);
   const genderHint = gender === '' ? guessGender({ fullName: name, nickname }) : null;
   const provinceList = useMemo(() => provinceOptions([...provinces, province, originProvince]), [provinces, province, originProvince]);
   const regions = useMemo(() => regionCandidates({ originProvince, province }, link.place), [originProvince, province, link.place]);
@@ -332,7 +349,9 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     const ctx = { user, clientName };
     try {
       if (raw.is_active) {
-        if (!confirm(`Đánh dấu "${raw.name}" đã nghỉ (rời công ty khách)?\n\nNgười này ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử. Mở lại được bất cứ lúc nào.`)) return;
+        if (!confirm(isSale
+          ? `Ngừng theo dõi "${raw.name}"?\n\nNgười này ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử. Mở lại được bất cứ lúc nào.`
+          : `Đánh dấu "${raw.name}" đã nghỉ (rời công ty khách)?\n\nNgười này ra khỏi hàng đợi chăm sóc nhưng giữ nguyên hạng và toàn bộ lịch sử. Mở lại được bất cứ lúc nào.`)) return;
         await deactivateContact(raw, ctx);
         toast(`Đã đánh dấu "${raw.name}" nghỉ`);
       } else {
@@ -375,8 +394,9 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       const linkCoords = mapLink.trim() ? await mapLinkCoords(mapLink, token) : null;
       const shared = {
         name, phone, email, role,
-        client_ids: clientIds,
-        primary_client_ids: primaryIds.filter(id => clientIds.includes(id)),
+        // Sale không gắn công ty khách (DB cũng chặn)
+        client_ids: isSale ? [] : clientIds,
+        primary_client_ids: isSale ? [] : primaryIds.filter(id => clientIds.includes(id)),
         start_date: startDate, channel, address, map_link: mapLink,
         social_link: joinSocialLinks({ ...social, facebook: withScheme(social.facebook), linkedin: withScheme(social.linkedin) }),
         hobbies: splitTags(interests),
@@ -386,7 +406,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       let saveCurrent = current;
       if (isNew) {
         // Bước 1: tạo người (cùng đường lưu với form Khách hàng); bước 2: lưu phần chăm sóc như sửa hồ sơ
-        createdRaw.current ??= await saveContact({ ...emptyContactForm(), ...shared }, null, { user, clientName });
+        createdRaw.current ??= await saveContact({ ...emptyContactForm(), ...shared }, null, { user, clientName, kind: data.space });
         saveRaw = createdRaw.current;
         saveCurrent = { ...current, id: saveRaw.id };
       }
@@ -411,10 +431,11 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         },
         geo: { manualPin, linkCoords, preview },
         occasions: planOccasionSave(myOccasions, occRows.filter(r => !isBlankDraft(r))),
+        sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleArea, saleIndustries } : null,
       });
       setSaving(false);
       emitCskhDataChanged();
-      toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : isNew ? `Đã thêm liên hệ "${name.trim()}"` : 'Đã cập nhật hồ sơ');
+      toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : isNew ? `Đã thêm ${isSale ? 'Sale' : 'liên hệ'} "${name.trim()}"` : 'Đã cập nhật hồ sơ');
       onClose();
     } catch (e) {
       setSaving(false);
@@ -452,20 +473,27 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   };
 
   return (
-    <Sheet label={isNew ? 'Thêm liên hệ' : `Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
+    <Sheet label={isNew ? (isSale ? 'Thêm Sale' : 'Thêm liên hệ') : `Hồ sơ ${current.fullName}`} onClose={onClose} wide="xl">
       {/* ── Đầu hồ sơ ── */}
       <div className="flex items-center gap-4 pr-8">
         <ContactAvatar name={name || current.fullName} url={avatarUrl || undefined} tier={current.tier} size={64} />
         <div className="min-w-0 flex-1">
-          <p className="text-[22px] md:text-[24px] font-bold tracking-[-0.02em] leading-tight text-[#1D1D1F] truncate">{isNew ? (name.trim() || 'Liên hệ mới') : current.fullName}</p>
-          <p className="text-[13.5px] text-[#6E6E73] truncate mt-0.5">{isNew ? 'Thêm liên hệ mới — điền xong bấm "Thêm liên hệ"' : [current.jobTitle, current.organization].filter(Boolean).join(' · ') || 'Chưa gắn công ty'}</p>
-          {!isNew && <div className="flex flex-wrap items-center gap-1.5 mt-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(display.color)}>{display.label}</span>
-            {!current.isActive && <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium bg-black/[0.05] text-[#6E6E73]">Đã nghỉ</span>}
-            {stats && stats.status !== 'unclassified' && (
+          <p className="text-[22px] md:text-[24px] font-bold tracking-[-0.02em] leading-tight text-[#1D1D1F] truncate">{isNew ? (name.trim() || (isSale ? 'Sale mới' : 'Liên hệ mới')) : current.fullName}</p>
+          <p className="text-[13.5px] text-[#6E6E73] truncate mt-0.5">{isNew
+            ? (isSale ? 'Thêm vào Mạng lưới Sale — tách riêng, không lẫn vào khách hàng' : 'Thêm liên hệ mới — điền xong bấm "Thêm liên hệ"')
+            : [current.jobTitle, current.organization].filter(Boolean).join(' · ') || (isSale ? 'Chưa ghi nơi làm' : 'Chưa gắn công ty')}</p>
+          {(isSale || !isNew) && <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {/* Nhãn SALE: nhìn là biết hồ sơ của Mạng lưới Sale, không phải khách */}
+            {isSale && <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-bold tracking-[0.04em] bg-[#FF9500]/[0.16] text-[#B25000]">SALE</span>}
+            {isSale && !isNew && current.saleStage !== 'none' && (
+              <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(SALE_STAGE_COLOR[current.saleStage])}>{SALE_STAGE_LABEL[current.saleStage]}</span>
+            )}
+            {!isNew && <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(display.color)}>{display.label}</span>}
+            {!isNew && !current.isActive && <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium bg-black/[0.05] text-[#6E6E73]">{isSale ? 'Ngừng theo dõi' : 'Đã nghỉ'}</span>}
+            {!isNew && stats && stats.status !== 'unclassified' && (
               <span className="px-2.5 py-0.5 rounded-full text-[12px] font-medium" style={chipStyle(CARE_STATUS_COLOR[stats.status])}>{dueLabel(stats)}</span>
             )}
-            {stats?.score && (
+            {!isNew && stats?.score && (
               <span className="px-2.5 py-0.5 rounded-full text-[12px] font-semibold" style={chipStyle(scoreColor(stats.score.total))}
                 title={`Yếu nhất: ${weakestPart(stats.score).label} — ${weakestPart(stats.score).hint}`}>
                 {stats.score.total} điểm · {SCORE_GRADE_LABEL[scoreGrade(stats.score.total)]}
@@ -537,6 +565,65 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           </select>
         </Field>
       </Section>
+
+      {/* ── Công việc của Sale: nơi làm, mạnh ở đâu, tiến độ chiêu mộ, khách đã giới thiệu ── */}
+      {isSale && (
+        <Section title="Công việc của Sale" note="Sale tách riêng khỏi khách hàng — không gắn được vào công ty khách.">
+          <Field label="Đang làm cho đối thủ" hint={data.competitors.length ? 'Chọn từ Thị trường → Đối thủ; làm công ty khác / tự do thì để trống và gõ ô bên cạnh' : 'Chưa có đối thủ nào trong Thị trường'}>
+            <select value={competitorId} className={inputCls}
+              onChange={e => {
+                const next = e.target.value;
+                const prevName = data.competitors.find(c => c.id === competitorId)?.name ?? '';
+                const nextName = data.competitors.find(c => c.id === next)?.name ?? '';
+                setCompetitorId(next);
+                // Ô "Nơi làm" đang trống / đang là tên đối thủ cũ → điền theo đối thủ mới
+                if (nextName && (!saleCompany.trim() || saleCompany.trim() === prevName)) setSaleCompany(nextName);
+              }}>
+              <option value="">— Không / công ty khác —</option>
+              {data.competitors.map(c => <option key={c.id} value={c.id}>{c.name}{c.zone ? ` · ${c.zone}` : ''}</option>)}
+            </select>
+          </Field>
+          <Field label="Nơi làm hiện tại" hint="Tên công ty / tự do — hiện cạnh tên Sale ở mọi danh sách">
+            <input value={saleCompany} onChange={e => setSaleCompany(e.target.value)} className={inputCls} placeholder="VD: Nhân lực MD, làm tự do" />
+          </Field>
+          <Field label="Chức vụ"><RoleSelect value={role} onChange={setRole} toast={toast} className={inputCls} /></Field>
+          <Field label="Tiến độ chiêu mộ" hint="Mời về làm cho Let's Go">
+            <select value={saleStage} onChange={e => setSaleStage(e.target.value as SaleStage)} className={inputCls}>
+              {SALE_STAGES.map(st => <option key={st} value={st}>{SALE_STAGE_LABEL[st]}</option>)}
+            </select>
+          </Field>
+          <Field label="Khu vực / KCN mạnh"><input value={saleArea} onChange={e => setSaleArea(e.target.value)} className={inputCls} placeholder="VD: VSIP, Bàu Bàng, Nhơn Trạch" /></Field>
+          <Field label="Ngành quen"><input value={saleIndustries} onChange={e => setSaleIndustries(e.target.value)} className={inputCls} placeholder="VD: Điện tử, may mặc, gỗ" /></Field>
+          <Field label="Quen biết từ ngày"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} min-w-[9.5rem]`} /></Field>
+          <Field label="Kênh quen biết">
+            <select value={channel} onChange={e => setChannel(e.target.value)} className={inputCls}>
+              <option value="">— Chưa rõ —</option>
+              {CONTACT_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
+          {!isNew && (
+            <Field label={`Khách đã giới thiệu${referrals.length ? ` · ${referrals.length} công ty` : ''}`} full
+              hint={'Lấy từ BD Pipeline: nguồn "Sale" hoặc "Đối tác giới thiệu" ghi đúng tên người này'}>
+              {referrals.length === 0
+                ? <p className="text-[13px] text-[#86868B]">Chưa có công ty nào trong BD Pipeline ghi nguồn là {current.fullName}.</p>
+                : (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {referrals.map(r => (
+                      <li key={r.id} className={`inline-flex items-center gap-1.5 rounded-full pl-3 pr-2.5 h-8 text-[12.5px] ${isWonReferral(r) ? 'bg-[#34C759]/[0.14] text-[#248A3D]' : 'bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)] text-[#1D1D1F]'}`}>
+                        <span className="font-medium truncate max-w-[200px]">{r.companyName}</span>
+                        <span className="text-[11.5px] opacity-75">{referralStageLabel(r.stage)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </Field>
+          )}
+          <Field label="Ghi chú ngắn" full>
+            <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={`${inputCls} resize-y`} />
+          </Field>
+          <Field label="Ghi chú chi tiết" full><RichTextEditor value={richNotes} onChange={setRichNotes} /></Field>
+        </Section>
+      )}
 
       {/* ── Liên lạc ── */}
       <Section title="Liên lạc">
@@ -640,8 +727,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         {user && regions.length > 0 && <RegionInsightPanel candidates={regions} userId={user.id} />}
       </Section>
 
-      {/* ── Công ty & chức vụ ── */}
-      <Section title="Công ty & chức vụ">
+      {/* ── Công ty & chức vụ (khách) — Sale có khối "Công việc của Sale" riêng ở trên ── */}
+      {!isSale && <Section title="Công ty & chức vụ">
         <Field label="Công ty phụ trách" full hint="★ = liên hệ chính của công ty đó (mỗi công ty 1 người)">
           <div className="flex flex-wrap items-center gap-1.5">
             {clientIds.map(id => (
@@ -687,7 +774,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={`${inputCls} resize-y`} />
         </Field>
         <Field label="Ghi chú chi tiết" full><RichTextEditor value={richNotes} onChange={setRichNotes} /></Field>
-      </Section>
+      </Section>}
 
       {/* ── Học vấn ── */}
       <Section title="Học vấn" note="Gõ tên trường có gợi ý từ người khác đã nhập; khác dấu / hoa vẫn nhận là 1 trường.">
@@ -786,13 +873,13 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 
       <div className={`${SHEET_FOOTER} mt-5 bg-[#F2F2F7]/90 md:bg-white/90`}>
         <div className="flex flex-wrap items-center gap-2">
-          {!isNew && <button type="button" onClick={() => setFullForm(true)} title="Các trường ít dùng"
+          {!isNew && !isSale && <button type="button" onClick={() => setFullForm(true)} title="Các trường ít dùng"
             className={`${FOOT_BTN} bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>
             <FileText size={14} /> Form đầy đủ
           </button>}
           {!isNew && <button type="button" onClick={toggleActive}
             className={`${FOOT_BTN} ${raw.is_active ? 'bg-[#FF9500]/[0.14] text-[#B25000] hover:bg-[#FF9500]/[0.2]' : 'bg-[#34C759]/[0.14] text-[#248A3D] hover:bg-[#34C759]/[0.2]'}`}>
-            {raw.is_active ? <><UserX size={14} /> Đánh dấu nghỉ</> : <><UserCheck size={14} /> Mở lại</>}
+            {raw.is_active ? <><UserX size={14} /> {isSale ? 'Ngừng theo dõi' : 'Đánh dấu nghỉ'}</> : <><UserCheck size={14} /> Mở lại</>}
           </button>}
           {!isNew && <button type="button" onClick={() => setDeleting(true)} className={`${FOOT_BTN} bg-[#FF3B30]/10 text-[#D70015] hover:bg-[#FF3B30]/[0.16]`}>
             <Trash2 size={14} /> Xoá
@@ -801,7 +888,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
           <button type="button" onClick={onClose} className={`${FOOT_BTN} px-4 bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]`}>Huỷ</button>
           <button type="button" onClick={handleSave} disabled={saving}
             className={`${FOOT_BTN} px-5 bg-[#0071E3] text-white font-semibold hover:bg-[#0077ED] disabled:opacity-40`}>
-            {saving ? 'Đang lưu…' : isNew ? 'Thêm liên hệ' : 'Lưu hồ sơ'}
+            {saving ? 'Đang lưu…' : isNew ? (isSale ? 'Thêm Sale' : 'Thêm liên hệ') : 'Lưu hồ sơ'}
           </button>
         </div>
       </div>

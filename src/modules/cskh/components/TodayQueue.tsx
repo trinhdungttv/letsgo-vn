@@ -9,6 +9,7 @@ import type { TodayQueueItem } from '../../../lib/cskh/todayQueue';
 import type { CskhContact, CskhGroup } from '../../../lib/cskh/types';
 import { CHANNEL_META, groupDisplayOf, REASON_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
+import { useSpace } from '../space';
 
 const roundBtn = 'inline-flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#F2F2F7] text-[#0071E3] hover:bg-[#E5E5EA] transition';
 const pill = 'inline-flex items-center gap-1 h-10 md:h-8 px-3.5 md:px-3 rounded-full text-[13px] font-semibold transition';
@@ -25,6 +26,7 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
   /** Dòng nhật ký đang được đánh dấu xong (khoá nút). */
   busyId?: string | null;
 }) {
+  const { tierLabel } = useSpace();
   if (loading && items.length === 0) {
     return <p className="py-10 text-center text-[13px] text-[#86868B]">Đang tải…</p>;
   }
@@ -48,7 +50,7 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
         const links = contactActionLinks(contact);
         const isFollowUp = item.reason === 'followup_overdue' || item.reason === 'followup_today';
         const reason = REASON_META[item.reason];
-        const group = groupDisplayOf(contact, groupById);
+        const group = groupDisplayOf(contact, groupById, tierLabel);
         return (
           <div key={item.contactId} className="relative py-3">
             {idx > 0 && <span aria-hidden className="absolute top-0 left-[52px] right-0 h-px bg-[#E5E5EA]" />}

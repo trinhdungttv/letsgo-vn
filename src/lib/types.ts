@@ -322,7 +322,8 @@ export interface CRMGift {
 
 export interface ClientGift {
   id: string;
-  client_id: string;
+  /** null = quà tặng Sale (Mạng lưới Sale, migration 178) — không gắn công ty khách. */
+  client_id: string | null;
   item_name: string;
   value: number | null;
   gift_date: string;
@@ -659,7 +660,7 @@ export interface Quote {
   converted_lead_id?: string | null;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans'
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'crm-sales' | 'admin-settings' | 'workspace' | 'loans'
   // Văn phòng Orient (module office_rental — tách biệt dữ liệu, chỉ admin)
   | 'office' | 'office-dashboard' | 'office-reports' | 'office-pl' | 'office-rooms' | 'office-billing' | 'office-parking' | 'office-tickets' | 'office-assets' | 'office-settings';
 
@@ -840,6 +841,8 @@ export interface Contact {
   map_link?: string | null;
   /** Ảnh đại diện, URL công khai trong bucket `avatars` (migration 143). */
   avatar_url?: string | null;
+  /** 'client' = người của công ty khách (mặc định) · 'sale' = Mạng lưới Sale (migration 178). Chưa chạy 178 → không có = 'client'. */
+  kind?: string | null;
   created_at: string;
   updated_at: string;
   clients?: { name: string } | null;

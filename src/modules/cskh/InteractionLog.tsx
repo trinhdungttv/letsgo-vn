@@ -45,7 +45,7 @@ const TYPE_TILE: Readonly<Record<InteractionType, keyof typeof ICON_TILE>> = {
 };
 
 export default function CskhInteractionLog() {
-  const { data, loading, clients, toast, openProfile, openLog, openGroupLog } = useCskh();
+  const { space, data, loading, clients, toast, openProfile, openLog, openGroupLog } = useCskh();
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const today = todayVN();
@@ -162,7 +162,7 @@ export default function CskhInteractionLog() {
     <div className="space-y-4 md:space-y-5">
       <PageTitle
         eyebrow="Lịch sử liên hệ"
-        title="Nhật ký CSKH"
+        title={space === 'sale' ? 'Nhật ký Sale' : 'Nhật ký CSKH'}
         subtitle={<>{logs.length} lần tương tác · {openCount} việc đã hứa đang mở</>}
         actions={(
           <>

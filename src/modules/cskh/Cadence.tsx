@@ -18,6 +18,7 @@ import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, MoreButton, PageTitle, Panel, Quiet, Row } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
 import { ContactAvatar } from './components/ContactAvatar';
+import { useSpace } from './space';
 
 /** Mỗi khu hiện bấy nhiêu dòng trước, còn lại bấm "Hiện thêm". */
 const PAGE = 30;
@@ -30,11 +31,12 @@ const SECTIONS: { key: Section; title: string; meta: string; icon: ReactNode; em
 ];
 
 export default function CskhCadence() {
-  const { data, loading, clients, openProfile, openLog, openPicker } = useCskh();
+  const { tierLabel } = useSpace();
+  const { space, data, loading, clients, openProfile, openLog, openPicker } = useCskh();
   const today = todayVN();
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
   const groupById = useMemo(() => new Map((data?.groups ?? []).map(g => [g.id, g])), [data]);
-  const scope = useCareScope(contacts, clients);
+  const scope = useCareScope(contacts, clients, space);
   const [limits, setLimits] = useState<Record<Section, number>>({ overdue: PAGE, due_soon: PAGE, ok: PAGE });
 
   const sections = useMemo(() => {
@@ -86,7 +88,7 @@ export default function CskhCadence() {
               {rows.length === 0 ? <Quiet>{sec.empty}</Quiet> : (
                 <div>
                   {shown.map(({ contact: c, st }, idx) => {
-                    const g = groupDisplayOf(c, groupById);
+                    const g = groupDisplayOf(c, groupById, tierLabel);
                     return (
                       <Row key={c.id} first={idx === 0} inset={52}>
                         <button type="button" onClick={() => openProfile(c.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left group">

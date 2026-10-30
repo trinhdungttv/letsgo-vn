@@ -16,6 +16,25 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-crm-sale-network',
+    date: '2026-10-31',
+    title: 'CRM',
+    features: [
+      'Mạng lưới Sale: mục riêng trong CRM chăm sóc Sale / CTV, tách hẳn khỏi khách hàng (chỉ admin)',
+      'Hồ sơ Sale: nơi đang làm (chọn đối thủ), khu vực mạnh, ngành quen, tiến độ chiêu mộ',
+      'Sale có hạng và nhịp nhắc riêng (thưa hơn khách), nhật ký, sự kiện, quà không cần công ty',
+      'BD Pipeline: chọn tên Sale làm nguồn → hồ sơ Sale thấy các công ty họ đã giới thiệu',
+    ],
+  },
+  {
+    id: '2026-10-30-cskh-scope-visible-mobile',
+    date: '2026-10-30',
+    title: 'CSKH',
+    features: [
+      'CSKH trên điện thoại: luôn thấy bộ lọc đang bật, báo số mục bị ẩn ở "Sắp tới" và bỏ lọc 1 chạm',
+    ],
+  },
+  {
     id: '2026-10-27-cskh-new-contact-one-form',
     date: '2026-10-27',
     title: 'CSKH',

@@ -13,6 +13,8 @@
 // ============================================================================
 import { supabase } from './supabase';
 import { logActivity } from './audit';
+import { contactKindOf } from './cskh/space';
+import type { ContactKind } from './cskh/types';
 import type { AppUser, Contact, ContactClientLink } from './types';
 
 // `contacts.client_id` (cột soi, FK contacts_client_id_fkey) và bảng nối
@@ -74,18 +76,26 @@ const withFallbackLinks = (rows: Contact[]): Contact[] => rows.map(c => ({
  * Đọc bảng `contacts` kèm đủ danh sách công ty. `apply` nhận query builder để
  * gắn thêm .eq/.in/.order — dùng hàm này thay vì tự gọi supabase, có vậy màn
  * hình nào cũng được lớp lùi-về-cột-cũ bảo vệ.
+ *
+ * `kind` (migration 178): mặc định CHỈ người của khách hàng — Mạng lưới Sale không bao giờ lẫn
+ * vào màn hình khách. Lọc ở máy (không lọc SQL) để DB chưa chạy 178 vẫn đọc được; đọc theo id
+ * (người cụ thể, khu vực nào cũng được) thì truyền 'all'.
  */
-export async function selectContacts(apply: (q: any) => any = q => q): Promise<Contact[]> {
+export async function selectContacts(apply: (q: any) => any = q => q, kind: ContactKind | 'all' = 'client'): Promise<Contact[]> {
+  const pick = (rows: Contact[]) => (kind === 'all' ? rows : rows.filter(c => contactKindOf(c) === kind));
   if (await hasJunction()) {
     const { data, error } = await apply(supabase.from('contacts').select(CONTACT_SELECT));
-    if (!error) return (data || []) as Contact[];
+    if (!error) return pick((data || []) as Contact[]);
     if (!isMissingJunction(error)) throw error;
     junctionReady = false;   // bảng vừa biến mất giữa chừng — lùi về cột cũ
   }
   const { data, error } = await apply(supabase.from('contacts').select(CONTACT_SELECT_LEGACY));
   if (error) throw error;
-  return withFallbackLinks((data || []) as Contact[]);
+  return pick(withFallbackLinks((data || []) as Contact[]));
 }
+
+export const MIGRATION_178_HINT =
+  'Mạng lưới Sale cần migration 178 (sale_network). Mở Supabase → SQL Editor, chạy file 20261031100000_178_sale_network.sql rồi thử lại.';
 
 /**
  * Người liên hệ của MỘT công ty, kèm đủ các công ty khác họ kiêm nhiệm.
@@ -209,7 +219,8 @@ export const contactToForm = (c: Contact): ContactFormValues => ({
 export async function findPhoneDuplicates(phone: string, excludeId?: string): Promise<Contact[]> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 6) return [];
-  const data = await selectContacts(q => q.not('phone', 'is', null));
+  // Cảnh báo trùng cả giữa khách và Mạng lưới Sale (cùng 1 người ở 2 nơi là đáng biết)
+  const data = await selectContacts(q => q.not('phone', 'is', null), 'all');
   return data.filter(
     c => c.id !== excludeId && (c.phone || '').replace(/\D/g, '') === digits
   );
@@ -326,7 +337,7 @@ async function syncContactClients(opts: {
 
 /** Đọc lại một liên hệ kèm đủ danh sách công ty — dùng sau mỗi lần ghi. */
 async function refetchContact(id: string): Promise<Contact> {
-  const rows = await selectContacts(q => q.eq('id', id));
+  const rows = await selectContacts(q => q.eq('id', id), 'all');
   if (!rows.length) throw new Error('Không đọc lại được liên hệ vừa lưu');
   return rows[0];
 }
@@ -351,6 +362,8 @@ export interface SaveContactCtx {
   user: AppUser | null;
   /** Tra tên công ty theo id — để ghi lịch sử đọc được kể cả khi công ty đổi tên sau này. */
   clientName: (id: string | null) => string | null;
+  /** Chỉ dùng khi TẠO MỚI: 'sale' = người của Mạng lưới Sale (cần migration 178). Mặc định khách. */
+  kind?: ContactKind;
 }
 
 /**
@@ -370,7 +383,9 @@ export async function saveContact(
   const name = form.name.trim();
   if (!name) throw new Error('Vui lòng nhập họ tên');
 
-  const clientIds = [...new Set(form.client_ids)];
+  // Sale không gắn công ty khách (DB cũng chặn bằng trigger migration 178)
+  const isSale = existing ? contactKindOf(existing) === 'sale' : ctx.kind === 'sale';
+  const clientIds = isSale ? [] : [...new Set(form.client_ids)];
   // Liên hệ tự do không thuộc công ty nào thì không có khái niệm "liên hệ chính".
   const primaryIds = form.is_active ? form.primary_client_ids.filter(id => clientIds.includes(id)) : [];
   const today = new Date().toISOString().slice(0, 10);
@@ -419,10 +434,12 @@ export async function saveContact(
     return saved;
   }
 
-  const body = { ...payload, created_at: new Date().toISOString() };
+  const body = { ...payload, created_at: new Date().toISOString(), ...(isSale ? { kind: 'sale' } : {}) };
   const runInsert = (b: typeof body) => supabase
     .from('contacts').insert(b).select('id').single();
   let { data, error } = await runInsert(body);
+  // Thiếu cột `kind` mà đang tạo Sale → KHÔNG lùi về tạo người thường (sẽ lẫn sang khách)
+  if (isSale && isMissingColumnError(error) && /kind/.test(error?.message || '')) throw new Error(MIGRATION_178_HINT);
   if (isMissingColumnError(error)) ({ data, error } = await runInsert(withoutOptionalColumns(body)));
   if (error) throw error;
   savedId = (data as { id: string }).id;
@@ -587,6 +604,12 @@ export async function getContactUsage(contact: Contact): Promise<ContactUsage> {
  */
 export async function deleteContact(contact: Contact, ctx: SaveContactCtx): Promise<void> {
   const names = clientIdsOf(contact).map(id => ctx.clientName(id)).filter(Boolean).join(', ');
+  // Sale: nhật ký mất liên kết người sẽ trông như dòng cũ của khách (lẫn sang CSKH) → lưu trữ (xoá mềm,
+  // khôi phục được ở trang Lịch sử) trước khi xoá người. Quà Sale không có công ty nên không lẫn.
+  if (contactKindOf(contact) === 'sale') {
+    const { error: logError } = await supabase.from('cskh_logs').update({ is_archived: true }).eq('contact_id', contact.id);
+    if (logError) throw logError;
+  }
   const { error } = await supabase.from('contacts').delete().eq('id', contact.id);
   if (error) throw error;
   await logActivity({

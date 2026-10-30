@@ -86,6 +86,26 @@ describe('runCareAutomationOnce', () => {
     expect(loadCskhData).not.toHaveBeenCalled();
   });
 
+  it('khách và Mạng lưới Sale chạy riêng: mỗi khu vực 1 lượt/ngày, tải đúng dữ liệu của khu vực đó', async () => {
+    loadCskhData.mockImplementation(async (space: string) => ({ migrationReady: true, saleReady: true, space }));
+    let m = await fresh();
+    await m.runCareAutomationOnce({ ctx, today: TODAY, daily: true, space: 'client' });
+    await m.runCareAutomationOnce({ ctx, today: TODAY, daily: true, space: 'sale' });
+    expect(loadCskhData.mock.calls.map(c => c[0])).toEqual(['client', 'sale']);
+    expect(runCareAutomation).toHaveBeenCalledTimes(2);
+    m = await fresh(); // F5 cùng ngày → cả 2 đã chạy
+    await m.runCareAutomationOnce({ ctx, today: TODAY, daily: true, space: 'client' });
+    await m.runCareAutomationOnce({ ctx, today: TODAY, daily: true, space: 'sale' });
+    expect(runCareAutomation).toHaveBeenCalledTimes(2);
+  });
+
+  it('Mạng lưới Sale khi DB chưa chạy migration 178 → không chạy', async () => {
+    loadCskhData.mockResolvedValue({ migrationReady: true, saleReady: false, space: 'sale' });
+    const m = await fresh();
+    expect(await m.runCareAutomationOnce({ ctx, today: TODAY, daily: true, space: 'sale' })).toBeNull();
+    expect(runCareAutomation).not.toHaveBeenCalled();
+  });
+
   it('câu thông báo: có việc thì báo, không có thì im', async () => {
     const m = await fresh();
     expect(m.automationMessage({ gift: 2, reconnect: 1 })).toBe('Đã tạo 3 việc nhắc trong Workspace (2 chuẩn bị quà, 1 kết nối lại)');

@@ -17,6 +17,7 @@ import { PillSelect, SearchField, Segmented, Switch } from './apple';
 import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
 import { ChoiceChip, Sheet, SHEET_FOOTER } from './Sheet';
+import { useSpace } from '../space';
 
 type GenderPick = 'all' | 'female' | 'male';
 type Scope = 'care' | 'all';
@@ -37,6 +38,7 @@ export function GroupLogModal({ contacts, groups, clients, today, initialSelecte
   onSetGender: (ids: readonly string[], gender: Exclude<Gender, ''>) => Promise<string | null>;
   onClose: () => void;
 }) {
+  const { tierLabel } = useSpace();
   const { branches } = useBranchLookup();
   const people = useMemo(() => contacts.filter(c => !c.isArchived), [contacts]);
   const preset = (initialSelected?.length ?? 0) > 0;
@@ -99,7 +101,7 @@ export function GroupLogModal({ contacts, groups, clients, today, initialSelecte
       if (!m) return false;
       if (scope === 'care' && c.tier === 'unclassified') return false;
       if (genderPick !== 'all' && m.gender.gender !== genderPick) return false;
-      if (groupKey !== 'all' && groupDisplayOf(c, groupById).key !== groupKey) return false;
+      if (groupKey !== 'all' && groupDisplayOf(c, groupById, tierLabel).key !== groupKey) return false;
       if (branch !== 'all' && !m.branchIds.has(branch)) return false;
       if (company !== 'all' && !c.clientIds.includes(company)) return false;
       if (role !== 'all' && c.jobTitle.trim() !== role) return false;
@@ -134,7 +136,7 @@ export function GroupLogModal({ contacts, groups, clients, today, initialSelecte
   };
 
   const selectedNoCompany = useMemo(
-    () => people.filter(c => selected.has(c.id) && c.clientIds.length === 0).length,
+    () => people.filter(c => selected.has(c.id) && c.clientIds.length === 0 && c.kind !== 'sale').length,
     [people, selected],
   );
   const isGift = action.type === 'gift' && logGift;
@@ -273,7 +275,7 @@ export function GroupLogModal({ contacts, groups, clients, today, initialSelecte
         <div className="max-h-[42vh] overflow-y-auto -mx-1 px-1">
           {shown.map(c => {
             const g = meta.get(c.id)?.gender;
-            const sub = [groupDisplayOf(c, groupById).label, c.jobTitle, c.organization].filter(Boolean).join(' · ');
+            const sub = [groupDisplayOf(c, groupById, tierLabel).label, c.jobTitle, c.organization].filter(Boolean).join(' · ');
             return (
               <label key={c.id} className="flex items-center gap-3 py-2 border-b border-[#F0F0F2] last:border-0 cursor-pointer">
                 <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} aria-label={`Chọn ${c.fullName}`} className="w-4 h-4 accent-[#0071E3] shrink-0" />
