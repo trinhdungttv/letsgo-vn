@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeQuoteInfo, standardLines, lineTotal, quoteInfoIsEmpty, emptyQuoteInfo } from './quoteInfo';
+import { normalizeQuoteInfo, standardLines, lineTotal, lineKind, quoteInfoIsEmpty, emptyQuoteInfo } from './quoteInfo';
 
 describe('quoteInfo', () => {
   it('chuẩn hoá giá trị null / thiếu trường về dạng đầy đủ', () => {
@@ -21,5 +21,15 @@ describe('quoteInfo', () => {
   it('nhận biết thông tin báo giá còn trống', () => {
     expect(quoteInfoIsEmpty(emptyQuoteInfo())).toBe(true);
     expect(quoteInfoIsEmpty({ ...emptyQuoteInfo(), lines: standardLines() })).toBe(false);
+  });
+  it('báo giá giới thiệu: giá báo = phí / người; "cả hai" theo từng dòng; dữ liệu cũ = cho thuê', () => {
+    const [l] = standardLines();
+    const line = { ...l, wage: 8_000_000, fee: 2_000_000 };
+    expect(lineKind({ service: 'recruitment' }, line)).toBe('recruitment');
+    expect(lineTotal(line, 'recruitment')).toBe(2_000_000);
+    expect(lineKind({ service: 'both' }, { ...line, kind: 'recruitment' })).toBe('recruitment');
+    expect(lineKind({ service: 'both' }, line)).toBe('leasing');
+    expect(lineKind({}, { ...line, kind: 'recruitment' })).toBe('leasing');
+    expect(normalizeQuoteInfo({ lines: [] }).service).toBeUndefined();
   });
 });

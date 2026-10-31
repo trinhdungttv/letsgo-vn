@@ -32,3 +32,18 @@ export default function ServiceTypeBadge({
     </span>
   );
 }
+
+/**
+ * Hình thức của đối thủ / nhu cầu của khách (migration 184): giới thiệu = "GT" tím như ServiceTypeBadge,
+ * làm cả hai = "Thuê + GT", chỉ cho thuê = không nhãn (mặc định).
+ */
+export function ServiceModeChip({ mode, className = '' }: { mode: 'leasing' | 'recruitment' | 'both' | 'direct' | null | undefined; className?: string }) {
+  if (mode === 'recruitment' || mode === 'direct') return <ServiceTypeBadge type="recruitment" className={className} />;
+  if (mode !== 'both') return null;
+  return (
+    <span title="Cả cho thuê lao động và giới thiệu lao động"
+      className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium select-none whitespace-nowrap bg-purple-50 text-purple-600 border-purple-200 ${className}`}>
+      Thuê + GT
+    </span>
+  );
+}

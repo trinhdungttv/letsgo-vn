@@ -1,6 +1,9 @@
 // Thông tin dự án tuyển dụng + điều khoản phí giới thiệu (cùng dạng Phương án giá → Giới thiệu LĐ).
-import { useMemo, useState } from 'react';
-import { normalizeReferral } from '../../lib/costPlan/referral';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../lib/auth';
+import { listPlans } from '../../lib/costPlan/api';
+import { isReferralPlan, normalizeReferral } from '../../lib/costPlan/referral';
+import type { CostPlanRow } from '../../lib/costPlan/types';
 import type { ReferralConfig } from '../../lib/costPlan/referral';
 import { errText, saveProject } from '../../lib/recruit/api';
 import type { CtvConfig, ProjectStatus, RecruitProject } from '../../lib/recruit/types';
@@ -37,6 +40,19 @@ export default function ProjectForm({ project, onDone, onCancel }: {
   const [ctv, setCtv] = useState<CtvConfig>(() => ({ mode: 'per_hire', value: 0, milestone: 'fee_ok', ...(project?.ctv ?? {}) }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Phương án giá chế độ Giới thiệu LĐ (Workspace) → lấy điều khoản phí, khỏi gõ lại
+  const { token } = useAuth();
+  const [plans, setPlans] = useState<CostPlanRow[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    listPlans(token).then(rows => setPlans(rows.filter(isReferralPlan)), () => setPlans([]));
+  }, [token]);
+  const pickPlan = (id: string) => {
+    const p = plans.find(x => x.id === id);
+    if (!p) return;
+    setFee(normalizeReferral(p.data.referral));
+    toast(`Đã lấy điều khoản phí từ Phương án giá "${p.title}"`);
+  };
 
   const clientOptions = useMemo(
     () => clients.filter(c => !c.archived_at).sort((a, b) => compareVnName(a.name, b.name)),
@@ -113,6 +129,14 @@ export default function ProjectForm({ project, onDone, onCancel }: {
           <h3 className="text-[15px] font-semibold text-[#1D1D1F]">Phí giới thiệu (với vị trí chính thức của khách)</h3>
           <p className="text-[12px] text-[#86868B] mt-0.5">Cùng cách tính với Phương án giá → Giới thiệu lao động. Dùng để tự tính mốc tính phí, bảo hành và đối soát.</p>
         </div>
+        {plans.length > 0 && (
+          <Field label="Lấy từ Phương án giá (Giới thiệu LĐ)" hint="Điền sẵn cách tính, mức phí, số ngày, bảo hành từ phương án đã lập — sửa tiếp được bên dưới">
+            <select value="" onChange={e => pickPlan(e.target.value)} className={inputCls}>
+              <option value="">— Chọn phương án giá —</option>
+              {plans.map(p => <option key={p.id} value={p.id}>{p.title}{p.company_name ? ` · ${p.company_name}` : ''}{p.zone_name ? ` · ${p.zone_name}` : ''}</option>)}
+            </select>
+          </Field>
+        )}
         <div className="flex flex-wrap gap-1.5">
           <ChoiceChip active={fee.mode === 'lump'} onClick={() => setF('mode', 'lump')}>Trọn gói / người</ChoiceChip>
           <ChoiceChip active={fee.mode === 'time'} onClick={() => setF('mode', 'time')}>Theo giờ / ngày làm</ChoiceChip>

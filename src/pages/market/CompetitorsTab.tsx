@@ -5,6 +5,8 @@ import {
 } from 'chart.js';
 import { Plus, TrendingUp, TrendingDown, Minus, X, Eye, List, LayoutGrid, Image as ImageIcon, MapPin, Settings, ArrowUp, ArrowDown, Trash2, Pencil, Images, ChevronRight, ChevronDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { ServiceModeChip } from '../../components/ServiceTypeBadge';
+import { SERVICE_MODE_LABEL, pruneMissing, type ServiceMode } from '../../lib/serviceMode';
 import { fmtTr, sameZone, type MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
@@ -23,6 +25,8 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Le
 const emptyForm = {
   company_name: '', zone_name: '', wage_paid: '', fee_unskilled: '', fee_skilled: '', fee_tech: '',
   fee_per_shift: '', trend: 'stable', supplying_for: '', notes: '',
+  // hình thức + phí giới thiệu / người + bảo hành (migration 184)
+  service_mode: 'leasing' as ServiceMode, referral_fee: '', referral_guarantee_days: '',
 };
 
 // Bật/tắt + sắp xếp trên/dưới các biểu đồ tổng quan đối thủ — lưu localStorage, không cần migration.
@@ -276,7 +280,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
     if (!form.company_name.trim()) { toast('Nhập tên đối thủ'); return; }
     setSaving(true);
     try {
-      const { data, error } = await supabase.from('competitors').insert({
+      const { data, error } = await supabase.from('competitors').insert(await pruneMissing('competitors', {
         company_name: form.company_name.trim(),
         zone_name: form.zone_name || 'Toàn quốc',
         wage_paid: form.wage_paid ? parseFloat(form.wage_paid) * 1_000_000 : null,
@@ -287,7 +291,10 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
         trend: form.trend,
         supplying_for: form.supplying_for.split(',').map(s => s.trim()).filter(Boolean),
         notes: form.notes || null,
-      }).select().single();
+        service_mode: form.service_mode,
+        referral_fee: form.service_mode !== 'leasing' ? parseFloat(form.referral_fee) || null : null,
+        referral_guarantee_days: form.service_mode !== 'leasing' ? parseInt(form.referral_guarantee_days) || null : null,
+      }, ['service_mode', 'referral_fee', 'referral_guarantee_days'])).select().single();
       if (error) throw error;
       await logActivity({
         user, action: 'insert', table: 'competitors', recordId: data.id,
@@ -572,6 +579,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => openCompetitor(c)} className="font-semibold text-[#1D4ED8] hover:underline text-left">{c.company_name}</button>
+                            <ServiceModeChip mode={c.service_mode} />
                             {linkCount > 0 && <span title={`${linkCount} liên kết đã nhập`} className="text-[9.5px] px-1.5 py-px rounded-full bg-gray-100 text-[#666]">{linkCount} link</span>}
                           </div>
                           {c.notes && <div className={`text-[10.5px] ${c.notes.includes('⚠') ? 'text-red-500' : 'text-[#aaa]'}`}>{c.notes}</div>}
@@ -648,7 +656,7 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
                 <div className="p-3.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12.5px] font-semibold text-[#1D4ED8] truncate">{c.company_name}</div>
+                      <div className="text-[12.5px] font-semibold text-[#1D4ED8] truncate flex items-center gap-1.5"><span className="truncate">{c.company_name}</span><ServiceModeChip mode={c.service_mode} /></div>
                       <div className="flex items-start justify-between gap-2 mt-0.5">
                         <div className="flex items-center gap-1 flex-wrap min-w-0">
                           <span className="text-[10.5px] text-[#888] flex items-center gap-1 shrink-0"><MapPin size={10} /> {c.zone_name}</span>
@@ -731,6 +739,16 @@ export default function CompetitorsTab({ marketZones, marketSurveys, competitors
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Tên *</label>
                 <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+              <div className="col-span-2 flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Hình thức đối thủ đang làm</label>
+                <select value={form.service_mode} onChange={e => setForm(f => ({ ...f, service_mode: e.target.value as ServiceMode }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                  {(Object.keys(SERVICE_MODE_LABEL) as ServiceMode[]).map(k => <option key={k} value={k}>{SERVICE_MODE_LABEL[k]}</option>)}
+                </select></div>
+              {form.service_mode !== 'leasing' && (<>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Phí giới thiệu / người (₫)</label>
+                  <input type="number" value={form.referral_fee} onChange={e => setForm(f => ({ ...f, referral_fee: e.target.value }))} placeholder="2000000" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-purple-300 outline-none focus:border-purple-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Bảo hành (ngày)</label>
+                  <input type="number" value={form.referral_guarantee_days} onChange={e => setForm(f => ({ ...f, referral_guarantee_days: e.target.value }))} placeholder="30" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-purple-300 outline-none focus:border-purple-500" /></div>
+              </>)}
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Khu vực HĐ</label>
                 <input value={form.zone_name} onChange={e => setForm(f => ({ ...f, zone_name: e.target.value }))} placeholder="Biên Hòa, VSIP" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
               <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Lương trả LĐ PT (tr)</label>

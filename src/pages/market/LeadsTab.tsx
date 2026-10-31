@@ -3,6 +3,8 @@ import { Plus, X, ArrowRight, Pencil, Users, GripVertical, MapPin, List, LayoutG
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { supabase } from '../../lib/supabase';
+import { ServiceModeChip } from '../../components/ServiceTypeBadge';
+import { NEED_LABEL, pruneMissing, type NeedType } from '../../lib/serviceMode';
 import type { MarketTabProps } from './shared';
 import { logActivity } from '../../lib/audit';
 import { useAuth } from '../../lib/auth';
@@ -38,7 +40,7 @@ const STATUS_OPTIONS = ['Chưa LH', 'Đang TH', 'Đã LH'];
 const statusCls = (s: string) => s === 'Đã LH' ? 'bg-emerald-50 text-emerald-700' : s === 'Đang TH' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700';
 
 const emptyLeadForm = {
-  company_name: '', region: '', industry: '', workers_needed: '', source: '', lgv_qty: '0', map_link: '',
+  company_name: '', region: '', industry: '', workers_needed: '', need_type: 'leasing' as NeedType, source: '', lgv_qty: '0', map_link: '',
   wage_min: '', wage_max: '', allowance_notes: '', wage_detail: {} as Record<string, string>, wage_detail_client: {} as Record<string, string>,
 };
 const emptyClientSetupForm = {
@@ -310,7 +312,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     setSaving(true);
     try {
       const mapPos = parseLatLngFromLink(leadForm.map_link);
-      const { data, error } = await supabase.from('market_leads').insert({
+      const { data, error } = await supabase.from('market_leads').insert(await pruneMissing('market_leads', {
         company_name: leadForm.company_name.trim(),
         region: leadForm.region || (zoneFilter !== 'all' ? zoneFilter : null),
         industry: leadForm.industry || null,
@@ -325,7 +327,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         wage_detail: wageDetailToNumbers(leadForm.wage_detail),
         wage_detail_client: wageDetailToNumbers(leadForm.wage_detail_client),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
-      }).select().single();
+        need_type: leadForm.need_type,
+      }, ['need_type'])).select().single();
       if (error) throw error;
       await logActivity({
         user, action: 'insert', table: 'market_leads', recordId: data.id,
@@ -348,7 +351,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       const newWageDetail = wageDetailToNumbers(patch.wage_detail);
       const newWageDetailClient = wageDetailToNumbers(patch.wage_detail_client);
       const mapPos = parseLatLngFromLink(patch.map_link);
-      const { error } = await supabase.from('market_leads').update({
+      const { error } = await supabase.from('market_leads').update(await pruneMissing('market_leads', {
+        ...(patch.need_type ? { need_type: patch.need_type } : {}),
         region: patch.region || null,
         industry: patch.industry || null,
         workers_needed: parseInt(patch.workers_needed) || 0,
@@ -366,7 +370,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         ...(wageDetailChanged(old?.wage_detail, newWageDetail) ? { wage_detail_updated_at: new Date().toISOString() } : {}),
         ...(wageDetailChanged(old?.wage_detail_client, newWageDetailClient) ? { wage_detail_client_updated_at: new Date().toISOString() } : {}),
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
-      }).eq('id', leadId);
+      }, ['need_type'])).eq('id', leadId);
       if (error) throw error;
       await onRefresh();
       setEditLeadId(null);
@@ -827,6 +831,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                 <div className="min-w-0">
                   <div className="text-[12.5px] font-medium flex items-center gap-1.5 flex-wrap">
                     {l.company_name}
+                    <ServiceModeChip mode={l.need_type} />
                     <select value={l.status} onChange={e => handleStatusChange(l.id, e.target.value)} className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium border-0 outline-none ${statusCls(l.status)}`}>
                       {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
                     </select>
@@ -956,6 +961,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
                     options={industries.map(i => ({ value: i, label: i }))} placeholder="Chọn ngành…" allowAdd onAdd={handleAddIndustry} /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Nhu cầu LĐ</label>
                   <input type="number" value={leadForm.workers_needed} onChange={e => setLeadForm(f => ({ ...f, workers_needed: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
+                <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Khách cần lao động</label>
+                  <select value={leadForm.need_type} onChange={e => setLeadForm(f => ({ ...f, need_type: e.target.value as NeedType }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+                    {(Object.keys(NEED_LABEL) as NeedType[]).map(k => <option key={k} value={k}>{NEED_LABEL[k]}</option>)}
+                  </select></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Nguồn thông tin</label>
                   <input value={leadForm.source} onChange={e => setLeadForm(f => ({ ...f, source: e.target.value }))} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
                 <div className="flex flex-col gap-1"><label className="text-[12px] text-[#666] font-medium">Let's Go VN đang cung cấp</label>
@@ -993,6 +1002,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
 }
 
 interface EditPatch {
+  /** chỉ Công ty / Dự án có (migration 184); hồ sơ khách hàng không dùng */
+  need_type?: NeedType;
   region?: string; industry: string; wage_min: string; wage_max: string; allowance_notes: string; workers_needed: string; map_link: string;
   website_url: string; facebook_url: string; youtube_url: string; tiktok_url: string;
   wage_detail: Record<string, string>; wage_detail_client: Record<string, string>;
@@ -1030,7 +1041,12 @@ function EditFormFields({ initial, industries, onAddIndustry, onCancel, onSave, 
           options={industries.map(i => ({ value: i, label: i }))} placeholder="Chọn ngành…" allowAdd onAdd={onAddIndustry} /></div>
       <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Nhu cầu LĐ</label>
         <input type="number" value={patch.workers_needed} onChange={e => setPatch(p => ({ ...p, workers_needed: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
-      <div />
+      {patch.need_type !== undefined ? (
+        <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Khách cần lao động</label>
+          <select value={patch.need_type} onChange={e => setPatch(p => ({ ...p, need_type: e.target.value as NeedType }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
+            {(Object.keys(NEED_LABEL) as NeedType[]).map(k => <option key={k} value={k}>{NEED_LABEL[k]}</option>)}
+          </select></div>
+      ) : <div />}
       <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương từ (đ)</label>
         <input type="number" step="100000" value={patch.wage_min} onChange={e => setPatch(p => ({ ...p, wage_min: e.target.value }))} className="text-[12.5px] px-2 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" /></div>
       <div className="flex flex-col gap-1"><label className="text-[11px] text-[#666] font-medium">Lương đến (đ)</label>
@@ -1095,6 +1111,7 @@ function ClientEditForm({ client, ...rest }: { client: Client } & EditFormExtraP
 
 function LeadEditForm({ lead, regionOptions, ...rest }: { lead: import('../../lib/types').MarketLead; regionOptions: string[] } & EditFormExtraProps) {
   return <EditFormFields regionOptions={regionOptions} initial={{
+    need_type: lead.need_type ?? 'leasing',
     region: lead.region ?? '',
     industry: lead.industry ?? '',
     workers_needed: String(lead.workers_needed ?? ''),

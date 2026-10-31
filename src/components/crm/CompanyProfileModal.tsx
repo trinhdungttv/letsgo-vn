@@ -9,6 +9,7 @@ import { formatCurrency, formatDate } from '../../lib/format';
 import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, PipelineTaskStatus, CRMProduct, Contact, WorkTask, TaskStatus, PipelineAppendix, ClientGift } from '../../lib/types';
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
+import { needToServiceType } from '../../lib/serviceMode';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { addContactClient, clientIdsOf, isPrimaryAt, saveContact, emptyContactForm, findPhoneDuplicates } from '../../lib/contactOps';
@@ -769,6 +770,10 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
         msg += `\n\nKhách hàng này đang có 1 thẻ CRM riêng (${n.interactions} lịch sử/ghi chú, ${n.gifts} quà tặng, ${n.tasks} việc, ${n.appendices} phụ lục) — sẽ GỘP hết vào thẻ này. ` +
           'Thẻ cũ chuyển sang "Ngưng HĐ" kèm ghi chú "Đã gộp", không xoá dữ liệu nào.';
       }
+      // Hình thức trong bảng báo giá CRM quyết định loại thẻ khách (migration 184): giới thiệu → "Giới thiệu LĐ"
+      // (không có lịch chốt công / lương), cho thuê hoặc cả hai → "Cho thuê LĐ" (phần GT ghi riêng ở P&L).
+      const serviceType = needToServiceType(entry.quote_info?.service);
+      if (!match) msg += `\n\nLoại dịch vụ: ${serviceType === 'recruitment' ? 'GIỚI THIỆU lao động' : 'Cho thuê lao động'} (theo hình thức ở "Thông tin báo giá").`;
       if (!confirm(msg)) return;
 
       const today = new Date().toISOString().slice(0, 10);
@@ -779,7 +784,10 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           name: entry.company_name, branch_id: entry.branch_id || null,
           client_type: 'active', pipeline_stage: 'won', won_date: today,
           notes: entry.notes || null, status: 'ok',
-          cutoff_day: 25, payment_start: 5, payment_end: 8,
+          service_type: serviceType,
+          ...(serviceType === 'recruitment'
+            ? { cutoff_day: null, payment_start: null, payment_end: null, payment_term_days: 30 }
+            : { cutoff_day: 25, payment_start: 5, payment_end: 8 }),
         }).select('id').single();
         if (error) throw error;
         clientId = data.id as string;

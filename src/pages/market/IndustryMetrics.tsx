@@ -3,6 +3,7 @@ import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from 'chart.js';
 import { LineChart, Plus, Trash2, Loader2, Check, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { pruneMissing } from '../../lib/serviceMode';
 import type { IndustryMetric } from '../../lib/types';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 
@@ -31,6 +32,7 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
     key: r._key, period: r.period ?? '',
     avg_wage_unskilled: r._wageUnskilledText ?? '', avg_wage_skilled: r._wageSkilledText ?? '',
     service_fee_min: r.service_fee_min ?? null, service_fee_max: r.service_fee_max ?? null,
+    referral_fee_min: r.referral_fee_min ?? null, referral_fee_max: r.referral_fee_max ?? null,
     turnover_rate: r.turnover_rate ?? null, ot_hours: r.ot_hours ?? null,
     demand_headcount: r.demand_headcount ?? null, note: r.note ?? '',
   })));
@@ -84,13 +86,15 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
     if (valid.length === 0) { setSaveStatus('idle'); return; }
     setSaveStatus('saving');
     for (const r of valid) {
-      const payload = {
+      const payload = await pruneMissing('industry_metrics', {
         industry_id: industryId, period: (r.period ?? '').trim(),
         avg_wage_unskilled: numTr(r._wageUnskilledText ?? ''), avg_wage_skilled: numTr(r._wageSkilledText ?? ''),
         service_fee_min: r.service_fee_min ?? null, service_fee_max: r.service_fee_max ?? null,
+        // phí giới thiệu TB ngành, đ / người (migration 184)
+        referral_fee_min: r.referral_fee_min ?? null, referral_fee_max: r.referral_fee_max ?? null,
         turnover_rate: r.turnover_rate ?? null, ot_hours: r.ot_hours ?? null,
         demand_headcount: r.demand_headcount ?? null, note: (r.note ?? '').trim() || null,
-      };
+      }, ['referral_fee_min', 'referral_fee_max']);
       r.avg_wage_unskilled = payload.avg_wage_unskilled;
       r.avg_wage_skilled = payload.avg_wage_skilled;
       if (r.id) {
@@ -190,14 +194,16 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
 
       {/* Điện thoại: bảng nhiều cột cuộn ngang thay vì ép mỗi cột còn ~40px */}
       <div className="overflow-x-auto">
-      <table className="w-full min-w-[620px] md:min-w-0 text-[12px] mt-2">
+      <table className="w-full min-w-[760px] text-[12px] mt-2">
         <thead>
           <tr className="text-[10.5px] text-[#888] bg-[#FBFBF9]">
             <th className="text-left font-medium px-3 py-1.5 w-[11%]">Kỳ</th>
             <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương PT (tr)</th>
             <th className="text-left font-medium px-1 py-1.5 w-[12%]">Lương tay nghề (tr)</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[10%]">Phí từ</th>
-            <th className="text-left font-medium px-1 py-1.5 w-[10%]">Phí đến</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[9%]" title="Phí dịch vụ cho thuê lao động">Phí thuê từ</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[9%]">Phí thuê đến</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[9%] text-purple-600" title="Phí giới thiệu lao động, đ / người">Phí GT từ</th>
+            <th className="text-left font-medium px-1 py-1.5 w-[9%] text-purple-600">Phí GT đến</th>
             <th className="text-left font-medium px-1 py-1.5 w-[8%]">Nghỉ %</th>
             <th className="text-left font-medium px-1 py-1.5 w-[8%]">OT h</th>
             <th className="text-left font-medium px-1 py-1.5 w-[9%]">Cầu LĐ</th>
@@ -213,6 +219,8 @@ export default function IndustryMetrics({ industryId, toast }: Props) {
               <td className="px-1 py-1"><input value={r._wageSkilledText ?? ''} onChange={e => set(r._key, { _wageSkilledText: sanitizeDecimal(e.target.value) })} placeholder="8.5" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_min ?? ''} onChange={e => set(r._key, { service_fee_min: num(e.target.value) })} placeholder="350000" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.service_fee_max ?? ''} onChange={e => set(r._key, { service_fee_max: num(e.target.value) })} placeholder="500000" className={cell} /></td>
+              <td className="px-1 py-1"><input value={r.referral_fee_min ?? ''} onChange={e => set(r._key, { referral_fee_min: num(e.target.value) })} placeholder="1500000" aria-label="Phí giới thiệu từ" className={cell} /></td>
+              <td className="px-1 py-1"><input value={r.referral_fee_max ?? ''} onChange={e => set(r._key, { referral_fee_max: num(e.target.value) })} placeholder="3000000" aria-label="Phí giới thiệu đến" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.turnover_rate ?? ''} onChange={e => set(r._key, { turnover_rate: num(e.target.value) })} placeholder="12" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.ot_hours ?? ''} onChange={e => set(r._key, { ot_hours: num(e.target.value) })} placeholder="40" className={cell} /></td>
               <td className="px-1 py-1"><input value={r.demand_headcount ?? ''} onChange={e => set(r._key, { demand_headcount: num(e.target.value) })} placeholder="3500" className={cell} /></td>

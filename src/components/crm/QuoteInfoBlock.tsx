@@ -6,9 +6,14 @@ import { useAuth } from '../../lib/auth';
 import { fetchIndustries } from '../../pages/market/industries';
 import { useMarketRefs } from './MarketSupplyBlock';
 import {
-  type QuoteInfo, type QuoteInfoLine, QUOTE_UNITS, emptyLine, standardLines,
-  lineTotal, normalizeQuoteInfo, quoteInfoIsEmpty,
+  type QuoteInfo, type QuoteInfoLine, type QuoteService, QUOTE_UNITS, emptyLine, standardLines,
+  lineKind, lineTotal, normalizeQuoteInfo, quoteInfoIsEmpty,
 } from '../../lib/quoteInfo';
+import { DEFAULT_REFERRAL_TERMS, normalizeTerms } from '../../lib/serviceMode';
+
+const SERVICE_OPTIONS: [QuoteService, string][] = [
+  ['leasing', 'Cho thuê (thời vụ)'], ['recruitment', 'Giới thiệu (chính thức)'], ['both', 'Cả hai'],
+];
 import type { CRMPipelineEntry } from '../../lib/types';
 
 const fmt = (n: number) => n.toLocaleString('vi-VN');
@@ -98,6 +103,8 @@ export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
   const numVal = (s: string): number | null => { const n = parseInt(s.replace(/[^\d]/g, ''), 10); return Number.isFinite(n) ? n : null; };
 
   const totalWorkers = useMemo(() => info.lines.reduce((s, l) => s + (parseInt(l.workers, 10) || 0), 0), [info.lines]);
+  const service: QuoteService = info.service ?? 'leasing';
+  const terms = normalizeTerms(info.referral ?? DEFAULT_REFERRAL_TERMS);
   const statusEl = status === 'saving' ? <span className="text-blue-600">Đang lưu…</span>
     : status === 'pending' ? <span className="text-[#999]">Sắp tự lưu…</span>
     : status === 'saved' ? <span className="text-emerald-600">✓ Đã lưu</span>
@@ -117,6 +124,28 @@ export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
       {open && (
         <div className="p-3 space-y-3">
           <div className="text-[11px] text-[#999]">Điền sẵn để lưu lại và chuyển sang file Báo giá tự động sau này. Tự lưu khi bạn ngừng gõ.</div>
+
+          {/* Hai dịch vụ: hình thức quyết định cách tính giá và loại thẻ khách hàng khi chốt Hợp tác */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-[#888]">Hình thức</span>
+            <div role="tablist" aria-label="Hình thức báo giá" className="inline-flex p-[2px] rounded-lg bg-[#F1F0EC] text-[11.5px]">
+              {SERVICE_OPTIONS.map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={service === k} onClick={() => setField('service', k)}
+                  className={`px-2 py-0.5 rounded-md font-medium transition ${service === k ? (k === 'leasing' ? 'bg-white text-blue-700 shadow-sm' : 'bg-white text-purple-700 shadow-sm') : 'text-[#666] hover:text-[#111]'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {service !== 'leasing' && (
+              <span className="flex items-center gap-1.5 text-[11px] text-[#666]">
+                Tính phí khi làm đủ
+                <input inputMode="numeric" value={terms.minDays} onChange={e => setField('referral', { ...terms, minDays: parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0 })} className={`${inp} !w-12 text-center`} aria-label="Số ngày làm đủ để tính phí" />
+                ngày · bảo hành
+                <input inputMode="numeric" value={terms.guaranteeDays} onChange={e => setField('referral', { ...terms, guaranteeDays: parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0 })} className={`${inp} !w-12 text-center`} aria-label="Số ngày bảo hành" />
+                ngày
+              </span>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-x-3 gap-y-2">
             <label className="flex flex-col gap-0.5"><span className="text-[11px] text-[#888]">Mã số thuế</span>
@@ -157,30 +186,50 @@ export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
               <div className="overflow-x-auto border border-[#EEEDE8] rounded-lg">
                 <table className="w-full text-[12px] min-w-[560px]">
                   <thead><tr className="bg-[#F9F9F7] text-[10.5px] text-[#888] text-left">
-                    {['Hạng mục / vị trí', 'SL LĐ', 'Đơn giá LĐ (đ)', 'Phí DV (đ)', 'Đơn vị', 'Giá báo / đv', 'Ghi chú', ''].map(h => <th key={h} className="px-2 py-1.5 font-medium whitespace-nowrap">{h}</th>)}
+                    {['Hạng mục / vị trí', ...(service === 'both' ? ['Hình thức'] : []), 'SL LĐ',
+                      service === 'recruitment' ? 'Lương KH trả (tham khảo)' : 'Đơn giá LĐ (đ)',
+                      service === 'recruitment' ? 'Phí GT / người (đ)' : service === 'both' ? 'Phí DV / phí GT (đ)' : 'Phí DV (đ)',
+                      'Đơn vị', 'Giá báo / đv', 'Ghi chú', ''].map(h => <th key={h} className="px-2 py-1.5 font-medium whitespace-nowrap">{h}</th>)}
                   </tr></thead>
                   <tbody>
-                    {info.lines.map(l => (
-                      <tr key={l.id} className="border-t border-[#F0EEE9] align-top">
+                    {info.lines.map(l => {
+                      const kind = lineKind(info, l);
+                      return (
+                      <tr key={l.id} className={`border-t border-[#F0EEE9] align-top ${kind === 'recruitment' ? 'bg-purple-50/30' : ''}`}>
                         <td className="px-1.5 py-1 min-w-[110px]"><input value={l.label} onChange={e => setLine(l.id, { label: e.target.value })} placeholder="Phổ thông…" className={inp} /></td>
+                        {service === 'both' && (
+                          <td className="px-1.5 py-1 w-[96px]">
+                            <select value={kind} onChange={e => setLine(l.id, { kind: e.target.value as 'leasing' | 'recruitment' })} className={inp} aria-label="Hình thức dòng">
+                              <option value="leasing">Cho thuê</option><option value="recruitment">Giới thiệu</option>
+                            </select>
+                          </td>
+                        )}
                         <td className="px-1.5 py-1 w-[62px]"><input inputMode="numeric" value={l.workers} onChange={e => setLine(l.id, { workers: e.target.value.replace(/[^\d]/g, '') })} className={inp} /></td>
                         <td className="px-1.5 py-1 w-[104px]"><input inputMode="numeric" value={l.wage != null ? fmt(l.wage) : ''} onChange={e => setLine(l.id, { wage: numVal(e.target.value) })} className={inp} /></td>
                         <td className="px-1.5 py-1 w-[92px]"><input inputMode="numeric" value={l.fee != null ? fmt(l.fee) : ''} onChange={e => setLine(l.id, { fee: numVal(e.target.value) })} className={inp} /></td>
                         <td className="px-1.5 py-1 w-[88px]">
-                          <select value={l.unit} onChange={e => setLine(l.id, { unit: e.target.value as QuoteInfoLine['unit'] })} className={inp}>
-                            {QUOTE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                          </select>
+                          {kind === 'recruitment' ? <span className="block px-2 py-1 text-[#666]">người</span> : (
+                            <select value={l.unit} onChange={e => setLine(l.id, { unit: e.target.value as QuoteInfoLine['unit'] })} className={inp}>
+                              {QUOTE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                          )}
                         </td>
-                        <td className="px-2 py-1.5 whitespace-nowrap font-semibold text-[#111]">{l.wage != null || l.fee != null ? fmt(lineTotal(l)) : '—'}</td>
+                        <td className={`px-2 py-1.5 whitespace-nowrap font-semibold ${kind === 'recruitment' ? 'text-purple-700' : 'text-[#111]'}`}>{(kind === 'recruitment' ? l.fee != null : l.wage != null || l.fee != null) ? fmt(lineTotal(l, kind)) : '—'}</td>
                         <td className="px-1.5 py-1 min-w-[100px]"><input value={l.note} onChange={e => setLine(l.id, { note: e.target.value })} className={inp} /></td>
                         <td className="px-1 py-1"><button type="button" onClick={() => removeLine(l)} title="Xoá dòng" className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-600"><Trash2 size={12} /></button></td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
-            <div className="text-[10.5px] text-[#aaa] mt-1">Giá báo / đv = Đơn giá LĐ + Phí DV (cùng cách tính ở Báo giá tự động).</div>
+            <div className="text-[10.5px] text-[#aaa] mt-1">
+              {service === 'leasing' ? 'Giá báo / đv = Đơn giá LĐ + Phí DV (cùng cách tính ở Báo giá tự động).'
+                : service === 'recruitment' ? `Giá báo = phí giới thiệu / người, thu khi làm đủ ${terms.minDays} ngày; lương do khách trả thẳng cho người lao động.`
+                : 'Dòng cho thuê: lương + phí DV · dòng giới thiệu: chỉ phí / người.'}
+              {service !== 'leasing' && ' Chốt Hợp tác → thẻ khách hàng tạo theo hình thức này.'}
+            </div>
           </div>
 
           <label className="flex flex-col gap-0.5"><span className="text-[11px] text-[#888]">Ghi chú cho báo giá</span>

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Loader2, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import ServiceTypeBadge from '../../components/ServiceTypeBadge';
+import { pruneMissing } from '../../lib/serviceMode';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import type { Quote } from '../../lib/types';
@@ -28,6 +30,7 @@ export default function QuoteHistory({ toast }: Props) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [zoneFilter, setZoneFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [serviceFilter, setServiceFilter] = useState<'all' | 'leasing' | 'recruitment'>('all');
   const [converting, setConverting] = useState<string | null>(null);
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null);
 
@@ -43,10 +46,11 @@ export default function QuoteHistory({ toast }: Props) {
 
   const filtered = useMemo(() => quotes.filter(q => {
     if (statusFilter !== 'all' && q.status !== statusFilter) return false;
+    if (serviceFilter !== 'all' && (q.service_type ?? 'leasing') !== serviceFilter) return false;
     if (zoneFilter !== 'all' && q.zone !== zoneFilter) return false;
     if (search.trim() && !q.client_name.toLowerCase().includes(search.trim().toLowerCase())) return false;
     return true;
-  }), [quotes, statusFilter, zoneFilter, search]);
+  }), [quotes, statusFilter, serviceFilter, zoneFilter, search]);
 
   const updateStatus = async (q: Quote, status: string) => {
     setQuotes(prev => prev.map(x => x.id === q.id ? { ...x, status } : x));
@@ -63,16 +67,18 @@ export default function QuoteHistory({ toast }: Props) {
     setConverting(q.id);
     try {
       const workersMatch = q.labor_demand?.match(/\d+/);
-      const { data, error } = await supabase.from('market_leads').insert({
+      const { data, error } = await supabase.from('market_leads').insert(await pruneMissing('market_leads', {
         company_name: q.client_name,
         region: q.zone,
         industry: q.industry ?? null,
         workers_needed: workersMatch ? Number(workersMatch[0]) : 0,
+        // báo giá giới thiệu → khách cần lao động chính thức (migration 184)
+        ...(q.service_type === 'recruitment' ? { need_type: 'direct' } : {}),
         source: 'Báo giá',
         status: 'Đã LH',
         suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }],
-        allowance_notes: `Chuyển từ báo giá ngày ${new Date(q.created_at).toLocaleDateString('vi-VN')}. Phí đề xuất — Phổ thông: ${fmtVND(q.price_unskilled)}, Tay nghề: ${fmtVND(q.price_skilled)}, Kỹ thuật viên: ${fmtVND(q.price_tech)}.`,
-      }).select().single();
+        allowance_notes: `Chuyển từ báo giá ${q.service_type === 'recruitment' ? 'GIỚI THIỆU LĐ' : 'cho thuê LĐ'} ngày ${new Date(q.created_at).toLocaleDateString('vi-VN')}. ${q.service_type === 'recruitment' ? 'Phí giới thiệu / người' : 'Phí đề xuất'} — Phổ thông: ${fmtVND(q.price_unskilled)}, Tay nghề: ${fmtVND(q.price_skilled)}, Kỹ thuật viên: ${fmtVND(q.price_tech)}.`,
+      }, ['need_type'])).select().single();
       if (error) throw error;
       const { error: linkErr } = await supabase.from('quotes').update({ converted_lead_id: data.id }).eq('id', q.id);
       if (linkErr) throw linkErr;
@@ -110,6 +116,11 @@ export default function QuoteHistory({ toast }: Props) {
         <div className="flex items-center gap-2 flex-wrap">
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm theo tên công ty..."
             className="text-[12px] px-2.5 py-1 rounded-md border border-gray-300 outline-none focus:border-blue-500 w-44" />
+          <select value={serviceFilter} onChange={e => setServiceFilter(e.target.value as typeof serviceFilter)} aria-label="Dịch vụ" className="text-[12px] px-2 py-1 rounded-md border border-gray-300 outline-none">
+            <option value="all">Mọi dịch vụ</option>
+            <option value="leasing">Cho thuê</option>
+            <option value="recruitment">Giới thiệu</option>
+          </select>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-[12px] px-2 py-1 rounded-md border border-gray-300 outline-none">
             <option value="all">Mọi trạng thái</option>
             {STATUS_OPTIONS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
@@ -128,7 +139,7 @@ export default function QuoteHistory({ toast }: Props) {
       ) : (
         <table className="w-full text-[12.5px]">
           <thead><tr className="border-b border-[#E8E7E2]">
-            {['Ngày', 'Khách hàng', 'KCN', 'PT / TN / KTV', 'Trạng thái', ''].map(h => (
+            {['Ngày', 'Khách hàng', 'KCN', 'Phí PT / TN / KTV', 'Trạng thái', ''].map(h => (
               <th key={h} className="text-left px-3 py-1.5 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">{h}</th>
             ))}
           </tr></thead>
@@ -137,11 +148,14 @@ export default function QuoteHistory({ toast }: Props) {
               <tr key={q.id} className="border-b border-[#F0EEE9] last:border-0 align-top">
                 <td className="px-3 py-2 whitespace-nowrap text-[#888]">{new Date(q.created_at).toLocaleDateString('vi-VN')}</td>
                 <td className="px-3 py-2 font-medium">
-                  {q.client_name}
+                  {q.client_name} <ServiceTypeBadge type={q.service_type ?? 'leasing'} className="align-middle" />
                   {q.industry && <div className="text-[11px] text-[#999] font-normal">{q.industry}</div>}
                 </td>
                 <td className="px-3 py-2 text-[#666]">{q.zone || '—'}</td>
-                <td className="px-3 py-2 text-[#666] whitespace-nowrap">{fmtVND(q.price_unskilled)} / {fmtVND(q.price_skilled)} / {fmtVND(q.price_tech)}</td>
+                <td className="px-3 py-2 text-[#666] whitespace-nowrap">
+                  {fmtVND(q.price_unskilled)} / {fmtVND(q.price_skilled)} / {fmtVND(q.price_tech)}
+                  <div className="text-[11px] text-[#999]">{q.service_type === 'recruitment' ? `/ người · đủ ${q.referral_terms?.minDays ?? '?'} ngày${q.referral_terms?.guaranteeDays ? ` · BH ${q.referral_terms.guaranteeDays} ngày` : ''}` : '/ người / tháng'}</div>
+                </td>
                 <td className="px-3 py-2">
                   <select value={q.status} onChange={e => updateStatus(q, e.target.value)}
                     className={`text-[11px] font-medium px-1.5 py-0.5 rounded-full border-0 outline-none cursor-pointer ${statusCls(q.status)}`}>

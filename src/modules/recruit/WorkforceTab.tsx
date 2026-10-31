@@ -1,4 +1,4 @@
-// Tab Thời vụ (GĐ4): lao động thời vụ của các khách cho thuê, quản lý tới từng người — nhắc mốc 12 tháng
+// Tab Đang cho thuê (GĐ4, trước tên "Thời vụ"): lao động thời vụ của các khách cho thuê, quản lý tới từng người — nhắc mốc 12 tháng
 // (BLLĐ 2019 Điều 53), chuyển chính thức cho khách, đối chiếu với số lao động tuần đang nhập ở Khách hàng.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -56,7 +56,7 @@ export default function WorkforceTab() {
     return (rows ?? []).filter(r => !k || foldVn(r.candidate.full_name).includes(k) || (digits.length >= 3 && r.candidate.phone.includes(digits)));
   }, [rows, q]);
 
-  if (missing) return <Quiet>Phần Thời vụ cần chạy migration 183 (20261101130000_183_recruit_workforce.sql) trên Supabase.</Quiet>;
+  if (missing) return <Quiet>Phần Đang cho thuê cần chạy migration 183 (20261101130000_183_recruit_workforce.sql) trên Supabase.</Quiet>;
 
   const totals = (summary ?? []).reduce((a, s) => ({ active: a.active + s.active, warn: a.warn + s.warn10, over: a.over + s.over12 }), { active: 0, warn: 0, over: 0 });
   const chosen = shown.filter(r => sel.has(r.id));
@@ -64,7 +64,7 @@ export default function WorkforceTab() {
 
   return (
     <div className="space-y-4 md:space-y-5">
-      <PageTitle eyebrow="Thời vụ" title="Lao động thời vụ theo từng người"
+      <PageTitle eyebrow="Đang cho thuê" title="Lao động thời vụ theo từng người"
         subtitle={`Cho thuê lại lao động tối đa ${LEASE_MAX_MONTHS} tháng (BLLĐ 2019 Điều 53) — nhắc từ tháng thứ ${LEASE_WARN_MONTHS} để chuyển chính thức cho khách hoặc điều chuyển.`}
         actions={canEdit ? (<>
           <button type="button" onClick={() => setImporting(true)} className={PILL_GRAY}><FileSpreadsheet size={14} /> Nhập Excel</button>

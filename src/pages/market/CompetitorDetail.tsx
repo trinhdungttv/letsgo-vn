@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { ArrowLeft, Pencil, Save, Plus, X, MapPin, ExternalLink, User, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import ServiceTypeBadge, { ServiceModeChip } from '../../components/ServiceTypeBadge';
+import { SERVICE_MODE_LABEL, pruneMissing, type ServiceMode } from '../../lib/serviceMode';
 import { formatCurrency } from '../../lib/format';
 import type { Competitor, CompetitorClient, CompetitorLog, MarketZone, Client, MarketLead } from '../../lib/types';
 import { useProvinces } from '../../hooks/useProvinces';
@@ -83,6 +85,10 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     facebook_url: competitor.facebook_url ?? '',
     tiktok_url: competitor.tiktok_url ?? '',
     social_other_url: competitor.social_other_url ?? '',
+    // hình thức + phí giới thiệu (migration 184)
+    service_mode: (competitor.service_mode ?? 'leasing') as ServiceMode,
+    referral_fee: competitor.referral_fee != null ? String(competitor.referral_fee) : '',
+    referral_guarantee_days: competitor.referral_guarantee_days != null ? String(competitor.referral_guarantee_days) : '',
   });
   // Chốt lại snapshot ban đầu để cảnh báo F5/đóng tab khi đang sửa dở mà chưa bấm "Lưu".
   const [initialForm, setInitialForm] = useState(form);
@@ -230,13 +236,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
 
   const [logNote, setLogNote] = useState('');
   const [logSource, setLogSource] = useState('');
-  const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '' });
+  const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', service_type: 'leasing' as 'leasing' | 'recruitment' });
   const [kcnFromProfile, setKcnFromProfile] = useState(false);
 
   // Sửa tại chỗ 1 dòng "KH đang phục vụ" — gồm cả NGÀY chốt số LĐ, để nhập được số liệu
   // của kỳ trước mà không làm nó trông như vừa khảo sát hôm nay.
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
-  const [editClientForm, setEditClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', workers_date: '' });
+  const [editClientForm, setEditClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', workers_date: '', service_type: 'leasing' as 'leasing' | 'recruitment' });
   const [savingClient, setSavingClient] = useState(false);
   const [missingCols, setMissingCols] = useState<string[]>([]);
   useEffect(() => { missingCompetitorClientColumns().then(setMissingCols); }, []);
@@ -251,6 +257,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       sale_phone: c.sale_phone ?? '',
       sale_fee: c.sale_fee != null ? String(c.sale_fee) : '',
       workers_date: workersDateInput(c),
+      service_type: c.service_type === 'recruitment' ? 'recruitment' : 'leasing',
     });
   };
 
@@ -265,6 +272,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       sale_phone: editClientForm.sale_phone.trim() || null,
       sale_fee: editClientForm.sale_fee ? parseFloat(editClientForm.sale_fee) : null,
       workers_updated_at: dateInputToIso(editClientForm.workers_date),
+      service_type: editClientForm.service_type,
     });
     setSavingClient(false);
     if (error) { toast('Lỗi: ' + error.message); return; }
@@ -387,8 +395,11 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       tiktok_url: form.tiktok_url.trim() || null,
       social_other_url: form.social_other_url.trim() || null,
       custom_links,
+      service_mode: form.service_mode,
+      referral_fee: form.service_mode !== 'leasing' ? parseFloat(form.referral_fee) || null : null,
+      referral_guarantee_days: form.service_mode !== 'leasing' ? parseInt(form.referral_guarantee_days) || null : null,
     };
-    const { error } = await supabase.from('competitors').update(patch).eq('id', competitor.id);
+    const { error } = await supabase.from('competitors').update(await pruneMissing('competitors', patch, ['service_mode', 'referral_fee', 'referral_guarantee_days'])).eq('id', competitor.id);
     setSaving(false);
     if (error) { toast('Lỗi: ' + error.message); return; }
     Object.assign(competitor, patch);
@@ -421,6 +432,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       sale_name: clientForm.sale_name.trim() || null,
       sale_phone: clientForm.sale_phone.trim() || null,
       sale_fee: clientForm.sale_fee ? parseFloat(clientForm.sale_fee) : null,
+      service_type: clientForm.service_type,
     });
     if (error) { toast('Lỗi: ' + error.message); return; }
 
@@ -437,7 +449,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
       await onRefresh();
     }
 
-    setClientForm({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '' });
+    setClientForm({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', service_type: 'leasing' });
     setKcnFromProfile(false);
     await load();
   };
@@ -582,6 +594,24 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                       <SearchSelect value={form.recruitment_source} onChange={v => setForm(f => ({ ...f, recruitment_source: v }))} options={sourceOptions} placeholder="Chọn hoặc gõ để thêm mới…" allowAdd onAdd={handleAddSource} />
                     </div>
                   </div>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#888]">Hình thức đang làm</label>
+                      <select value={form.service_mode} onChange={e => setForm(f => ({ ...f, service_mode: e.target.value as ServiceMode }))} className="text-[13px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]">
+                        {(Object.keys(SERVICE_MODE_LABEL) as ServiceMode[]).map(k => <option key={k} value={k}>{SERVICE_MODE_LABEL[k]}</option>)}
+                      </select>
+                    </div>
+                    {form.service_mode !== 'leasing' && (<>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-[#888]">Phí giới thiệu / người (₫)</label>
+                        <input type="number" min={0} value={form.referral_fee} onChange={e => setForm(f => ({ ...f, referral_fee: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-purple-200 rounded-lg outline-none focus:border-purple-500" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-[#888]">Bảo hành (ngày)</label>
+                        <input type="number" min={0} value={form.referral_guarantee_days} onChange={e => setForm(f => ({ ...f, referral_guarantee_days: e.target.value }))} className="text-[13px] px-2.5 py-1.5 border border-purple-200 rounded-lg outline-none focus:border-purple-500" />
+                      </div>
+                    </>)}
+                  </div>
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] text-[#888]">Nhân sự liên hệ</label>
@@ -693,6 +723,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                   <div className="flex justify-between"><span className="text-[#888]">Trụ sở chính</span><span className="font-medium text-[#111]">{competitor.zone_name}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Tổng LĐ ước tính</span><span className="font-medium text-[#111]">{(competitor.total_workers ?? 0).toLocaleString('vi-VN')}</span></div>
                   <div className="flex justify-between"><span className="text-[#888]">Nguồn tuyển</span><span className="font-medium text-[#111]">{competitor.recruitment_source || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#888]">Hình thức</span><span className="font-medium text-[#111] flex items-center gap-1.5">{SERVICE_MODE_LABEL[competitor.service_mode ?? 'leasing']} <ServiceModeChip mode={competitor.service_mode} /></span></div>
                   <div>
                     <div className="text-[#888] mb-1 flex items-center gap-1"><User size={11} /> Nhân sự liên hệ</div>
                     {(() => {
@@ -782,7 +813,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">KH đang phục vụ</div>
             {missingCols.length > 0 && (
               <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800">
-                Database chưa có cột <b>{missingCols.join(', ')}</b> — các ô này sẽ không lưu được. Chạy migration <b>139</b> trong Supabase SQL Editor.
+                Database chưa có cột <b>{missingCols.join(', ')}</b> — các ô này sẽ không lưu được. Chạy migration <b>{missingCols.includes('service_type') && missingCols.length === 1 ? '184' : missingCols.includes('service_type') ? '139 và 184' : '139'}</b> trong Supabase SQL Editor.
               </div>
             )}
             <div className="overflow-x-auto">
@@ -795,7 +826,12 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                 <tbody>
                   {compClients.map(c => editingClientId === c.id ? (
                     <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0 bg-blue-50/40">
-                      <td className="px-2 py-1.5"><input value={editClientForm.client_name} onChange={e => setEditClientForm(f => ({ ...f, client_name: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5">
+                        <input value={editClientForm.client_name} onChange={e => setEditClientForm(f => ({ ...f, client_name: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" />
+                        <select value={editClientForm.service_type} onChange={e => setEditClientForm(f => ({ ...f, service_type: e.target.value as 'leasing' | 'recruitment' }))} aria-label="Hình thức" className="mt-1 w-32 text-[11.5px] px-1.5 py-0.5 rounded border border-gray-300 outline-none">
+                          <option value="leasing">Cho thuê</option><option value="recruitment">Giới thiệu</option>
+                        </select>
+                      </td>
                       <td className="px-2 py-1.5"><input value={editClientForm.kcn} onChange={e => setEditClientForm(f => ({ ...f, kcn: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
                       <td className="px-2 py-1.5">
                         <input type="number" min={0} value={editClientForm.worker_count} onChange={e => setEditClientForm(f => ({ ...f, worker_count: e.target.value }))} className="w-16 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" />
@@ -813,7 +849,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                     </tr>
                   ) : (
                     <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
-                      <td className="px-3 py-2 font-medium">{c.client_name}</td>
+                      <td className="px-3 py-2 font-medium">{c.client_name} <ServiceTypeBadge type={c.service_type ?? 'leasing'} className="align-middle" /></td>
                       <td className="px-3 py-2 text-[#666]">{c.kcn || '—'}</td>
                       {/* Rê chuột vào con số → biết số liệu này chốt từ bao giờ. */}
                       <td className="px-3 py-2">
@@ -886,7 +922,11 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
               <input value={clientForm.sale_phone} onChange={e => setClientForm(f => ({ ...f, sale_phone: e.target.value }))} placeholder="SĐT sale"
                 className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
               <input type="number" min={0} value={clientForm.sale_fee} onChange={e => setClientForm(f => ({ ...f, sale_fee: e.target.value }))} placeholder="Phí sale/tháng (₫)"
-                className="col-span-2 text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
+              <select value={clientForm.service_type} onChange={e => setClientForm(f => ({ ...f, service_type: e.target.value as 'leasing' | 'recruitment' }))} aria-label="Hình thức đối thủ cung cấp"
+                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]">
+                <option value="leasing">Cho thuê lao động</option><option value="recruitment">Giới thiệu lao động</option>
+              </select>
               <button onClick={handleAddClient} className="col-span-2 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition whitespace-nowrap">
                 <Plus size={12} /> Thêm
               </button>
@@ -901,6 +941,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
               {feeRow('Phí KTV', competitor.fee_tech, 'text-emerald-700')}
               {feeRow('Lương trả LĐ', competitor.wage_paid)}
               {feeRow('Phí/công', competitor.fee_per_shift)}
+              {(competitor.service_mode === 'recruitment' || competitor.service_mode === 'both') && (<>
+                {feeRow('Phí giới thiệu / người', competitor.referral_fee ?? null, 'text-purple-700')}
+                <div className="flex items-center justify-between px-3 py-2 border-b border-[#F0EEE9] last:border-0">
+                  <span className="text-[12px] text-[#888]">Bảo hành giới thiệu</span>
+                  <span className="text-[13px] font-semibold text-purple-700">{competitor.referral_guarantee_days ? `${competitor.referral_guarantee_days} ngày` : '—'}</span>
+                </div>
+              </>)}
             </div>
           </div>
         </div>

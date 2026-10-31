@@ -410,6 +410,10 @@ export interface Competitor {
   custom_links?: Record<string, string>;
   // Chế độ hiển thị ảnh cover: 'cover' cắt lấp đầy khung, 'contain' tự khớp hiện toàn bộ ảnh (migration 116)
   image_fit?: 'cover' | 'contain' | null;
+  // Hình thức đối thủ làm + phí giới thiệu / người + bảo hành (migration 184)
+  service_mode?: 'leasing' | 'recruitment' | 'both' | null;
+  referral_fee?: number | null;
+  referral_guarantee_days?: number | null;
 }
 
 export interface CompetitorClient {
@@ -429,6 +433,8 @@ export interface CompetitorClient {
   // rê chuột vào con số để biết số liệu chốt từ bao giờ.
   updated_at?: string | null;
   workers_updated_at?: string | null;
+  /** Đối thủ cung cấp cho khách này theo hình thức nào (migration 184) */
+  service_type?: 'leasing' | 'recruitment' | null;
 }
 
 export interface CompetitorLog {
@@ -538,6 +544,9 @@ export interface IndustryMetric {
   demand_headcount?: number | null;
   note?: string | null;
   created_at?: string;
+  // Phí giới thiệu TB ngành, đ / người (migration 184)
+  referral_fee_min?: number | null;
+  referral_fee_max?: number | null;
 }
 
 // Chuỗi giá trị ngành (migration 109) — 'input' nguyên liệu, 'customer' khách của khách, 'market' thị trường xuất
@@ -603,6 +612,8 @@ export interface MarketLead {
   region: string | null;
   industry: string | null;
   workers_needed: number;
+  /** Khách cần thời vụ (cho thuê) / chính thức (giới thiệu) / cả hai (migration 184) */
+  need_type?: 'leasing' | 'direct' | 'both' | null;
   source: string | null;
   lead_date: string;
   status: string;
@@ -658,6 +669,9 @@ export interface Quote {
   // Ngành nghề + liên kết Dự án được tạo từ báo giá này khi "Thắng" (migration 121)
   industry?: string | null;
   converted_lead_id?: string | null;
+  // Cho thuê (price_* = phí DV / người / tháng) hay Giới thiệu (price_* = phí GT / người) (migration 184)
+  service_type?: 'leasing' | 'recruitment' | null;
+  referral_terms?: { minDays: number; guaranteeDays: number } | null;
 }
 
 export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'crm-sales' | 'admin-settings' | 'workspace' | 'loans'

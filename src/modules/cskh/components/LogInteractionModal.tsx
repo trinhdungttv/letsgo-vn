@@ -4,8 +4,10 @@
 // Hình thức "Quà tặng": thêm ô món quà (mình tặng / họ tặng, giá trị, sự kiện) → ghi luôn vào
 // Sự kiện & Quà tặng → Lịch sử quà; sửa / xoá dòng nhật ký thì món quà đi theo.
 // Có `existing` = SỬA dòng nhật ký: điền sẵn, khoá người liên hệ, lưu qua onUpdate.
-import { useState } from 'react';
-import { giftDraftOf, giftInputOf, giftOfLog, type LogGiftDraft } from '../../../lib/cskh/logGift';
+// Ghi mới: đang gõ dở thì tự lưu nháp trên máy (logDraft.ts) — lỡ tay đóng, mở lại vẫn còn.
+import { useEffect, useRef, useState } from 'react';
+import { clearLogDraft, getLogDraftStorage, loadLogDraft, logDraftHasContent, logDraftSavedLabel, saveLogDraft, type LogDraft } from '../../../lib/cskh/logDraft';
+import { EMPTY_GIFT_DRAFT, giftDraftOf, giftInputOf, giftOfLog, type LogGiftDraft } from '../../../lib/cskh/logGift';
 import type { CskhContact, CskhGift, CskhInteraction, CskhOccasion, InteractionType } from '../../../lib/cskh/types';
 import { INTERACTION_LABEL, INTERACTION_TYPES } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
@@ -40,26 +42,75 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
   onClose: () => void;
 }) {
   const editing = !!existing;
-  const [contactId, setContactId] = useState(existing?.contactId ?? initialContactId ?? '');
+  // Nháp gõ dở lần trước (chỉ khi ghi mới) — người trong nháp đã bị xoá thì bỏ người, giữ chữ
+  const [draft, setDraft] = useState<LogDraft | null>(() => (existing ? null : loadLogDraft(getLogDraftStorage(), initialContactId, Date.now())));
+  const draftContact = draft ? contacts.find(c => c.id === draft.contactId) ?? null : null;
+  const [contactId, setContactId] = useState(existing?.contactId ?? initialContactId ?? draftContact?.id ?? '');
   const [clientId, setClientId] = useState<string | null>(() => {
     if (existing) return existing.clientId;
-    const c = contacts.find(x => x.id === initialContactId);
+    if (draftContact && draft?.clientId && draftContact.clientIds.includes(draft.clientId)) return draft.clientId;
+    const c = contacts.find(x => x.id === (initialContactId ?? draftContact?.id));
     return c ? defaultClientIdOf(c) : null;
   });
-  const [type, setType] = useState<InteractionType>(existing?.type ?? 'call');
-  const [occurredAt, setOccurredAt] = useState(existing?.occurredAt ?? today);
-  const [content, setContent] = useState(existing?.content ?? '');
-  const [theyInitiated, setTheyInitiated] = useState(existing?.initiatedBy === 'them');
+  const [type, setType] = useState<InteractionType>(existing?.type ?? draft?.type ?? 'call');
+  const [occurredAt, setOccurredAt] = useState(existing?.occurredAt ?? (draft?.occurredAt || today));
+  const [content, setContent] = useState(existing?.content ?? draft?.content ?? '');
+  const [theyInitiated, setTheyInitiated] = useState(existing ? existing.initiatedBy === 'them' : !!draft?.theyInitiated);
   const [followUp, setFollowUp] = useState<FollowUpValue>(
-    existing ? { action: existing.followUpAction, due: existing.followUpDue ?? '' } : EMPTY_FOLLOW_UP,
+    existing ? { action: existing.followUpAction, due: existing.followUpDue ?? '' } : draft?.followUp ?? EMPTY_FOLLOW_UP,
   );
   const [extras, setExtras] = useState<ExtraRow[]>(
-    () => (existing?.extraTasks ?? []).map(t => ({ taskId: t.id, action: t.action, due: t.due ?? '', done: t.done })),
+    () => existing
+      ? existing.extraTasks.map(t => ({ taskId: t.id, action: t.action, due: t.due ?? '', done: t.done }))
+      : draft?.extras ?? [],
   );
   const existingGift = existing ? giftOfLog(gifts, existing) : null;
-  const [giftDraft, setGiftDraft] = useState<LogGiftDraft>(() => giftDraftOf(existingGift));
+  const [giftDraft, setGiftDraft] = useState<LogGiftDraft>(() => {
+    if (existing || !draft) return giftDraftOf(existingGift);
+    // Sự kiện đã bị xoá / thuộc người khác thì bỏ gắn
+    const okOccasion = occasions.some(o => o.id === draft.gift.occasionId && o.contactId === draftContact?.id);
+    return { ...draft.gift, occasionId: okOccasion ? draft.gift.occasionId : '' };
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Tự lưu nháp mỗi lần sửa form (ghi mới). Khoá theo người: đổi người giữa chừng thì nháp đi theo.
+  const draftKey = useRef<string | null>(draft ? draft.contactId : null);
+  const draftValue = { contactId, clientId, type, occurredAt, content, theyInitiated, followUp, extras: extras.map(e => ({ action: e.action, due: e.due })), gift: giftDraft };
+  const dirty = !editing && logDraftHasContent(draftValue);
+  useEffect(() => {
+    if (editing) return;
+    saveLogDraft(getLogDraftStorage(), { ...draftValue, savedAt: Date.now() }, draftKey.current);
+    draftKey.current = contactId;
+    // draftValue dựng lại mỗi lần render — chỉ cần chạy khi các ô của form đổi
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, contactId, clientId, type, occurredAt, content, theyInitiated, followUp, extras, giftDraft]);
+
+  /** Bỏ nháp, về form trắng (giữ người liên hệ nếu form mở cho 1 người cụ thể). */
+  const resetForm = () => {
+    clearLogDraft(getLogDraftStorage(), contactId, Date.now());
+    const c = contacts.find(x => x.id === initialContactId);
+    setContactId(initialContactId ?? '');
+    setClientId(c ? defaultClientIdOf(c) : null);
+    setType('call');
+    setOccurredAt(today);
+    setContent('');
+    setTheyInitiated(false);
+    setFollowUp(EMPTY_FOLLOW_UP);
+    setExtras([]);
+    setGiftDraft(EMPTY_GIFT_DRAFT);
+    setDraft(null);
+    setError('');
+  };
+
+  // "Huỷ" là chủ ý bỏ → hỏi trước nếu đang gõ dở rồi xoá nháp; còn bấm nền / Esc / X thì giữ nháp
+  const handleCancel = () => {
+    if (dirty) {
+      if (!confirm('Bỏ nội dung đang nhập dở?\n\n(Chỉ muốn đóng tạm thì bấm ra ngoài hoặc nút X — nội dung vẫn được giữ.)')) return;
+      clearLogDraft(getLogDraftStorage(), contactId, Date.now());
+    }
+    onClose();
+  };
 
   const contact = contacts.find(c => c.id === contactId) ?? null;
   // Dòng cũ chưa gắn người (contact = null) không ghi quà được
@@ -125,11 +176,19 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
     });
     setSaving(false);
     if (err) setError(err);
+    else clearLogDraft(getLogDraftStorage(), contactId, Date.now());
   };
 
   return (
     <Sheet label={editing ? 'Sửa nhật ký' : 'Ghi tương tác'} onClose={onClose} wide>
       <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] mb-3">{editing ? 'Sửa nhật ký' : 'Ghi tương tác'}</h2>
+
+      {draft && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] bg-[#0071E3]/[0.08] px-3.5 py-2.5 text-[12.5px] text-[#0058B0]">
+          <span className="flex-1 min-w-[200px]">Đã mở lại nội dung đang nhập dở {logDraftSavedLabel(draft.savedAt, Date.now())}.</span>
+          <button type="button" onClick={resetForm} className="font-semibold hover:opacity-70 min-h-[32px] md:min-h-0">Bỏ nháp, nhập mới</button>
+        </div>
+      )}
 
       <div className="space-y-3">
         <div>
@@ -238,8 +297,10 @@ export function LogInteractionModal({ contacts, clients, gifts = [], occasions =
 
       {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
-      <div className="flex gap-2 mt-4">
-        <button type="button" onClick={onClose}
+      {dirty && <p className="mt-3 text-[11px] text-[#AEAEB2]">✓ Đã lưu nháp trên máy này — lỡ tay đóng, mở lại vẫn còn.</p>}
+
+      <div className={`flex gap-2 ${dirty ? 'mt-2' : 'mt-4'}`}>
+        <button type="button" onClick={handleCancel}
           className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Huỷ</button>
         <button type="button" onClick={handleSave} disabled={saving}
           className="flex-[2] h-11 md:h-9 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[13px] font-semibold hover:bg-[#0077ED] disabled:opacity-40">

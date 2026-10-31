@@ -11,7 +11,7 @@ import type { CompetitorClient } from '../../lib/types';
  * chạy suốt từ 23/07 mà không ai biết: form "KH đang phục vụ" im lặng không thêm được.
  * Dò 1 lần mỗi phiên rồi tự loại cột chưa có ra khỏi payload.
  */
-const OPTIONAL_COLUMNS = ['sale_phone', 'updated_at', 'workers_updated_at'] as const;
+const OPTIONAL_COLUMNS = ['sale_phone', 'updated_at', 'workers_updated_at', 'service_type'] as const;
 
 let probe: Promise<Set<string>> | null = null;
 
@@ -52,6 +52,8 @@ export interface CompetitorClientInput {
   sale_fee?: number | null;
   /** Mốc chốt số LĐ — cho sửa tay để nhập được số liệu của kỳ trước. */
   workers_updated_at?: string | null;
+  /** Đối thủ cung cấp cho khách này: cho thuê / giới thiệu (migration 184) */
+  service_type?: 'leasing' | 'recruitment';
 }
 
 export async function insertCompetitorClient(competitorId: string, input: CompetitorClientInput) {
@@ -66,6 +68,7 @@ export async function insertCompetitorClient(competitorId: string, input: Compet
     sale_fee: input.sale_fee ?? null,
     workers_updated_at: input.workers_updated_at ?? now,
     updated_at: now,
+    service_type: input.service_type ?? 'leasing',
   });
   return supabase.from('competitor_clients').insert(payload).select().single();
 }
@@ -88,6 +91,7 @@ export async function updateCompetitorClient(row: CompetitorClient, input: Compe
     workers_updated_at: input.workers_updated_at
       ?? (workersChanged ? now : row.workers_updated_at ?? row.created_at ?? now),
     updated_at: now,
+    service_type: input.service_type ?? row.service_type ?? 'leasing',
   });
   return supabase.from('competitor_clients').update(payload).eq('id', row.id).select().single();
 }

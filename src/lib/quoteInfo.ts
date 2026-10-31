@@ -5,6 +5,11 @@
 export type QuoteUnit = 'ngày công' | 'giờ' | 'tháng';
 export const QUOTE_UNITS: QuoteUnit[] = ['ngày công', 'giờ', 'tháng'];
 
+/** Hình thức của bảng báo giá CRM (migration 184 — lưu trong jsonb, không cần cột mới). */
+export type QuoteService = 'leasing' | 'recruitment' | 'both';
+/** Dòng tính theo: cho thuê (lương + phí theo đơn vị) hay giới thiệu (phí / người khi làm đủ ngày). */
+export type LineKind = 'leasing' | 'recruitment';
+
 export interface QuoteInfoLine {
   id: string;
   /** Hạng mục / vị trí, vd "Phổ thông", "Tay nghề", "Kỹ thuật viên", "Tổ trưởng". */
@@ -17,6 +22,8 @@ export interface QuoteInfoLine {
   fee: number | null;
   unit: QuoteUnit;
   note: string;
+  /** Chỉ dùng khi báo giá "cả hai" — dòng này là cho thuê hay giới thiệu. */
+  kind?: LineKind;
 }
 
 export interface QuoteInfo {
@@ -31,6 +38,10 @@ export interface QuoteInfo {
   payment_terms: string;
   note: string;
   lines: QuoteInfoLine[];
+  /** Cho thuê / giới thiệu / cả hai — thiếu = cho thuê (dữ liệu cũ) */
+  service?: QuoteService;
+  /** Điều khoản giới thiệu: làm đủ N ngày thì tính phí, bảo hành M ngày */
+  referral?: { minDays: number; guaranteeDays: number };
   updated_at?: string;
 }
 
@@ -46,8 +57,16 @@ export const emptyQuoteInfo = (): QuoteInfo => ({
 /** Ba dòng chuẩn theo tab Báo giá tự động. */
 export const standardLines = (): QuoteInfoLine[] => ['Phổ thông', 'Tay nghề', 'Kỹ thuật viên'].map(l => emptyLine(l));
 
-/** Giá bán ra / đơn vị = lương + phí dịch vụ (cùng cách tính ở bảng Báo giá tự động). */
-export const lineTotal = (l: QuoteInfoLine): number => (l.wage ?? 0) + (l.fee ?? 0);
+/** Dòng này tính theo cách nào (báo giá 1 hình thức → mọi dòng theo hình thức đó). */
+export const lineKind = (q: Pick<QuoteInfo, 'service'>, l: QuoteInfoLine): LineKind =>
+  q.service === 'recruitment' ? 'recruitment' : q.service === 'both' ? (l.kind ?? 'leasing') : 'leasing';
+
+/**
+ * Giá báo / đơn vị. Cho thuê = lương + phí dịch vụ (cùng cách tính ở Báo giá tự động).
+ * Giới thiệu = chỉ phí giới thiệu / người (lương do khách trả thẳng cho người lao động).
+ */
+export const lineTotal = (l: QuoteInfoLine, kind: LineKind = 'leasing'): number =>
+  kind === 'recruitment' ? (l.fee ?? 0) : (l.wage ?? 0) + (l.fee ?? 0);
 
 /** Chuẩn hoá giá trị đọc từ DB (có thể null/thiếu trường) về dạng đầy đủ. */
 export function normalizeQuoteInfo(raw: unknown): QuoteInfo {

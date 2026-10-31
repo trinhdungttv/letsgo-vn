@@ -12,6 +12,7 @@ import { fetchIndustries } from './market/industries';
 import QuoteHistory from './market/QuoteHistory';
 
 import { isRangeKey } from '../lib/payroll/wageRange';
+import { DEFAULT_REFERRAL_TERMS, avgReferralFee, hasColumn, pruneMissing, referralTermsText, type ReferralTerms } from '../lib/serviceMode';
 
 const sumWageDetail = (d: Record<string, number> | null | undefined) =>
   Object.entries(d ?? {}).reduce((a, [k, b]) => a + (isRangeKey(k) ? 0 : (b || 0)), 0);
@@ -46,6 +47,11 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
   const [form, setForm] = useState({ name: '', tax: '', address: '', contact: '', demand: '', zone: initialZone || '', industry: '' });
   const [wages, setWages] = useState({ pt: '6200000', tn: '8500000', ktv: '12000000' });
   const [fees, setFees] = useState({ pt: '850000', tn: '1100000', ktv: '1400000' });
+  // Hai dịch vụ (migration 184): cho thuê = lương + phí DV / người / tháng · giới thiệu = phí / người khi làm đủ N ngày
+  const [service, setService] = useState<'leasing' | 'recruitment'>('leasing');
+  const isGT = service === 'recruitment';
+  const [refFees, setRefFees] = useState({ pt: '', tn: '', ktv: '' });
+  const [terms, setTerms] = useState<ReferralTerms>(DEFAULT_REFERRAL_TERMS);
   const [showPreview, setShowPreview] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -82,14 +88,22 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
   const ptFee = parseInt(fees.pt) || 0;
   const tnFee = parseInt(fees.tn) || 0;
   const ktvFee = parseInt(fees.ktv) || 0;
+  const ptRef = parseInt(refFees.pt) || 0;
+  const tnRef = parseInt(refFees.tn) || 0;
+  const ktvRef = parseInt(refFees.ktv) || 0;
 
   const selectedZone = marketZones.find(z => z.name === form.zone);
   const zoneRegionWage = selectedZone?.region_zone && regionWages ? regionWages[selectedZone.region_zone as RegionZone] : null;
-  const belowMinWage = zoneRegionWage != null && [ptWage, tnWage, ktvWage].some(w => w > 0 && w < zoneRegionWage);
+  const belowMinWage = !isGT && zoneRegionWage != null && [ptWage, tnWage, ktvWage].some(w => w > 0 && w < zoneRegionWage);
 
   const competitorsForZone = useMemo(() => competitors.filter(c =>
     zoneMatches(c.zone_name, form.zone) || (c.active_zones ?? []).some(z => zoneMatches(z, form.zone))
   ), [competitors, form.zone]);
+  // Phí giới thiệu của đối thủ có làm giới thiệu tại KCN này (Đối thủ → hình thức + phí GT, migration 184)
+  const zoneReferral = useMemo(() => avgReferralFee(competitorsForZone), [competitorsForZone]);
+  const referralCompetitors = useMemo(() => competitorsForZone.filter(c => (c.service_mode === 'recruitment' || c.service_mode === 'both') && c.referral_fee), [competitorsForZone]);
+  const industryReferral = industryMetric?.referral_fee_min != null || industryMetric?.referral_fee_max != null
+    ? { lo: industryMetric?.referral_fee_min ?? null, hi: industryMetric?.referral_fee_max ?? null } : null;
 
   // Phí dịch vụ THẬT LGVN đã đàm phán được tại đúng KCN (+ ngành nếu lọc) — chênh lệch
   // giữa "Công ty trả LGVN" và "LGVN trả NLĐ" theo từng dự án/khách hàng đã có wage_detail
@@ -125,6 +139,11 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
     if (mid == null) return;
     setFees(f => ({ ...f, pt: String(mid) }));
     toast('Đã áp dụng gợi ý phí theo ngành vào Phổ thông');
+  };
+  const applyRefFee = (v: number | null, label: string) => {
+    if (v == null) return;
+    setRefFees(f => ({ ...f, pt: String(Math.round(v)) }));
+    toast(`Đã áp dụng ${label} vào phí giới thiệu Phổ thông`);
   };
   const applyRealMarginFee = () => {
     if (!realMargin) return;
@@ -165,7 +184,12 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
   }), [competitorsForZone, fees]);
 
   const handleDownload = () => {
-    const rows = [
+    const rows = isGT ? [
+      ['Loại LĐ', 'Phí giới thiệu / người'],
+      ['Phổ thông', ptRef], ['Tay nghề', tnRef], ['Kỹ thuật viên', ktvRef],
+      [], ...referralTermsText(terms).map(t => ['', `"${t}"`]),
+      [], ['Khách hàng:', form.name], ['KCN:', form.zone], ['Ngành:', form.industry], ['Ngày:', new Date().toLocaleDateString('vi-VN')],
+    ] : [
       ['Loại LĐ', 'Đơn giá LĐ', 'Phí DV', 'Tổng'],
       ['Phổ thông', ptWage, ptFee, ptWage + ptFee],
       ['Tay nghề', tnWage, tnFee, tnWage + tnFee],
@@ -175,25 +199,29 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
     const csv = '﻿' + rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `BaoGia_${form.name.replace(/\s/g, '_') || 'LetsGoVN'}.csv`; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = `BaoGia${isGT ? 'GioiThieu' : ''}_${form.name.replace(/\s/g, '_') || 'LetsGoVN'}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleSave = async () => {
     if (!form.name) { toast('Nhập tên công ty trước'); return; }
+    // Database chưa chạy migration 184 thì báo giá giới thiệu sẽ bị lưu nhầm thành cho thuê → chặn, nhắc chạy migration
+    if (isGT && !(await hasColumn('quotes', 'service_type'))) { toast('Chưa lưu được báo giá giới thiệu: cần chạy migration 184 trong Supabase'); return; }
     try {
-      const { data, error } = await supabase.from('quotes').insert({
+      const payload = await pruneMissing('quotes', {
         client_name: form.name, tax_code: form.tax, address: form.address,
         contact_person: form.contact, labor_demand: form.demand, zone: form.zone || null,
         industry: form.industry || null,
-        price_unskilled: ptFee, price_skilled: tnFee, price_tech: ktvFee, status: 'draft',
-      }).select().single();
+        price_unskilled: isGT ? ptRef : ptFee, price_skilled: isGT ? tnRef : tnFee, price_tech: isGT ? ktvRef : ktvFee, status: 'draft',
+        service_type: service, referral_terms: isGT ? terms : null,
+      }, ['service_type', 'referral_terms']);
+      const { data, error } = await supabase.from('quotes').insert(payload).select().single();
       if (error) throw error;
       setSaved(true); setTimeout(() => setSaved(false), 3000);
       toast('Đã lưu báo giá!');
       await logActivity({
         user, action: 'insert', table: 'quotes', recordId: data.id,
-        description: `Tạo báo giá cho "${form.name}"`,
+        description: `Tạo báo giá ${isGT ? 'giới thiệu lao động' : 'cho thuê lao động'} cho "${form.name}"`,
         newData: data,
       });
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -203,7 +231,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
 
   return (
     <>
-      <PageHeader title="Báo giá tự động" subtitle="Điền thông tin → Xem trước → Tải Excel" />
+      <PageHeader title="Báo giá tự động" subtitle="Chọn hình thức (cho thuê / giới thiệu) → Điền thông tin → Xem trước → Tải Excel" />
       <div className="flex-1 overflow-y-auto p-3 md:p-5">
         <MinWageStaleBanner dbBatches={minWageBatches} className="mb-3" />
         <div className="flex gap-1.5 mb-4">
@@ -219,7 +247,18 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
           <QuoteHistory toast={toast} />
         ) : (
         <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden mb-4">
-          <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Thông tin khách hàng</div>
+          <div className="px-4 py-2.5 border-b border-[#E8E7E2] flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[12.5px] font-semibold text-[#111]">Thông tin khách hàng</span>
+            {/* Hai dịch vụ: chọn trước, form chỉ hiện đúng phần của dịch vụ đó */}
+            <div role="tablist" aria-label="Hình thức dịch vụ" className="inline-flex p-[2px] rounded-lg bg-[#F1F0EC] text-[12px]">
+              {([['leasing', 'Cho thuê lao động (thời vụ)'], ['recruitment', 'Giới thiệu lao động (chính thức)']] as const).map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={service === k} onClick={() => setService(k)}
+                  className={`px-2.5 py-1 rounded-md font-medium transition ${service === k ? (k === 'recruitment' ? 'bg-white text-purple-700 shadow-sm' : 'bg-white text-blue-700 shadow-sm') : 'text-[#666] hover:text-[#111]'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="p-4">
             <div className="grid grid-cols-2 gap-3 mb-3">
               {[
@@ -274,7 +313,25 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
               </div>
             )}
 
-            {(industryMetric?.service_fee_min != null || realMargin) && (
+            {isGT && (zoneReferral || industryReferral) && (
+              <div className="mb-4 p-3 bg-purple-50/60 border border-purple-200 rounded-lg text-[12px] space-y-1.5">
+                <div className="font-semibold text-purple-800">Gợi ý phí giới thiệu dựa trên dữ liệu thị trường</div>
+                {zoneReferral && (
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span>Đối thủ làm giới thiệu tại {form.zone} (n={zoneReferral.n}): TB <strong>{fmtVND(Math.round(zoneReferral.avg))}</strong>/người ({fmtVND(zoneReferral.min)} – {fmtVND(zoneReferral.max)})</span>
+                    <button onClick={() => applyRefFee(zoneReferral.avg, 'phí TB đối thủ')} className="text-blue-600 hover:underline text-[11.5px] font-medium shrink-0">Áp dụng vào Phổ thông</button>
+                  </div>
+                )}
+                {industryReferral && (
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span>Phí giới thiệu TB ngành "{form.industry}": <strong>{industryReferral.lo != null ? fmtVND(industryReferral.lo) : '—'}{industryReferral.hi != null ? ` – ${fmtVND(industryReferral.hi)}` : ''}</strong>/người</span>
+                    <button onClick={() => applyRefFee(industryReferral.lo != null && industryReferral.hi != null ? (industryReferral.lo + industryReferral.hi) / 2 : industryReferral.lo ?? industryReferral.hi, 'phí TB ngành')} className="text-blue-600 hover:underline text-[11.5px] font-medium shrink-0">Áp dụng vào Phổ thông</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!isGT && (industryMetric?.service_fee_min != null || realMargin) && (
               <div className="mb-4 p-3 bg-amber-50/60 border border-amber-200 rounded-lg text-[12px] space-y-1.5">
                 <div className="font-semibold text-amber-800">Gợi ý phí dịch vụ dựa trên dữ liệu thị trường</div>
                 {industryMetric?.service_fee_min != null && (
@@ -298,6 +355,29 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
               </div>
             )}
 
+            {isGT ? (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 p-3 bg-purple-50/40 border border-purple-100 rounded-lg">
+                <div className="text-[12px] text-[#555] font-medium col-span-full">Phí giới thiệu đề xuất (₫ / người, thu 1 lần khi làm đủ ngày) — người lao động ký HĐ với khách</div>
+                {[{ key: 'pt', label: 'Phổ thông' }, { key: 'tn', label: 'Tay nghề' }, { key: 'ktv', label: 'Kỹ thuật viên' }].map(f => (
+                  <div key={f.key} className="flex flex-col gap-1">
+                    <label className="text-[11.5px] text-[#888]">{f.label}</label>
+                    <input type="number" value={refFees[f.key as keyof typeof refFees]} onChange={e => setRefFees(prev => ({ ...prev, [f.key]: e.target.value }))}
+                      placeholder="VD: 2000000" className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-purple-500" />
+                  </div>
+                ))}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11.5px] text-[#888]">Làm đủ (ngày) thì tính phí</label>
+                  <input type="number" min={0} value={terms.minDays} onChange={e => setTerms(t => ({ ...t, minDays: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-purple-500" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11.5px] text-[#888]">Bảo hành (ngày)</label>
+                  <input type="number" min={0} value={terms.guaranteeDays} onChange={e => setTerms(t => ({ ...t, guaranteeDays: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-purple-500" />
+                </div>
+                <div className="text-[11px] text-[#888] self-end">Tính phí theo giờ / ngày làm thực tế → dùng Workspace → Phương án giá (chế độ Giới thiệu LĐ).</div>
+              </div>
+            ) : (<>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3 p-3 bg-[#F9F9F7] rounded-lg">
               <div className="text-[12px] text-[#555] font-medium col-span-full">Đơn giá lao động đề xuất (₫/người/tháng)</div>
               {[{ key: 'pt', label: 'Phổ thông' }, { key: 'tn', label: 'Tay nghề' }, { key: 'ktv', label: 'Kỹ thuật viên' }].map(f => (
@@ -319,6 +399,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
                 </div>
               ))}
             </div>
+            </>)}
 
             <div className="flex flex-wrap gap-2 mb-4">
               <button onClick={() => setShowPreview(!showPreview)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-blue-500 text-blue-700 hover:bg-blue-50 transition"><Eye size={13} /> Xem trước</button>
@@ -353,7 +434,35 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
               </div>
             )}
 
-            {showComparison && form.zone && (
+            {showComparison && form.zone && isGT && (
+              <div className="mb-4 border border-purple-200 rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-purple-50 text-[12px] font-semibold text-purple-800">
+                  So sánh phí giới thiệu với đối thủ — {form.zone} ({referralCompetitors.length} đối thủ làm giới thiệu có ghi phí)
+                </div>
+                <table className="w-full text-[12.5px]">
+                  <thead><tr className="border-b border-purple-100">
+                    {['Đơn vị', 'Phí / người', 'Bảo hành'].map(h => <th key={h} className="text-left px-3 py-1.5 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7]">{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    <tr className="border-b border-[#F0EEE9]">
+                      <td className="px-3 py-2 font-semibold text-purple-700">Let's Go VN (Phổ thông)</td>
+                      <td className="px-3 py-2 font-semibold text-purple-700">{ptRef ? fmtVND(ptRef) : '—'}</td>
+                      <td className="px-3 py-2">{terms.guaranteeDays ? `${terms.guaranteeDays} ngày` : 'Không'}</td>
+                    </tr>
+                    {referralCompetitors.map(c => (
+                      <tr key={c.id} className="border-b border-[#F0EEE9] last:border-0">
+                        <td className="px-3 py-2">{c.company_name}</td>
+                        <td className="px-3 py-2">{fmtVND(c.referral_fee as number)}</td>
+                        <td className="px-3 py-2 text-[#888]">{c.referral_guarantee_days ? `${c.referral_guarantee_days} ngày` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {referralCompetitors.length === 0 && <div className="px-3 py-2 text-[11.5px] text-[#999] bg-[#F9F9F7]">Chưa có đối thủ nào ghi phí giới thiệu tại KCN này — vào tab Đối thủ, chọn hình thức "Giới thiệu" và nhập phí.</div>}
+              </div>
+            )}
+
+            {showComparison && form.zone && !isGT && (
               <div className="mb-4 border border-violet-200 rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-violet-50 text-[12px] font-semibold text-violet-800">
                   So sánh phí dịch vụ với đối thủ — {form.zone} ({competitorsForZone.length} đối thủ có dữ liệu)
@@ -383,7 +492,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
             {showPreview && (
               <div className="bg-[#F9F9F7] border border-[#E8E7E2] rounded-lg p-4">
                 <div className="text-center mb-4 pb-4 border-b border-[#E8E7E2]">
-                  <div className="text-[15px] font-bold">BÁO GIÁ DỊCH VỤ CUNG ỨNG LAO ĐỘNG</div>
+                  <div className="text-[15px] font-bold">{isGT ? 'BÁO GIÁ DỊCH VỤ GIỚI THIỆU LAO ĐỘNG' : 'BÁO GIÁ DỊCH VỤ CUNG ỨNG LAO ĐỘNG'}</div>
                   <div className="text-[12px] text-[#888] mt-1">CÔNG TY CỔ PHẦN LET'S GO VN · MST: 0317087641 · Ngày: {new Date().toLocaleDateString('vi-VN')}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 mb-4 text-[13px]">
@@ -398,6 +507,24 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
                     {form.industry && <div className="flex gap-2"><span className="text-[#888] shrink-0">Ngành:</span><span>{form.industry}</span></div>}
                   </div>
                 </div>
+                {isGT ? (<>
+                  <table className="w-full text-[12.5px]">
+                    <thead><tr className="border-b border-[#E8E7E2]">
+                      {['Loại lao động', 'Phí giới thiệu / người'].map(h => <th key={h} className="text-left py-2 text-[11.5px] text-[#888] font-medium pr-4">{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {[{ label: 'Phổ thông', fee: ptRef }, { label: 'Tay nghề', fee: tnRef }, { label: 'Kỹ thuật viên', fee: ktvRef }].filter(r => r.fee > 0).map(row => (
+                        <tr key={row.label} className="border-b border-[#F0EEE9]">
+                          <td className="py-2">{row.label}</td><td className="py-2 font-semibold text-purple-800">{fmtVND(row.fee)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ul className="text-[11.5px] text-[#666] mt-3 pt-3 border-t border-[#E8E7E2] space-y-0.5 list-disc pl-4">
+                    {referralTermsText(terms).map(t => <li key={t}>{t}</li>)}
+                    <li>Báo giá có hiệu lực 15 ngày · Thanh toán theo đối soát hằng tháng.</li>
+                  </ul>
+                </>) : (<>
                 <table className="w-full text-[12.5px]">
                   <thead><tr className="border-b border-[#E8E7E2]">
                     {['Loại lao động', 'Đơn giá LĐ', 'Phí dịch vụ', 'Tổng/người/tháng'].map(h => <th key={h} className="text-left py-2 text-[11.5px] text-[#888] font-medium pr-4">{h}</th>)}
@@ -412,6 +539,7 @@ export default function Quotes({ marketZones, competitors, clients, marketLeads,
                   </tbody>
                 </table>
                 <div className="text-[11.5px] text-[#888] mt-3 pt-3 border-t border-[#E8E7E2]">Báo giá có hiệu lực 15 ngày · Thanh toán 15–30 ngày/kỳ · BHXH theo quy định pháp luật</div>
+                </>)}
               </div>
             )}
           </div>

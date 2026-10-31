@@ -16,6 +16,26 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-service-mode-market',
+    date: '2026-10-31',
+    title: 'Thị trường',
+    features: [
+      'Báo giá: chọn Cho thuê lao động (thời vụ) hoặc Giới thiệu lao động (chính thức), in điều khoản GT',
+      'Đối thủ: ghi hình thức cho thuê / giới thiệu / cả hai, phí giới thiệu mỗi người, ngày bảo hành',
+      'Leads ghi khách cần thời vụ hay chính thức; Ngành Nghề thêm phí giới thiệu từ – đến',
+      'CRM: bảng báo giá chọn Cho thuê / Giới thiệu / Cả hai; Hợp tác tạo khách đúng loại dịch vụ',
+      'Tuyển dụng: lấy phí từ Phương án giá, gợi ý Lương TT; tab Thời vụ đổi tên thành Đang cho thuê',
+    ],
+  },
+  {
+    id: '2026-10-31-cskh-log-draft',
+    date: '2026-10-31',
+    title: 'CSKH',
+    features: [
+      'Ghi tương tác: nội dung đang nhập dở được tự lưu nháp — lỡ tay đóng form, mở lại vẫn còn',
+    ],
+  },
+  {
     id: '2026-10-31-recruit-workforce',
     date: '2026-10-31',
     title: 'Tuyển dụng',

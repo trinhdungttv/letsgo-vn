@@ -1,6 +1,9 @@
 // Vị trí tuyển (JD) — nhập theo đúng khung tin tuyển dụng của khách (VD Trưởng ca sản xuất Co-Herent):
 // lương, địa điểm, giờ làm/ca, mô tả, yêu cầu, phúc lợi → sinh tin đăng Facebook/Zalo.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../../lib/supabase';
+import { foldVn } from '../../lib/recruit/normalize';
+import type { MarketSurvey } from '../../lib/types';
 import { Copy, Trash2 } from 'lucide-react';
 import { copyText } from '../../lib/clipboard';
 import { deletePosition, errText, savePosition } from '../../lib/recruit/api';
@@ -25,6 +28,25 @@ export default function PositionSheet({ position, onClose }: { position: Recruit
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD(cur => ({ ...cur, [k]: v }));
+
+  // Gợi ý lương từ Thị trường → Lương TT: khảo sát mới nhất ở KCN của các nhà máy vị trí này
+  const [surveys, setSurveys] = useState<MarketSurvey[]>([]);
+  useEffect(() => {
+    supabase.from('market_surveys').select('*').order('survey_date', { ascending: false }).limit(300)
+      .then(({ data }) => setSurveys((data ?? []) as MarketSurvey[]), () => {});
+  }, []);
+  const wageHints = useMemo(() => {
+    const chosen = d.site_ids.length ? sites.filter(x => d.site_ids.includes(x.id)) : sites;
+    const keys = chosen.map(x => foldVn(x.zone_name || x.name).replace(/^kcn\s+/, '').trim()).filter(Boolean);
+    const out: MarketSurvey[] = [];
+    for (const k of keys) {
+      const hit = surveys.find(sv => { const z = foldVn(sv.zone_name).replace(/^kcn\s+/, '').trim(); return z === k || z.includes(k) || k.includes(z); });
+      if (hit && !out.includes(hit)) out.push(hit);
+    }
+    return out;
+  }, [surveys, sites, d.site_ids]);
+  const applyWage = (lo: number | null, hi: number | null) => setD(cur => ({ ...cur, salary_min: lo ?? cur.salary_min, salary_max: hi ?? lo ?? cur.salary_max }));
+  const tr = (v: number | null | undefined) => (v ? (v / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : '?');
 
   const preview = useMemo(() => project ? jobPostText({
     project, position: { ...d, id: position?.id ?? 'new', project_id: project.id, sort_order: 0, fee_override: null }, sites,
@@ -113,6 +135,20 @@ export default function PositionSheet({ position, onClose }: { position: Recruit
         </section>
 
         <section className={sectionCls}>
+          {wageHints.length > 0 && (
+            <div className="rounded-[10px] bg-white border border-black/[0.06] px-3 py-2 text-[12px] space-y-1">
+              <div className="font-semibold text-[#1D1D1F]">Lương thị trường (tab Lương TT)</div>
+              {wageHints.map(w => (
+                <div key={w.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[#6E6E73]">
+                  <span>{w.zone_name} · {new Date(w.survey_date).toLocaleDateString('vi-VN')}:</span>
+                  {(w.wage_unskilled_min || w.wage_unskilled_max) && <button type="button" onClick={() => applyWage(w.wage_unskilled_min, w.wage_unskilled_max)} className="text-[#0066CC] hover:underline">PT {tr(w.wage_unskilled_min)}–{tr(w.wage_unskilled_max)} tr</button>}
+                  {(w.wage_skilled_min || w.wage_skilled_max) && <button type="button" onClick={() => applyWage(w.wage_skilled_min, w.wage_skilled_max)} className="text-[#0066CC] hover:underline">Tay nghề {tr(w.wage_skilled_min)}–{tr(w.wage_skilled_max)} tr</button>}
+                  {w.wage_tech && <button type="button" onClick={() => applyWage(w.wage_tech, w.wage_tech)} className="text-[#0066CC] hover:underline">KTV {tr(w.wage_tech)} tr</button>}
+                </div>
+              ))}
+              <div className="text-[11px] text-[#86868B]">Bấm vào mức lương để điền vào ô bên dưới.</div>
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Field label="Lương từ (đ/tháng)"><MoneyInput value={d.salary_min} onChange={v => set('salary_min', v)} placeholder="12.000.000" /></Field>
             <Field label="Lương đến"><MoneyInput value={d.salary_max} onChange={v => set('salary_max', v)} placeholder="20.000.000" /></Field>

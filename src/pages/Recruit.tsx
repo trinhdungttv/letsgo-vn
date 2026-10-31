@@ -19,7 +19,7 @@ const TABS: { key: RecruitTab; label: string; Icon: LucideIcon }[] = [
   { key: 'batches', label: 'Nhận việc', Icon: CalendarCheck },
   { key: 'settle', label: 'Đối soát', Icon: Receipt },
   { key: 'insights', label: 'Phân tích', Icon: TrendingUp },
-  { key: 'workforce', label: 'Thời vụ', Icon: HardHat },
+  { key: 'workforce', label: 'Đang cho thuê', Icon: HardHat },
   { key: 'plan', label: 'Kế hoạch', Icon: ClipboardList },
 ];
 
