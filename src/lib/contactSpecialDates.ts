@@ -165,10 +165,9 @@ type SpecialDateWithContact = SpecialDateRow & { contacts: ContactLite | null };
  * Các ngày đặc biệt (sinh nhật + ngày khác) rơi trong `withinDays` ngày tới, tính cả
  * hôm nay (giờ Việt Nam) — dùng cho popup nhắc khi mở app.
  *
- * Từ migration CSKH 169/171 (chốt 19/10/2026): chỉ người ĐANG CHĂM SÓC (đang phụ
- * trách + đã chọn hạng), tính cả sự kiện ÂM LỊCH và sự kiện của người thân, bỏ sự
- * kiện đã xoá. DB chưa chạy migration thì giữ cách cũ (mọi người đang phụ trách,
- * chỉ dương lịch).
+ * Từ migration CSKH 169/171: mọi người ĐANG PHỤ TRÁCH (kể cả chưa xếp hạng chăm sóc —
+ * Tony chốt 31/10/2026), tính cả sự kiện ÂM LỊCH và sự kiện của người thân, bỏ sự
+ * kiện đã xoá. DB chưa chạy migration thì giữ cách cũ (chỉ dương lịch).
  */
 export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN()): Promise<UpcomingEvent[]> {
   const [cRes, sRes] = await Promise.all([
@@ -176,7 +175,6 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN
     supabase.from('contacts')
       .select('*, clients!contacts_client_id_fkey(name)')
       .eq('is_active', true)
-      .neq('tier', 'unclassified')
       .not('birthday', 'is', null),
     supabase.from('contact_special_dates')
       .select('*, contacts(*, clients!contacts_client_id_fkey(name))')
@@ -201,7 +199,7 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN
 
   for (const row of (sRes.data || []) as unknown as SpecialDateWithContact[]) {
     const contact = row.contacts as (ContactLite & { tier?: string }) | null;
-    if (!contact || contact.is_active === false || contact.tier === 'unclassified' || contactKindOf(contact) !== 'client') continue;
+    if (!contact || contact.is_active === false || contactKindOf(contact) !== 'client') continue;
     const o = mapSpecialDateRow(row);
     if (!o) continue;
     const who = o.relatedPerson && !o.title.toLowerCase().includes(o.relatedPerson.toLowerCase()) ? ` của ${o.relatedPerson}` : '';
@@ -213,8 +211,9 @@ export async function fetchUpcomingContactEvents(withinDays = 7, today = todayVN
 
 /**
  * Mốc nhắc ngày quan trọng khi mở app (nâng cấp 24/10/2026, port PRM OccasionAlertHost):
- * mỗi sự kiện nhắc TRƯỚC N ngày (số ngày riêng từng sự kiện) rồi nhắc LẠI ĐÚNG NGÀY — người
- * gọi tự lọc các mốc đã xem. Chỉ người đang chăm sóc (cùng luật với hàng đợi Hôm nay).
+ * mỗi sự kiện nhắc ở lần mở app đầu tiên trong 2 ngày trước rồi nhắc LẠI ĐÚNG NGÀY — người
+ * gọi tự lọc các mốc đã xem. Mọi người liên hệ của khách đang phụ trách (kể cả chưa xếp hạng
+ * chăm sóc — Tony chốt 31/10/2026), bỏ người đã nghỉ.
  * Trả về null khi DB chưa chạy migration CSKH 169/171 → người gọi dùng cách cũ.
  */
 export async function fetchOccasionAlerts(today = todayVN()): Promise<OccasionAlert[] | null> {
@@ -224,7 +223,7 @@ export async function fetchOccasionAlerts(today = todayVN()): Promise<OccasionAl
   ]);
   if (rows.length > 0 && !('tier' in rows[0])) return null;
   if (isMissingColumnError(sRes.error)) return null;
-  const contacts = rows.map(mapContactRow).filter(c => c.tier !== 'unclassified' && !c.isArchived);
+  const contacts = rows.map(mapContactRow).filter(c => !c.isArchived);
   const ids = new Set(contacts.map(c => c.id));
   const occasions: CskhOccasion[] = [
     ...((sRes.data ?? []) as SpecialDateRow[]).filter(r => ids.has(r.contact_id)).map(mapSpecialDateRow)

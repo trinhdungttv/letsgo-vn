@@ -108,16 +108,23 @@ describe('lần tới + cảnh báo khi mở app', () => {
     expect(nextOccurrenceInfo({ occasionType: 'anniversary', day: 27, month: 10, year: 2015, isLunar: false }, '2026-10-24')?.age).toBeNull();
   });
 
-  it('trước N ngày rồi đúng ngày; chỉ người đang chăm sóc, bỏ người đã nghỉ', () => {
+  it('trước 2 ngày rồi đúng ngày (dù nhắc trước 3 ngày); nhắc cả người chưa xếp hạng, bỏ người đã nghỉ', () => {
     const list = [occ(), occ({ id: 'o2', contactId: 'c2' }), occ({ id: 'o3', contactId: 'c3' })];
     expect(buildOccasionAlerts(people, list, '2026-10-23')).toHaveLength(0);
-    const d3 = buildOccasionAlerts(people, list, '2026-10-24');
-    expect(d3.map(a => [a.contactName, a.stage, a.daysUntil, a.age])).toEqual([['Anh Minh', 'before', 3, 36]]);
-    expect(d3[0].key).toBe('o1:2026-10-27:before');
-    expect(d3[0].sub).toBe('TP Nhân sự · Midea');
-    // Lỡ hôm D-3, mở app hôm D-1 vẫn còn mốc "trước" cùng khoá → đã xem thì không hiện lại
+    // remindDaysBefore = 3 chỉ dùng cho việc "Chuẩn bị quà" — popup chưa hiện ở D-3
+    expect(buildOccasionAlerts(people, list, '2026-10-24')).toHaveLength(0);
+    const d2 = buildOccasionAlerts(people, list, '2026-10-25');
+    expect(d2.map(a => [a.contactName, a.stage, a.daysUntil, a.age])).toEqual([
+      ['Anh Minh', 'before', 2, 36],
+      ['Chị Lan', 'before', 2, 36],   // chưa xếp hạng chăm sóc vẫn được nhắc
+    ]);
+    expect(d2[0].key).toBe('o1:2026-10-27:before');
+    expect(d2[0].sub).toBe('TP Nhân sự · Midea');
+    // Lỡ hôm D-2, mở app hôm D-1 vẫn còn mốc "trước" cùng khoá → đã xem thì không hiện lại
     expect(buildOccasionAlerts(people, list, '2026-10-26')[0].key).toBe('o1:2026-10-27:before');
-    expect(buildOccasionAlerts(people, list, '2026-10-27').map(a => [a.stage, a.key])).toEqual([['day', 'o1:2026-10-27:day']]);
+    expect(buildOccasionAlerts(people, list, '2026-10-27').map(a => [a.stage, a.key])).toEqual([
+      ['day', 'o1:2026-10-27:day'], ['day', 'o2:2026-10-27:day'],
+    ]);
     expect(buildOccasionAlerts(people, list, '2026-10-28')).toHaveLength(0);
   });
 

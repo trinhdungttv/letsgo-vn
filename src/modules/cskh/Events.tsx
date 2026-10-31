@@ -7,13 +7,21 @@
 // • Lịch sử quà — tránh tặng trùng: Đã tặng / Đã nhận, giá trị, gắn sự kiện. Quà ghi từ Nhật ký
 //   (hình thức "Quà tặng") cũng nằm ở đây; dòng "Quà tặng" cũ chưa có món quà được nhắc ở đầu trang
 //   để ghi bổ sung.
+// • Ngày của CÔNG TY (migration 185, chỉ trang khách): thành lập / kỷ niệm / ngày lễ riêng +
+//   ngày lễ quốc gia người đứng đầu, của công ty đang hợp tác trong phạm vi lọc (chi nhánh,
+//   người quản lý KH). Nhập ở Khách hàng → "Ngày lễ KH"; nút "Ngày lễ công ty" ở đây mở cùng form.
 // Xoá = lưu trữ (xoá mềm), khôi phục được ở trang Lịch sử.
 // ============================================================================
 import { useMemo, useState } from 'react';
-import { CalendarHeart, CalendarPlus, Gift, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Building2, CalendarHeart, CalendarPlus, Gift, Pencil, Plus, Trash2 } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { useAuth } from '../../lib/auth';
+import { branchOf } from '../../lib/branchRef';
+import { useCompanyDates } from '../../hooks/useCompanyDates';
+import { buildCompanyAgenda, type CompanyAgendaItem } from '../../lib/cskh/companyDates';
+import { isCooperatingClient } from '../../lib/cskh/seedTiers';
+import CompanyDatesQuickModal from '../../components/clients/CompanyDatesQuickModal';
 import { formatCurrencyFull } from '../../lib/format';
 import { formatDateVN, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
@@ -30,14 +38,20 @@ import { useCareScope } from './useCareScope';
 import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, MoreButton, PageTitle, Panel, Quiet, Row, Segmented, Switch } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
+import { CompanyEventRow } from './components/CompanyEventRow';
 import { GiftForm } from './components/GiftForm';
 import { LogInteractionModal } from './components/LogInteractionModal';
 import { OccasionForm } from './components/OccasionForm';
 
 const PAGE = 30;
 
+type EventFilter = 'all' | 'people' | 'company';
+type EventRow =
+  | { kind: 'person'; key: string; nextIso: string; daysUntil: number; o: CskhOccasion }
+  | { kind: 'company'; key: string; nextIso: string; daysUntil: number; item: CompanyAgendaItem };
+
 export default function CskhEvents() {
-  const { space, data, loading, clients, toast, openProfile } = useCskh();
+  const { space, data, loading, clients, toast, openProfile, openClient } = useCskh();
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const today = todayVN();
@@ -54,6 +68,10 @@ export default function CskhEvents() {
   const [fixingLog, setFixingLog] = useState<CskhInteraction | null>(null);
   const [showAllMissing, setShowAllMissing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [eventFilter, setEventFilter] = useState<EventFilter>('all');
+  const [datesModal, setDatesModal] = useState<{ onlyClientIds?: string[]; tab: 'company' | 'country' } | null>(null);
+  const { data: dates } = useCompanyDates();
+  const isClientSpace = space === 'client';
 
   const scopedIds = useMemo(() => new Set(scope.scoped.map(c => c.id)), [scope.scoped]);
 
@@ -69,6 +87,22 @@ export default function CskhEvents() {
     })
     .sort((a, b) => a.daysUntil - b.daysUntil), [data, contactById, scopedIds, showAllPeople, today]);
   const hiddenUnclassified = (data?.occasions ?? []).filter(o => !o.isArchived && contactById.get(o.contactId)?.tier === 'unclassified').length;
+
+  // Ngày của công ty đang hợp tác, theo bộ lọc chi nhánh / người quản lý KH (người phụ trách không áp cho công ty)
+  const { branch, manager } = scope.filters;
+  const companyItems = useMemo(() => {
+    if (!isClientSpace || !dates.ready) return [];
+    const lites = clients
+      .filter(isCooperatingClient)
+      .filter(c => (branch === 'all' || branchOf(c, branches)?.id === branch) && (manager === 'all' || (c.manager ?? '').trim() === manager))
+      .map(c => ({ id: c.id, name: c.name, leaderCountry: dates.countryByClient.get(c.id) ?? null }));
+    return buildCompanyAgenda({ clients: lites, occasions: dates.occasions, holidays: dates.holidays, today, withinDays: 366 });
+  }, [isClientSpace, dates, clients, branches, branch, manager, today]);
+
+  const eventRows = useMemo<EventRow[]>(() => [
+    ...(eventFilter === 'company' ? [] : upcoming.map(u => ({ kind: 'person' as const, key: u.o.id, ...u }))),
+    ...(eventFilter === 'people' ? [] : companyItems.map(item => ({ kind: 'company' as const, key: item.key, nextIso: item.nextIso, daysUntil: item.daysUntil, item }))),
+  ].sort((a, b) => a.daysUntil - b.daysUntil), [upcoming, companyItems, eventFilter]);
 
   const gifts = useMemo(() => (data?.gifts ?? [])
     .filter(g => !g.isArchived && (giftDir === 'all' || g.direction === giftDir) && (!g.contactId || scopedIds.has(g.contactId)))
@@ -112,7 +146,7 @@ export default function CskhEvents() {
 
   if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
 
-  const soon = upcoming.filter(u => u.daysUntil <= 30).length;
+  const soon = upcoming.filter(u => u.daysUntil <= 30).length + companyItems.filter(i => i.daysUntil <= 30).length;
 
   return (
     <div className="space-y-4 md:space-y-5">
@@ -122,6 +156,11 @@ export default function CskhEvents() {
         subtitle={<>{soon} sự kiện trong 30 ngày tới · đã tặng {givenYear.length} món trong 12 tháng{givenYearValue > 0 && ` (${formatCurrencyFull(givenYearValue)})`}</>}
         actions={(
           <>
+            {isClientSpace && (
+              <button type="button" onClick={() => setDatesModal({ tab: 'company' })} className={PILL_TINTED} title="Ngày thành lập, ngày lễ công ty, quốc gia người đứng đầu — cùng form với Khách hàng → Ngày lễ KH">
+                <Building2 size={15} strokeWidth={2.2} /> Ngày lễ công ty
+              </button>
+            )}
             <button type="button" onClick={() => setGiftForm({ existing: null })} className={PILL_TINTED}>
               <Gift size={15} strokeWidth={2.2} /> Ghi quà
             </button>
@@ -170,16 +209,41 @@ export default function CskhEvents() {
         <Panel title="Sự kiện sắp tới" count={soon}
           icon={<span className={`w-7 h-7 rounded-[8px] ${ICON_TILE.red} text-white flex items-center justify-center`}><CalendarHeart size={15} /></span>}
           meta="Xếp theo ngày gần nhất · âm lịch đã quy đổi sang dương"
-          footer={upcoming.length > eventLimit && (
-            <MoreButton onClick={() => setEventLimit(eventLimit + PAGE)}>Hiện thêm (còn {upcoming.length - eventLimit})</MoreButton>
+          footer={eventRows.length > eventLimit && (
+            <MoreButton onClick={() => setEventLimit(eventLimit + PAGE)}>Hiện thêm (còn {eventRows.length - eventLimit})</MoreButton>
           )}>
-          <div className="pb-1">
-            <Switch checked={showAllPeople} onChange={setShowAllPeople}
-              label={<span className="text-[12.5px] text-[#6E6E73]">Cả người chưa chăm sóc{hiddenUnclassified ? ` (${hiddenUnclassified})` : ''}</span>} />
-          </div>
-          {upcoming.length === 0 ? <Quiet icon={<CalendarHeart size={18} />}>Chưa có sự kiện nào — bấm "Thêm sự kiện".</Quiet> : (
+          {isClientSpace && (
+            <div className="pb-1.5">
+              <Segmented label="Lọc sự kiện" value={eventFilter} onChange={setEventFilter} options={[
+                { key: 'all', label: 'Tất cả' },
+                { key: 'people', label: 'Người liên hệ', badge: upcoming.length },
+                { key: 'company', label: 'Công ty', badge: companyItems.length },
+              ]} />
+            </div>
+          )}
+          {eventFilter !== 'company' && (
+            <div className="pb-1">
+              <Switch checked={showAllPeople} onChange={setShowAllPeople}
+                label={<span className="text-[12.5px] text-[#6E6E73]">Cả người chưa chăm sóc{hiddenUnclassified ? ` (${hiddenUnclassified})` : ''}</span>} />
+            </div>
+          )}
+          {isClientSpace && !dates.ready && eventFilter !== 'people' && (
+            <p className="text-[12px] text-[#86868B] pb-1">Chưa chạy migration 185 — chưa có ngày lễ công ty.</p>
+          )}
+          {eventRows.length === 0 ? (
+            <Quiet icon={<CalendarHeart size={18} />}>
+              {eventFilter === 'company' ? 'Chưa có ngày lễ công ty — bấm "Ngày lễ công ty" để nhập.' : 'Chưa có sự kiện nào — bấm "Thêm sự kiện".'}
+            </Quiet>
+          ) : (
             <div>
-              {upcoming.slice(0, eventLimit).map(({ o, nextIso, daysUntil }, idx) => {
+              {eventRows.slice(0, eventLimit).map((r, idx) => {
+                if (r.kind === 'company') {
+                  return (
+                    <CompanyEventRow key={r.key} item={r.item} first={idx === 0} onOpenClient={openClient}
+                      onEdit={it => setDatesModal(it.type === 'national' ? { tab: 'country' } : { tab: 'company', onlyClientIds: [it.client.id] })} />
+                  );
+                }
+                const { o, nextIso, daysUntil } = r;
                 const c = contactById.get(o.contactId);
                 return (
                   <Row key={o.id} first={idx === 0} inset={56}>
@@ -275,6 +339,10 @@ export default function CskhEvents() {
         </Panel>
       </div>
 
+      {datesModal && (
+        <CompanyDatesQuickModal clients={clients} onlyClientIds={datesModal.onlyClientIds} initialTab={datesModal.tab}
+          onClose={() => setDatesModal(null)} toast={toast} />
+      )}
       {occForm && (
         <OccasionForm
           contacts={contacts}

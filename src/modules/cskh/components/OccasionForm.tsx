@@ -116,7 +116,7 @@ export function OccasionForm({ contacts, existing, initialContactId, onSave, onC
           <div>
             <label className={labelCls}>Nhắc trước (ngày)</label>
             <input type="number" inputMode="numeric" min={0} max={60} value={remind} onChange={e => setRemind(e.target.value)} className={inputCls} />
-            <p className="text-[11.5px] text-[#86868B] mt-0.5">Nhắc khi mở app trước bấy nhiêu ngày (rồi nhắc lại đúng ngày) + tạo việc "Chuẩn bị quà" trong Workspace. 0 = chỉ đúng ngày</p>
+            <p className="text-[11.5px] text-[#86868B] mt-0.5">Tạo việc "Chuẩn bị quà" trong Workspace trước bấy nhiêu ngày. Popup chúc mừng khi mở app: trước 2 ngày + đúng ngày. 0 = chỉ đúng ngày</p>
           </div>
         </div>
         <div>

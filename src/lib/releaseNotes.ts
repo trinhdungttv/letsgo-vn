@@ -16,6 +16,17 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-company-occasions',
+    date: '2026-10-31',
+    title: 'Khách hàng & CSKH',
+    features: [
+      'Khách hàng → "Ngày lễ KH": nhập nhanh ngày thành lập, kỷ niệm, ngày lễ riêng của từng công ty',
+      'Chọn quốc gia người đứng đầu → tự nhắc ngày lễ lớn của nước đó (Seollal, Chuseok, Obon, Tết Xuân…)',
+      'CSKH Sự kiện & Dashboard hiện ngày của công ty; sửa danh mục ngày lễ theo quốc gia',
+      'Popup chúc sinh nhật / ngày đặc biệt: nhắc trước 2 ngày + đúng ngày, cho mọi người liên hệ của khách',
+    ],
+  },
+  {
     id: '2026-10-31-service-mode-market',
     date: '2026-10-31',
     title: 'Thị trường',

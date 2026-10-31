@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { MapPin, Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList, List, LayoutGrid } from 'lucide-react';
+import { MapPin, Plus, TrendingUp, TrendingDown, Settings, RefreshCw, AlertTriangle, FileDown, FileUp, Trash2, Pencil, Check, ClipboardList, List, LayoutGrid, CalendarHeart } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import AdminSettings, { loadColumnSettings, type ColumnKey } from '../components/AdminSettings';
 import FilterDropdown, { ALL_OPTION } from '../components/FilterDropdown';
@@ -19,6 +19,7 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import { HealthScoreRing } from '../components/clients/HealthScoreRing';
 import { ChurnBadge } from '../components/clients/ChurnBadge';
 import BulkCompanyMediaModal from './market/BulkCompanyMediaModal';
+import CompanyDatesQuickModal from '../components/clients/CompanyDatesQuickModal';
 import AddClientModal from '../components/clients/AddClientModal';
 import { CycleTrack } from '../components/clients/CycleTrack';
 import { calcHealthScore, detectChurnRisk } from '../utils/healthScore';
@@ -100,6 +101,7 @@ export default function Clients({
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
+  const [showCompanyDates, setShowCompanyDates] = useState(false);
   const [bulkWeek, setBulkWeek] = useState('');
   const [bulkExtraWeeks, setBulkExtraWeeks] = useState(0);
   const [bulkValues, setBulkValues] = useState<Record<string, string>>({});
@@ -999,6 +1001,7 @@ export default function Clients({
               title="Thao tác khách hàng"
               actions={[
                 { key: 'labor', label: 'Nhập nhanh số lao động', hint: 'Cho nhiều công ty cùng lúc', icon: <ClipboardList size={16} />, onClick: openBulkLabor },
+                { key: 'dates', label: 'Ngày lễ & kỷ niệm KH', hint: 'Thành lập, ngày lễ công ty, lễ quốc gia', icon: <CalendarHeart size={16} />, onClick: () => setShowCompanyDates(true) },
                 { key: 'media', label: 'Nhập ảnh & Google Maps', hint: 'Hàng loạt', icon: <MapPin size={16} />, onClick: () => setShowBulkMedia(true) },
                 { key: 'csv', label: 'Xuất CSV danh sách KH', icon: <FileDown size={16} />, onClick: exportToCSV },
                 { key: 'import', label: isImporting ? 'Đang nhập...' : 'Import Excel', icon: <FileUp size={16} />, disabled: isImporting, onClick: () => fileInputRef.current?.click() },
@@ -1053,6 +1056,9 @@ export default function Clients({
             </div>
             <button onClick={openBulkLabor} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh số lao động cho nhiều công ty">
               <ClipboardList size={13} /> Nhập nhanh LĐ
+            </button>
+            <button onClick={() => setShowCompanyDates(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition" title="Nhập nhanh ngày thành lập, kỷ niệm, ngày lễ công ty và quốc gia người đứng đầu — hiện ở CSKH để chúc khách">
+              <CalendarHeart size={13} /> Ngày lễ KH
             </button>
             </div>
             <button onClick={() => setAddModalOpen(true)} className="inline-flex items-center gap-1 px-3 h-9 md:h-auto md:py-1.5 rounded-lg text-[13px] md:text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition">
@@ -1767,6 +1773,7 @@ export default function Clients({
       </div>
 
       {/* Admin Settings Modal */}
+      {showCompanyDates && <CompanyDatesQuickModal clients={clients} onClose={() => setShowCompanyDates(false)} toast={toast} />}
       {showBulkMedia && <BulkCompanyMediaModal clients={clients.filter(c => !c.archived_at)} leads={[]} onClose={() => setShowBulkMedia(false)} onRefresh={onReload} toast={toast} />}
       {showSettings && isAdmin && (
         <AdminSettings

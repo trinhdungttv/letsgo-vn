@@ -3,14 +3,19 @@
 // của CSKH (thay Relationship Radar cũ): điểm TB các người liên hệ đang chăm sóc, ai
 // quá hạn, việc đã hứa đang mở, sự kiện sắp tới, quà đã tặng, nhật ký gần đây.
 // Bấm người → hồ sơ; nút + → ghi tương tác ngay tại đây.
+// Kèm "Ngày lễ & kỷ niệm" của chính công ty (migration 185): quốc gia người đứng đầu, ngày
+// thành lập, ngày riêng, ngày lễ của nước đó — nút Sửa mở cùng form nhập nhanh bên Khách hàng.
 // ============================================================================
 import { useMemo, useState } from 'react';
-import { ChevronRight, HeartPulse, Plus } from 'lucide-react';
+import { CalendarHeart, ChevronRight, Globe2, HeartPulse, Pencil, Plus } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { formatCurrencyFull } from '../../lib/format';
 import type { Client } from '../../lib/types';
 import { buildContactStats, dueLabel } from '../../lib/cskh/cadence';
+import { agendaTitle, buildCompanyAgenda, COMPANY_OCCASION_LABEL } from '../../lib/cskh/companyDates';
+import { useCompanyDates } from '../../hooks/useCompanyDates';
+import CompanyDatesQuickModal from '../../components/clients/CompanyDatesQuickModal';
 import { formatDateVN, relativeDayLabel, todayVN } from '../../lib/cskh/dates';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import { diffDays, nextOccurrenceIso } from '../../lib/cskh/lunar';
@@ -45,7 +50,14 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
   const [profileId, setProfileId] = useState<string | null>(null);
   const [logFor, setLogFor] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editDates, setEditDates] = useState(false);
+  const { data: dates } = useCompanyDates();
   const today = todayVN();
+  const leaderCountry = dates.countryByClient.get(client.id) ?? null;
+  const companyDates = useMemo(() => buildCompanyAgenda({
+    clients: [{ id: client.id, name: client.name, leaderCountry }],
+    occasions: dates.occasions, holidays: dates.holidays, today, withinDays: 366,
+  }), [client.id, client.name, leaderCountry, dates, today]);
 
   const view = useMemo(() => {
     if (!data) return null;
@@ -154,6 +166,46 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
         </div>
       )}
 
+      <div className="mx-4 md:mx-5 py-3 border-t border-[#E5E5EA]">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#86868B] flex items-center gap-1.5">
+            <CalendarHeart size={13} /> Ngày lễ &amp; kỷ niệm công ty
+          </p>
+          <button type="button" onClick={() => setEditDates(true)} className={LINK}><Pencil size={13} /> Sửa</button>
+        </div>
+        {!dates.ready ? (
+          <p className="text-[12px] text-[#86868B]">Chưa chạy migration 185 — chưa lưu được ngày lễ công ty.</p>
+        ) : (
+          <>
+            <p className="text-[12.5px] text-[#3A3A3C] flex items-center gap-1.5">
+              <Globe2 size={13} className="text-[#86868B]" />
+              Người đứng đầu: {leaderCountry ? <b className="font-semibold">{leaderCountry}</b> : <span className="text-[#86868B]">chưa rõ quốc gia</span>}
+            </p>
+            {companyDates.length === 0 ? (
+              <p className="text-[12px] text-[#C7C7CC] mt-1">Chưa có ngày nào — bấm Sửa để nhập ngày thành lập, ngày lễ công ty, quốc gia người đứng đầu.</p>
+            ) : (
+              <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                {companyDates.map(it => (
+                  <p key={it.key} className="text-[12px] text-[#1D1D1F] py-0.5 flex items-baseline gap-2 min-w-0">
+                    <span className="shrink-0 w-11 tabular-nums text-[#86868B]">{it.nextIso.slice(8, 10)}/{it.nextIso.slice(5, 7)}</span>
+                    <span className="min-w-0 truncate">
+                      {agendaTitle(it)}
+                      <span className="text-[#86868B]">
+                        {' · '}{it.type === 'national' ? `lễ ${it.holiday.country}` : COMPANY_OCCASION_LABEL[it.occasion.kind].toLowerCase()}
+                        {(it.type === 'national' ? it.holiday.isLunar : it.occasion.isLunar) ? ' · âm lịch' : ''}
+                      </span>
+                    </span>
+                    <span className={`ml-auto shrink-0 text-[11.5px] ${it.daysUntil <= 7 ? 'text-[#D70015] font-medium' : 'text-[#86868B]'}`}>
+                      {it.daysUntil === 0 ? 'Hôm nay' : `còn ${it.daysUntil} ngày`}
+                    </span>
+                  </p>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {(view.openFollowUps.length > 0 || view.recent.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mx-4 md:mx-5 py-3 border-t border-[#E5E5EA]">
           <div>
@@ -180,6 +232,10 @@ export default function ClientCareBlock({ client, clients, toast }: { client: Cl
         </div>
       )}
 
+      {editDates && (
+        <CompanyDatesQuickModal clients={clients.some(c => c.id === client.id) ? clients : [client, ...clients]}
+          onlyClientIds={[client.id]} onClose={() => setEditDates(false)} toast={toast} />
+      )}
       {profileId && data.rawContacts.has(profileId) && data.contacts.some(c => c.id === profileId) && (
         <ContactProfileModal
           key={profileId}

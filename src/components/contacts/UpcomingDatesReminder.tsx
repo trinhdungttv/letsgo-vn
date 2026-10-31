@@ -2,17 +2,22 @@
 // UpcomingDatesReminder — nhắc sinh nhật & ngày quan trọng khi mở app (mọi trang).
 // ----------------------------------------------------------------------------
 // Từ CSKH nâng cấp 24/10/2026 (port PRM OccasionAlertHost): mỗi sự kiện nhắc 2 lần —
-// TRƯỚC N ngày (theo "Nhắc trước" của từng sự kiện, đặt trong hồ sơ / Sự kiện & Quà tặng)
-// và ĐÚNG NGÀY; mỗi mốc chỉ hiện 1 lần trên mỗi trình duyệt (khoá `id:ngàyLầnTới:mốc`,
+// lần mở app ĐẦU TIÊN trong 2 ngày trước (Tony chốt 31/10; sự kiện đặt "chỉ đúng ngày" thì bỏ
+// mốc này) và ĐÚNG NGÀY; mỗi mốc chỉ hiện 1 lần trên mỗi trình duyệt (khoá `id:ngàyLầnTới:mốc`,
 // lưu localStorage theo người dùng, tự dọn mốc đã qua). App để mở qua đêm (iPad/PWA) thì
-// kiểm lại khi quay lại màn hình sang ngày mới. Chỉ người đang chăm sóc.
+// kiểm lại khi quay lại màn hình sang ngày mới. Nhắc MỌI người liên hệ của khách đang phụ trách,
+// kể cả người chưa xếp hạng chăm sóc (Tony chốt 31/10/2026); bỏ người đã nghỉ.
+// Kèm ngày của CÔNG TY đang hợp tác (migration 185): thành lập, kỷ niệm, ngày lễ công ty và
+// ngày lễ quốc gia người đứng đầu (1 dòng gom các công ty cùng nước) — cùng luật 2 mốc.
 // DB chưa chạy migration CSKH → giữ cách cũ (mọi ngày trong 7 ngày tới, mỗi ngày 1 lần).
 // ============================================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarHeart, Gift, X } from 'lucide-react';
+import { Building2, CalendarHeart, Gift, Globe2, X } from 'lucide-react';
 import { fetchOccasionAlerts, fetchUpcomingContactEvents, type UpcomingEvent } from '../../lib/contactSpecialDates';
 import { todayVN } from '../../lib/cskh/dates';
 import { alertWhen, pruneSeenKeys, type OccasionAlert } from '../../lib/cskh/occasions';
+import { agendaCompanies, agendaTitle, COMPANY_OCCASION_LABEL, type CompanyAlert } from '../../lib/cskh/companyDates';
+import { fetchCompanyAlerts } from '../../lib/companyDatesApi';
 import { AvatarCircle } from './AvatarUpload';
 
 const WINDOW_DAYS = 7;
@@ -44,6 +49,10 @@ interface Item {
   sub: string;
   daysUntil: number;
   notBirthday: boolean;
+  /** Dòng ngày công ty / ngày lễ quốc gia — hiện ô biểu tượng thay ảnh đại diện. */
+  icon?: 'company' | 'national';
+  /** Gợi ý chăm sóc của ngày lễ quốc gia. */
+  tip?: string;
 }
 
 const fromAlert = (a: OccasionAlert): Item => ({
@@ -55,6 +64,23 @@ const fromAlert = (a: OccasionAlert): Item => ({
   daysUntil: a.daysUntil,
   notBirthday: !a.label.startsWith('Sinh nhật'),
 });
+
+const fromCompany = ({ key, item }: CompanyAlert): Item => {
+  const national = item.type === 'national';
+  const lunar = national ? item.holiday.isLunar : item.occasion.isLunar;
+  const lunarDm = national ? `${item.holiday.day}/${item.holiday.month}` : `${item.occasion.day}/${item.occasion.month}`;
+  return {
+    key,
+    name: national ? `${item.holiday.title}${item.holiday.localName ? ` · ${item.holiday.localName}` : ''}` : item.client.name,
+    avatarUrl: null,
+    label: `${national ? `Lễ ${item.holiday.country}` : agendaTitle(item)} · ${item.nextIso.slice(8, 10)}/${item.nextIso.slice(5, 7)}${lunar ? ` (âm ${lunarDm})` : ''}`,
+    sub: national ? agendaCompanies(item, 4) : COMPANY_OCCASION_LABEL[item.occasion.kind],
+    daysUntil: item.daysUntil,
+    notBirthday: true,
+    icon: national ? 'national' : 'company',
+    tip: national ? item.holiday.tip : item.occasion.note,
+  };
+};
 
 const fromLegacy = (e: UpcomingEvent, i: number): Item => ({
   key: `legacy:${i}`,
@@ -84,10 +110,15 @@ export default function UpcomingDatesReminder({ userId, forceOpenToken }: Props)
     const today = todayVN();
     checkedDay.current = today;
     try {
-      const alerts = await fetchOccasionAlerts(today);
+      const [alerts, companyAlerts] = await Promise.all([
+        fetchOccasionAlerts(today),
+        // Ngày công ty lỗi / chưa chạy migration 185 → vẫn nhắc người liên hệ như cũ
+        fetchCompanyAlerts(today).catch(() => null),
+      ]);
+      const companyItems = (companyAlerts ?? []).map(fromCompany);
       if (alerts) {
         modeRef.current = 'alerts';
-        const all = alerts.map(fromAlert);
+        const all = [...alerts.map(fromAlert), ...companyItems].sort((a, b) => a.daysUntil - b.daysUntil);
         allRef.current = all;
         const seen = readSeen(userId);
         const fresh = all.filter(a => !seen.has(a.key));
@@ -96,7 +127,7 @@ export default function UpcomingDatesReminder({ userId, forceOpenToken }: Props)
         return;
       }
       modeRef.current = 'legacy';
-      const list = (await fetchUpcomingContactEvents(WINDOW_DAYS)).map(fromLegacy);
+      const list = [...(await fetchUpcomingContactEvents(WINDOW_DAYS)).map(fromLegacy), ...companyItems].sort((a, b) => a.daysUntil - b.daysUntil);
       allRef.current = list;
       setItems(list);
       setOpen(list.length > 0 && !localStorage.getItem(`lgvn_bday_seen_${userId}_${today}`));
@@ -148,14 +179,19 @@ export default function UpcomingDatesReminder({ userId, forceOpenToken }: Props)
         <ul className="px-5 py-2">
           {items.map(e => (
             <li key={e.key} className="flex items-center gap-3 py-2.5 border-b border-[#F0F0F2] last:border-0">
-              <AvatarCircle url={e.avatarUrl} name={e.name} size={38} />
+              {e.icon ? (
+                <span className={`w-[38px] h-[38px] shrink-0 rounded-full flex items-center justify-center ${e.icon === 'national' ? 'bg-[#0071E3]/[0.12] text-[#0058B0]' : 'bg-[#8944AB]/[0.12] text-[#8944AB]'}`}>
+                  {e.icon === 'national' ? <Globe2 size={18} /> : <Building2 size={18} />}
+                </span>
+              ) : <AvatarCircle url={e.avatarUrl} name={e.name} size={38} />}
               <div className="flex-1 min-w-0">
                 <div className="text-[14px] font-semibold text-[#1D1D1F] truncate">{e.name}</div>
                 <div className="text-[12px] text-[#6E6E73] truncate">
-                  {e.notBirthday && <CalendarHeart className="inline w-3 h-3 text-[#D70015] -mt-0.5 mr-0.5" />}
+                  {e.notBirthday && !e.icon && <CalendarHeart className="inline w-3 h-3 text-[#D70015] -mt-0.5 mr-0.5" />}
                   {e.label}
                 </div>
                 {e.sub && <div className="text-[11.5px] text-[#86868B] truncate">{e.sub}</div>}
+                {e.tip && <div className="text-[11.5px] text-[#6E6E73] line-clamp-2">{e.tip}</div>}
               </div>
               <span className={`shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full ${
                 e.daysUntil === 0 ? 'bg-[#FF3B30]/[0.12] text-[#D70015]' : e.daysUntil === 1 ? 'bg-[#FF9500]/[0.14] text-[#B25000]' : 'bg-black/[0.05] text-[#6E6E73]'

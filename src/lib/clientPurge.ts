@@ -27,6 +27,7 @@ export const OWNED_TABLES: RelationTable[] = [
   { table: 'contacts', label: 'Người liên hệ' },
   { table: 'contact_clients', label: 'Liên kết liên hệ ↔ công ty' },
   { table: 'client_gifts', label: 'Quà tặng' },
+  { table: 'client_occasions', label: 'Ngày lễ & kỷ niệm công ty' },
   { table: 'client_documents', label: 'Tài liệu' },
   { table: 'client_manager_history', label: 'Lịch sử người quản lý' },
   { table: 'client_branch_history', label: 'Lịch sử chi nhánh' },

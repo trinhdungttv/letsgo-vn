@@ -6,10 +6,13 @@
 //   • Sinh nhật của CHÍNH người liên hệ, dương lịch, biết năm → contacts.birthday (dùng chung
 //     với hồ sơ Khách hàng) + contacts.birthday_remind_days (migration 174).
 //   • Mọi dòng khác (âm lịch, không rõ năm, của người thân, kỷ niệm, giỗ…) → contact_special_dates.
-// Nhắc khi mở app: TRƯỚC N ngày (theo từng sự kiện) rồi nhắc LẠI ĐÚNG NGÀY — mỗi mốc chỉ
-// hiện 1 lần (khoá `id:ngàyLầnTới:stage`). Hàm thuần, có test.
+// Nhắc khi mở app (popup chúc mừng): lần mở app ĐẦU TIÊN trong 2 ngày trước rồi nhắc LẠI
+// ĐÚNG NGÀY — mỗi mốc chỉ hiện 1 lần (khoá `id:ngàyLầnTới:stage`). "Nhắc trước N ngày" của
+// từng sự kiện vẫn quyết định việc "Chuẩn bị quà" ở Workspace; popup lấy min(N, 2) — N = 0
+// thì chỉ báo đúng ngày. Hàm thuần, có test.
 // ============================================================================
 import { isValidDayMonth } from './dates';
+import { GREETING_POPUP_DAYS } from './companyDates';
 import { diffDays, nextOccurrenceIso } from './lunar';
 import type { CskhContact, CskhOccasion, OccasionType } from './types';
 import { OCCASION_LABEL } from './types';
@@ -240,12 +243,13 @@ export function occasionLabel(o: Pick<CskhOccasion, 'title' | 'relatedPerson'>):
 }
 
 /**
- * Các mốc cần báo hôm nay: còn 1..remindDaysBefore ngày → mốc "trước" (lỡ mất ngày đầu vẫn
- * báo ở lần mở app kế tiếp trong khoảng đó), đúng ngày → mốc "đúng ngày". Chỉ người ĐANG
- * CHĂM SÓC (cùng luật với hàng đợi Hôm nay), bỏ người đã nghỉ và sự kiện đã xoá.
+ * Các mốc cần báo hôm nay: còn 1..min(remindDaysBefore, 2) ngày → mốc "trước" (lỡ mất ngày đầu
+ * vẫn báo ở lần mở app kế tiếp trong khoảng đó), đúng ngày → mốc "đúng ngày". Nhắc MỌI người
+ * liên hệ, kể cả người chưa xếp hạng chăm sóc (Tony chốt 31/10/2026 — thay chốt C9 ngày 19/10);
+ * chỉ bỏ người đã nghỉ và sự kiện đã xoá.
  */
 export function buildOccasionAlerts(
-  contacts: readonly Pick<CskhContact, 'id' | 'fullName' | 'avatarUrl' | 'tier' | 'isArchived' | 'jobTitle' | 'organization'>[],
+  contacts: readonly Pick<CskhContact, 'id' | 'fullName' | 'avatarUrl' | 'isArchived' | 'jobTitle' | 'organization'>[],
   occasions: readonly Pick<CskhOccasion, 'id' | 'contactId' | 'title' | 'occasionType' | 'day' | 'month' | 'year' | 'isLunar' | 'relatedPerson' | 'remindDaysBefore' | 'isArchived'>[],
   today: string,
 ): OccasionAlert[] {
@@ -253,11 +257,11 @@ export function buildOccasionAlerts(
   const out: OccasionAlert[] = [];
   for (const o of occasions) {
     const c = byId.get(o.contactId);
-    if (o.isArchived || !c || c.isArchived || c.tier === 'unclassified') continue;
+    if (o.isArchived || !c || c.isArchived) continue;
     const nextIso = nextOccurrenceIso(o.day, o.month, o.isLunar, today);
     const daysUntil = diffDays(today, nextIso);
     const stage: OccasionAlertStage | null =
-      daysUntil === 0 ? 'day' : daysUntil > 0 && daysUntil <= o.remindDaysBefore ? 'before' : null;
+      daysUntil === 0 ? 'day' : daysUntil > 0 && daysUntil <= Math.min(o.remindDaysBefore, GREETING_POPUP_DAYS) ? 'before' : null;
     if (!stage) continue;
     out.push({
       key: `${o.id}:${nextIso}:${stage}`,

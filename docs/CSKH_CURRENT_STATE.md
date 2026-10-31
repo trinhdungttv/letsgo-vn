@@ -399,3 +399,33 @@ Trước đây chọn hình thức "Quà tặng" chỉ tạo dòng `cskh_logs`, 
 - **Chiều ngược — "Ghi quà" riêng ở Sự kiện & Quà tặng (26/10, `saveGift(input, existing, ctx, interactions)` / `archiveGift(g, user, interactions)`)**: ghi mới = ghi quà trước rồi ghi 1 dòng nhật ký `contact_type = 'gift'` cùng dấu `created_at` (Họ tặng mình → `initiated_by = 'them'`, ghi chú quà = nội dung nhật ký; nhật ký lỗi thì quà vừa ghi bị gỡ). Sửa quà → dòng nhật ký đi kèm (nếu có) đổi theo người / công ty / ngày / ghi chú. Xoá quà → xoá mềm cả dòng nhật ký "Quà tặng" kèm (và việc đã hứa chưa xong của dòng đó); hộp xác nhận nói rõ. Tìm dòng đi kèm bằng `logOfGift` — chỉ hình thức "Quà tặng", dòng cùng dấu nhưng đã đổi hình thức khác (đợt ghi nhóm) là lần liên hệ riêng nên không đụng.
 - **Hệ quả cần biết**: (1) ngày tặng giờ **không được ở tương lai** (form có `max`, API chặn; quà cũ có ngày tương lai vẫn sửa được món / ghi chú nếu không đổi ngày) — vì dòng nhật ký tính là "đã liên hệ", ngày tương lai làm ngày liên hệ lần cuối nhảy sang tương lai; (2) quà ghi TRƯỚC 26/10 chưa có dòng nhật ký và **không tự bổ sung** — sửa / xoá chúng chỉ đụng quà; (3) sửa 1 món quà trong đợt ghi nhóm sẽ sửa luôn nhật ký của người đó nên người này tách khỏi dòng đợt nếu đổi ngày / ghi chú.
 - Test: `lib/cskh/logGift.test.ts`, `modules/cskh/data/logGiftSave.test.ts` (nhật ký → quà), `modules/cskh/data/giftLogSync.test.ts` (quà → nhật ký).
+
+## 12. 31/10/2026 — Ngày lễ & kỷ niệm của CÔNG TY + popup chúc mừng 2 ngày
+
+### 12.1 Chốt nơi nhập: module Khách hàng (CSKH chỉ hiện + nhắc)
+
+- Ngày thành lập, ngày lễ riêng, quốc gia người đứng đầu là **thuộc tính của công ty** (như ngày chốt, bắt đầu HĐ) → nhập ở nơi quản lý hồ sơ công ty, một nguồn duy nhất.
+- Nhập nhanh hàng loạt cần đủ danh sách công ty — CSKH xoay quanh **người liên hệ**, công ty chưa có người liên hệ không hiện ở CSKH.
+- Chọn quốc gia 1 lần → ngày lễ quốc gia tự áp, không phải nhập từng ngày cho từng công ty.
+- CSKH → Sự kiện & Quà có nút **"Ngày lễ công ty"** mở **cùng form** (cùng component, cùng hàm lưu) — người làm CSKH không phải đổi module.
+
+### 12.2 Dữ liệu (migration 185 — CHƯA CHẠY, Tony tự chạy)
+
+- `clients.leader_country` (text, NULL = chưa rõ) — so khớp tên nước không phân biệt hoa/thường (`countryKey`).
+- `client_occasions` — ngày riêng của công ty: `kind` founding | anniversary | holiday | other, `day/month/year?/is_lunar`, `note`, xoá mềm. Mỗi công ty 1 ngày thành lập đang dùng (unique index). FK `ON DELETE CASCADE` + đã thêm vào `OWNED_TABLES` của `clientPurge` (chỉ mất khi xoá vĩnh viễn công ty).
+- `national_holidays` — danh mục ngày lễ theo nước (36 ngày nạp sẵn cho 10 nước: Hàn, Nhật, Trung, Đài Loan, Hồng Kông, Singapore, Thái Lan, Mỹ, Đức, Việt Nam), có tên bản địa + gợi ý chăm sóc. Sửa 1 lần áp cho mọi công ty nước đó. Chỉ ngày cố định (dương / âm lịch VN); lễ đổi ngày theo thứ (Lễ Tạ ơn) chưa hỗ trợ.
+- Danh sách nước để chọn = bảng `countries` (FDI, migration 106) + nước có ngày lễ + nước đang được chọn. **Không** thêm nước mới vào bảng `countries`.
+
+### 12.3 Code
+
+- Logic thuần + test: `lib/cskh/companyDates.ts` (`buildCompanyAgenda` gom 1 ngày lễ quốc gia thành 1 dòng nhiều công ty, `buildCompanyAlerts`, `parseDateInput`, `planCompanySave`).
+- Đọc/ghi: `lib/companyDatesApi.ts`; hook `hooks/useCompanyDates.ts` (tải lại theo `cskh:data-changed`). Quốc gia đọc thẳng `clients.leader_country` từ DB, không phụ thuộc danh sách khách App đã tải.
+- Form: `components/clients/CompanyDatesQuickModal.tsx` — tab Theo công ty (lưu 1 lần, chỉ dòng đã sửa) + tab Lễ theo quốc gia (lưu ngay). Mở từ Khách hàng (nút "Ngày lễ KH" / menu ⋯ trên điện thoại), hồ sơ công ty (khối Ngày lễ & kỷ niệm trong `ClientCareBlock`), CSKH → Sự kiện.
+- Hiện ở: CSKH Sự kiện & Quà (lọc Tất cả / Người liên hệ / Công ty, `CompanyEventRow`), Dashboard "Sắp tới → Sự kiện" + ô "Sự kiện 30 ngày", popup khi mở app. Chỉ công ty `isCooperatingClient`; theo bộ lọc Chi nhánh + Người quản lý KH (bộ lọc Người phụ trách không áp cho công ty).
+
+### 12.4 Popup chúc mừng: trước 2 ngày + đúng ngày (áp cả người liên hệ)
+
+- Tony yêu cầu 31/10: hiện ở **lần mở app đầu tiên trong 2 ngày trước** + **đúng ngày**. Trước đây mốc "trước" = "Nhắc trước N ngày" của từng sự kiện (mặc định 3, dòng cũ 7).
+- Nay popup lấy `min(N, 2)` (`GREETING_POPUP_DAYS`); N vẫn quyết định việc "Chuẩn bị quà" ở Workspace. N = 0 → chỉ báo đúng ngày.
+- **Nhắc mọi người liên hệ của khách** đang phụ trách, kể cả người chưa xếp hạng chăm sóc (Tony chốt 31/10 — **thay chốt C9** ngày 19/10 "chỉ người đang chăm sóc"). Vẫn bỏ người "Đã nghỉ" và người thuộc Mạng lưới Sale. Mỗi mốc 1 lần / trình duyệt (localStorage).
+- Chỉ đổi popup: hàng đợi Hôm nay, việc "Chuẩn bị quà" tự động, danh sách Sự kiện mặc định vẫn theo người đang chăm sóc.

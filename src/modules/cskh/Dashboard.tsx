@@ -7,9 +7,11 @@
 // Bộ lọc Chi nhánh / Người phụ trách / Người quản lý KH thay cho "Cá nhân · Công việc" của PRM.
 // ============================================================================
 import { useMemo, useState, type ReactNode } from 'react';
-import { CalendarClock, Check, ChevronRight, ListFilter, PenLine, TrendingDown, TrendingUp, UserPlus, Users } from 'lucide-react';
+import { Building2, CalendarClock, Check, ChevronRight, Globe2, ListFilter, PenLine, TrendingDown, TrendingUp, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
+import { useCompanyDates } from '../../hooks/useCompanyDates';
+import { agendaCompanies, agendaTitle, buildCompanyAgenda, type CompanyAgendaItem } from '../../lib/cskh/companyDates';
 import { branchOf } from '../../lib/branchRef';
 import { buildContactStats, CARE_STATUS_LABEL } from '../../lib/cskh/cadence';
 import { groupBatches } from '../../lib/cskh/groupLog';
@@ -82,6 +84,7 @@ export default function CskhDashboard() {
   const userName = useMemo(() => new Map((data?.users ?? []).map(u => [u.id, u.full_name])), [data]);
   const scope = useCareScope(contacts, clients, space);
   const { scoped, filters } = scope;
+  const { data: dates } = useCompanyDates();
 
   // ── Số liệu ───────────────────────────────────────────────────────────────
   const stats = useMemo(
@@ -183,6 +186,18 @@ export default function CskhDashboard() {
     } satisfies Record<AgendaKey, number>;
   }, [isFiltered, base, scoped, interactions, occasions, today]);
 
+  // Ngày của công ty đang hợp tác (thành lập, ngày lễ công ty, lễ quốc gia người đứng đầu) trong 30 ngày —
+  // theo bộ lọc chi nhánh / người quản lý KH; chỉ trang khách (migration 185)
+  const companyUpcoming = useMemo<CompanyAgendaItem[]>(() => {
+    if (isSale || !dates.ready) return [];
+    const lites = clients
+      .filter(c => isCooperatingClient(c)
+        && (filters.branch === 'all' || branchOf(c, branches)?.id === filters.branch)
+        && (filters.manager === 'all' || (c.manager ?? '').trim() === filters.manager))
+      .map(c => ({ id: c.id, name: c.name, leaderCountry: dates.countryByClient.get(c.id) ?? null }));
+    return buildCompanyAgenda({ clients: lites, occasions: dates.occasions, holidays: dates.holidays, today, withinDays: 30 });
+  }, [isSale, dates, clients, filters.branch, filters.manager, branches, today]);
+
   // "Sắp hết HĐ → Tái ký" đã có luồng riêng ở Workspace — chỉ nhắc 1 dòng, không tạo việc trùng
   const expiringContracts = useMemo(() => (isSale ? 0 : clients.filter(c => {
     if (!isCooperatingClient(c) || !c.contract_end) return false;
@@ -219,18 +234,23 @@ export default function CskhDashboard() {
 
   const careCountAll = contacts.filter(c => c.tier !== 'unclassified' && !c.isArchived).length;
   const queueTotal = fullQueue.length;
-  const eventsThisWeek = view.upcoming.filter(u => u.daysUntil <= 7).length;
+  // Sự kiện người liên hệ + ngày công ty, gần nhất trước
+  const eventRows = [
+    ...view.upcoming.map(u => ({ kind: 'person' as const, key: u.occasion.id, daysUntil: u.daysUntil, nextIso: u.nextIso, u })),
+    ...companyUpcoming.map(item => ({ kind: 'company' as const, key: item.key, daysUntil: item.daysUntil, nextIso: item.nextIso, item })),
+  ].sort((a, b) => a.daysUntil - b.daysUntil);
+  const eventsThisWeek = eventRows.filter(u => u.daysUntil <= 7).length;
   const summary = [
     queueTotal > 0 ? `${queueTotal} người cần liên hệ` : 'không ai cần liên hệ',
     view.dueFollowUps > 0 && `${view.dueFollowUps} việc đã hứa đến hạn`,
     eventsThisWeek > 0 && `${eventsThisWeek} sự kiện trong tuần`,
   ].filter(Boolean).join(' · ');
-  const nextEvent = view.upcoming[0];
+  const nextEvent = eventRows[0];
   const delta = view.last30 - view.prev30;
   const careTotal = view.status.overdue + view.status.due_soon + view.status.ok;
   const briefContact = brief ? contactById.get(brief.contactId) ?? null : null;
   const agenda: AgendaKey = agendaTab
-    ?? (view.followUps.length > 0 ? 'promises' : view.upcoming.length > 0 ? 'events' : 'recent');
+    ?? (view.followUps.length > 0 ? 'promises' : eventRows.length > 0 ? 'events' : 'recent');
   const healthColor = view.scored ? scoreColor(view.avgScore) : '#C7C7CC';
 
   if (!data) {
@@ -349,11 +369,12 @@ export default function CskhDashboard() {
             </Metric>
 
             <Metric label="Sự kiện 30 ngày" onClick={() => goTab('events')}>
-              <b className={bigNum}>{view.upcoming.length}</b>
+              <b className={bigNum}>{eventRows.length}</b>
               <span className={`${caption} truncate`}>
-                {nextEvent
-                  ? `${nextEvent.occasion.title} · ${contactById.get(nextEvent.occasion.contactId)?.fullName ?? ''} · ${daysUntilLabel(nextEvent.daysUntil).toLowerCase()}`
-                  : 'Không có sự kiện sắp tới'}
+                {!nextEvent ? 'Không có sự kiện sắp tới'
+                  : nextEvent.kind === 'company'
+                    ? `${agendaTitle(nextEvent.item)} · ${agendaCompanies(nextEvent.item, 2)} · ${daysUntilLabel(nextEvent.daysUntil).toLowerCase()}`
+                    : `${nextEvent.u.occasion.title} · ${contactById.get(nextEvent.u.occasion.contactId)?.fullName ?? ''} · ${daysUntilLabel(nextEvent.daysUntil).toLowerCase()}`}
               </span>
             </Metric>
           </div>
@@ -417,7 +438,7 @@ export default function CskhDashboard() {
                 )}>
                 <Segmented label="Sắp tới" value={agenda} onChange={setAgendaTab} options={[
                   { key: 'promises', label: 'Việc đã hứa', badge: view.followUps.length },
-                  { key: 'events', label: 'Sự kiện', badge: view.upcoming.length },
+                  { key: 'events', label: 'Sự kiện', badge: eventRows.length },
                   { key: 'recent', label: 'Gần đây' },
                 ]} />
                 <div className="mt-1.5">
@@ -450,21 +471,41 @@ export default function CskhDashboard() {
                       );
                     }))}
 
-                  {agenda === 'events' && (view.upcoming.length === 0 ? <Quiet>Không có sự kiện nào trong 30 ngày tới.</Quiet>
-                    : view.upcoming.slice(0, LIST_LIMIT).map(({ occasion: o, nextIso, daysUntil }, idx) => (
-                      <Row key={o.id} first={idx === 0} inset={52}>
+                  {agenda === 'events' && (eventRows.length === 0 ? <Quiet>Không có sự kiện nào trong 30 ngày tới.</Quiet>
+                    : eventRows.slice(0, LIST_LIMIT).map((r, idx) => r.kind === 'company' ? (
+                      <Row key={r.key} first={idx === 0} inset={52} onClick={() => goTab('events')} title="Mở Sự kiện & Quà">
                         <span className="w-10 shrink-0 rounded-[10px] bg-white ring-1 ring-black/[0.08] text-center leading-none overflow-hidden" aria-hidden>
-                          <small className="block text-[9px] font-semibold uppercase tracking-wide text-[#FF3B30] pt-1">Th{Number(nextIso.slice(5, 7))}</small>
-                          <b className="block text-[16px] font-semibold text-[#1D1D1F] pt-0.5 pb-1 tabular-nums">{Number(nextIso.slice(8, 10))}</b>
+                          <small className="block text-[9px] font-semibold uppercase tracking-wide text-[#0071E3] pt-1">Th{Number(r.nextIso.slice(5, 7))}</small>
+                          <b className="block text-[16px] font-semibold text-[#1D1D1F] pt-0.5 pb-1 tabular-nums">{Number(r.nextIso.slice(8, 10))}</b>
                         </span>
-                        <button type="button" onClick={() => setBrief({ contactId: o.contactId, item: null })} className="min-w-0 flex-1 text-left">
-                          <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{o.title}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{agendaTitle(r.item)}</span>
+                          <span className={`flex items-center gap-1 ${caption} min-w-0`}>
+                            {r.item.type === 'national' ? <Globe2 size={12} className="shrink-0" /> : <Building2 size={12} className="shrink-0" />}
+                            <span className="truncate">
+                              {r.item.type === 'national' ? `Lễ ${r.item.holiday.country} · ` : ''}{agendaCompanies(r.item, 2)}
+                              {(r.item.type === 'national' ? r.item.holiday.isLunar : r.item.occasion.isLunar) ? ' · âm lịch' : ''}
+                            </span>
+                          </span>
+                        </span>
+                        <span className={`shrink-0 h-6 px-2.5 inline-flex items-center rounded-full text-[12px] font-medium ${r.daysUntil <= 7 ? 'bg-[rgba(255,59,48,0.12)] text-[#D70015]' : 'bg-[#F2F2F7] text-[#6E6E73]'}`}>
+                          {daysUntilLabel(r.daysUntil)}
+                        </span>
+                      </Row>
+                    ) : (
+                      <Row key={r.key} first={idx === 0} inset={52}>
+                        <span className="w-10 shrink-0 rounded-[10px] bg-white ring-1 ring-black/[0.08] text-center leading-none overflow-hidden" aria-hidden>
+                          <small className="block text-[9px] font-semibold uppercase tracking-wide text-[#FF3B30] pt-1">Th{Number(r.nextIso.slice(5, 7))}</small>
+                          <b className="block text-[16px] font-semibold text-[#1D1D1F] pt-0.5 pb-1 tabular-nums">{Number(r.nextIso.slice(8, 10))}</b>
+                        </span>
+                        <button type="button" onClick={() => setBrief({ contactId: r.u.occasion.contactId, item: null })} className="min-w-0 flex-1 text-left">
+                          <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{r.u.occasion.title}</span>
                           <span className={`block ${caption} truncate`}>
-                            {o.relatedPerson ? `${o.relatedPerson} của ` : ''}{contactById.get(o.contactId)?.fullName ?? ''}{o.isLunar ? ' · âm lịch' : ''}
+                            {r.u.occasion.relatedPerson ? `${r.u.occasion.relatedPerson} của ` : ''}{contactById.get(r.u.occasion.contactId)?.fullName ?? ''}{r.u.occasion.isLunar ? ' · âm lịch' : ''}
                           </span>
                         </button>
-                        <span className={`shrink-0 h-6 px-2.5 inline-flex items-center rounded-full text-[12px] font-medium ${daysUntil <= 7 ? 'bg-[rgba(255,59,48,0.12)] text-[#D70015]' : 'bg-[#F2F2F7] text-[#6E6E73]'}`}>
-                          {daysUntilLabel(daysUntil)}
+                        <span className={`shrink-0 h-6 px-2.5 inline-flex items-center rounded-full text-[12px] font-medium ${r.daysUntil <= 7 ? 'bg-[rgba(255,59,48,0.12)] text-[#D70015]' : 'bg-[#F2F2F7] text-[#6E6E73]'}`}>
+                          {daysUntilLabel(r.daysUntil)}
                         </span>
                       </Row>
                     )))}
