@@ -56,8 +56,9 @@ export interface ContactSaleColumns {
   sale_company: string;
   competitor_id: string | null;
   sale_stage: string;
-  sale_area: string;
-  sale_industries: string;
+  /** Migration 179 — mã KCN (market_zones) / ngành (industries). */
+  sale_zone_ids: string[] | null;
+  sale_industry_ids: string[] | null;
 }
 export type ContactRow = Contact & Partial<ContactCskhColumns> & Partial<ContactProfileColumns> & Partial<ContactSaleColumns>;
 
@@ -134,6 +135,9 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T)
 
 const text = (v: string | null | undefined): string => v ?? '';
 
+/** Mảng mã (uuid[]) — thiếu cột / giá trị lạ → rỗng, bỏ trùng. */
+const idList = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x !== ''))] : []);
+
 /**
  * Sở thích: cột `hobbies` là TEXT chứa JSON array; dữ liệu cũ có thể là chuỗi
  * ngăn phẩy. Cùng quy tắc với parseHobbies() trong lib/contactOps (file đó gọi
@@ -162,8 +166,8 @@ export function mapContactRow(row: ContactRow): CskhContact {
     saleCompany,
     competitorId: row.competitor_id ?? null,
     saleStage: oneOf<SaleStage>(row.sale_stage, SALE_STAGES, 'none'),
-    saleArea: text(row.sale_area),
-    saleIndustries: text(row.sale_industries),
+    saleZoneIds: idList(row.sale_zone_ids),
+    saleIndustryIds: idList(row.sale_industry_ids),
     fullName: row.name,
     nickname: text(row.nickname),
     avatarUrl: text(row.avatar_url),

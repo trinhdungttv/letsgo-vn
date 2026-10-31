@@ -185,10 +185,10 @@ export interface CskhContact {
   /** Đối thủ trong Thị trường (competitors.id) nếu Sale đang làm cho đối thủ. */
   competitorId: string | null;
   saleStage: SaleStage;
-  /** Khu vực / KCN mạnh. */
-  saleArea: string;
-  /** Ngành quen. */
-  saleIndustries: string;
+  /** Khu vực / KCN mạnh — mã market_zones (migration 179; chọn từ danh mục, không gõ tay). */
+  saleZoneIds: string[];
+  /** Ngành quen — mã industries (migration 179). */
+  saleIndustryIds: string[];
   fullName: string;
   nickname: string;
   avatarUrl: string;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CskhGroup } from '../../lib/cskh/types';
-import { groupDisplayOf, hasToken, mapEmbedQuery, mapEmbedSrc, resolveGroupKey, splitList, toggleToken, TIER_COLOR, GROUP_COLOR } from './ui';
+import { catalogNames, groupDisplayOf, hasToken, mapEmbedQuery, mapEmbedSrc, resolveGroupKey, splitList, toggleToken, TIER_COLOR, GROUP_COLOR } from './ui';
 
 const groups: CskhGroup[] = [
   { id: 'g1', name: 'Khách Samsung', color: 'purple', baseTier: 'vip', kind: 'client', isArchived: false },
@@ -48,5 +48,13 @@ describe('bản đồ nhúng không cần API key', () => {
     expect(mapEmbedQuery('', ' 12 Đại lộ Bình Dương ')).toBe('12 Đại lộ Bình Dương');
     expect(mapEmbedQuery('', '  ')).toBeNull();
     expect(mapEmbedSrc('10.9,106.6')).toBe('https://maps.google.com/maps?q=10.9%2C106.6&z=16&hl=vi&output=embed');
+  });
+});
+
+describe('danh mục KCN / ngành của Sale', () => {
+  it('hiện tên theo thứ tự danh mục, bỏ mã đã bị xoá khỏi danh mục', () => {
+    const zones = [{ id: 'z1', name: 'KCN Long Bình' }, { id: 'z2', name: 'KCN Nhơn Trạch' }, { id: 'z3', name: 'VSIP 1' }];
+    expect(catalogNames(zones, ['z3', 'gone', 'z1'])).toEqual(['KCN Long Bình', 'VSIP 1']);
+    expect(catalogNames(zones, [])).toEqual([]);
   });
 });

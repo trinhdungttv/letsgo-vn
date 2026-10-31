@@ -37,6 +37,9 @@ import type {
 export const MIGRATION_HINT =
   'Cần chạy migration CSKH 168–173 trên Supabase (SQL Editor) trước khi lưu dữ liệu chăm sóc.';
 
+export const MIGRATION_179_HINT =
+  'Chưa lưu được KCN mạnh / ngành quen của Sale — cần chạy migration 179 (sale_zones_industries) trên Supabase (SQL Editor).';
+
 export const MIGRATION_174_HINT =
   'Chưa lưu được giới tính / học vấn / quê quán / số ngày nhắc sinh nhật / vị trí chấm tay — cần chạy migration 174 trên Supabase (SQL Editor).';
 
@@ -49,6 +52,7 @@ const isMissingSchema = (err: DbError) =>
 /** Lỗi ghi → câu tiếng Việt đọc được (thiếu bảng/cột = chưa chạy migration). */
 function writeError(err: DbError): Error {
   // Quà / người / nhóm của Sale ghi khi DB chưa chạy 178: client_id còn NOT NULL hoặc chưa có cột kind
+  if (isMissingSchema(err) && /sale_zone_ids|sale_industry_ids/.test(err?.message || '')) return new Error(MIGRATION_179_HINT);
   if (err && ((err.code === '23502' && /client_id/.test(err.message || '')) || (isMissingSchema(err) && /\bkind\b|sale_/.test(err.message || '')))) {
     return new Error(MIGRATION_178_HINT);
   }
@@ -128,6 +132,16 @@ export interface CskhData {
   referrals: SaleReferral[];
   /** Chỉ trang Sale: đối thủ trong Thị trường (chọn "Đang làm ở"). */
   competitors: CompetitorLite[];
+  /** Chỉ trang Sale: danh mục KCN (Thị trường → Khu vực) để chọn "KCN mạnh". */
+  zones: CatalogItem[];
+  /** Chỉ trang Sale: danh mục ngành (Thị trường → Ngành nghề) để chọn "Ngành quen". */
+  industries: CatalogItem[];
+}
+
+/** 1 mục danh mục dùng chung (KCN / ngành): mã + tên hiện tại. */
+export interface CatalogItem {
+  id: string;
+  name: string;
 }
 
 export interface CompetitorLite {
@@ -142,7 +156,7 @@ export interface CompetitorLite {
  */
 export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhData> {
   const sale = space === 'sale';
-  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes] = await Promise.all([
+  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes] = await Promise.all([
     selectContacts(q => q.order('name'), 'all') as Promise<ContactRow[]>,
     fetchAll<CskhLogRow>((from, to) => supabase.from('cskh_logs').select('*')
       .order('log_date', { ascending: false }).order('created_at', { ascending: false }).order('id').range(from, to)),
@@ -154,6 +168,8 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
     // Trang Sale: nguồn khách của BD Pipeline + danh sách đối thủ ('*' để DB chưa chạy 178 vẫn đọc được)
     sale ? supabase.from('crm_pipeline').select('*') : Promise.resolve({ data: [], error: null }),
     sale ? supabase.from('competitors').select('id, company_name, zone_name').order('company_name') : Promise.resolve({ data: [], error: null }),
+    sale ? supabase.from('market_zones').select('id, name').order('name') : Promise.resolve({ data: [], error: null }),
+    sale ? supabase.from('industries').select('id, name').order('name') : Promise.resolve({ data: [], error: null }),
   ]);
 
   // Bảng có sẵn trước CSKH mà lỗi → báo; bảng mới chưa có (chưa chạy migration) → bỏ qua
@@ -215,7 +231,18 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
     referrals: pipeRes.error ? [] : mapReferralRows((pipeRes.data ?? []) as PipelineReferralRow[]),
     competitors: compRes.error ? [] : ((compRes.data ?? []) as { id: string; company_name: string | null; zone_name: string | null }[])
       .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name),
+    zones: catalogOf(zoneRes),
+    industries: catalogOf(industryRes),
   };
+}
+
+/** Danh mục KCN / ngành: lỗi đọc (bảng chưa có) → rỗng; bỏ tên trống, xếp theo tên tiếng Việt. */
+function catalogOf(res: { data: unknown; error: unknown }): CatalogItem[] {
+  if (res.error) return [];
+  return ((res.data ?? []) as { id: string; name: string | null }[])
+    .map(r => ({ id: r.id, name: (r.name ?? '').trim() }))
+    .filter(r => r.name)
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
 }
 
 /** Một người liên hệ (dùng cho bottom sheet ghi nhận nhanh — không cần tải cả module). Khu vực nào cũng được. */
@@ -716,8 +743,9 @@ export interface SaleProfilePatch {
   saleCompany: string;
   competitorId: string | null;
   saleStage: SaleStage;
-  saleArea: string;
-  saleIndustries: string;
+  /** Mã KCN (market_zones) / ngành (industries) — migration 179. */
+  saleZoneIds: string[];
+  saleIndustryIds: string[];
 }
 
 /** Toạ độ nhà hiện tại khi lưu: chấm tay > link Maps > tra chữ (xem lib/cskh/mapPoints.planGeo). */
@@ -800,8 +828,8 @@ export async function saveProfile(opts: {
       sale_company: sp.saleCompany.trim(),
       competitor_id: sp.competitorId,
       sale_stage: sp.saleStage,
-      sale_area: sp.saleArea.trim(),
-      sale_industries: sp.saleIndustries.trim(),
+      sale_zone_ids: [...new Set(sp.saleZoneIds)],
+      sale_industry_ids: [...new Set(sp.saleIndustryIds)],
     }).eq('id', opts.raw.id);
     if (error) throw writeError(error);
   }

@@ -33,7 +33,7 @@ import { compareVnName } from '../../lib/vnName';
 import { assignGroups, setGender, setOwner, setSaleStage } from './data/api';
 import { useCskh } from './context';
 import {
-  CARE_STATUS_COLOR, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, SALE_STAGE_COLOR, scoreColor, TIER_COLOR,
+  CARE_STATUS_COLOR, catalogNames, chipStyle, GROUP_COLOR, groupDisplayOf, LINK, NEW_GROUP_VALUE, PANEL, PILL_GRAY, PILL_PRIMARY, PILL_TINTED, resolveGroupKey, ROUND_ADD, SALE_STAGE_COLOR, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, FilterChip, MoreButton, Panel, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
@@ -91,10 +91,14 @@ interface Filters {
   stage: 'all' | SaleStage;
   /** Chỉ Mạng lưới Sale: nơi làm ('all' | khoá tên nơi làm đã chuẩn hoá). */
   workplace: string;
+  /** Chỉ Mạng lưới Sale: KCN mạnh ('all' | market_zones.id). */
+  zone: string;
+  /** Chỉ Mạng lưới Sale: ngành quen ('all' | industries.id). */
+  industry: string;
 }
 const DEFAULT_FILTERS: Filters = {
   scope: 'care', group: 'all', status: 'all', branch: 'all', owner: 'all', kind: 'cooperating', company: 'all', province: 'all',
-  gender: 'all', trait: 'all', stage: 'all', workplace: 'all',
+  gender: 'all', trait: 'all', stage: 'all', workplace: 'all', zone: 'all', industry: 'all',
 };
 /** Sale không có công ty khách / loại khách / chi nhánh — bỏ các bộ lọc đó. */
 const SALE_DEFAULTS: Partial<Filters> = { kind: 'all', company: 'all', branch: 'all' };
@@ -129,6 +133,9 @@ export default function CskhMatrix() {
 
   const contacts = useMemo(() => data?.contacts ?? [], [data]);
   const groups = useMemo(() => data?.groups ?? [], [data]);
+  // Danh mục KCN / ngành (chỉ trang Sale nạp)
+  const zones = useMemo(() => data?.zones ?? [], [data]);
+  const industries = useMemo(() => data?.industries ?? [], [data]);
   const cadence = data?.settings.cadence;
   const groupById = useMemo(() => new Map(groups.map(g => [g.id, g])), [groups]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
@@ -160,10 +167,13 @@ export default function CskhMatrix() {
       branchNames,
       kinds,
       workplace: normalizeSearch(c.organization),
-      // Sale: tìm được theo khu vực / ngành quen / tiến độ chiêu mộ
-      haystack: contactSearchHaystack(c, c.kind === 'sale' ? [c.saleArea, c.saleIndustries, SALE_STAGE_LABEL[c.saleStage]] : branchNames),
+      zoneNames: c.kind === 'sale' ? catalogNames(zones, c.saleZoneIds) : [],
+      // Sale: tìm được theo KCN mạnh / ngành quen / tiến độ chiêu mộ
+      haystack: contactSearchHaystack(c, c.kind === 'sale'
+        ? [...catalogNames(zones, c.saleZoneIds), ...catalogNames(industries, c.saleIndustryIds), SALE_STAGE_LABEL[c.saleStage]]
+        : branchNames),
     }] as const;
-  })), [contacts, clientById, branches, groupById, tierLabel]);
+  })), [contacts, clientById, branches, groupById, tierLabel, zones, industries]);
 
   const trait = filters.trait === 'all' ? null : parseTraitFilter(filters.trait);
   const passes = (c: CskhContact, skip: readonly Dim[] = []): boolean => {
@@ -186,6 +196,8 @@ export default function CskhMatrix() {
     if (on('trait') && trait && !hasTrait(c, trait.field, trait.key)) return false;
     if (on('stage') && filters.stage !== 'all' && c.saleStage !== filters.stage) return false;
     if (on('workplace') && filters.workplace !== 'all' && d.workplace !== filters.workplace) return false;
+    if (on('zone') && filters.zone !== 'all' && !c.saleZoneIds.includes(filters.zone)) return false;
+    if (on('industry') && filters.industry !== 'all' && !c.saleIndustryIds.includes(filters.industry)) return false;
     if (on('search') && search.trim() && !matchesQuery(d.haystack, search)) return false;
     return true;
   };
@@ -207,7 +219,7 @@ export default function CskhMatrix() {
   });
   const visible = sorted.slice(0, limit);
   // Đang tìm mà người cần tìm nằm ở phạm vi / loại khách khác → gợi ý mở rộng
-  const outside = search.trim() ? contacts.filter(c => passes(c, ['scope', 'kind', 'stage', 'workplace'])).length - filtered.length : 0;
+  const outside = search.trim() ? contacts.filter(c => passes(c, ['scope', 'kind', 'stage', 'workplace', 'zone', 'industry'])).length - filtered.length : 0;
 
   // ── Bảng nhiệt Nhóm × Trạng thái: người đang chăm sóc, theo các bộ lọc trừ nhóm/trạng thái/tìm ──
   const matrix = (() => {
@@ -252,8 +264,11 @@ export default function CskhMatrix() {
       companies: clients.filter(c => cIds.has(c.id)).sort((a, b) => a.name.localeCompare(b.name, 'vi')),
       provinces: [...provinces].sort((a, b) => a.localeCompare(b, 'vi')),
       workplaces: [...workplaces.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, 'vi')),
+      // Chỉ KCN / ngành đang có Sale chọn, kèm số người
+      zones: zones.map(z => ({ ...z, n: contacts.filter(c => c.saleZoneIds.includes(z.id)).length })).filter(z => z.n > 0),
+      industries: industries.map(i => ({ ...i, n: contacts.filter(c => c.saleIndustryIds.includes(i.id)).length })).filter(i => i.n > 0),
     };
-  }, [contacts, derived, branches, clients]);
+  }, [contacts, derived, branches, clients, zones, industries]);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
   // Đặc điểm (thẻ) của người trong phạm vi đang xem — "Golf (5)" ra 5 người chơi golf
   const scopeKey = filters.scope;
@@ -374,6 +389,8 @@ export default function CskhMatrix() {
   if (filters.province !== 'all') chips.push({ label: filters.province, clear: () => setFilter({ province: 'all' }) });
   if (filters.gender !== 'all') chips.push({ label: GENDER_FILTER_LABEL[filters.gender], clear: () => setFilter({ gender: 'all' }) });
   if (filters.stage !== 'all') chips.push({ label: `Chiêu mộ: ${SALE_STAGE_LABEL[filters.stage]}`, clear: () => setFilter({ stage: 'all' }) });
+  if (filters.zone !== 'all') chips.push({ label: `KCN: ${zones.find(z => z.id === filters.zone)?.name ?? '?'}`, clear: () => setFilter({ zone: 'all' }) });
+  if (filters.industry !== 'all') chips.push({ label: `Ngành: ${industries.find(i => i.id === filters.industry)?.name ?? '?'}`, clear: () => setFilter({ industry: 'all' }) });
   if (filters.workplace !== 'all') chips.push({ label: `Nơi làm: ${options.workplaces.find(w => w.key === filters.workplace)?.label ?? '?'}`, clear: () => setFilter({ workplace: 'all' }) });
   if (trait) {
     const label = traitOptions.find(g => g.field === trait.field)?.stats.find(t => t.key === trait.key)?.label ?? trait.key;
@@ -539,6 +556,18 @@ export default function CskhMatrix() {
                 <option value="all">Mọi tiến độ chiêu mộ</option>
                 {SALE_STAGES.map(st => <option key={st} value={st}>{SALE_STAGE_LABEL[st]}</option>)}
               </PillSelect>
+              {(options.zones.length > 0 || filters.zone !== 'all') && (
+                <PillSelect value={filters.zone} active={filters.zone !== 'all'} label="Lọc theo KCN mạnh" onChange={v => setFilter({ zone: v })}>
+                  <option value="all">Mọi KCN</option>
+                  {options.zones.map(z => <option key={z.id} value={z.id}>{`${z.name} (${z.n})`}</option>)}
+                </PillSelect>
+              )}
+              {(options.industries.length > 0 || filters.industry !== 'all') && (
+                <PillSelect value={filters.industry} active={filters.industry !== 'all'} label="Lọc theo ngành quen" onChange={v => setFilter({ industry: v })}>
+                  <option value="all">Mọi ngành</option>
+                  {options.industries.map(i => <option key={i.id} value={i.id}>{`${i.name} (${i.n})`}</option>)}
+                </PillSelect>
+              )}
               {options.workplaces.length > 0 && (
                 <PillSelect value={filters.workplace} active={filters.workplace !== 'all'} label="Lọc theo nơi làm" onChange={v => setFilter({ workplace: v })}>
                   <option value="all">Mọi nơi làm</option>
@@ -718,7 +747,7 @@ export default function CskhMatrix() {
                         onPick={k => assignGroup([c.id], k, c.fullName)} onCreate={openGroups} />
                     </td>
                     <td className="px-2 py-2.5 hidden lg:table-cell text-[12.5px] text-[#6E6E73]">
-                      {(isSale ? c.saleArea : d?.branchNames.join(', ')) || c.province || <span className="text-[#C7C7CC]">—</span>}
+                      {(isSale ? d?.zoneNames.join(', ') : d?.branchNames.join(', ')) || c.province || <span className="text-[#C7C7CC]">—</span>}
                     </td>
                     <td className="px-2 py-2.5 hidden md:table-cell text-[12.5px] text-[#6E6E73] whitespace-nowrap">
                       {c.lastInteractionAt ? relativeDayLabel(c.lastInteractionAt, today) : <span className="text-[#C7C7CC]">—</span>}

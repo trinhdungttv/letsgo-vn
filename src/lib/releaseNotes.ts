@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-sale-zone-industry-pick',
+    date: '2026-10-31',
+    title: 'CRM',
+    features: [
+      'Hồ sơ Sale: KCN mạnh và ngành quen chọn từ danh mục Thị trường, lọc được ở Danh sách Sale',
+    ],
+  },
+  {
     id: '2026-10-31-crm-sale-network',
     date: '2026-10-31',
     title: 'CRM',

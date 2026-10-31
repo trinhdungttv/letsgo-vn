@@ -56,6 +56,12 @@ export const GROUP_COLOR: Readonly<Record<GroupColor, string>> = {
   gray: GRAY,
 };
 
+/** Tên các mục danh mục (KCN / ngành) đã chọn, theo thứ tự danh mục — để hiện trong bảng / tìm kiếm. */
+export function catalogNames(items: readonly { id: string; name: string }[], ids: readonly string[]): string[] {
+  const set = new Set(ids);
+  return items.filter(i => set.has(i.id)).map(i => i.name);
+}
+
 /** Màu tiến độ chiêu mộ Sale (Mạng lưới Sale). */
 export const SALE_STAGE_COLOR: Readonly<Record<SaleStage, string>> = {
   none: GRAY,

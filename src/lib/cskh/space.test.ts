@@ -27,13 +27,17 @@ describe('loại người liên hệ', () => {
       id: 's1', client_id: null, name: 'Anh Sơn', phone: null, email: null, role: null, start_date: null, end_date: null,
       is_active: true, is_primary: false, notes: null, address: null, birthday: null, hobbies: null, social_link: null,
       channel: null, rich_notes: null, created_at: '', updated_at: '', contact_clients: [],
-      kind: 'sale', sale_company: ' Nhân lực MD ', competitor_id: 'cp1', sale_stage: 'invited', sale_area: 'VSIP', sale_industries: 'Điện tử',
+      kind: 'sale', sale_company: ' Nhân lực MD ', competitor_id: 'cp1', sale_stage: 'invited',
+      sale_zone_ids: ['z1', 'z2', 'z1'], sale_industry_ids: ['i1'],
     } as ContactRow;
     const c = mapContactRow(row);
-    expect(c).toMatchObject({ kind: 'sale', organization: 'Nhân lực MD', saleCompany: 'Nhân lực MD', competitorId: 'cp1', saleStage: 'invited', saleArea: 'VSIP' });
-    // Thiếu cột (chưa chạy 178) → khách, tiến độ mặc định
-    const legacy = mapContactRow({ ...row, kind: undefined, sale_company: undefined, sale_stage: 'lạ' } as ContactRow);
-    expect(legacy).toMatchObject({ kind: 'client', saleStage: 'none', saleCompany: '' });
+    expect(c).toMatchObject({
+      kind: 'sale', organization: 'Nhân lực MD', saleCompany: 'Nhân lực MD', competitorId: 'cp1', saleStage: 'invited',
+      saleZoneIds: ['z1', 'z2'], saleIndustryIds: ['i1'], // mã KCN / ngành chọn từ danh mục, bỏ trùng
+    });
+    // Thiếu cột (chưa chạy 178 / 179) → khách, tiến độ mặc định, chưa chọn KCN / ngành
+    const legacy = mapContactRow({ ...row, kind: undefined, sale_company: undefined, sale_stage: 'lạ', sale_zone_ids: undefined, sale_industry_ids: null } as unknown as ContactRow);
+    expect(legacy).toMatchObject({ kind: 'client', saleStage: 'none', saleCompany: '', saleZoneIds: [], saleIndustryIds: [] });
   });
 
   it('nhóm tự tạo chưa có cột kind → nhóm của khách', () => {

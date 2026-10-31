@@ -53,6 +53,7 @@ import {
   CARE_STATUS_COLOR, CHANNEL_META, chipStyle, groupDisplayOf, inputCls, NEW_GROUP_VALUE, resolveGroupKey, SALE_STAGE_COLOR, scoreColor,
 } from '../ui';
 import { AddressPinMap } from './AddressPinMap';
+import { CatalogPick } from './CatalogPick';
 import { TaskCheck } from './apple';
 import { ContactAvatar } from './ContactAvatar';
 import { GroupOptions } from './GroupSelect';
@@ -260,8 +261,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [saleCompany, setSaleCompany] = useState(current.saleCompany);
   const [competitorId, setCompetitorId] = useState(current.competitorId ?? '');
   const [saleStage, setSaleStage] = useState<SaleStage>(current.saleStage);
-  const [saleArea, setSaleArea] = useState(current.saleArea);
-  const [saleIndustries, setSaleIndustries] = useState(current.saleIndustries);
+  const [saleZoneIds, setSaleZoneIds] = useState<string[]>(current.saleZoneIds);
+  const [saleIndustryIds, setSaleIndustryIds] = useState<string[]>(current.saleIndustryIds);
   const referrals = useMemo(
     () => (isSale && !isNew ? referralsByContact([current], data.referrals).get(current.id) ?? [] : []),
     [isSale, isNew, current, data.referrals],
@@ -431,7 +432,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         },
         geo: { manualPin, linkCoords, preview },
         occasions: planOccasionSave(myOccasions, occRows.filter(r => !isBlankDraft(r))),
-        sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleArea, saleIndustries } : null,
+        sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleZoneIds, saleIndustryIds } : null,
       });
       setSaving(false);
       emitCskhDataChanged();
@@ -592,8 +593,15 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
               {SALE_STAGES.map(st => <option key={st} value={st}>{SALE_STAGE_LABEL[st]}</option>)}
             </select>
           </Field>
-          <Field label="Khu vực / KCN mạnh"><input value={saleArea} onChange={e => setSaleArea(e.target.value)} className={inputCls} placeholder="VD: VSIP, Bàu Bàng, Nhơn Trạch" /></Field>
-          <Field label="Ngành quen"><input value={saleIndustries} onChange={e => setSaleIndustries(e.target.value)} className={inputCls} placeholder="VD: Điện tử, may mặc, gỗ" /></Field>
+          {/* Chọn từ danh mục Thị trường (không gõ tay) — lọc được ở Danh sách Sale, không bị trùng kiểu viết */}
+          <Field label="Khu vực / KCN mạnh" full hint="Chọn được nhiều KCN · thiếu KCN thì thêm ở Thị trường → Khu vực">
+            <CatalogPick items={data.zones} value={saleZoneIds} onChange={setSaleZoneIds} addLabel="Thêm KCN…"
+              emptyText="Chưa có KCN nào trong Thị trường → Khu vực." />
+          </Field>
+          <Field label="Ngành quen" full hint="Chọn được nhiều ngành · thiếu ngành thì thêm ở Thị trường → Ngành nghề">
+            <CatalogPick items={data.industries} value={saleIndustryIds} onChange={setSaleIndustryIds} addLabel="Thêm ngành…"
+              emptyText="Chưa có ngành nào trong Thị trường → Ngành nghề." />
+          </Field>
           <Field label="Quen biết từ ngày"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} min-w-[9.5rem]`} /></Field>
           <Field label="Kênh quen biết">
             <select value={channel} onChange={e => setChannel(e.target.value)} className={inputCls}>
