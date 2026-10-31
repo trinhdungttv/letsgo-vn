@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { PIPELINE_SELECT } from '../lib/pipelineHelpers';
 import type { Client, CRMProduct, CRMDeal, CRMActivity, CRMPipelineEntry } from '../lib/types';
 
 export function useCRMData(enabled: boolean) {
@@ -19,7 +20,7 @@ export function useCRMData(enabled: boolean) {
         supabase.from('crm_products').select('*').order('name'),
         supabase.from('crm_deals').select('*, crm_leads(name, company), crm_products(name)').order('created_at', { ascending: false }),
         supabase.from('crm_activities').select('*').order('created_at', { ascending: false }),
-        supabase.from('crm_pipeline').select('*, contacts(name, phone), crm_products(name, category, price)').order('created_at', { ascending: false }),
+        supabase.from('crm_pipeline').select(PIPELINE_SELECT).order('created_at', { ascending: false }),
       ]);
       setLeads((l.data ?? []) as Client[]);
       setProducts(p.data ?? []);
@@ -32,7 +33,7 @@ export function useCRMData(enabled: boolean) {
   }, [enabled]);
 
   const reloadPipeline = useCallback(async () => {
-    const { data } = await supabase.from('crm_pipeline').select('*, contacts(name, phone), crm_products(name, category, price)').order('created_at', { ascending: false });
+    const { data } = await supabase.from('crm_pipeline').select(PIPELINE_SELECT).order('created_at', { ascending: false });
     setPipeline((data ?? []) as CRMPipelineEntry[]);
   }, []);
 

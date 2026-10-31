@@ -16,6 +16,50 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-recruit-workforce',
+    date: '2026-10-31',
+    title: 'Tuyển dụng',
+    features: [
+      'Tab Thời vụ: lao động thời vụ của từng khách quản lý tới từng người (nhập Excel danh sách đang làm)',
+      'Cảnh báo người làm thời vụ từ tháng thứ 10 và đủ 12 tháng (giới hạn cho thuê lại lao động)',
+      'Chuyển chính thức cho khách 1 chạm, ghi được phí chuyển đổi để đối soát',
+      'Đối chiếu số người theo danh sách với số lao động theo tuần đang nhập ở Khách hàng',
+    ],
+  },
+  {
+    id: '2026-10-31-recruit-insights',
+    date: '2026-10-31',
+    title: 'Tuyển dụng',
+    features: [
+      'Tab Phân tích: dự báo từng tháng cần bao nhiêu hồ sơ, hạn gom hồ sơ, đủ / sát / thiếu nguồn',
+      'Phễu tuyển theo nhóm KTV / LĐPT, tỷ lệ nghỉ trong 30 ngày đầu',
+      'Hiệu quả từng kênh tuyển + nhập chi phí → chi phí cho mỗi người đi làm',
+      'Bản đồ nguồn lao động theo xã/phường quanh nhà máy; báo cáo tuần Excel gửi khách',
+    ],
+  },
+  {
+    id: '2026-10-31-recruit-onboarding-fees',
+    date: '2026-10-31',
+    title: 'Tuyển dụng',
+    features: [
+      'Đợt nhận việc: xếp người, điểm danh Đến / Không đến, xuất danh sách Excel gửi nhân sự khách',
+      'Tự chốt phí giới thiệu khi đủ ngày; nhắc người nghỉ trong bảo hành cần người thay (miễn phí)',
+      'Đối soát phí theo tháng → xuất Excel gửi khách → ghi doanh thu "Giới thiệu lao động" vào P&L Dự án',
+      'Hoa hồng CTV tự tính, theo dõi đã trả; form ứng tuyển công khai có link + mã QR riêng từng CTV',
+    ],
+  },
+  {
+    id: '2026-10-31-recruit-core',
+    date: '2026-10-31',
+    title: 'Tuyển dụng',
+    features: [
+      'Mục mới Tuyển dụng: dự án tuyển theo khách (VD Co-Herent), nhà máy gắn chi nhánh, JD nhóm A-B-C',
+      'Bảng chỉ tiêu nhà máy × tháng: dán thẳng bảng khách gửi (PDF / Excel), xem Kế hoạch vs Thực tế',
+      'Kho ứng viên dùng chung, chống trùng SĐT / CCCD, nhập Excel; hồ sơ đi từ Mới → Đã nhận việc',
+      'Tin tuyển dụng tự dựng từ JD để đăng Facebook / Zalo; việc cần làm hôm nay (hẹn PV, hồ sơ chưa gọi)',
+    ],
+  },
+  {
     id: '2026-10-31-sale-zone-industry-pick',
     date: '2026-10-31',
     title: 'CRM',

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark, UsersRound } from 'lucide-react';
+import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark, UsersRound, UserPlus } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
@@ -15,6 +15,7 @@ const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'dashboard', label: 'Dashboard', icon: <Home size={16} /> },
   { page: 'workspace', label: 'Workspace', icon: <Briefcase size={16} /> },
   { page: 'clients', label: 'Khách hàng', icon: <Building2 size={16} /> },
+  { page: 'recruit', label: 'Tuyển dụng', icon: <UserPlus size={16} /> },
   { page: 'branches', label: 'Chi Nhánh', icon: <Building size={16} /> },
   { page: 'finance', label: 'Tài chính', icon: <DollarSign size={16} /> },
   { page: 'market', label: 'Thị trường', icon: <MapPin size={16} /> },

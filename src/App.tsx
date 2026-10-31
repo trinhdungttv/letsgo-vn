@@ -31,8 +31,10 @@ import CRMPipeline from './pages/CRMPipeline';
 import AdminPage from './pages/AdminPage';
 import Workspace from './pages/Workspace';
 import Loans from './pages/Loans';
+import Recruit from './pages/Recruit';
 import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
+import { parseApplyHash } from './lib/recruit/publicLink';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
@@ -41,8 +43,10 @@ import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme
 
 // Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
 const OfficeRental = lazy(() => import('./modules/office-rental'));
+// Form ứng tuyển công khai (#/apply/<mã>) — người ngoài mở, không cần đăng nhập
+const PublicApply = lazy(() => import('./pages/PublicApply'));
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-sales', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...OFFICE_PAGES];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-sales', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'recruit', ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -58,8 +62,10 @@ function AppInner() {
   // Link chia sẻ "Phương án giá" (#/p/<mã>) — mở được KHÔNG cần đăng nhập, chỉ cần mã 4 số.
   // Khi đang ở link này thì không nạp dữ liệu toàn app (người ngoài không có quyền).
   const [shareCode, setShareCode] = useState<string | null>(() => parseShareHash(window.location.hash));
+  // Link ứng tuyển (#/apply/<mã>[/<id CTV>]) — cũng mở không cần đăng nhập, không nạp dữ liệu app
+  const [applyLink, setApplyLink] = useState(() => parseApplyHash(window.location.hash));
   useEffect(() => {
-    const sync = () => setShareCode(parseShareHash(window.location.hash));
+    const sync = () => { setShareCode(parseShareHash(window.location.hash)); setApplyLink(parseApplyHash(window.location.hash)); };
     window.addEventListener('hashchange', sync);
     window.addEventListener('popstate', sync);
     return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); };
@@ -73,7 +79,7 @@ function AppInner() {
     marketSurveys, competitors, marketZones, setMarketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
-  } = useAppData(!!user && !shareCode);
+  } = useAppData(!!user && !shareCode && !applyLink);
 
   const {
     leads,
@@ -82,7 +88,7 @@ function AppInner() {
     activities, setActivities,
     pipeline,
     reloadPipeline,
-  } = useCRMData(!!user && !shareCode);
+  } = useCRMData(!!user && !shareCode && !applyLink);
 
   function parseHash(): Page {
     const h = window.location.hash.replace('#/', '').split('/')[0];
@@ -309,6 +315,13 @@ function AppInner() {
   const handleActivityCreate = useCallback((a: CRMActivity) => setActivities(prev => [a, ...prev]), [setActivities]);
 
   if (shareCode) return <SharedCostPlan code={shareCode} />;
+  if (applyLink) {
+    return (
+      <Suspense fallback={<div className="h-screen bg-[#F5F5F7]" />}>
+        <PublicApply code={applyLink.code} refId={applyLink.ref} />
+      </Suspense>
+    );
+  }
 
   if (authLoading) {
     return (
@@ -409,6 +422,7 @@ function AppInner() {
         {page === 'history' && <History toast={toast} onReload={loadClients} />}
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'loans' && <Loans toast={toast} />}
+        {page === 'recruit' && user && canAccess(user.role, page, rolePermissions) && <Recruit clients={clients} toast={toast} />}
         {isOfficePage(page) && user && canAccess(user.role, page, rolePermissions) && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" /></div>}>
             <OfficeRental page={page} toast={toast} />

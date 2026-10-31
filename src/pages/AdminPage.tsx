@@ -30,7 +30,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   rejected: { label: 'Đã từ chối', cls: 'bg-red-50 text-red-700 border border-red-200' },
 };
 
-const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
+const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Tuyển dụng', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
 
 const LEVEL_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'view', view: 'none', none: 'full' };
 

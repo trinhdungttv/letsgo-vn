@@ -11,6 +11,7 @@ import { listPlans } from '../lib/costPlan/api';
 import { planCountsByPipeline } from '../lib/costPlan/listFilter';
 import type { CostPlanRow } from '../lib/costPlan/types';
 import { supabase } from '../lib/supabase';
+import { PIPELINE_SELECT } from '../lib/pipelineHelpers';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useBranchData } from '../hooks/useBranchData';
@@ -199,7 +200,7 @@ export default function CRMPipeline({ pipeline, clients, products, onRefresh, on
         custom_price: modalForm.customPrice ? parseFloat(modalForm.customPrice) : null,
         last_contact: new Date().toISOString().split('T')[0],
         ...(source.source_type ? source : {}),
-      }).select('*, contacts(name, phone), crm_products(name, category, price)').single();
+      }).select(PIPELINE_SELECT).single();
       if (error) throw new Error(sourceSaveErrorHint(error.message) ?? error.message);
       // Cùng 1 công ty phải thấy được ở Thị trường > Công ty/Dự án — không phải nhập tay lại lần 2.
       // Link Google Maps + ảnh bìa cũng nằm ở dòng này (nguồn chung với hồ sơ công ty — CompanyMedia).

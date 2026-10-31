@@ -145,16 +145,18 @@ export const PAGE_MODULE: Record<string, string> = {
   history: 'Lịch sử',
   'admin-settings': 'Admin',
   loans: 'Khoan vay',
+  // Tuyển dụng — quyền 'Tuyển dụng' (migration 180: admin/bdh/kinhdoanh full, ketoan xem)
+  recruit: 'Tuyển dụng',
   // Văn phòng Orient — một quyền chung cho cả module (migration 164 cấp cho admin)
   ...Object.fromEntries(OFFICE_PAGES.map(p => [p, OFFICE_PERMISSION_MODULE])),
 };
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', ...crm, ...OFFICE_PAGES],
-  ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace'],
-  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', ...crm],
-  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', ...crm],
+  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', 'recruit', ...crm, ...OFFICE_PAGES],
+  ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace', 'recruit'],
+  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', 'recruit', ...crm],
+  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'recruit', ...crm],
 };
 
 /** Mạng lưới Sale (migration 178): chốt 31/10/2026 chỉ admin — danh sách Sale muốn chiêu mộ là thông tin nhạy cảm. */
@@ -171,6 +173,8 @@ export function canAccess(role: string, page: string, rolePermissions?: RolePerm
     const perm = rolePermissions?.find(p => p.role === role && p.module === OFFICE_PERMISSION_MODULE);
     return perm ? perm.level !== 'none' : true;
   }
+  // Tuyển dụng: chưa có dòng quyền nào (chưa chạy migration 180) → vẫn cho admin vào để thấy hướng dẫn cài đặt
+  if (page === 'recruit' && role === 'admin' && !rolePermissions?.some(p => p.module === PAGE_MODULE.recruit)) return true;
   if (rolePermissions && rolePermissions.length) {
     const module = PAGE_MODULE[page];
     if (!module) return false;

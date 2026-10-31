@@ -1,6 +1,14 @@
 import { supabase } from './supabase';
 import type { Client, CRMPipelineEntry } from './types';
 
+/**
+ * Cột nạp kèm mỗi dòng crm_pipeline (người liên hệ + sản phẩm). Từ migration 178, crm_pipeline có 2
+ * khoá ngoại sang contacts (contact_id + source_contact_id "Sale giới thiệu") → PHẢI chỉ đích danh
+ * đường contact_id; viết `contacts(...)` trống trơn thì PostgREST báo "more than one relationship"
+ * (PGRST201) và cả trang BD Pipeline trống. Dùng hằng này thay vì tự viết chuỗi select.
+ */
+export const PIPELINE_SELECT = '*, contacts!crm_pipeline_contact_id_fkey(name, phone), crm_products(name, category, price)';
+
 // Lấy entry crm_pipeline gắn với 1 Khách hàng (client_id); nếu chưa có thì
 // tự tạo 1 entry "ẩn" để dùng làm gốc dữ liệu chung (lịch sử trao đổi, quà
 // tặng, task, sở thích...) cho cả CSKH Radar, CRM Pipeline BD và trang

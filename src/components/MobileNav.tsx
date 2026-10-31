@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3, Home, Building2, Building, Briefcase, DollarSign, MapPin, Landmark, History,
-  LayoutDashboard, Network, UserCircle2, UsersRound, Package, Settings, Users,
+  LayoutDashboard, Network, UserCircle2, UsersRound, UserPlus, Package, Settings, Users,
   LogOut, MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin, Check,
 } from 'lucide-react';
 import type { Page } from '../lib/types';
@@ -20,6 +20,7 @@ const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode; tile: key
   { page: 'reports',        label: 'Báo cáo',    icon: <BarChart3 size={21} />,       tile: 'indigo' },
   { page: 'dashboard',      label: 'Dashboard',  icon: <Home size={21} />,            tile: 'blue' },
   { page: 'clients',        label: 'Khách hàng', icon: <Building2 size={21} />,       tile: 'teal' },
+  { page: 'recruit',        label: 'Tuyển dụng', icon: <UserPlus size={21} />,        tile: 'teal' },
   { page: 'workspace',      label: 'Workspace',  icon: <Briefcase size={21} />,       tile: 'blue' },
   { page: 'branches',       label: 'Chi nhánh',  icon: <Building size={21} />,        tile: 'teal' },
   { page: 'finance',        label: 'Tài chính',  icon: <DollarSign size={21} />,      tile: 'green' },
