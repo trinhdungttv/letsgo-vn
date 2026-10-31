@@ -17,6 +17,7 @@ import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
 import MarketSupplyBlock from './MarketSupplyBlock';
+import WorkerNeedBlock from './WorkerNeedBlock';
 import QuoteInfoBlock from './QuoteInfoBlock';
 import { PipelineSourcePicker } from './PipelineSourceField';
 import { findClientsByName, otherPipelineEntryOf, pipelineDataCounts, linkPipelineToClient } from '../../lib/pipelineHelpers';
@@ -1052,6 +1053,12 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
             defaultBranchId={entry.branch_id}
           />
         </div>
+        <WorkerNeedBlock
+          key={entry.id}
+          entry={entry}
+          onSaveEstimate={n => patchEntry({ worker_estimate: n }, `Cập nhật số LĐ khách yêu cầu cho "${entry.company_name}" → ${n ?? 'trống'}`)}
+          toast={toast}
+        />
         <InlineEdit
           label="Tổng Thời Vụ"
           value={String(entry.workers_seasonal ?? 0)}

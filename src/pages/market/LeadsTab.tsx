@@ -372,6 +372,11 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         ...(isValidVnLatLng(mapPos) ? { lat: mapPos.lat, lng: mapPos.lng, geocoded_at: new Date().toISOString() } : {}),
       }, ['need_type'])).eq('id', leadId);
       if (error) throw error;
+      // Thẻ CRM Pipeline đọc crm_pipeline.worker_estimate — đổi số cần tuyển thì đổi luôn thẻ (cùng crm_id)
+      const newNeeded = parseInt(patch.workers_needed) || 0;
+      if (old?.crm_id && newNeeded !== (old.workers_needed ?? 0)) {
+        await supabase.from('crm_pipeline').update({ worker_estimate: newNeeded || null }).eq('id', old.crm_id);
+      }
       await onRefresh();
       setEditLeadId(null);
       toast('Đã cập nhật');

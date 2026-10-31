@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-10-31-crm-worker-need',
+    date: '2026-10-31',
+    title: 'CRM Pipeline',
+    features: [
+      'Hồ sơ công ty: hiện và sửa số LĐ khách yêu cầu + hình thức cần (thời vụ / chính thức / cả hai)',
+    ],
+  },
+  {
     id: '2026-10-31-company-occasions',
     date: '2026-10-31',
     title: 'Khách hàng & CSKH',
