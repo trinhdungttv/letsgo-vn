@@ -6,6 +6,7 @@ import {
 } from 'chart.js';
 import { Target, AlertTriangle, FileWarning, Coins, Settings2, TrendingUp, TrendingDown, X as XIcon, Download } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import LaborReportButton from '../components/laborReport/LaborReportButton';
 import type { Client, LaborHistoryEntry, ProjectPnl, ProjectPnlCost, Branch, BranchTarget, FinanceRecord, BranchOverhead, WorkTask, WorkTaskComment } from '../lib/types';
 import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, DOC_STATUS_STEPS } from '../lib/types';
 import { getMonthLast, getMonthLastFilled, formatCurrency, monthLabel, shiftMonth, daysUntil, formatDate } from '../lib/format';
@@ -611,6 +612,7 @@ export default function Reports({ clients, laborHistory }: ReportsProps) {
               className="h-[30px] px-2.5 sm:px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5">
               <Target size={13} /><span className="hidden sm:inline">Mục tiêu</span>
             </button>
+            <LaborReportButton />
             <button onClick={exportExcel} disabled={exporting}
               className="h-[30px] px-2.5 sm:px-3 text-[12px] border border-[#E8E7E2] rounded-lg bg-white hover:bg-[#F9F9F7] flex items-center gap-1.5 disabled:opacity-50">
               <Download size={13} /><span className="hidden sm:inline">{exporting ? 'Đang xuất…' : 'Xuất'}</span>

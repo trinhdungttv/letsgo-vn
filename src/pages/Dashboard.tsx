@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import AlertsTasksPanel from '../components/AlertsTasksPanel';
+import LaborReportButton from '../components/laborReport/LaborReportButton';
 import { Bar, Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -16,6 +17,7 @@ import { statusPill, formatCurrency, formatDate, calcPnl, shiftMonth, monthLabel
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { isActiveInMonth } from '../utils/suspension';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler, Legend);
 
@@ -167,8 +169,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
   // trách, số liệu tháng cũ sẽ bị gán nhầm hết cho người quản lý MỚI NHẤT thay vì đúng người
   // phụ trách tại thời điểm đó. Chưa có lịch sử nào (KH cũ, hoặc chưa từng chuyển) thì coi
   // như người quản lý hiện tại (clients.manager) đã phụ trách từ đầu.
-  const clientsInScopeForMonth = useCallback((month: string): Client[] => {
-    const base = clients.filter(c => c.cooperation_status !== 'suspended');
+  const scopeFilter = useCallback((base: Client[], month: string): Client[] => {
     if (scopeMode === 'all' || !selectedScope) return base;
     if (scopeMode === 'region') {
       const zonesInProvince = zonesByProvince[selectedScope];
@@ -181,7 +182,20 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
       return base.filter(c => branchOf(c, branches)?.id === br.id);
     }
     return base.filter(c => (getManagerForMonth(managerHistory[c.id] || [], month) ?? c.manager) === selectedScope);
-  }, [clients, scopeMode, selectedScope, zonesByProvince, branches, managerHistory]);
+  }, [scopeMode, selectedScope, zonesByProvince, branches, managerHistory]);
+
+  // Thẻ khách hàng / hợp đồng / doanh thu: chỉ KH đang hợp tác.
+  const clientsInScopeForMonth = useCallback(
+    (month: string): Client[] => scopeFilter(clients.filter(c => c.cooperation_status !== 'suspended'), month),
+    [clients, scopeFilter],
+  );
+  // CỘNG LAO ĐỘNG của 1 tháng: theo quy tắc ngưng hợp tác chung (utils/suspension) — tháng chứa ngày
+  // ngưng vẫn tính, các tháng trước đó KH đã ngưng vẫn có mặt (số đã nhập là lịch sử thật, không được
+  // mất khỏi xu hướng). Khớp trang Báo cáo và file "Báo cáo LĐ".
+  const laborClientsForMonth = useCallback(
+    (month: string): Client[] => scopeFilter(clients.filter(c => isActiveInMonth(c, month)), month),
+    [clients, scopeFilter],
+  );
 
   const curMonth = currentMonthStr();
   const curMonthNum = parseInt(curMonth.split('-')[1], 10);
@@ -212,7 +226,8 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
     return map;
   }, [projectsPnl]);
 
-  const totalWorkers = filteredClients.reduce((s, c) => s + (c.current_workers || 0), 0);
+  const laborClientsNow = useMemo(() => laborClientsForMonth(curMonth), [laborClientsForMonth, curMonth]);
+  const totalWorkers = laborClientsNow.reduce((s, c) => s + (c.current_workers || 0), 0);
   const totalRevenue = filteredClients.reduce((s, c) => s + (pnlByClient[c.id] || []).reduce((t, p) => t + (p.revenue || 0), 0), 0);
 
   const financeByClient = useMemo(() => {
@@ -257,12 +272,12 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
     };
     // Tháng trước: dùng đúng người phụ trách của THÁNG TRƯỚC (không phải người hiện tại),
     // để KH vừa đổi quản lý không bị tính hụt/thừa vào delta của người cũ/mới.
-    const prevClients = curMonthNum - 1 >= 1 ? clientsInScopeForMonth(monthStrOfThisYear(curMonthNum - 1)) : [];
-    return { cur: sumOf(curMonthNum, filteredClients), prev: sumOf(curMonthNum - 1, prevClients, true) };
-  }, [filteredClients, laborHistory, curMonthNum, clientsInScopeForMonth]);
+    const prevClients = curMonthNum - 1 >= 1 ? laborClientsForMonth(monthStrOfThisYear(curMonthNum - 1)) : [];
+    return { cur: sumOf(curMonthNum, laborClientsNow), prev: sumOf(curMonthNum - 1, prevClients, true) };
+  }, [laborClientsNow, laborHistory, curMonthNum, laborClientsForMonth]);
 
   // Chỉ so sánh khi tháng này ĐÃ có người nhập số. Chưa nhập thì `totalWorkers`
-  // vẫn đang là số chốt của tháng trước (current_workers = bản ghi mới nhất),
+  // vẫn đang là số chốt của tháng trước (current_workers = số của tuần muộn nhất đã nhập),
   // đem so sẽ ra "0%" — nghe như lao động đứng yên, trong khi thực tế là chưa có số.
   const workerDeltaPct = monthWorkers.cur !== null && monthWorkers.prev !== null && monthWorkers.prev > 0
     ? ((totalWorkers - monthWorkers.prev) / monthWorkers.prev) * 100
@@ -324,7 +339,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
       if (num === curMonthNum) return totalWorkers || null;
       // Mỗi tháng trong quá khứ lấy đúng tập KH theo người phụ trách CỦA THÁNG ĐÓ
       // (phạm vi chi nhánh/khu vực không đổi theo tháng, chỉ "Quản lý" mới cần tra lại).
-      const monthClients = clientsInScopeForMonth(monthStrOfThisYear(num));
+      const monthClients = laborClientsForMonth(monthStrOfThisYear(num));
       let sum = 0, found = false;
       for (const c of monthClients) {
         // KH chưa nhập tháng này → tạm lấy số tháng gần nhất trước đó (đánh dấu ước tính).
@@ -335,7 +350,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
       return found ? sum : null;
     });
     return { months, labels: months.map(n => `T${n}`), points, estimated };
-  }, [trendRange, curMonthNum, clientsInScopeForMonth, laborHistory, totalWorkers]);
+  }, [trendRange, curMonthNum, laborClientsForMonth, laborHistory, totalWorkers]);
 
   const trendRangeLabel = laborTrend.months.length > 1
     ? `T${laborTrend.months[0]}–T${laborTrend.months[laborTrend.months.length - 1]}`
@@ -646,6 +661,7 @@ export default function Dashboard({ clients, laborHistory, managerHistory, onOpe
               <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
           )}
+          <LaborReportButton compact />
         </div>
       </div>
 

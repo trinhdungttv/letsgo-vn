@@ -6,7 +6,7 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
 import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, ClientGift, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
-import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekLabelFull, sortLaborHistory, statusPill, monthLabel } from '../lib/format';
+import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekLabelFull, sortLaborHistory, latestLaborEntry, recentLaborCounts, statusPill, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -290,7 +290,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const selectedDeal = deals.find(d => d.id === selectedDealId) || null;
 
   const hist = useMemo(() => sortLaborHistory(laborHistory), [laborHistory]);
-  const currentWorkers = hist.length ? hist[hist.length - 1].count : 0;
+  // Cùng quy tắc với cột "LĐ" ở trang Khách hàng: tuần muộn nhất đã nhập tính tới tuần này.
+  const currentWorkers = useMemo(() => latestLaborEntry(laborHistory)?.count ?? 0, [laborHistory]);
 
   const chartData = useMemo(() => {
     if (chartView === 'week') {
@@ -336,8 +337,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     progCutoff: client.prog_cutoff || false,
     contractEnd: client.contract_end || '',
     lastContactDate: '',
-    workerHistory: hist.slice(-6).map(h => h.count),
-  }), [client, hist]);
+    workerHistory: recentLaborCounts(laborHistory),
+  }), [client, laborHistory]);
 
   /** Chênh lệch LĐ của tháng gần nhất so với tháng trước (null nếu thiếu số liệu). */
   const laborDelta = useMemo(() => {

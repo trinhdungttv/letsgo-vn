@@ -12,6 +12,7 @@ import PopulationDataPanel from './PopulationDataPanel';
 import SearchSelect from './SearchSelect';
 import { fetchIndustries } from './industries';
 import { supabase } from '../../lib/supabase';
+import { latestLaborEntry } from '../../lib/format';
 import { shortId } from '../../hooks/useHashSubRoute';
 import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep, haversineKm } from '../../lib/geo';
 import type { Branch, MarketLeadSupplier } from '../../lib/types';
@@ -167,11 +168,11 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
     const ids = rows.map(c => c.id);
     if (ids.length) {
       const { data: laborData, error: laborErr } = await supabase.from('client_labor_history')
-        .select('client_id, count, created_at').in('client_id', ids).order('created_at', { ascending: true });
+        .select('client_id, week_label, count, created_at').in('client_id', ids).order('created_at', { ascending: true });
       if (!laborErr && laborData) {
-        const latest = new Map<string, number>();
-        laborData.forEach(h => latest.set(h.client_id, h.count));
-        rows.forEach(c => { c.current_workers = latest.get(c.id) ?? null; });
+        const byClient = new Map<string, { week_label: string; count: number; created_at: string }[]>();
+        laborData.forEach(h => (byClient.get(h.client_id) ?? byClient.set(h.client_id, []).get(h.client_id)!).push(h));
+        rows.forEach(c => { c.current_workers = latestLaborEntry(byClient.get(c.id) ?? [])?.count ?? null; });
       }
     }
     setAllClients(rows);

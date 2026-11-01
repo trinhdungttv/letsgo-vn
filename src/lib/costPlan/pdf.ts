@@ -29,7 +29,7 @@ export function planCuts(blocks: PdfBlock[], total: number, pageH: number): numb
  * html2canvas đo "đường cơ sở" của chữ bằng 1 thẻ <img> 1×1 chèn thẳng vào <body>. Tailwind preflight đặt `img{display:block}` làm phép đo sai
  * → MỌI chữ bị vẽ lệch xuống vài px (rất rõ ở bảng có dòng sát). Đặt lại riêng cho thẻ đo đó trong lúc chụp.
  */
-const METRICS_FIX = 'body > div > img[width="1"][height="1"]{display:inline-block!important;vertical-align:baseline!important}';
+export const METRICS_FIX = 'body > div > img[width="1"][height="1"]{display:inline-block!important;vertical-align:baseline!important}';
 
 export async function renderElementToPdf(el: HTMLElement, opts: { scale?: number; quality?: number; landscape?: boolean } = {}): Promise<Blob> {
   if (document.fonts?.ready) await document.fonts.ready;

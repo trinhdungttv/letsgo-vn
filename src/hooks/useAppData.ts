@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { latestLaborEntry } from '../lib/format';
 import type { Client, LaborHistoryEntry, ClientManagerHistory, FinanceRecord, MarketSurvey, Competitor, MarketZone, MarketLead } from '../lib/types';
 
 // Nhan PromiseLike de chap nhan ca PostgrestFilterBuilder cua Supabase (thenable, khong phai Promise that),
@@ -46,7 +47,8 @@ export function useAppData(enabled = false) {
     }
     for (const c of clientList) {
       const h = laborMap[c.id] || [];
-      c.current_workers = h.length ? h[h.length - 1].count : 0;
+      // Số LĐ hiện tại = tuần muộn nhất đã nhập (nhập bù tuần cũ không đè số mới).
+      c.current_workers = latestLaborEntry(h)?.count ?? 0;
     }
 
     let allManagerHist: ClientManagerHistory[] = [];

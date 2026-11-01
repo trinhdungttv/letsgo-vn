@@ -9,7 +9,7 @@ import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { useBranchData } from '../hooks/useBranchData';
 import { useAllBranchStaffs } from '../hooks/useAllBranchStaffs';
 import type { Client, LaborHistoryEntry, MarketZone, Manager, ClientManagerHistory } from '../lib/types';
-import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth, prevWeekLabel } from '../lib/format';
+import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekLabelsForMonth, prevWeekLabel, recentLaborCounts } from '../lib/format';
 import { branchOf, branchOptions, resolveBranchByLegacyText } from '../lib/branchRef';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -237,9 +237,7 @@ export default function Clients({
     if (quickFilter === 'unpaid') return (c.prog_cutoff || false) && !(c.paid_this_month || false);
     if (quickFilter === 'shortage') return (c.min_workers || 0) > 0 && (c.current_workers || 0) < (c.min_workers || 0);
     if (quickFilter === 'churn') {
-      const hist = (laborHistory[c.id] || [])
-        .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
-        .slice(-6).map(h => h.count);
+      const hist = recentLaborCounts(laborHistory[c.id] || []);
       return detectChurnRisk(hist) !== null;
     }
     return true;
@@ -337,16 +335,12 @@ export default function Clients({
     return d >= 0 && d <= 30;
   }).length;
   const churnClients = activeClients.filter(c => {
-    const hist = (laborHistory[c.id] || [])
-      .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
-      .slice(-6).map(h => h.count);
+    const hist = recentLaborCounts(laborHistory[c.id] || []);
     return detectChurnRisk(hist) !== null;
   });
   const unpaidCount = activeClients.filter(c => c.prog_cutoff && !c.paid_this_month).length;
   const allScores = activeClients.map(c => {
-    const hist = (laborHistory[c.id] || [])
-      .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1)
-      .slice(-6).map(h => h.count);
+    const hist = recentLaborCounts(laborHistory[c.id] || []);
     // Phân nhánh theo loại hình dịch vụ.
     if (c.service_type === 'recruitment') {
       return calcHealthScore({
@@ -1222,8 +1216,7 @@ export default function Clients({
                 const minW = c.min_workers || 0;
                 const curW = c.current_workers || 0;
                 const underMin = minW > 0 && curW < minW;
-                const wHistory = (laborHistory[c.id] || [])
-                  .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1).slice(-6).map(h => h.count);
+                const wHistory = recentLaborCounts(laborHistory[c.id] || []);
                 const hs = c.service_type === 'recruitment'
                   ? calcHealthScore({ serviceType: 'recruitment', overdueInvoiceCount: 0, unpaidInvoiceCount: 0, contractEnd: c.contract_end || '', lastContactDate: '' })
                   : calcHealthScore({ serviceType: 'leasing', currentWorkers: curW, minWorkers: minW, paidThisMonth: c.paid_this_month || false, progCutoff: c.prog_cutoff || false, contractEnd: c.contract_end || '', lastContactDate: '', workerHistory: wHistory });
@@ -1322,11 +1315,7 @@ export default function Clients({
                   const curW = c.current_workers || 0;
                   const underMin = minW > 0 && curW < minW;
                   const isWarn = c.status === 'warn' || c.status === 'danger';
-                  const wHistory = (laborHistory[c.id] || [])
-                    .slice()
-                    .sort((a, b) => a.week_label < b.week_label ? -1 : 1)
-                    .slice(-6)
-                    .map(h => h.count);
+                  const wHistory = recentLaborCounts(laborHistory[c.id] || []);
                   const hs = c.service_type === 'recruitment'
                     ? calcHealthScore({
                         serviceType: 'recruitment',
@@ -1728,8 +1717,7 @@ export default function Clients({
               {filtered.length === 0 ? (
                 <div className="col-span-full text-center py-8 text-[#aaa]">Không có dữ liệu</div>
               ) : filtered.map(c => {
-                const wHistory = (laborHistory[c.id] || [])
-                  .slice().sort((a, b) => a.week_label < b.week_label ? -1 : 1).slice(-6).map(h => h.count);
+                const wHistory = recentLaborCounts(laborHistory[c.id] || []);
                 const hs = c.service_type === 'recruitment'
                   ? calcHealthScore({ serviceType: 'recruitment', overdueInvoiceCount: 0, unpaidInvoiceCount: 0, contractEnd: c.contract_end || '', lastContactDate: '' })
                   : calcHealthScore({ serviceType: 'leasing', currentWorkers: c.current_workers || 0, minWorkers: c.min_workers || 0, paidThisMonth: c.paid_this_month || false, progCutoff: c.prog_cutoff || false, contractEnd: c.contract_end || '', lastContactDate: '', workerHistory: wHistory });

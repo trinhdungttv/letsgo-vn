@@ -8,7 +8,7 @@ import { useAuth, AuthProvider, canAccess } from './lib/auth';
 import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useKeepPopoversOnScreen } from './hooks/useKeepPopoversOnScreen';
-import { sortLaborHistory } from './lib/format';
+import { latestLaborEntry } from './lib/format';
 import { shortId, expandId } from './hooks/useHashSubRoute';
 
 import Login from './pages/Login';
@@ -302,8 +302,8 @@ function AppInner() {
       const client = prev.find(c => c.id === entry.client_id);
       if (!client) return prev;
       const hist = laborHistory[entry.client_id] || [];
-      const allHist = sortLaborHistory([...hist.filter(e => e.id !== entry.id), entry]);
-      const latest = allHist[allHist.length - 1]?.count ?? client.current_workers;
+      const allHist = [...hist.filter(e => e.id !== entry.id), entry];
+      const latest = latestLaborEntry(allHist)?.count ?? client.current_workers;
       return prev.map(c => c.id === entry.client_id ? { ...c, current_workers: latest } : c);
     });
   }, [setLaborHistory, setClients, laborHistory]);

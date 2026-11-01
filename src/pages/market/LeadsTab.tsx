@@ -28,6 +28,7 @@ import { fmtTr, sameZone } from './shared';
 import type { Client, CompetitorClient } from '../../lib/types';
 import MapLinkHint from '../../components/MapLinkHint';
 import { isSuspended, formatSuspensionDate } from '../../utils/suspension';
+import { latestLaborEntry } from '../../lib/format';
 import {
   type MergedSupplier, type LgvSupply, mergeSuppliers, fetchSupplyRows, writeSupplyQty,
   deleteSupplyRows, sameCompany,
@@ -148,9 +149,8 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
    */
   const lgvSupplyOf = (client: Client | undefined): LgvSupply | null => {
     if (!client) return null;
-    const hist = laborHistory[client.id] ?? [];
-    if (!hist.length) return null;
-    const latest = hist[hist.length - 1];
+    const latest = latestLaborEntry(laborHistory[client.id] ?? []);
+    if (!latest) return null;
     return {
       count: client.current_workers ?? latest.count ?? 0,
       note: `Số LĐ mới nhất đã nhập trong hồ sơ khách hàng · tuần ${latest.week_label}`

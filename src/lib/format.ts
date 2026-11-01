@@ -66,17 +66,29 @@ export function recentMonths(n = 3): { month: number; year: number; label: strin
 }
 
 // Sắp xếp lịch sử lao động theo đúng trình tự thời gian thực tế (cũ -> mới),
-// dựa trên kỳ (tháng/tuần) ghi trong week_label (dạng "TmWw") — KHÔNG theo
-// thứ tự nhập (created_at), vì người dùng có thể nhập các tháng không theo
-// thứ tự (vd: nhập T5 trước rồi mới nhập T1-T4).
+// dựa trên tuần thật của week_label ("TmWw", năm suy từ ngày nhập — xem laborEntryWeekKey)
+// — KHÔNG theo thứ tự nhập (created_at), vì người dùng có thể nhập các tháng không theo
+// thứ tự (vd: nhập T5 trước rồi mới nhập T1-T4). Không so chuỗi nhãn: "T10W1" < "T9W1" theo chữ.
+// Cùng tuần → bản nhập trước đứng trước. Nhãn lạ (không đọc được) xếp đầu.
 export function sortLaborHistory<T extends { week_label: string; created_at: string }>(entries: T[]): T[] {
-  const sortKey = (label: string): number => {
-    const wIdx = label.indexOf('W');
-    const month = parseInt(label.slice(1, wIdx), 10);
-    const week = parseInt(label.slice(wIdx + 1), 10);
-    return month * 10 + week;
-  };
-  return [...entries].sort((a, b) => sortKey(a.week_label) - sortKey(b.week_label) || a.created_at.localeCompare(b.created_at));
+  const keyed = entries.map(e => ({ e, k: laborEntryWeekKey(e) ?? '' }));
+  keyed.sort((a, b) => a.k.localeCompare(b.k) || a.e.created_at.localeCompare(b.e.created_at));
+  return keyed.map(x => x.e);
+}
+
+// Số lao động `n` tuần gần nhất đã nhập (cũ → mới), tính tới tuần này — đầu vào của điểm sức khoẻ
+// hợp đồng và cảnh báo rủi ro mất khách. Mỗi tuần 1 số (nhập 2 lần thì lấy bản sau); bỏ số nhập
+// trước cho tuần tương lai để khớp "LĐ hiện tại" (latestLaborEntry).
+export function recentLaborCounts<T extends { week_label: string; created_at: string; count: number }>(hist: T[], n = 6, now: Date = new Date()): number[] {
+  const cur = isoDay(mondayOf(now));
+  const byWeek = new Map<string, T>();
+  for (const e of hist) {
+    const k = laborEntryWeekKey(e);
+    if (!k || k > cur) continue;
+    const prev = byWeek.get(k);
+    if (!prev || e.created_at > prev.created_at) byWeek.set(k, e);
+  }
+  return [...byWeek.keys()].sort().slice(-n).map(k => byWeek.get(k)!.count);
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +101,7 @@ export function sortLaborHistory<T extends { week_label: string; created_at: str
 // ---------------------------------------------------------------------------
 
 // Thứ 2 của tuần chứa ngày d (00:00 local).
-function mondayOf(d: Date): Date {
+export function mondayOf(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // getDay: CN=0 → Mon=0..Sun=6
   return x;
@@ -110,6 +122,58 @@ export function weekInfoOf(d: Date): { year: number; month: number; week: number
   const month = thu.getMonth() + 1;
   const week = Math.floor((thu.getDate() - firstThursday(year, month).getDate()) / 7) + 1;
   return { year, month, week, label: `T${month}W${week}` };
+}
+
+// Thứ 2 của tuần mang nhãn "TmWn" trong năm `year` (nhãn không mang năm nên năm phải truyền vào).
+// Nhãn sai định dạng → null.
+export function weekMondayOf(label: string, year: number): Date | null {
+  const m = label.match(/^T(\d{1,2})W(\d)$/);
+  if (!m) return null;
+  const month = Number(m[1]), week = Number(m[2]);
+  if (month < 1 || month > 12 || week < 1) return null;
+  const mon = firstThursday(year, month);
+  mon.setDate(mon.getDate() + (week - 1) * 7 - 3);
+  return mon;
+}
+
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Tuần thật của 1 bản ghi lao động = Thứ 2 'YYYY-MM-DD'. Nhãn "TmWn" không mang năm → suy năm từ
+// created_at; tháng của nhãn lệch > 6 tháng so với ngày nhập thì coi là năm liền trước / liền sau
+// (vd nhập ngày 5/1/2027 cho nhãn T12W5 → tuần của năm 2026). Nhãn sai định dạng → null.
+export function laborEntryWeekKey(e: { week_label: string; created_at: string }): string | null {
+  const m = e.week_label.trim().match(/^T(\d{1,2})W(\d)$/);
+  if (!m) return null;
+  const created = new Date(e.created_at);
+  if (Number.isNaN(created.getTime())) return null;
+  const labelMonth = Number(m[1]), createdMonth = created.getMonth() + 1;
+  let year = created.getFullYear();
+  if (labelMonth - createdMonth > 6) year -= 1;
+  else if (createdMonth - labelMonth > 6) year += 1;
+  const mon = weekMondayOf(e.week_label.trim(), year);
+  return mon ? isoDay(mon) : null;
+}
+
+// Bản ghi "số lao động hiện tại" của 1 khách hàng = TUẦN MUỘN NHẤT đã nhập tính tới tuần này —
+// KHÔNG phải bản nhập sau cùng: nhập bù số của tuần cũ không được đè lên số tuần mới hơn.
+// Cùng tuần → bản nhập sau. Chỉ có số nhập trước cho tuần tương lai → lấy tuần sớm nhất trong đó.
+export function latestLaborEntry<T extends { week_label: string; created_at: string }>(hist: T[], now: Date = new Date()): T | null {
+  if (!hist.length) return null;
+  const cur = isoDay(mondayOf(now));
+  let best: { e: T; k: string } | null = null, future: { e: T; k: string } | null = null;
+  for (const e of hist) {
+    const k = laborEntryWeekKey(e);
+    if (!k) continue;
+    if (k <= cur) {
+      if (!best || k > best.k || (k === best.k && e.created_at > best.e.created_at)) best = { e, k };
+    } else if (!future || k < future.k || (k === future.k && e.created_at > future.e.created_at)) {
+      future = { e, k };
+    }
+  }
+  if (best) return best.e;
+  if (future) return future.e;
+  // Toàn nhãn lạ (dữ liệu cũ) → giữ cách cũ: bản nhập sau cùng.
+  return hist.reduce((a, b) => (b.created_at > a.created_at ? b : a));
 }
 
 export function getCurrentWeekLabel(): string {

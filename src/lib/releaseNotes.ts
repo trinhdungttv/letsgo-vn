@@ -16,6 +16,27 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-02-current-workers-latest-week',
+    date: '2026-11-02',
+    title: 'Dashboard',
+    features: [
+      'Số lao động hiện tại lấy theo tuần mới nhất đã nhập — nhập bù số tuần cũ không còn đè số mới',
+      'Xu hướng lao động các tháng trước giữ đủ số của khách hàng đã ngưng (tính tới hết tháng ngưng)',
+      'Điểm sức khoẻ & cảnh báo rủi ro mất khách dùng đúng 6 tuần gần nhất (trước đây T10 xếp trước T9)',
+    ],
+  },
+  {
+    id: '2026-11-01-labor-report-export',
+    date: '2026-11-01',
+    title: 'Báo cáo',
+    features: [
+      'Nút "Báo cáo LĐ" (Dashboard, Báo cáo): 1 cú bấm ra file PDF hoặc Markdown tổng quan lao động',
+      'Biểu đồ tăng/giảm theo tuần, tháng, cầu biến động; so sánh chi nhánh, khu vực, KCN, khách hàng',
+      'Xem trước từng trang; chọn phạm vi (toàn hệ thống / chi nhánh / khu vực), tuần chốt, số tuần, tháng',
+      'Ghi rõ số nào là số gần nhất (KH chưa nhập tuần đó) và liệt kê KH lâu chưa cập nhật số lao động',
+    ],
+  },
+  {
     id: '2026-11-01-branch-bulk-edit',
     date: '2026-11-01',
     title: 'Chi nhánh',
