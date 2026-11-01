@@ -2,6 +2,12 @@
 // câu lệnh gửi Gemini, tách kết quả thành Tóm tắt / Lời thoại, đọc mốc [mm:ss] để bấm nghe lại đúng đoạn.
 import { BOX_OPEN } from './noteText';
 
+/**
+ * Bật/tắt chép lời + tóm tắt bằng Gemini trên giao diện (nút, tự chạy sau khi ghi âm). Đang TẮT: chỉ ghi âm + lưu file,
+ * Tony tự tải file về để phân tích. Muốn bật lại: đổi thành true (cần GEMINI_API_KEY + SUPABASE_SERVICE_ROLE_KEY trên Vercel).
+ */
+export const TRANSCRIBE_ENABLED = false;
+
 export const SUMMARY_HEAD = '## TÓM TẮT';
 export const ACTIONS_HEAD = '## QUYẾT ĐỊNH & VIỆC CẦN LÀM';
 export const TRANSCRIPT_HEAD = '## LỜI THOẠI';

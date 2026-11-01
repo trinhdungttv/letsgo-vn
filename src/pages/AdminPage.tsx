@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { ROLE_LABELS, ROLE_COLORS } from '../lib/constants';
 import { getAppLogoUrl, setAppLogoUrl } from '../lib/appSettings';
+import { RECRUIT_ENABLED } from '../lib/featureFlags';
 
 interface AdminPageProps {
   toast: (msg: string) => void;
@@ -30,7 +31,8 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   rejected: { label: 'Đã từ chối', cls: 'bg-red-50 text-red-700 border border-red-200' },
 };
 
-const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Tuyển dụng', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
+// 'Tuyển dụng' ẩn khi module tắt (featureFlags.ts) — dòng quyền trong DB vẫn giữ nguyên
+const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', ...(RECRUIT_ENABLED ? ['Tuyển dụng'] : []), 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
 
 const LEVEL_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'view', view: 'none', none: 'full' };
 

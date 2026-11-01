@@ -4,6 +4,7 @@ import type { AppUser, RolePermission } from './types';
 import { OFFICE_PAGES, OFFICE_PERMISSION_MODULE, isOfficePage } from '../modules/office-rental/pages';
 import { startGoogleLogin, completeGoogleLogin, hasGoogleRedirect } from './googleLogin';
 import { SESSION_TOKEN_KEY } from './sessionToken';
+import { RECRUIT_ENABLED } from './featureFlags';
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -176,6 +177,8 @@ export function canAccess(role: string, page: string, rolePermissions?: RolePerm
     const perm = rolePermissions?.find(p => p.role === role && p.module === OFFICE_PERMISSION_MODULE);
     return perm ? perm.level !== 'none' : true;
   }
+  // Tuyển dụng đang tắt (featureFlags.ts) → không ai thấy menu / trang, kể cả admin
+  if (page === 'recruit' && !RECRUIT_ENABLED) return false;
   // Tuyển dụng: chưa có dòng quyền nào (chưa chạy migration 180) → vẫn cho admin vào để thấy hướng dẫn cài đặt
   if (page === 'recruit' && role === 'admin' && !rolePermissions?.some(p => p.module === PAGE_MODULE.recruit)) return true;
   if (rolePermissions && rolePermissions.length) {

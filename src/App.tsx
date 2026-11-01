@@ -34,6 +34,7 @@ import Recruit from './pages/Recruit';
 import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import { parseApplyHash } from './lib/recruit/publicLink';
+import { RECRUIT_ENABLED } from './lib/featureFlags';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import QuickNotesDock from './components/quickNotes/QuickNotesDock';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
@@ -49,7 +50,10 @@ const PublicApply = lazy(() => import('./pages/PublicApply'));
 /** Trang Mạng lưới Sale cũ — nay là tệp Sale trong CSKH (#/crm-leads/sale). */
 const LEGACY_SALE_PAGE = 'crm-sales';
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'recruit', ...OFFICE_PAGES];
+/** Tuyển dụng đang tắt (featureFlags.ts): link cũ #/recruit/… và form ứng tuyển #/apply/… quay về Dashboard. */
+const readApplyLink = (hash: string) => (RECRUIT_ENABLED ? parseApplyHash(hash) : null);
+
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...(RECRUIT_ENABLED ? ['recruit' as Page] : []), ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -66,9 +70,9 @@ function AppInner() {
   // Khi đang ở link này thì không nạp dữ liệu toàn app (người ngoài không có quyền).
   const [shareCode, setShareCode] = useState<string | null>(() => parseShareHash(window.location.hash));
   // Link ứng tuyển (#/apply/<mã>[/<id CTV>]) — cũng mở không cần đăng nhập, không nạp dữ liệu app
-  const [applyLink, setApplyLink] = useState(() => parseApplyHash(window.location.hash));
+  const [applyLink, setApplyLink] = useState(() => readApplyLink(window.location.hash));
   useEffect(() => {
-    const sync = () => { setShareCode(parseShareHash(window.location.hash)); setApplyLink(parseApplyHash(window.location.hash)); };
+    const sync = () => { setShareCode(parseShareHash(window.location.hash)); setApplyLink(readApplyLink(window.location.hash)); };
     window.addEventListener('hashchange', sync);
     window.addEventListener('popstate', sync);
     return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); };
@@ -99,6 +103,10 @@ function AppInner() {
     if (parts[0] === LEGACY_SALE_PAGE) {
       window.history.replaceState(null, '', `#/crm-leads/sale${parts[1] ? `/${parts[1]}` : ''}`);
       return 'crm-leads';
+    }
+    if (!RECRUIT_ENABLED && (parts[0] === 'recruit' || parts[0] === 'apply')) {
+      window.history.replaceState(null, '', '#/dashboard');
+      return 'dashboard';
     }
     const h = parts[0];
     return h && PAGES.includes(h as Page) ? (h as Page) : 'dashboard';

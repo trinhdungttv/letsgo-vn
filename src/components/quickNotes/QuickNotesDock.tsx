@@ -20,7 +20,7 @@ import {
   recordingName, relativeTime,
 } from '../../lib/quickNotes/noteText';
 import { downloadBlob, dropStashedAudio, listStashedAudio, stashAudio } from '../../lib/quickNotes/pendingAudio';
-import { summaryForNote } from '../../lib/quickNotes/transcript';
+import { summaryForNote, TRANSCRIBE_ENABLED } from '../../lib/quickNotes/transcript';
 import type { PendingAudio, QuickNote, QuickNoteRecording } from '../../lib/quickNotes/types';
 import ConfirmDialog, { type ConfirmRequest } from './ConfirmDialog';
 import NoteEditor from './NoteEditor';
@@ -38,7 +38,7 @@ const TAB_MIN = 60;
 const OVERLAP = 10;
 const BUTTONS_SPACE = 150;
 /** Ghi âm xong + tải lên xong thì tự cho Gemini chép lời & tóm tắt (như Notion AI meeting notes). Bản ghi quá ngắn thì bỏ qua. */
-const AUTO_TRANSCRIBE = true;
+const AUTO_TRANSCRIBE = TRANSCRIBE_ENABLED;
 const AUTO_TRANSCRIBE_MIN_SEC = 5;
 
 const tabShadow = '-1px 0 0 rgba(0,0,0,0.05), -6px 2px 14px -6px rgba(0,0,0,0.3)';

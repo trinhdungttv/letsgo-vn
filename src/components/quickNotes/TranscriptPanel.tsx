@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronRight, Copy, Loader2, RotateCcw, Sparkles, TextQuote } from 'lucide-react';
 import { copyText } from '../../lib/clipboard';
 import { BOX_OPEN } from '../../lib/quickNotes/noteText';
-import { parseTranscript } from '../../lib/quickNotes/transcript';
+import { parseTranscript, TRANSCRIBE_ENABLED } from '../../lib/quickNotes/transcript';
 import type { QuickNoteRecording } from '../../lib/quickNotes/types';
 
 export interface TranscribeJob {
@@ -74,6 +74,9 @@ export default function TranscriptPanel({ rec, job, readOnly, onTranscribe, onIn
     if (tail.current) tail.current.scrollTop = tail.current.scrollHeight;
   }, [job?.text]);
 
+  // Tính năng đang tắt: bản ghi chưa có chữ thì không hiện gì (chỉ nghe / tải file)
+  if (!TRANSCRIBE_ENABLED && !has && !job) return null;
+
   if (job?.status === 'running') {
     return (
       <div className="rounded-[10px] bg-black/[0.04] px-2.5 py-2 text-[12px]">
@@ -138,7 +141,7 @@ export default function TranscriptPanel({ rec, job, readOnly, onTranscribe, onIn
           className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-black/[0.06]">
           {copied ? <Check size={12} /> : <Copy size={12} />}
         </button>
-        {!readOnly && (
+        {!readOnly && TRANSCRIBE_ENABLED && (
           <button type="button" onClick={onTranscribe} title="Chép lại từ đầu (tính thêm phí Gemini)" aria-label="Chép lại"
             className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center opacity-60 hover:opacity-100 hover:bg-black/[0.06]">
             <RotateCcw size={12} />
