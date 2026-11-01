@@ -1,6 +1,6 @@
 // Cửa sổ danh sách (như cửa sổ MFinder): 2 khu riêng Ghi chú / Sơ đồ tư duy, mỗi khu có Tất cả / Lưu trữ / Đã xoá
 // + ô tìm; danh sách bên trái + khung soạn bên phải. Điện thoại: toàn màn, bấm 1 dòng → mở toàn màn, nút ‹ để quay lại.
-// Nút Phóng to trong khung soạn → cửa sổ gần kín màn hình (nhớ riêng cho Ghi chú / Sơ đồ tư duy).
+// Nút Phóng to trong khung soạn → cửa sổ gần kín màn hình; 1 cỡ chung cho cả 2 khu (đổi khu không bị phóng / thu).
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlertCircle, Circle, Loader2, Mic, Network, Pin, Plus, StickyNote, X } from 'lucide-react';
@@ -29,14 +29,14 @@ export interface EditorExtra {
 const kindOf = (n: Pick<QuickNote, 'view_mode'>): NoteView => (isMindmap(n) ? 'mindmap' : 'text');
 
 const WIN_KEY = 'qn-window-expanded';
-const WIN_DEFAULT: Record<NoteView, boolean> = { text: false, mindmap: true };
 
-function loadWinExpanded(): Record<NoteView, boolean> {
+function loadWinExpanded(): boolean {
   try {
-    const raw = JSON.parse(localStorage.getItem(WIN_KEY) ?? 'null') as Partial<Record<NoteView, boolean>> | null;
-    return { text: raw?.text ?? WIN_DEFAULT.text, mindmap: raw?.mindmap ?? WIN_DEFAULT.mindmap };
+    const raw = JSON.parse(localStorage.getItem(WIN_KEY) ?? 'null') as boolean | { text?: boolean } | null;
+    // Bản cũ nhớ riêng từng loại { text, mindmap } → lấy theo cỡ đang dùng cho ghi chú
+    return typeof raw === 'boolean' ? raw : !!raw?.text;
   } catch {
-    return WIN_DEFAULT;
+    return false;
   }
 }
 
@@ -160,10 +160,9 @@ export default function NotesWindow({
     if (!isMobile || (selected && kindOf(selected) !== k)) setSelectedId(null);
   };
 
-  const viewMode: NoteView = selected ? kindOf(selected) : section;
-  const expanded = !isMobile && winExpanded[viewMode];
+  const expanded = !isMobile && winExpanded;
   const toggleExpand = () => {
-    const next = { ...winExpanded, [viewMode]: !winExpanded[viewMode] };
+    const next = !winExpanded;
     setWinExpanded(next);
     try { localStorage.setItem(WIN_KEY, JSON.stringify(next)); } catch { /* chỉ nhớ trong phiên */ }
   };

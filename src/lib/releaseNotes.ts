@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-01-quick-notes-same-size',
+    date: '2026-11-01',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Chuyển qua lại giữa Ghi chú và Sơ đồ tư duy giữ nguyên cỡ đang chọn (cửa sổ hoặc toàn màn hình), không tự phóng / thu',
+      'Ô việc cần làm thành vòng tròn to như Lời nhắc iPhone: bấm vào vòng tròn (hoặc lề trái) là đánh dấu xong',
+    ],
+  },
+  {
     id: '2026-11-01-quick-notes-mindmap-split',
     date: '2026-11-01',
     title: 'Ghi chú nhanh',

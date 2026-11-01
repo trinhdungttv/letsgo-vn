@@ -8,8 +8,8 @@
 // Điện thoại (< 768px, không có rê chuột): tay nắm nhỏ ở mép phải → bấm mở danh sách toàn màn.
 // Ghi chú riêng từng người (migration 188, qua quick_notes_rpc), tự lưu; ghi âm chạy tiếp khi đóng thẻ / đổi trang,
 // file lên Storage qua api/quick-notes-audio.ts — chưa lên được thì giữ trong IndexedDB của máy để thử lại.
-// Thẻ soạn: nút Phóng to (gần kín màn hình) + kéo góc dưới trái để đổi cỡ; nhớ riêng cho dạng Văn bản / Sơ đồ tư duy
-// (sơ đồ mặc định mở to) trong localStorage của máy.
+// Thẻ soạn: nút Phóng to (gần kín màn hình) + kéo góc dưới trái để đổi cỡ; 1 cỡ chung cho ghi chú và sơ đồ (chuyển qua
+// lại giữa các thẻ không bị phóng / thu), nhớ trong localStorage của máy.
 // ============================================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
@@ -46,21 +46,18 @@ const AUTO_TRANSCRIBE_MIN_SEC = 5;
 
 const tabShadow = '-1px 0 0 rgba(0,0,0,0.05), -6px 2px 14px -6px rgba(0,0,0,0.3)';
 
-/** Cỡ thẻ soạn, nhớ riêng cho dạng văn bản / sơ đồ tư duy. */
-type CardLayout = Record<NoteView, { expanded: boolean; w: number; h: number }>;
+/** Cỡ thẻ soạn — dùng chung cho ghi chú và sơ đồ tư duy. */
+type CardLayout = { expanded: boolean; w: number; h: number };
 const CARD_KEY = 'qn-card-layout';
 const CARD_MIN = { w: 340, h: 320 };
-const CARD_DEFAULT: CardLayout = { text: { expanded: false, w: 460, h: 540 }, mindmap: { expanded: true, w: 760, h: 600 } };
+const CARD_DEFAULT: CardLayout = { expanded: false, w: 460, h: 540 };
 
 function loadCardLayout(): CardLayout {
   try {
-    const raw = JSON.parse(localStorage.getItem(CARD_KEY) ?? 'null') as Partial<CardLayout> | null;
-    if (!raw) return CARD_DEFAULT;
-    const pick = (k: NoteView) => {
-      const v = raw[k];
-      return v && Number.isFinite(v.w) && Number.isFinite(v.h) ? { expanded: !!v.expanded, w: v.w, h: v.h } : CARD_DEFAULT[k];
-    };
-    return { text: pick('text'), mindmap: pick('mindmap') };
+    const raw = JSON.parse(localStorage.getItem(CARD_KEY) ?? 'null') as (Partial<CardLayout> & { text?: Partial<CardLayout> }) | null;
+    // Bản cũ nhớ riêng từng loại { text, mindmap } → lấy theo cỡ đang dùng cho ghi chú
+    const v = raw?.text ?? raw;
+    return v && Number.isFinite(v.w) && Number.isFinite(v.h) ? { expanded: !!v.expanded, w: v.w!, h: v.h! } : CARD_DEFAULT;
   } catch {
     return CARD_DEFAULT;
   }
@@ -446,8 +443,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     transform: expanded ? `translateX(${active ? -6 : 0}px)` : `translateX(${TAB_HIDDEN}px)`,
   });
 
-  const cardMode: NoteView = openNote && isMindmap(openNote) ? 'mindmap' : 'text';
-  const card = cardLayout[cardMode];
+  const card = cardLayout;
   const cardW = Math.max(CARD_MIN.w, Math.min(card.w, view.w - 90));
   const cardH = Math.max(Math.min(CARD_MIN.h, view.h - 24), Math.min(card.h, view.h - 24));
   const cardTop = Math.min(Math.max(anchorY - 12, 12), view.h - cardH - 12);
@@ -455,7 +451,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     ? { right: TAB_W + 12, left: 16, top: 12, bottom: 12 }
     : { right: TAB_W + 12, top: cardTop, width: cardW, height: cardH };
 
-  const toggleCardExpand = () => saveCardLayout({ ...cardLayout, [cardMode]: { ...card, expanded: !card.expanded } });
+  const toggleCardExpand = () => saveCardLayout({ ...card, expanded: !card.expanded });
 
   // Kéo góc dưới bên trái để đổi cỡ thẻ (thẻ bám mép phải nên kéo sang trái = rộng ra)
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -473,13 +469,13 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
         w: Math.round(Math.max(CARD_MIN.w, Math.min(view.w - TAB_W - 40, w0 + (sx - ev.clientX)))),
         h: Math.round(Math.max(CARD_MIN.h, Math.min(view.h - top - 12, h0 + (ev.clientY - sy)))),
       };
-      setCardLayout(cl => ({ ...cl, [cardMode]: { ...cl[cardMode], expanded: false, ...last } }));
+      setCardLayout({ expanded: false, ...last });
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       setResizing(false);
-      saveCardLayout({ ...cardLayout, [cardMode]: { ...card, expanded: false, ...last } });
+      saveCardLayout({ expanded: false, ...last });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);

@@ -4,16 +4,17 @@
 // 2 loại mục, cố định từ lúc tạo: Ghi chú văn bản / Sơ đồ tư duy kiểu XMind (mindmap/MindMapEditor — tải riêng khi mở).
 // Từ ghi chú có thể tạo 1 sơ đồ MỚI (ghi chú giữ nguyên); từ sơ đồ có thể tạo 1 ghi chú MỚI chứa dàn ý.
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import {
   AlertCircle, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2,
   Maximize2, Mic, Minimize2, Network, Pause, Pin, Play, RotateCcw, Search, Square, Trash2, X,
 } from 'lucide-react';
 import { FONT_FAMILY, FONT_LABEL, FONT_SIZES, PALETTE, stepFontSize } from '../../lib/quickNotes/colors';
 import {
-  continueChecklist, displayTitle, findMatches, formatDuration, isMindmap, relativeTime, toggleBoxAt, toggleChecklist,
+  continueChecklist, displayTitle, findMatches, formatDuration, isMindmap, relativeTime, toggleChecklist,
 } from '../../lib/quickNotes/noteText';
 import { NOTE_COLORS, NOTE_FONTS, type QuickNote, type QuickNoteRecording, type SaveState } from '../../lib/quickNotes/types';
+import ChecklistOverlay from './ChecklistOverlay';
 import RecordingList, { type UploadItem } from './RecordingList';
 import type { TranscribeJob } from './TranscriptPanel';
 import type { AudioRecorder } from './useAudioRecorder';
@@ -211,13 +212,15 @@ export default function NoteEditor(props: NoteEditorProps) {
     }
   };
 
-  const onClick = (e: MouseEvent<HTMLTextAreaElement>) => {
+  // Bấm ô tròn: đổi ☐ ⇄ ☑, giữ nguyên chỗ con trỏ đang gõ
+  const toggleBox = (pos: number) => {
     if (readOnly) return;
-    const el = e.currentTarget;
-    if (el.selectionStart !== el.selectionEnd) return;
-    const pos = el.selectionStart;
-    const next = toggleBoxAt(el.value, pos);
-    if (next !== null) setBody(next, [pos, pos]);
+    const v = note.body;
+    const ch = v[pos];
+    if (ch !== '☐' && ch !== '☑') return;
+    const el = ta.current;
+    const sel: [number, number] | undefined = el && document.activeElement === el ? [el.selectionStart, el.selectionEnd] : undefined;
+    setBody(v.slice(0, pos) + (ch === '☐' ? '☑' : '☐') + v.slice(pos + 1), sel);
   };
 
   const onChecklist = () => {
@@ -438,12 +441,14 @@ export default function NoteEditor(props: NoteEditorProps) {
           </div>
         )}
         <textarea ref={ta} value={note.body} readOnly={readOnly}
-          onChange={e => setBody(e.target.value)} onKeyDown={onKeyDown} onClick={onClick}
+          onChange={e => setBody(e.target.value)} onKeyDown={onKeyDown}
           onScroll={e => { if (layer.current) layer.current.scrollTop = e.currentTarget.scrollTop; }}
           placeholder={'Ghi nhanh cuộc trò chuyện, việc cần làm…\nDòng đầu là tiêu đề · bấm ☐ trên thanh công cụ để thêm việc'}
           spellCheck
           className="relative block w-full h-full resize-none bg-transparent outline-none px-4 py-3 whitespace-pre-wrap break-words placeholder:opacity-45"
           style={{ ...font, color: pal.ink }} />
+        <ChecklistOverlay text={note.body} font={font} ta={ta} ink={pal.ink} paper={pal.paper} accent={pal.dot}
+          readOnly={readOnly} onToggle={toggleBox} />
       </div>
       )}
 
