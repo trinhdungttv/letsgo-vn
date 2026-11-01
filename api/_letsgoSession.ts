@@ -29,6 +29,28 @@ export async function sessionOk(token: string): Promise<boolean> {
   }
 }
 
+/**
+ * user_id cua phien dang nhap (RPC quick_notes_rpc 'whoami' — migration 188): moi tai khoan con han deu dung duoc.
+ * null = token khong hop le / het han / chua chay migration.
+ */
+export async function sessionUserId(token: string): Promise<string | null> {
+  const base = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!base || !key || !token) return null;
+  try {
+    const res = await fetch(`${base.replace(/\/$/, '')}/rest/v1/rpc/quick_notes_rpc`, {
+      method: 'POST',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_token: token, p_action: 'whoami', p_args: {} }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { user_id?: unknown };
+    return typeof data?.user_id === 'string' ? data.user_id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Doc token tu request roi kiem; tra Response 401 (cau tieng Viet) khi khong hop le, null khi hop le. */
 export async function requireSession(req: Request): Promise<Response | null> {
   if (await sessionOk(req.headers.get(TOKEN_HEADER) ?? '')) return null;

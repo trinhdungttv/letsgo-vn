@@ -1,6 +1,8 @@
 // ============================================================================
 // Khung module CSKH — được trang CSKH (CRMLeads.tsx) nạp bằng React.lazy.
 // ----------------------------------------------------------------------------
+// • Trang có 2 tệp: Khách hàng / Sale – CTV (lib/cskh/space). Mỗi lúc chỉ hiện 1 tệp;
+//   dữ liệu các tệp được hiện tải chung 1 lượt nên chuyển tệp là có ngay.
 // • Tải dữ liệu MỘT lần cho mọi tab (chuyển tab không tải lại); nơi khác ghi xong
 //   thì phát `cskh:data-changed` để tải lại.
 // • Giữ các hộp thoại dùng chung: Hồ sơ, Ghi tương tác, Chọn người chăm sóc, Nhóm.
@@ -13,11 +15,14 @@ import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import type { CskhSpace } from '../../lib/cskh/space';
+import { buildTodayQueue } from '../../lib/cskh/todayQueue';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
 import { addGroup, addInteraction, archiveGroup, assignGroups, logToast, saveGroupLog, setGender, updateGroup } from './data/api';
 import { automationMessage, runCareAutomationOnce } from './automationRunner';
-import { useCskhData } from './data/useCskhData';
+import type { CskhData } from './data/api';
+import { useCskhSpaces } from './data/useCskhData';
+import { useCareScope } from './useCareScope';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
 import { SpaceContext } from './space';
 import CskhDashboard from './Dashboard';
@@ -34,19 +39,80 @@ import { ContactProfileModal } from './components/ContactProfileModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
 
-export default function CskhModule({ space = 'client', tab, onTab, clients, toast, onOpenWorkspace, onOpenClient }: {
-  /** Khu vực: 'client' = trang CSKH (mặc định), 'sale' = trang Mạng lưới Sale — dữ liệu 2 bên không lẫn. */
-  space?: CskhSpace;
+interface ViewProps {
   tab: CskhTabKey;
   onTab: (tab: CskhTabKey) => void;
   clients: Client[];
   toast: (msg: string) => void;
   onOpenWorkspace: () => void;
   onOpenClient: (id: string) => void;
+}
+
+export default function CskhModule({ space = 'client', spaces, onDueCounts, ...view }: ViewProps & {
+  /** Tệp đang hiện: 'client' = Khách hàng (mặc định), 'sale' = Sale / CTV — dữ liệu 2 tệp không lẫn. */
+  space?: CskhSpace;
+  /** Các tệp được hiện trên trang (nạp chung 1 lượt); thiếu = chỉ tệp đang hiện. */
+  spaces?: readonly CskhSpace[];
+  /** Báo số người cần liên hệ hôm nay của các tệp KHÔNG đang hiện (hiện trên nút chuyển tệp). */
+  onDueCounts?: (space: CskhSpace, count: number) => void;
+}) {
+  const { clients, toast } = view;
+  const { user } = useAuth();
+  const { branches } = useBranchLookup();
+  const loadSpaces = spaces?.includes(space) ? spaces : [...(spaces ?? []), space];
+  const { data: bySpace, loading } = useCskhSpaces(toast, loadSpaces);
+  const data = bySpace?.[space] ?? null;
+
+  // ── Việc nhắc tự động: 1 lần mỗi phiên cho từng tệp, sau khi dữ liệu tải xong (App có thể đã chạy trước) ──
+  useEffect(() => {
+    if (!bySpace || !user || !branches.length) return;
+    for (const d of Object.values(bySpace)) {
+      if (!d?.migrationReady || (d.space === 'sale' && !d.saleReady)) continue;
+      runCareAutomationOnce({ ctx: { user, clients, branches }, today: todayVN(), data: d })
+        .then(r => { const msg = automationMessage(r, d.space); if (msg) toast(msg); })
+        .catch(e => toast('Lỗi tạo việc nhắc CSKH: ' + (e as Error).message));
+    }
+  }, [bySpace, user, clients, branches, toast]);
+
+  return (
+    <>
+      {/* Đổi tệp = dựng lại toàn bộ hộp thoại / bộ lọc trong tab → không sót trạng thái của tệp kia */}
+      <SpaceView key={space} space={space} data={data} loading={loading} {...view} />
+      {onDueCounts && bySpace && Object.values(bySpace).map(d => (d && d.space !== space && (
+        // key theo cả tệp đang hiện: chuyển tệp là đọc lại bộ lọc vừa dùng ở tệp kia
+        <DueCounter key={`${d.space}:${space}`} data={d} clients={clients} onCount={onDueCounts} />
+      )))}
+    </>
+  );
+}
+
+/**
+ * Đếm người cần liên hệ hôm nay của 1 tệp đang ẩn — cùng cách tính và cùng bộ lọc phạm vi với
+ * khối "Hôm nay cần liên hệ" của tệp đó, để con số trên nút chuyển tệp khớp khi bấm sang.
+ */
+function DueCounter({ data, clients, onCount }: { data: CskhData; clients: Client[]; onCount: (space: CskhSpace, count: number) => void }) {
+  const { scoped } = useCareScope(data.contacts, clients, data.space);
+  const today = todayVN();
+  const count = useMemo(() => buildTodayQueue({
+    contacts: scoped,
+    interactions: data.interactions.filter(i => !i.isArchived),
+    occasions: data.occasions.filter(o => !o.isArchived),
+    gifts: data.gifts.filter(g => !g.isArchived),
+    cadence: data.settings.cadence,
+    today,
+  }, Number.MAX_SAFE_INTEGER).items.length, [scoped, data, today]);
+  useEffect(() => { onCount(data.space, count); }, [data.space, count, onCount]);
+  return null;
+}
+
+/** Các tab + hộp thoại dùng chung của 1 tệp. */
+function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWorkspace, onOpenClient }: ViewProps & {
+  space: CskhSpace;
+  data: CskhData | null;
+  loading: boolean;
 }) {
   const { user } = useAuth();
   const { branches } = useBranchLookup();
-  const { data, loading } = useCskhData(toast, space);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [creatingContact, setCreatingContact] = useState(false);
   /** '' = form chưa chọn người; id = chọn sẵn; null = đóng. */
@@ -55,15 +121,6 @@ export default function CskhModule({ space = 'client', tab, onTab, clients, toas
   const [managingGroups, setManagingGroups] = useState(false);
   /** null = đóng; mảng = người chọn sẵn (rỗng = tự chọn trong hộp). */
   const [groupLogFor, setGroupLogFor] = useState<readonly string[] | null>(null);
-
-  // ── Việc nhắc tự động: 1 lần mỗi phiên, sau khi dữ liệu tải xong (App có thể đã chạy trước) ──
-  useEffect(() => {
-    if (!data?.migrationReady || !user || !branches.length) return;
-    if (data.space === 'sale' && !data.saleReady) return;
-    runCareAutomationOnce({ ctx: { user, clients, branches }, today: todayVN(), data })
-      .then(r => { const msg = automationMessage(r, data.space); if (msg) toast(msg); })
-      .catch(e => toast('Lỗi tạo việc nhắc CSKH: ' + (e as Error).message));
-  }, [data, user, clients, branches, toast]);
 
   const openLog = useCallback((contactId?: string) => { setProfileId(null); setLogFor(contactId ?? ''); }, []);
   const openGroups = useCallback(() => { setProfileId(null); setManagingGroups(true); }, []);

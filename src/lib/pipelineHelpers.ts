@@ -81,8 +81,9 @@ const LEAD_TO_CLIENT: [string, string][] = [
   ['cover_image_pos_y', 'cover_image_pos_y'],
 ];
 
-/** Tách các cột Thị trường của công ty để ghi sang clients. `client` có thì chỉ điền ô đang trống. */
-function leadFieldsForClient(lead: Record<string, unknown>, client?: Record<string, unknown> | null) {
+/** Tách các cột Thị trường của công ty để ghi sang clients. `client` có thì chỉ điền ô đang trống.
+ *  `zones` = tên các KCN đã chọn ở thẻ CRM (crm_pipeline.zone_ids) — có thì thay cho KCN cũ 1 ô ở market_leads.region. */
+function leadFieldsForClient(lead: Record<string, unknown>, client?: Record<string, unknown> | null, zones: string[] = []) {
   const out: Record<string, unknown> = {};
   for (const [from, to] of LEAD_TO_CLIENT) {
     const v = lead[from];
@@ -91,9 +92,10 @@ function leadFieldsForClient(lead: Record<string, unknown>, client?: Record<stri
     if (client && !(to === 'market_suppliers' ? blankSuppliers(client[to]) : blank(client[to]))) continue;
     out[to] = v;
   }
-  // KCN của công ty (market_leads.region) → clients.industrial_zones
+  // KCN của công ty (đủ các KCN của thẻ CRM, chưa chạy 186 thì market_leads.region) → clients.industrial_zones
   const zone = typeof lead.region === 'string' ? lead.region.trim() : '';
-  if (zone && (!client || blank(client.industrial_zones))) out.industrial_zones = [zone];
+  const names = zones.length ? zones : zone ? [zone] : [];
+  if (names.length && (!client || blank(client.industrial_zones))) out.industrial_zones = names;
   // Ảnh bìa: chỉ chép cách hiển thị khi có chép ảnh
   if (!out.cover_image_url) { delete out.cover_image_fit; delete out.cover_image_pos_x; delete out.cover_image_pos_y; }
   // Link bản đồ + toạ độ đi cùng nhau: khách đã có link hoặc toạ độ thì giữ nguyên của khách
@@ -189,13 +191,21 @@ export async function linkPipelineToClient(
   let warning: string | null = null;
   const { data: lead } = await supabase.from('market_leads').select('*')
     .eq('crm_id', entry.id).order('created_at', { ascending: true }).limit(1).maybeSingle();
-  if (lead) {
+  // Các KCN đã chọn ở thẻ CRM (migration 186), giữ thứ tự chọn — KCN đầu là KCN chính
+  const zoneIds = entry.zone_ids ?? [];
+  let zones: string[] = [];
+  if (zoneIds.length) {
+    const { data } = await supabase.from('market_zones').select('id, name').in('id', zoneIds);
+    const byId = new Map(((data ?? []) as { id: string; name: string }[]).map(z => [z.id, z.name]));
+    zones = zoneIds.map(id => byId.get(id)).filter((n): n is string => !!n);
+  }
+  if (lead || zones.length) {
     let client: Record<string, unknown> | null = null;
     if (opts.existingClient) {
       const { data } = await supabase.from('clients').select('*').eq('id', clientId).maybeSingle();
       client = data ?? {};
     }
-    const fields = leadFieldsForClient(lead, client);
+    const fields = leadFieldsForClient(lead ?? {}, client, zones);
     if (Object.keys(fields).length) {
       const { error } = await supabase.from('clients').update(fields).eq('id', clientId);
       if (error) warning = 'Chưa chép được thông tin Thị trường sang Khách hàng: ' + error.message;

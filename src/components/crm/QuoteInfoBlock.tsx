@@ -10,6 +10,7 @@ import {
   lineKind, lineTotal, normalizeQuoteInfo, quoteInfoIsEmpty,
 } from '../../lib/quoteInfo';
 import { DEFAULT_REFERRAL_TERMS, normalizeTerms } from '../../lib/serviceMode';
+import { serviceOfProduct } from '../../lib/productService';
 
 const SERVICE_OPTIONS: [QuoteService, string][] = [
   ['leasing', 'Cho thuê (thời vụ)'], ['recruitment', 'Giới thiệu (chính thức)'], ['both', 'Cả hai'],
@@ -24,9 +25,11 @@ const inp = 'w-full text-[12px] px-2 py-1 border border-gray-200 rounded outline
  * các hạng mục lao động và đơn giá/phí dịch vụ để lưu lại và sau này đẩy sang file Báo giá tự động.
  * TỰ LƯU khi ngừng gõ (lưu vào crm_pipeline.quote_info, migration 156).
  */
-export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
+export default function QuoteInfoBlock({ entry, onUpdate, productCategory, toast }: {
   entry: CRMPipelineEntry;
   onUpdate: (e: CRMPipelineEntry) => void;
+  /** Nhóm sản phẩm đang chọn — bảng báo giá chưa có gì thì mặc định theo hình thức của sản phẩm. */
+  productCategory?: string | null;
   toast: (msg: string) => void;
 }) {
   const { user } = useAuth();
@@ -94,7 +97,7 @@ export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
 
   const setField = <K extends keyof QuoteInfo>(k: K, v: QuoteInfo[K]) => change(q => ({ ...q, [k]: v }));
   const setLine = (id: string, patch: Partial<QuoteInfoLine>) => change(q => ({ ...q, lines: q.lines.map(l => l.id === id ? { ...l, ...patch } : l) }));
-  const addLine = () => change(q => ({ ...q, lines: [...q.lines, emptyLine()] }));
+  const addLine = () => change(q => ({ ...q, service: q.service ?? defaultService, lines: [...q.lines, emptyLine()] }));
   const removeLine = (l: QuoteInfoLine) => {
     const filled = l.label || l.workers || l.wage != null || l.fee != null || l.note;
     if (filled && !confirm(`Xoá hạng mục "${l.label || 'chưa đặt tên'}" khỏi bảng báo giá?`)) return;
@@ -103,7 +106,10 @@ export default function QuoteInfoBlock({ entry, onUpdate, toast }: {
   const numVal = (s: string): number | null => { const n = parseInt(s.replace(/[^\d]/g, ''), 10); return Number.isFinite(n) ? n : null; };
 
   const totalWorkers = useMemo(() => info.lines.reduce((s, l) => s + (parseInt(l.workers, 10) || 0), 0), [info.lines]);
-  const service: QuoteService = info.service ?? 'leasing';
+  // Chưa chọn hình thức + chưa có hạng mục → theo sản phẩm (Giới thiệu lao động → Giới thiệu); hạng mục cũ
+  // nhập trước khi có ô hình thức là cho thuê nên giữ nguyên. Thêm hạng mục đầu tiên thì ghi luôn hình thức.
+  const defaultService: QuoteService = !info.service && info.lines.length === 0 ? (serviceOfProduct(productCategory) ?? 'leasing') : 'leasing';
+  const service: QuoteService = info.service ?? defaultService;
   const terms = normalizeTerms(info.referral ?? DEFAULT_REFERRAL_TERMS);
   const statusEl = status === 'saving' ? <span className="text-blue-600">Đang lưu…</span>
     : status === 'pending' ? <span className="text-[#999]">Sắp tự lưu…</span>

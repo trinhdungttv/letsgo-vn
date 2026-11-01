@@ -6,6 +6,8 @@
 //   • crm_pipeline.worker_estimate        — số hiện ở thẻ Pipeline
 //   • market_leads.workers_needed + need_type — Thị trường → Công ty/Dự án (cùng crm_id)
 // Sửa ở đây là ghi cả hai. "Tổng Thời Vụ / Chính Thức" bên dưới là số lao động đang làm — khác với số khách cần.
+// "Hình thức cần" đi theo sản phẩm đã chọn (src/lib/productService.ts): sản phẩm Giới thiệu lao động → chỉ còn
+// "Chính thức" hoặc "Cả hai"; dữ liệu cũ lệch (form Thêm công ty trước đây luôn ghi thời vụ) tự sửa theo sản phẩm.
 // ============================================================================
 import { useEffect, useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
@@ -13,6 +15,7 @@ import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { supabase } from '../../lib/supabase';
 import { NEED_LABEL, pruneMissing, type NeedType } from '../../lib/serviceMode';
+import { needOfProduct, needOptionsFor, fitNeedToProduct } from '../../lib/productService';
 
 interface LeadNeed {
   id: string;
@@ -25,12 +28,12 @@ interface Props {
   entry: { id: string; company_name: string; worker_estimate: number | null };
   /** Ghi crm_pipeline.worker_estimate (có ghi nhật ký). Trả về false nếu lỗi. */
   onSaveEstimate: (n: number | null) => Promise<boolean>;
+  /** Nhóm sản phẩm đang chọn (crm_products.category) — quyết định hình thức cần. */
+  productCategory?: string | null;
   toast: (m: string) => void;
 }
 
-const NEED_TYPES = Object.keys(NEED_LABEL) as NeedType[];
-
-export default function WorkerNeedBlock({ entry, onSaveEstimate, toast }: Props) {
+export default function WorkerNeedBlock({ entry, onSaveEstimate, productCategory, toast }: Props) {
   const { user } = useAuth();
   const [lead, setLead] = useState<LeadNeed | null>(null);
   const [editing, setEditing] = useState(false);
@@ -64,7 +67,7 @@ export default function WorkerNeedBlock({ entry, onSaveEstimate, toast }: Props)
     setLead({ ...lead, workersNeeded: n });
   };
 
-  const changeNeedType = async (needType: NeedType) => {
+  const changeNeedType = async (needType: NeedType, reason = '') => {
     if (!lead || needType === lead.needType) return;
     const payload = await pruneMissing('market_leads', { need_type: needType }, ['need_type']);
     if (!('need_type' in payload)) { toast('Chưa chạy migration 184 — chưa lưu được hình thức cần'); return; }
@@ -73,9 +76,20 @@ export default function WorkerNeedBlock({ entry, onSaveEstimate, toast }: Props)
     setLead({ ...lead, needType });
     await logActivity({
       user, action: 'update', table: 'market_leads', recordId: lead.id,
-      description: `Đổi hình thức khách cần → ${NEED_LABEL[needType]} — "${entry.company_name}"`,
+      description: `Đổi hình thức khách cần → ${NEED_LABEL[needType]}${reason} — "${entry.company_name}"`,
     });
   };
+
+  // Sản phẩm quyết định hình thức: đổi sản phẩm, hoặc dữ liệu cũ đang lệch → ghi lại cho khớp
+  const implied = needOfProduct(productCategory);
+  const needOptions = needOptionsFor(implied);
+  useEffect(() => {
+    if (!lead?.needType) return;
+    const fit = fitNeedToProduct(lead.needType, implied);
+    if (fit && fit !== lead.needType) void changeNeedType(fit, ` (theo sản phẩm "${productCategory}")`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?.id, lead?.needType, implied]);
+  const shownNeed = lead?.needType ? fitNeedToProduct(lead.needType, implied) ?? lead.needType : null;
 
   return (
     <>
@@ -103,14 +117,19 @@ export default function WorkerNeedBlock({ entry, onSaveEstimate, toast }: Props)
       </div>
       <div>
         <div className="text-[11px] text-[#888] font-medium mb-0.5">Hình thức cần</div>
-        {lead?.needType ? (
-          <select
-            value={lead.needType}
-            onChange={e => void changeNeedType(e.target.value as NeedType)}
-            className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
-          >
-            {NEED_TYPES.map(k => <option key={k} value={k}>{NEED_LABEL[k]}</option>)}
-          </select>
+        {shownNeed ? (
+          <>
+            <select
+              value={shownNeed}
+              onChange={e => void changeNeedType(e.target.value as NeedType)}
+              className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+            >
+              {needOptions.map(k => <option key={k} value={k}>{NEED_LABEL[k]}</option>)}
+            </select>
+            {implied && (
+              <div className="text-[10.5px] text-[#aaa] mt-0.5">Theo sản phẩm “{productCategory}” — đổi sản phẩm để đổi hình thức</div>
+            )}
+          </>
         ) : (
           <div className="text-[12.5px] text-gray-400 italic">{lead ? 'Chưa chạy migration 184' : 'Chưa có hồ sơ Thị trường'}</div>
         )}

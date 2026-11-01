@@ -48,15 +48,21 @@ export async function resolvePipelineEntry(entry: CRMPipelineEntry, branches: Br
   const found: string[] = [];
   const qi = normalizeQuoteInfo(entry.quote_info);
 
-  const [leadRes, clientRes] = await Promise.all([
+  // Thẻ có nhiều KCN (crm_pipeline.zone_ids, migration 186) → phương án lấy KCN chính (KCN đầu tiên)
+  const mainZoneId = entry.zone_ids?.[0] ?? null;
+  const [leadRes, clientRes, zoneRes] = await Promise.all([
     supabase.from('market_leads').select('industry, region').eq('crm_id', entry.id).limit(1).maybeSingle(),
     entry.client_id ? supabase.from('clients').select('industry, industrial_zones').eq('id', entry.client_id).maybeSingle() : Promise.resolve({ data: null }),
+    mainZoneId ? supabase.from('market_zones').select('name').eq('id', mainZoneId).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const lead = leadRes.data as { industry: string | null; region: string | null } | null;
   const client = clientRes.data as { industry: string | null; industrial_zones: string[] | null } | null;
+  const mainZone = (zoneRes.data as { name: string | null } | null)?.name;
 
   const industry = firstText(qi.industry, lead?.industry, client?.industry);
-  const zone = firstText(qi.zone, lead?.region, client?.industrial_zones?.[0]);
+  const zone = entry.client_id
+    ? firstText(qi.zone, client?.industrial_zones?.[0], mainZone, lead?.region)
+    : firstText(qi.zone, mainZone, lead?.region, client?.industrial_zones?.[0]);
   if (industry) found.push(`ngành "${industry}"`);
   if (zone) found.push(`KCN "${zone}"`);
 

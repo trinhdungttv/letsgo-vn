@@ -4,13 +4,15 @@ import { RELEASE_NOTES } from './src/lib/releaseNotes';
 import { cleanNotes, DEV_BUILD_ID, MAX_NOTES_IN_VERSION_FILE } from './src/lib/releaseUpdate';
 
 // Dev: Vite không chạy thư mục /api của Vercel, nên tự phục vụ các route /api cần dùng bằng đúng code đó.
-const DEV_API_ROUTES = ['check-link', 'resolve-map', 'osm-tile'];
+const DEV_API_ROUTES = ['check-link', 'resolve-map', 'osm-tile', 'quick-notes-audio', 'quick-notes-transcribe'];
 const devApi = (): Plugin => ({
   name: 'dev-api',
   configureServer(server) {
-    // api/resolve-map đọc biến Supabase từ process.env như trên Vercel
+    // api/resolve-map đọc biến Supabase từ process.env như trên Vercel; api/quick-notes-* cần thêm khoá service_role
+    // (dòng SUPABASE_SERVICE_ROLE_KEY trong .env — không có tiền tố VITE_ nên không bao giờ lọt vào bundle trình duyệt)
+    // và key Gemini (chạy dev dùng luôn VITE_GEMINI_API_KEY nếu chưa có GEMINI_API_KEY)
     const env = loadEnv(server.config.mode, process.cwd(), '');
-    for (const k of ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) if (env[k] && !process.env[k]) process.env[k] = env[k];
+    for (const k of ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'GEMINI_API_KEY', 'VITE_GEMINI_API_KEY']) if (env[k] && !process.env[k]) process.env[k] = env[k];
     for (const route of DEV_API_ROUTES) {
       server.middlewares.use(`/api/${route}`, async (req, res) => {
         const chunks: Buffer[] = [];

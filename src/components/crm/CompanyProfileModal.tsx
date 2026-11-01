@@ -10,9 +10,11 @@ import type { CRMPipelineEntry, CRMInteraction, CRMGift, CRMPipelineTask, Pipeli
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 import { needToServiceType } from '../../lib/serviceMode';
+import { serviceOfProduct } from '../../lib/productService';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
-import { addContactClient, clientIdsOf, isPrimaryAt, saveContact, emptyContactForm, findPhoneDuplicates } from '../../lib/contactOps';
+import { addContactClient, clientIdsOf, isPrimaryAt } from '../../lib/contactOps';
+import { QuickContactForm, ContactInfoWarning } from '../contacts/QuickContactForm';
 import ContactsTab from '../ContactsTab';
 import { branchLabel, branchLabelOf, branchOptions } from '../../lib/branchRef';
 import { useBranchData } from '../../hooks/useBranchData';
@@ -25,7 +27,10 @@ import { sourceOf, cleanSource, sameSource, sourceFullLabel, sourceSaveErrorHint
 import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { useCompanyMedia, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow } from './CompanyMedia';
+import { useCompanyMedia, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow, type FactorySite } from './CompanyMedia';
+import { readZoneSites, withZoneSite, ZONE_SITES_MIGRATION_HINT, type ZoneRef, type ZoneSite } from '../../lib/pipelineZones';
+import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
+import type { LatLngLite } from '../MiniMap';
 
 export const STAGES = [
   { id: 'tiem-nang',  label: 'Tiềm năng',    headerBg: 'bg-blue-50',    headerText: 'text-blue-700',    border: 'border-blue-200'   },
@@ -186,12 +191,15 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   const isMobile = useIsMobile();
   const { media, save: saveMedia } = useCompanyMedia(entry, toast, isModal);
   const [coverEditing, setCoverEditing] = useState(false);
-  // Người liên hệ vừa tạo ngay trong hồ sơ — hiện luôn trong ô chọn, không phải chờ trang cha nạp lại.
+  // Người liên hệ vừa tạo / vừa bổ sung ngay trong hồ sơ — hiện luôn trong ô chọn, không phải chờ trang cha nạp lại.
   const [createdContacts, setCreatedContacts] = useState<Contact[]>([]);
-  const contacts = useMemo(
-    () => [...contactsProp, ...createdContacts.filter(c => !contactsProp.some(x => x.id === c.id))],
-    [contactsProp, createdContacts],
-  );
+  const contacts = useMemo(() => {
+    const fresh = new Map(createdContacts.map(c => [c.id, c]));
+    return [
+      ...contactsProp.map(c => fresh.get(c.id) ?? c),
+      ...createdContacts.filter(c => !contactsProp.some(x => x.id === c.id)),
+    ];
+  }, [contactsProp, createdContacts]);
   const [interactions, setInteractions] = useState<CRMInteraction[]>([]);
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
@@ -288,6 +296,41 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   }, [entry.id, entry.client_id]);
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
+
+  // Nhóm sản phẩm đang chọn — quyết định "Hình thức cần", hình thức báo giá mặc định và loại thẻ khi Hợp tác
+  const productCategory = (entry.product_id ? products.find(p => p.id === entry.product_id)?.category : null)
+    ?? entry.crm_products?.category ?? null;
+
+  // ── Nhà máy theo KCN: mỗi KCN của công ty 1 ghim trên bản đồ (crm_pipeline.zone_sites, migration 187) ──
+  const [companyZones, setCompanyZones] = useState<ZoneRef[]>([]);
+  const factorySites = useMemo<FactorySite[]>(() => {
+    const sites = readZoneSites(entry.zone_sites);
+    return companyZones.map(z => ({ zoneId: z.id, name: z.name, mapLink: sites[z.id]?.map_link ?? null, lat: sites[z.id]?.lat ?? null, lng: sites[z.id]?.lng ?? null }));
+  }, [companyZones, entry.zone_sites]);
+  const saveFactorySite = async (zoneId: string, patch: { mapLink?: string; pin?: LatLngLite }, description: string): Promise<boolean> => {
+    let site: ZoneSite | null;
+    if (patch.pin) {
+      if (!isValidVnLatLng(patch.pin)) { toast('Vị trí nằm ngoài Việt Nam — chọn lại trên bản đồ'); return false; }
+      const lat = +patch.pin.lat.toFixed(6), lng = +patch.pin.lng.toFixed(6);
+      site = { map_link: `https://www.google.com/maps?q=${lat},${lng}`, lat, lng };
+    } else {
+      const link = (patch.mapLink ?? '').trim();
+      const pos = parseLatLngFromLink(link);
+      site = link ? { map_link: link, ...(isValidVnLatLng(pos) ? pos : { lat: null, lng: null }) } : null;
+    }
+    const zone_sites = withZoneSite(entry.zone_sites, zoneId, site);
+    const { error } = await supabase.from('crm_pipeline').update({ zone_sites }).eq('id', entry.id);
+    if (error) { toast(/zone_sites/.test(error.message) ? ZONE_SITES_MIGRATION_HINT : 'Lỗi: ' + error.message); return false; }
+    onUpdate({ ...entry, zone_sites });
+    const zoneName = companyZones.find(z => z.id === zoneId)?.name ?? '';
+    await logActivity({
+      user, action: 'update', table: 'crm_pipeline', recordId: entry.id,
+      description: `${description} tại ${zoneName} — "${entry.company_name}"`,
+      oldData: { zone_sites: entry.zone_sites ?? {} }, newData: { zone_sites },
+    });
+    if (site && site.map_link && site.lat == null) toast('Đã lưu link — link chưa có toạ độ nên chưa ghim được, bấm lên bản đồ để đặt ghim');
+    return true;
+  };
 
   const patchEntry = async (patch: Partial<CRMPipelineEntry>, description: string): Promise<boolean> => {
     const { error } = await supabase.from('crm_pipeline').update(patch).eq('id', entry.id);
@@ -442,46 +485,31 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     );
   };
 
-  // Tạo người liên hệ ngay tại ô "Người liên hệ (CSKH)" — ghi vào bảng contacts qua saveContact
-  // (cùng đường với CRM → CSKH: gắn công ty, ghi lịch sử, audit) rồi chọn luôn cho công ty này.
-  const [newContactOpen, setNewContactOpen] = useState(false);
-  const [newContact, setNewContact] = useState({ name: '', role: '', phone: '', email: '' });
-  const [creatingContact, setCreatingContact] = useState(false);
+  // Tạo nhanh người liên hệ / bổ sung thông tin người đang chọn ngay tại ô "Người liên hệ (CSKH)" —
+  // QuickContactForm ghi vào bảng contacts qua saveContact (cùng đường với CRM → CSKH).
+  const [quickContact, setQuickContact] = useState<'new' | 'edit' | null>(null);
   const roleOptions = useMemo(
     () => [...new Set(contacts.map(c => c.role?.trim()).filter((r): r is string => !!r))].sort((a, b) => a.localeCompare(b, 'vi')),
     [contacts],
   );
-  const closeNewContact = () => { setNewContactOpen(false); setNewContact({ name: '', role: '', phone: '', email: '' }); };
-  const createContact = async () => {
-    const name = newContact.name.trim();
-    if (!name) return;
-    setCreatingContact(true);
-    try {
-      const phone = newContact.phone.trim();
-      const dups = phone ? await findPhoneDuplicates(phone) : [];
-      if (dups.length && !confirm(
-        `Số ${phone} đã có ở: ${dups.map(d => d.name + (d.role ? ` — ${d.role}` : '')).join(', ')}.\n\n` +
-        'Vẫn tạo người liên hệ mới? (Bấm Huỷ để quay lại chọn người đã có trong danh sách.)'
-      )) return;
-      const saved = await saveContact(
-        { ...emptyContactForm(entry.client_id ?? ''), name, role: newContact.role.trim(), phone, email: newContact.email },
-        null,
-        { user, clientName: id => (id === entry.client_id ? entry.company_name : null) },
-      );
-      setCreatedContacts(prev => [...prev, saved]);
+  const pickedContact = entry.contact_id ? contacts.find(c => c.id === entry.contact_id) ?? null : null;
+  const onQuickContactSaved = async (saved: Contact) => {
+    const editing = quickContact === 'edit';
+    setCreatedContacts(prev => [...prev.filter(c => c.id !== saved.id), saved]);
+    setQuickContact(null);
+    if (editing) {
+      // Chỉ sửa hồ sơ người liên hệ — thẻ CRM giữ nguyên contact_id, cập nhật tên/SĐT hiển thị
+      onUpdate({ ...entry, contacts: { name: saved.name, phone: saved.phone } });
+      toast(`Đã cập nhật "${saved.name}"`);
+    } else {
       await updateLink(
         { contact_id: saved.id },
         { contact_id: saved.id, contacts: { name: saved.name, phone: saved.phone } },
         `Tạo mới & chọn người liên hệ "${saved.name}" cho "${entry.company_name}"`,
       );
       toast(`Đã tạo "${saved.name}" và chọn làm người liên hệ`);
-      closeNewContact();
-      onContactsChanged?.();
-    } catch (e: any) {
-      toast('Lỗi tạo người liên hệ: ' + e.message);
-    } finally {
-      setCreatingContact(false);
     }
+    onContactsChanged?.();
   };
 
   const cycleRating = async () => {
@@ -773,8 +801,10 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
       }
       // Hình thức trong bảng báo giá CRM quyết định loại thẻ khách (migration 184): giới thiệu → "Giới thiệu LĐ"
       // (không có lịch chốt công / lương), cho thuê hoặc cả hai → "Cho thuê LĐ" (phần GT ghi riêng ở P&L).
-      const serviceType = needToServiceType(entry.quote_info?.service);
-      if (!match) msg += `\n\nLoại dịch vụ: ${serviceType === 'recruitment' ? 'GIỚI THIỆU lao động' : 'Cho thuê lao động'} (theo hình thức ở "Thông tin báo giá").`;
+      // Chưa chọn hình thức ở bảng báo giá → theo sản phẩm đã chọn (Giới thiệu lao động → thẻ Giới thiệu LĐ).
+      const quoteService = entry.quote_info?.service;
+      const serviceType = needToServiceType(quoteService ?? serviceOfProduct(productCategory));
+      if (!match) msg += `\n\nLoại dịch vụ: ${serviceType === 'recruitment' ? 'GIỚI THIỆU lao động' : 'Cho thuê lao động'} (${quoteService ? 'theo hình thức ở "Thông tin báo giá"' : productCategory ? `theo sản phẩm "${productCategory}"` : 'mặc định'}).`;
       if (!confirm(msg)) return;
 
       const today = new Date().toISOString().slice(0, 10);
@@ -1057,6 +1087,7 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           key={entry.id}
           entry={entry}
           onSaveEstimate={n => patchEntry({ worker_estimate: n }, `Cập nhật số LĐ khách yêu cầu cho "${entry.company_name}" → ${n ?? 'trống'}`)}
+          productCategory={productCategory}
           toast={toast}
         />
         <InlineEdit
@@ -1102,7 +1133,7 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           <select
             value={entry.contact_id || ''}
             onChange={e => {
-              if (e.target.value === NEW_CONTACT) { setNewContactOpen(true); return; }
+              if (e.target.value === NEW_CONTACT) { setQuickContact('new'); return; }
               handlePickContact(e.target.value || null);
             }}
             className="w-full text-[12.5px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500"
@@ -1128,10 +1159,13 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
               </optgroup>
             )}
           </select>
-          {!newContactOpen && (
-            <button onClick={() => setNewContactOpen(true)} className="mt-1 text-[11.5px] font-medium text-blue-600 hover:underline">
-              ＋ Tạo người liên hệ mới
-            </button>
+          {!quickContact && (
+            <>
+              <ContactInfoWarning contact={pickedContact} onFix={() => setQuickContact('edit')} />
+              <button onClick={() => setQuickContact('new')} className="mt-1 text-[11.5px] font-medium text-blue-600 hover:underline">
+                ＋ Tạo người liên hệ mới
+              </button>
+            </>
           )}
         </div>
         <div>
@@ -1182,34 +1216,17 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
             );
           })()}
         </div>
-        {newContactOpen && (
-          <div className="col-span-2 bg-blue-50/60 border border-blue-200 rounded-lg p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[12px] font-semibold text-blue-800">Tạo người liên hệ mới</div>
-              <button onClick={closeNewContact} title="Đóng" className="p-0.5 rounded text-blue-400 hover:text-blue-700"><X size={13} /></button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input autoFocus value={newContact.name} onChange={e => setNewContact(f => ({ ...f, name: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') createContact(); if (e.key === 'Escape') closeNewContact(); }}
-                placeholder="Họ tên *" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-              <input value={newContact.role} onChange={e => setNewContact(f => ({ ...f, role: e.target.value }))} list="cp-contact-roles"
-                placeholder="Chức vụ (VD: Nhân sự)" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-              <input value={newContact.phone} onChange={e => setNewContact(f => ({ ...f, phone: e.target.value }))} inputMode="tel"
-                placeholder="Số điện thoại" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-              <input value={newContact.email} onChange={e => setNewContact(f => ({ ...f, email: e.target.value }))} type="email"
-                placeholder="Email" className="text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
-            </div>
-            <datalist id="cp-contact-roles">{roleOptions.map(r => <option key={r} value={r} />)}</datalist>
-            <div className="text-[10.5px] text-blue-900/60 leading-snug">
-              Lưu vào danh sách liên hệ chung (CRM → CSKH){entry.client_id ? ' và gắn vào công ty này' : ''}, rồi chọn luôn ở ô trên. Ngày sinh, sở thích… bổ sung sau ở CSKH.
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={closeNewContact} className="px-3 py-1.5 rounded-lg text-[12px] border border-gray-300 bg-white text-[#666] hover:bg-gray-50">Huỷ</button>
-              <button onClick={createContact} disabled={creatingContact || !newContact.name.trim()}
-                className="px-3.5 py-1.5 rounded-lg text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
-                {creatingContact ? 'Đang tạo…' : 'Tạo & chọn'}
-              </button>
-            </div>
+        {quickContact && (
+          <div className="col-span-2">
+            <QuickContactForm
+              key={quickContact === 'edit' ? pickedContact?.id : 'new'}
+              contact={quickContact === 'edit' ? pickedContact : null}
+              clientId={entry.client_id}
+              companyName={entry.company_name}
+              roleOptions={roleOptions}
+              onClose={() => setQuickContact(null)}
+              onSaved={c => void onQuickContactSaved(c)}
+            />
           </div>
         )}
       </div>
@@ -1248,8 +1265,8 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     </>
   );
 
-  const blkMarket = <MarketSupplyBlock entry={entry} toast={toast} />;
-  const blkQuote = <QuoteInfoBlock entry={entry} onUpdate={onUpdate} toast={toast} />;
+  const blkMarket = <MarketSupplyBlock entry={entry} toast={toast} onZonesSaved={ids => onUpdate({ ...entry, zone_ids: ids })} onZonesResolved={setCompanyZones} />;
+  const blkQuote = <QuoteInfoBlock entry={entry} onUpdate={onUpdate} productCategory={productCategory} toast={toast} />;
 
   const blkNotes = (
     <>
@@ -1866,7 +1883,8 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
 
   const blkLocation = (
     <CompanyLocationCard media={media} companyName={entry.company_name} crmId={entry.id}
-      mapClassName={wide ? 'h-64' : 'h-48'} onSave={saveMedia} />
+      mapClassName={wide ? 'h-64' : 'h-48'} onSave={saveMedia}
+      sites={factorySites} onSaveSite={saveFactorySite} />
   );
   const coverDialog = coverEditing && media ? (
     <CoverEditDialog media={media} onClose={() => setCoverEditing(false)}

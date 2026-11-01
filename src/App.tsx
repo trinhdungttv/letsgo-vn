@@ -24,7 +24,6 @@ import History from './pages/History';
 import CRMDash from './pages/CRMDash';
 import CRMBoard from './pages/CRMBoard';
 import CRMLeads from './pages/CRMLeads';
-import CRMSales from './pages/CRMSales';
 import CRMProds from './pages/CRMProds';
 import CRMDeal from './pages/CRMDeal';
 import CRMPipeline from './pages/CRMPipeline';
@@ -36,6 +35,7 @@ import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import { parseApplyHash } from './lib/recruit/publicLink';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
+import QuickNotesDock from './components/quickNotes/QuickNotesDock';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
@@ -46,7 +46,10 @@ const OfficeRental = lazy(() => import('./modules/office-rental'));
 // Form ứng tuyển công khai (#/apply/<mã>) — người ngoài mở, không cần đăng nhập
 const PublicApply = lazy(() => import('./pages/PublicApply'));
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-sales', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'recruit', ...OFFICE_PAGES];
+/** Trang Mạng lưới Sale cũ — nay là tệp Sale trong CSKH (#/crm-leads/sale). */
+const LEGACY_SALE_PAGE = 'crm-sales';
+
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'recruit', ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -91,7 +94,13 @@ function AppInner() {
   } = useCRMData(!!user && !shareCode && !applyLink);
 
   function parseHash(): Page {
-    const h = window.location.hash.replace('#/', '').split('/')[0];
+    const parts = window.location.hash.replace('#/', '').split('/');
+    // Mạng lưới Sale đã gộp vào CSKH thành tệp Sale (31/10/2026): link cũ #/crm-sales/<tab> → #/crm-leads/sale/<tab>
+    if (parts[0] === LEGACY_SALE_PAGE) {
+      window.history.replaceState(null, '', `#/crm-leads/sale${parts[1] ? `/${parts[1]}` : ''}`);
+      return 'crm-leads';
+    }
+    const h = parts[0];
     return h && PAGES.includes(h as Page) ? (h as Page) : 'dashboard';
   }
 
@@ -99,6 +108,10 @@ function AppInner() {
     const fromHash = window.location.hash.length > 2 ? parseHash() : null;
     if (fromHash) return fromHash;
     const saved = localStorage.getItem('lgvn_page');
+    if (saved === LEGACY_SALE_PAGE) {
+      window.history.replaceState(null, '', '#/crm-leads/sale');
+      return 'crm-leads';
+    }
     return saved && PAGES.includes(saved as Page) ? (saved as Page) : 'dashboard';
   });
 
@@ -200,11 +213,12 @@ function AppInner() {
     setToastTimer(t);
   }, [toastTimer]);
 
-  // Chặn mở thẳng URL #/office… / #/crm-sales khi không có quyền (chỉ admin) → về trang chính + báo
+  // Chặn mở thẳng URL #/office… khi không có quyền (chỉ admin) → về trang chính + báo.
+  // (Tệp Sale trong CSKH tự chặn trong trang CSKH — xem pages/CRMLeads.tsx)
   useEffect(() => {
-    if (user && (isOfficePage(page) || page === 'crm-sales') && !canAccess(user.role, page, rolePermissions)) {
+    if (user && isOfficePage(page) && !canAccess(user.role, page, rolePermissions)) {
       setPage('dashboard', true);
-      toast(page === 'crm-sales' ? 'Chỉ tài khoản admin được vào Mạng lưới Sale' : 'Chỉ tài khoản admin được vào Văn phòng Orient');
+      toast('Chỉ tài khoản admin được vào Văn phòng Orient');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, user, rolePermissions]);
@@ -446,9 +460,6 @@ function AppInner() {
         {page === 'crm-leads' && (
           <CRMLeads clients={clients} products={products} onSelectClient={handleSelectClient} onNavigate={navigate} toast={toast} />
         )}
-        {page === 'crm-sales' && user && canAccess(user.role, page, rolePermissions) && (
-          <CRMSales clients={clients} onNavigate={navigate} toast={toast} />
-        )}
         {page === 'crm-prods' && (
           <CRMProds
             products={products} deals={deals}
@@ -481,6 +492,8 @@ function AppInner() {
       {user && <UpcomingDatesReminder userId={user.id} />}
       {/* Việc nhắc tự động CSKH: mỗi ngày 1 lần khi mở app, không cần mở trang CSKH */}
       {user && <CareAutomationRunner clients={clients} toast={toast} />}
+      {/* Ghi chú nhanh: dải thẻ dính mép phải trên mọi trang (ghi chú riêng từng người + ghi âm cuộc họp) */}
+      {user && <QuickNotesDock userId={user.id} />}
     </div>
   );
 }

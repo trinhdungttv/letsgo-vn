@@ -286,6 +286,10 @@ export interface CRMPipelineEntry {
   source_name?: string | null;
   /** Chi nhánh mang về khi source_type = 'branch'. */
   source_branch_id?: string | null;
+  /** Các KCN (market_zones.id), KCN đầu = KCN chính (migration 186) — đọc qua src/lib/pipelineZones.ts. */
+  zone_ids?: string[] | null;
+  /** Vị trí nhà máy theo từng KCN { [zone_id]: { map_link, lat, lng } } (migration 187) — đọc qua readZoneSites. */
+  zone_sites?: Record<string, { map_link: string | null; lat: number | null; lng: number | null }> | null;
   contacts?: { name: string; phone: string | null } | null;
   crm_products?: { name: string; category: string | null; price?: number } | null;
   created_at: string;
@@ -674,7 +678,7 @@ export interface Quote {
   referral_terms?: { minDays: number; guaranteeDays: number } | null;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'crm-sales' | 'admin-settings' | 'workspace' | 'loans'
+export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans'
   // Tuyển dụng (module recruit — migration 180)
   | 'recruit'
   // Văn phòng Orient (module office_rental — tách biệt dữ liệu, chỉ admin)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3, Home, Building2, Building, Briefcase, DollarSign, MapPin, Landmark, History,
-  LayoutDashboard, Network, UserCircle2, UsersRound, UserPlus, Package, Settings, Users,
+  LayoutDashboard, Network, UserCircle2, UserPlus, Package, Settings, Users,
   LogOut, MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin, Check,
 } from 'lucide-react';
 import type { Page } from '../lib/types';
@@ -31,7 +31,6 @@ const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode; tile: key
   { page: 'crm-leads',      label: 'CRM',        icon: <UserCircle2 size={21} />,     tile: 'purple' },
   { page: 'crm-dash',       label: 'Tổng quan CRM', icon: <LayoutDashboard size={21} />, tile: 'purple' },
   { page: 'crm-pipeline',   label: 'Pipeline',   icon: <Network size={21} />,         tile: 'purple' },
-  { page: 'crm-sales',      label: 'Mạng lưới Sale', icon: <UsersRound size={21} />,   tile: 'orange' },
   { page: 'crm-prods',      label: 'Sản phẩm',   icon: <Package size={21} />,         tile: 'purple' },
   // Văn phòng Orient (chỉ admin) — gộp 10 trang thành 1 mục; bấm vào mở danh sách trang (xem OFFICE_NAV)
   { page: 'office',         label: 'VP Orient',  icon: <Building size={21} />,        tile: 'orange' },
@@ -75,8 +74,9 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
       const raw = localStorage.getItem(pinsKey(user?.username));
       if (raw) {
         // Ghim cũ của từng trang Văn phòng Orient → quy về mục gộp 'office' (bỏ trùng);
-        // ghim "CRM" cũ (Dashboard CRM) → nay "CRM" là Leads nên chuyển sang 'crm-leads'
-        const saved = (JSON.parse(raw) as Page[]).map(p => (isOfficePage(p) ? 'office' : p === 'crm-dash' ? 'crm-leads' : p) as Page);
+        // ghim "CRM" cũ (Dashboard CRM) → nay "CRM" là Leads nên chuyển sang 'crm-leads';
+        // ghim "Mạng lưới Sale" cũ → nay là tệp Sale trong CSKH ('crm-leads')
+        const saved = (JSON.parse(raw) as string[]).map(p => (isOfficePage(p as Page) ? 'office' : p === 'crm-dash' || p === 'crm-sales' ? 'crm-leads' : p) as Page);
         const parsed = saved.filter((p, i) => saved.indexOf(p) === i && MOBILE_MENU.some(m => m.page === p));
         if (parsed.length) setPins(parsed.slice(0, MAX_PINS));
       }

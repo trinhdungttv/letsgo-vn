@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Camera, ImagePlus, MapPin, ExternalLink, Pencil, X, Maximize2, Minimize2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, ImagePlus, MapPin, ExternalLink, Pencil, X, Maximize2, Minimize2, Factory } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { logActivity } from '../../lib/audit';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import CoverImageEditor, { type CoverImageValue } from '../CoverImageEditor';
 import MapLinkHint from '../MapLinkHint';
-import MiniMap, { type LatLngLite } from '../MiniMap';
+import MiniMap, { type LatLngLite, type MiniMapSite, type MiniMapView } from '../MiniMap';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { MAP_GROUPS, fetchMapContextPoints, type MapContextPoint, type MapGroup } from '../../lib/mapGroups';
 import { notifyMarketChanged, US } from './MarketSupplyBlock';
@@ -240,15 +240,23 @@ export function CoverEditDialog({ media, onSave, onClose }: {
   );
 }
 
+/** Nhà máy của công ty tại 1 KCN (crm_pipeline.zone_sites, migration 187) — `lat/lng` null = chưa ghim. */
+export interface FactorySite { zoneId: string; name: string; mapLink: string | null; lat: number | null; lng: number | null }
+type SitePatch = { mapLink?: string; pin?: LatLngLite };
+
 /** Khối "Vị trí trên bản đồ": bản đồ nhỏ có ghim đỏ của công ty + các điểm của Bản đồ Thị trường
  *  (chi nhánh, KCN, khách hàng, công ty/dự án) để phóng ra là thấy xung quanh. Đặt vị trí bằng
- *  cách bấm/kéo ghim trên bản đồ hoặc dán link Google Maps. */
-export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClassName = 'h-44' }: {
+ *  cách bấm/kéo ghim trên bản đồ hoặc dán link Google Maps.
+ *  Công ty có nhiều KCN → thêm danh sách "Nhà máy theo KCN": mỗi KCN 1 ghim đánh số riêng. */
+export function CompanyLocationCard({ media, companyName, crmId, onSave, sites = [], onSaveSite, mapClassName = 'h-44' }: {
   media: CompanyMediaData | null;
   companyName: string;
   /** id dòng crm_pipeline — để bỏ chính công ty này khỏi lớp điểm xung quanh */
   crmId: string;
-  onSave: (patch: { mapLink?: string; pin?: LatLngLite }, description: string) => Promise<boolean>;
+  onSave: (patch: SitePatch, description: string) => Promise<boolean>;
+  /** Các KCN của công ty kèm vị trí nhà máy (theo thứ tự KCN) — rỗng thì không hiện danh sách. */
+  sites?: FactorySite[];
+  onSaveSite?: (zoneId: string, patch: SitePatch, description: string) => Promise<boolean>;
   mapClassName?: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -258,6 +266,10 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
   const [big, setBig] = useState(false);
   const [points, setPoints] = useState<MapContextPoint[]>([]);
   const [shownGroups, setShownGroups] = usePersistedState<MapGroup[]>('crm_minimap_groups', MAP_GROUPS.map(g => g.id));
+  // Đang đặt / sửa vị trí nhà máy ở KCN nào (null = vị trí chính của công ty)
+  const [target, setTarget] = useState<string | null>(null);
+  const [siteDraft, setSiteDraft] = useState('');
+  const [view, setView] = useState<MiniMapView | null>(null);
   const saved = media?.mapLink ?? '';
   useEffect(() => { setDraft(saved); setEditing(false); setPending(null); }, [saved]);
   useEffect(() => {
@@ -275,18 +287,45 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
     return m;
   }, [around]);
 
+  const savedPin = media && media.lat != null && media.lng != null ? { lat: media.lat, lng: media.lng } : null;
+  const pinOf = (s: FactorySite) => (s.lat != null && s.lng != null ? { lat: s.lat, lng: s.lng } : null);
+  const targetSite = target ? sites.find(s => s.zoneId === target) ?? null : null;
+  const pinnedSites = sites.filter(s => pinOf(s));
+  const allPins = [...(savedPin ? [savedPin] : []), ...pinnedSites.map(s => pinOf(s)!)];
+
+  // Mở hồ sơ có nhiều nơi đã ghim (hoặc chỉ có ghim nhà máy, chưa có vị trí chính) → đưa khung nhìn tới đó (1 lần)
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    if (fittedRef.current || !allPins.length || (allPins.length === 1 && savedPin)) return;
+    fittedRef.current = true;
+    setView({ key: Date.now(), to: allPins });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPins.length]);
+  // KCN bị bỏ khỏi công ty khi đang sửa → thoát chế độ sửa
+  useEffect(() => { if (target && !targetSite) { setTarget(null); setPending(null); } }, [target, targetSite]);
+
   if (!media) return <div className="text-[11.5px] text-[#999]">Đang tải vị trí…</div>;
-  const savedPin = media.lat != null && media.lng != null ? { lat: media.lat, lng: media.lng } : null;
-  const picking = editing || !savedPin;
-  const showInput = editing || !saved;
+  const picking = target ? true : editing || !savedPin;
+  const showInput = !target && (editing || !saved);
+
+  // Ghim trên bản đồ: ghim đang sửa là ghim to (kéo được); các ghim còn lại là ghim phụ đánh số
+  const activePin = target ? pending ?? (targetSite && pinOf(targetSite)) : pending ?? savedPin;
+  const siteMarkers: MiniMapSite[] = [
+    ...sites.map((s, i) => ({ s, n: String(i + 1) }))
+      .filter(({ s }) => pinOf(s) && s.zoneId !== target)
+      .map(({ s, n }) => ({ key: s.zoneId, label: `Nhà máy ${n} — ${s.name}`, badge: n, lat: s.lat!, lng: s.lng! })),
+    ...(target && savedPin ? [{ key: 'main', label: `${companyName} — vị trí chính`, badge: '★', ...savedPin }] : []),
+  ];
 
   const cancel = () => { setDraft(saved); setPending(null); setEditing(false); };
   const savePin = async () => {
     if (!pending) return;
     setSaving(true);
-    const ok = await onSave({ pin: pending }, savedPin ? 'Dời ghim vị trí trên bản đồ' : 'Đặt ghim vị trí trên bản đồ');
+    const ok = target && targetSite && onSaveSite
+      ? await onSaveSite(target, { pin: pending }, pinOf(targetSite) ? 'Dời ghim nhà máy' : 'Đặt ghim nhà máy')
+      : await onSave({ pin: pending }, savedPin ? 'Dời ghim vị trí trên bản đồ' : 'Đặt ghim vị trí trên bản đồ');
     setSaving(false);
-    if (ok) { setPending(null); setEditing(false); }
+    if (ok) { setPending(null); setEditing(false); if (target) setTarget(null); }
   };
   const saveLink = async () => {
     const link = draft.trim();
@@ -298,6 +337,33 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
     if (ok) { setEditing(false); setPending(null); }
   };
   const toggleGroup = (g: MapGroup) => setShownGroups(cur => cur.includes(g) ? cur.filter(x => x !== g) : [...cur, g]);
+
+  // ── Nhà máy theo KCN ──
+  const startSite = (s: FactorySite) => {
+    setEditing(false); setPending(null);
+    setTarget(s.zoneId); setSiteDraft(s.mapLink ?? '');
+    // Chưa ghim → đưa bản đồ tới KCN đó (nếu KCN đã có toạ độ ở Thị trường) để bấm chọn cho nhanh
+    const at = pinOf(s) ?? points.find(p => p.group === 'kcn' && p.id === s.zoneId) ?? null;
+    if (at) setView({ key: Date.now(), to: [at] });
+  };
+  const stopSite = () => { setTarget(null); setPending(null); };
+  const saveSiteLink = async () => {
+    if (!targetSite || !onSaveSite) return;
+    const link = siteDraft.trim();
+    if (link === (targetSite.mapLink ?? '')) { stopSite(); return; }
+    setSaving(true);
+    const ok = await onSaveSite(targetSite.zoneId, { mapLink: link }, link ? 'Cập nhật vị trí nhà máy' : 'Xoá vị trí nhà máy');
+    setSaving(false);
+    if (ok) stopSite();
+  };
+  const clearSite = async () => {
+    if (!targetSite || !onSaveSite) return;
+    if (!confirm(`Xoá vị trí nhà máy tại ${targetSite.name}?`)) return;
+    setSaving(true);
+    const ok = await onSaveSite(targetSite.zoneId, { mapLink: '' }, 'Xoá vị trí nhà máy');
+    setSaving(false);
+    if (ok) stopSite();
+  };
 
   return (
     <div>
@@ -315,7 +381,8 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
         </div>
       </div>
 
-      <MiniMap pin={pending ?? savedPin} pinLabel={companyName} others={others}
+      <MiniMap pin={activePin} pinLabel={targetSite ? `Nhà máy — ${targetSite.name}` : companyName} others={others}
+        sites={siteMarkers} view={view}
         picking={picking} onPick={setPending}
         className={`w-full rounded-lg border border-[#E8E7E2] overflow-hidden transition-[height] ${big ? 'h-[420px]' : mapClassName}`} />
 
@@ -338,13 +405,17 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
 
       {pending ? (
         <div className="mt-2 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
-          <span className="flex-1 text-[11.5px] text-red-800">{savedPin ? 'Dời ghim tới vị trí mới?' : 'Đặt ghim tại vị trí này?'}</span>
+          <span className="flex-1 text-[11.5px] text-red-800">
+            {targetSite
+              ? `${pinOf(targetSite) ? 'Dời ghim nhà máy' : 'Đặt ghim nhà máy'} tại ${targetSite.name} tới vị trí này?`
+              : savedPin ? 'Dời ghim tới vị trí mới?' : 'Đặt ghim tại vị trí này?'}
+          </span>
           <button onClick={() => setPending(null)} className="px-2 py-1 rounded-md text-[11.5px] text-[#777] hover:bg-white">Bỏ</button>
           <button onClick={savePin} disabled={saving} className="px-2.5 py-1 rounded-md text-[11.5px] font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
             {saving ? 'Đang lưu…' : 'Lưu vị trí'}
           </button>
         </div>
-      ) : picking && (
+      ) : picking && !target && (
         <div className="mt-1.5 text-[11px] text-[#888]">
           {savedPin ? 'Bấm lên bản đồ hoặc kéo ghim đỏ để dời vị trí' : 'Chưa có vị trí — bấm lên bản đồ để đặt ghim'}, hoặc dán link Google Maps:
         </div>
@@ -370,14 +441,72 @@ export function CompanyLocationCard({ media, companyName, crmId, onSave, mapClas
             <div className="text-[11px] text-amber-600 mt-1">Link đang lưu chưa có toạ độ — bấm lên bản đồ để đặt ghim, hoặc dán lại link dài.</div>
           )}
         </div>
-      ) : (
+      ) : !target && (
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1 text-[11.5px] text-[#888] hover:text-blue-600">
-            <Pencil size={11} /> Sửa vị trí
+            <Pencil size={11} /> Sửa vị trí chính
           </button>
           <a href="#/market/map" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-[#999] hover:text-blue-600">
             Mở Bản đồ Thị trường <ExternalLink size={10} />
           </a>
+        </div>
+      )}
+
+      {sites.length > 0 && onSaveSite && (
+        <div className="mt-3 pt-2.5 border-t border-[#EEEDE8]">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <div className="text-[12px] font-semibold text-[#333] inline-flex items-center gap-1">
+              <Factory size={13} className="text-red-500" /> Nhà máy theo KCN
+              <span className="font-normal text-[11px] text-[#999]">{pinnedSites.length}/{sites.length} đã ghim</span>
+            </div>
+            {allPins.length >= 2 && (
+              <button onClick={() => setView({ key: Date.now(), to: allPins })} className="text-[11px] text-blue-600 hover:underline shrink-0">Xem tất cả</button>
+            )}
+          </div>
+          <div className="space-y-1">
+            {sites.map((s, i) => {
+              const pos = pinOf(s);
+              const active = s.zoneId === target;
+              return (
+                <div key={s.zoneId} className={`rounded-lg ${active ? 'bg-red-50/70 border border-red-200 p-2' : ''}`}>
+                  <div className="flex items-center gap-2 text-[12px] min-w-0">
+                    <span className={`w-5 h-5 shrink-0 rounded-full text-[10.5px] font-bold flex items-center justify-center ${pos ? 'bg-red-600 text-white' : 'bg-[#F1F0EC] text-[#999]'}`}>{i + 1}</span>
+                    <span className="flex-1 min-w-0 truncate text-[#111]" title={s.name}>{s.name}</span>
+                    {active ? (
+                      <button onClick={stopSite} className="text-[11px] text-[#888] hover:text-[#333] shrink-0">Xong</button>
+                    ) : pos ? (
+                      <span className="flex items-center gap-2 shrink-0 text-[11px]">
+                        <button onClick={() => setView({ key: Date.now(), to: [pos] })} className="text-blue-600 hover:underline">Xem</button>
+                        <button onClick={() => startSite(s)} className="text-[#888] hover:text-blue-600">Sửa</button>
+                        {s.mapLink && <a href={s.mapLink} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-blue-600" title="Mở Google Maps"><ExternalLink size={11} /></a>}
+                      </span>
+                    ) : (
+                      <button onClick={() => startSite(s)} className="shrink-0 text-[11px] font-medium text-red-600 hover:underline">+ Đặt ghim</button>
+                    )}
+                  </div>
+                  {active && (
+                    <div className="mt-1.5 space-y-1.5">
+                      <div className="text-[11px] text-red-800/80">
+                        {pos ? 'Kéo ghim đỏ hoặc bấm lên bản đồ để dời' : 'Bấm lên bản đồ để đặt ghim nhà máy'}, hoặc dán link Google Maps:
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input value={siteDraft} onChange={e => setSiteDraft(e.target.value)} autoFocus
+                          onKeyDown={e => { if (e.key === 'Enter') void saveSiteLink(); if (e.key === 'Escape') stopSite(); }}
+                          placeholder="Dán link Google Maps của nhà máy"
+                          className="flex-1 min-w-0 text-[12px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500" />
+                        <button onClick={() => void saveSiteLink()} disabled={saving || siteDraft.trim() === (s.mapLink ?? '')}
+                          className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 shrink-0">Lưu</button>
+                      </div>
+                      <MapLinkHint value={siteDraft} />
+                      {(pos || s.mapLink) && (
+                        <button onClick={() => void clearSite()} className="text-[11px] text-red-500 hover:text-red-600">Xoá vị trí nhà máy này</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

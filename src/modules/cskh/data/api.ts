@@ -128,13 +128,13 @@ export interface CskhData {
   migrationReady: boolean;
   /** false = DB chưa chạy migration 178 (Mạng lưới Sale chưa lưu được người / nhóm / quà). */
   saleReady: boolean;
-  /** Chỉ trang Sale: công ty trong BD Pipeline có nguồn Sale / Đối tác giới thiệu (để biết Sale nào giới thiệu khách nào). */
+  /** Chỉ tệp Sale: công ty trong BD Pipeline có nguồn Sale / Đối tác giới thiệu (để biết Sale nào giới thiệu khách nào). */
   referrals: SaleReferral[];
-  /** Chỉ trang Sale: đối thủ trong Thị trường (chọn "Đang làm ở"). */
+  /** Chỉ tệp Sale: đối thủ trong Thị trường (chọn "Đang làm ở"). */
   competitors: CompetitorLite[];
-  /** Chỉ trang Sale: danh mục KCN (Thị trường → Khu vực) để chọn "KCN mạnh". */
+  /** Chỉ tệp Sale: danh mục KCN (Thị trường → Khu vực) để chọn "KCN mạnh". */
   zones: CatalogItem[];
-  /** Chỉ trang Sale: danh mục ngành (Thị trường → Ngành nghề) để chọn "Ngành quen". */
+  /** Chỉ tệp Sale: danh mục ngành (Thị trường → Ngành nghề) để chọn "Ngành quen". */
   industries: CatalogItem[];
 }
 
@@ -155,7 +155,15 @@ export interface CompetitorLite {
  * Đọc chung rồi tách bằng lib/cskh/space.sliceSpace — Sale không bao giờ lẫn vào khách và ngược lại.
  */
 export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhData> {
-  const sale = space === 'sale';
+  return (await loadCskhSpaces([space]))[space] as CskhData;
+}
+
+/**
+ * Nạp nhiều khu vực trong 1 lượt đọc (trang CSKH có 2 tệp Khách hàng / Sale — chuyển tệp
+ * không phải tải lại). Mỗi khu vực vẫn là 1 CskhData riêng, tách bằng sliceSpace.
+ */
+export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Partial<Record<CskhSpace, CskhData>>> {
+  const sale = spaces.includes('sale');
   const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes] = await Promise.all([
     selectContacts(q => q.order('name'), 'all') as Promise<ContactRow[]>,
     fetchAll<CskhLogRow>((from, to) => supabase.from('cskh_logs').select('*')
@@ -165,7 +173,7 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
     supabase.from('cskh_settings').select('*').eq('id', 1).maybeSingle(),
     supabase.from('cskh_groups').select('*').order('name'),
     supabase.from('app_users').select('id, full_name').order('full_name'),
-    // Trang Sale: nguồn khách của BD Pipeline + danh sách đối thủ ('*' để DB chưa chạy 178 vẫn đọc được)
+    // Tệp Sale: nguồn khách của BD Pipeline + danh sách đối thủ ('*' để DB chưa chạy 178 vẫn đọc được)
     sale ? supabase.from('crm_pipeline').select('*') : Promise.resolve({ data: [], error: null }),
     sale ? supabase.from('competitors').select('id, company_name, zone_name').order('company_name') : Promise.resolve({ data: [], error: null }),
     sale ? supabase.from('market_zones').select('id, name').order('name') : Promise.resolve({ data: [], error: null }),
@@ -208,32 +216,43 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
     ...allContacts.map(birthdayOccasion).filter((o): o is CskhOccasion => o !== null),
   ];
 
-  const slice = sliceSpace({
+  const all = {
     contacts: allContacts,
     interactions,
     occasions,
     gifts: ((giftRes.data ?? []) as ClientGiftRow[]).map(mapGiftRow),
     groups: ((groupRes.data ?? []) as CskhGroupRow[]).map(mapGroupRow).filter(g => !g.isArchived),
-  }, space);
-  const settings = mapSettingsRow(settingsRes.data as CskhSettingsRow | null);
-  const ids = new Set(slice.contacts.map(c => c.id));
-
-  return {
-    space,
-    ...slice,
-    rawContacts: new Map(contactRows.filter(r => ids.has(r.id)).map(r => [r.id, r as Contact])),
-    // Trang Sale dùng nhịp của Sale cho mọi phép tính (hạn, điểm, hàng đợi)
-    settings: space === 'sale' ? { ...settings, cadence: settings.saleCadence } : settings,
-    users: (userRes.data ?? []) as AppUserLite[],
-    migrationReady,
-    saleReady,
-    // Lỗi đọc 2 bảng phụ này không làm hỏng trang — chỉ thiếu phần "đã giới thiệu" / gợi ý đối thủ
-    referrals: pipeRes.error ? [] : mapReferralRows((pipeRes.data ?? []) as PipelineReferralRow[]),
-    competitors: compRes.error ? [] : ((compRes.data ?? []) as { id: string; company_name: string | null; zone_name: string | null }[])
-      .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name),
-    zones: catalogOf(zoneRes),
-    industries: catalogOf(industryRes),
   };
+  const settings = mapSettingsRow(settingsRes.data as CskhSettingsRow | null);
+  const users = (userRes.data ?? []) as AppUserLite[];
+  // Lỗi đọc các bảng phụ của Sale không làm hỏng trang — chỉ thiếu phần "đã giới thiệu" / gợi ý đối thủ
+  const referrals = pipeRes.error ? [] : mapReferralRows((pipeRes.data ?? []) as PipelineReferralRow[]);
+  const competitors = compRes.error ? [] : ((compRes.data ?? []) as { id: string; company_name: string | null; zone_name: string | null }[])
+    .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name);
+  const zones = catalogOf(zoneRes);
+  const industries = catalogOf(industryRes);
+
+  const out: Partial<Record<CskhSpace, CskhData>> = {};
+  for (const space of spaces) {
+    const slice = sliceSpace(all, space);
+    const ids = new Set(slice.contacts.map(c => c.id));
+    const isSale = space === 'sale';
+    out[space] = {
+      space,
+      ...slice,
+      rawContacts: new Map(contactRows.filter(r => ids.has(r.id)).map(r => [r.id, r as Contact])),
+      // Tệp Sale dùng nhịp của Sale cho mọi phép tính (hạn, điểm, hàng đợi)
+      settings: isSale ? { ...settings, cadence: settings.saleCadence } : settings,
+      users,
+      migrationReady,
+      saleReady,
+      referrals: isSale ? referrals : [],
+      competitors: isSale ? competitors : [],
+      zones: isSale ? zones : [],
+      industries: isSale ? industries : [],
+    };
+  }
+  return out;
 }
 
 /** Danh mục KCN / ngành: lỗi đọc (bảng chưa có) → rỗng; bỏ tên trống, xếp theo tên tiếng Việt. */

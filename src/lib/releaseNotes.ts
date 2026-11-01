@@ -16,6 +16,67 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-01-quick-notes-gemini',
+    date: '2026-11-01',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Ghi âm xong, Gemini tự chép lời theo từng người nói — bấm mốc [mm:ss] để nghe lại đúng đoạn',
+      'Tóm tắt ý chính + việc cần làm; bấm "Chèn vào ghi chú" để thành các ô ☐',
+      'Tìm ghi chú theo cả câu đã nói trong bản ghi âm',
+    ],
+  },
+  {
+    id: '2026-10-31-quick-notes',
+    date: '2026-10-31',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Dải ghi chú dính mép phải mọi trang: rê chuột xem nhanh, bấm để soạn, tự lưu',
+      'Ghi chú có checklist ☐, cỡ chữ, ghim, 8 màu và tìm trong ghi chú',
+      'Ghi âm cuộc họp ngay trong ghi chú, chèn mốc thời gian; nghe lại tua được, đổi tốc độ',
+      'Cửa sổ Tất cả / Lưu trữ / Đã xoá có ô tìm; xoá có hỏi lại, khôi phục được trong 30 ngày',
+      'Điện thoại: chạm tay nắm ở mép phải để mở; ghi chú riêng từng người, dùng chung mọi máy',
+    ],
+  },
+  {
+    id: '2026-10-31-crm-factory-sites',
+    date: '2026-10-31',
+    title: 'CRM Pipeline',
+    features: [
+      'Hình thức cần đi theo sản phẩm: chọn Giới thiệu lao động thì không còn hiện Thời vụ',
+      'Bản đồ hồ sơ công ty: ghim vị trí nhà máy riêng cho từng KCN, có số thứ tự và Xem tất cả',
+    ],
+  },
+  {
+    id: '2026-10-31-crm-quick-contact',
+    date: '2026-10-31',
+    title: 'CRM Pipeline',
+    features: [
+      'Form Thêm công ty: tạo nhanh người liên hệ mới ngay tại ô Người liên hệ',
+      'Nhắc bổ sung chức vụ, SĐT, email, ngày sinh còn thiếu — có nút Bổ sung ngay',
+      'Sửa lỗi form Thêm công ty dài không cuộn tới nút Thêm (nút luôn hiện ở đáy)',
+    ],
+  },
+  {
+    id: '2026-10-31-crm-pipeline-multi-kcn',
+    date: '2026-10-31',
+    title: 'CRM Pipeline',
+    features: [
+      'Một công ty chọn được nhiều KCN khi thêm mới và trong hồ sơ công ty',
+      'Nhà cung ứng khác gợi ý theo từng KCN đã chọn',
+      'Thẻ Pipeline hiện đủ các KCN; thêm bộ lọc KCN (khớp khi công ty có KCN đó)',
+    ],
+  },
+  {
+    id: '2026-10-31-cskh-sale-merge',
+    date: '2026-10-31',
+    title: 'CSKH',
+    features: [
+      'Gộp Mạng lưới Sale vào CSKH: nút chuyển tệp Khách hàng / Sale – CTV, mỗi lúc chỉ hiện 1 tệp',
+      'Nút chuyển tệp báo số người cần liên hệ hôm nay của tệp bên kia',
+      'Bánh răng chọn tệp hiển thị trên máy: cả hai, chỉ Khách hàng hoặc chỉ Sale – CTV',
+    ],
+  },
+  {
     id: '2026-10-31-crm-worker-need',
     date: '2026-10-31',
     title: 'CRM Pipeline',

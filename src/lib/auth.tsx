@@ -159,7 +159,10 @@ const FALLBACK_RULES: Record<string, string[]> = {
   bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'recruit', ...crm],
 };
 
-/** Mạng lưới Sale (migration 178): chốt 31/10/2026 chỉ admin — danh sách Sale muốn chiêu mộ là thông tin nhạy cảm. */
+/**
+ * Quyền xem tệp Sale / CTV (Mạng lưới Sale, migration 178) bên trong trang CSKH — không còn là trang riêng
+ * (gộp 31/10/2026) nhưng giữ khoá này làm quyền. Chốt chỉ admin — danh sách Sale muốn chiêu mộ là thông tin nhạy cảm.
+ */
 export const SALE_PAGE = 'crm-sales';
 
 export function canAccess(role: string, page: string, rolePermissions?: RolePermission[]): boolean {

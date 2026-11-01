@@ -2,7 +2,7 @@
 // không phụ thuộc có ai mở trang CSKH. Code chạy thật nạp động (import()) nên bundle
 // chính không kéo theo phần dữ liệu CSKH. Chỉ tài khoản có quyền vào CSKH mới chạy.
 import { useEffect } from 'react';
-import { useAuth, canAccess } from '../../lib/auth';
+import { useAuth, canAccess, SALE_PAGE } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import type { Client } from '../../lib/types';
@@ -14,8 +14,8 @@ export default function CareAutomationRunner({ clients, toast }: { clients: Clie
   const { user, rolePermissions } = useAuth();
   const { branches } = useBranchLookup();
   const allowed = !!user && canAccess(user.role, 'crm-leads', rolePermissions);
-  // Mạng lưới Sale: chỉ người vào được trang Sale mới chạy (chỉ nhắc chuẩn bị quà)
-  const saleAllowed = !!user && canAccess(user.role, 'crm-sales', rolePermissions);
+  // Tệp Sale / CTV: chỉ người xem được tệp Sale mới chạy (chỉ nhắc chuẩn bị quà) — bánh răng ẩn tệp không tắt nhắc
+  const saleAllowed = !!user && canAccess(user.role, SALE_PAGE, rolePermissions);
   const ready = (allowed || saleAllowed) && clients.length > 0 && branches.length > 0;
 
   useEffect(() => {

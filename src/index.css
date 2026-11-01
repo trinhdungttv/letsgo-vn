@@ -138,6 +138,12 @@ body {
   border-width: 3px;
   box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.22), 0 2px 8px rgba(0, 0, 0, 0.45);
 }
+/* Ghim nhà máy theo KCN trong bản đồ nhỏ của hồ sơ — số thứ tự khớp danh sách "Nhà máy theo KCN" */
+.lgmap-pin-site .lgmap-pin-icon {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
 .lgmini-picking.leaflet-container {
   cursor: crosshair;
 }
@@ -399,4 +405,33 @@ body {
 .leaflet-container {
   font: inherit;
   z-index: 0;
+}
+
+/* ── Ghi chú nhanh (components/quickNotes) ─────────────────────────────── */
+.qn-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes qn-peek {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.qn-peek { animation: qn-peek 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes qn-pop {
+  from { opacity: 0; transform: translateX(16px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+.qn-pop { animation: qn-pop 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes qn-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.qn-rec-pulse { animation: qn-rec-pulse 1.2s ease-in-out infinite; }
+.qn-find-layer mark { background: rgba(255, 204, 0, 0.55); color: transparent; border-radius: 2px; }
+.qn-find-layer mark.qn-current { background: rgba(255, 149, 0, 0.8); }
+@media (prefers-reduced-motion: reduce) {
+  .qn-peek, .qn-pop, .qn-rec-pulse { animation: none; }
 }
