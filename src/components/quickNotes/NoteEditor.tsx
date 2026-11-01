@@ -1,16 +1,17 @@
 // Khung soạn 1 ghi chú (kiểu MFinder): tiêu đề = dòng đầu, checklist ☐, cỡ chữ A / A, ghim, kiểu chữ Aa, tìm trong
 // ghi chú, ghi âm, 8 màu, Lưu trữ / Xoá / Đóng, tự lưu ("Đã lưu").
 // 3 kiểu: 'card' = thẻ nổi cạnh dải (máy tính), 'pane' = khung phải của cửa sổ danh sách, 'sheet' = toàn màn (điện thoại).
-// Mỗi ghi chú có 2 dạng: Văn bản / Sơ đồ tư duy kiểu XMind (mindmap/MindMapEditor — tải riêng khi bấm sang Sơ đồ).
+// 2 loại mục, cố định từ lúc tạo: Ghi chú văn bản / Sơ đồ tư duy kiểu XMind (mindmap/MindMapEditor — tải riêng khi mở).
+// Từ ghi chú có thể tạo 1 sơ đồ MỚI (ghi chú giữ nguyên); từ sơ đồ có thể tạo 1 ghi chú MỚI chứa dàn ý.
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import {
-  AlertCircle, AlignLeft, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2,
+  AlertCircle, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2,
   Maximize2, Mic, Minimize2, Network, Pause, Pin, Play, RotateCcw, Search, Square, Trash2, X,
 } from 'lucide-react';
 import { FONT_FAMILY, FONT_LABEL, FONT_SIZES, PALETTE, stepFontSize } from '../../lib/quickNotes/colors';
 import {
-  continueChecklist, DEFAULT_TITLE, findMatches, formatDuration, relativeTime, titleOf, toggleBoxAt, toggleChecklist,
+  continueChecklist, displayTitle, findMatches, formatDuration, isMindmap, relativeTime, toggleBoxAt, toggleChecklist,
 } from '../../lib/quickNotes/noteText';
 import { NOTE_COLORS, NOTE_FONTS, type QuickNote, type QuickNoteRecording, type SaveState } from '../../lib/quickNotes/types';
 import RecordingList, { type UploadItem } from './RecordingList';
@@ -39,6 +40,12 @@ export interface NoteEditorProps {
   /** Thẻ / cửa sổ đang phóng to */
   expanded?: boolean;
   onToggleExpand?: () => void;
+  /** Ghi chú chữ → tạo 1 sơ đồ tư duy mới từ nội dung */
+  onCreateMindmap?: () => void;
+  /** Sơ đồ → tạo 1 ghi chú mới chứa dàn ý */
+  onCreateNote?: (body: string) => void;
+  /** Mục từng đổi qua lại Văn bản ⇄ Sơ đồ (bản thử 01/11) còn giấu phần kia → tách ra mục riêng */
+  onSplitLegacy?: () => void;
   onArchive: () => void;
   onDelete: () => void;
   onRestore?: () => void;
@@ -118,9 +125,9 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [hit, setHit] = useState(0);
   const [scrollbarW, setScrollbarW] = useState(0);
 
-  const title = titleOf(note) || DEFAULT_TITLE;
+  const title = displayTitle(note);
   const archived = !!note.archived_at;
-  const isMap = note.view_mode === 'mindmap';
+  const isMap = isMindmap(note);
   const big = variant === 'sheet';
   const recHere = recorder.active && recorder.noteId === note.id;
   const recElsewhere = recorder.active && recorder.noteId !== note.id;
@@ -254,19 +261,12 @@ export default function NoteEditor(props: NoteEditorProps) {
     : saveState === 'dirty' || saveState === 'saving' ? 'Đang lưu…'
       : saveState === 'error' ? 'Chưa lưu' : '';
 
-  // Thẻ (card): 2 nút nằm dọc trên dải tiêu đề bên trái cho đỡ chật; khung khác: nằm ngang trên thanh công cụ
-  const vertical = variant === 'card';
-  const viewSwitch = !readOnly && (
-    <div className={`flex ${vertical ? 'flex-col' : ''} p-0.5 rounded-lg bg-black/[0.07] shrink-0`} role="tablist" aria-label="Dạng ghi chú">
-      {([['text', AlignLeft, 'Văn bản'], ['mindmap', Network, 'Sơ đồ tư duy (kiểu XMind)']] as const).map(([k, Icon, label]) => (
-        <button key={k} type="button" role="tab" aria-selected={note.view_mode === k} title={label} aria-label={label}
-          onClick={() => { if (note.view_mode !== k) { setFindOpen(false); props.onChange({ view_mode: k }); } }}
-          className={`${big ? 'h-8 px-2.5' : vertical ? 'w-6 h-6 justify-center' : 'h-6 px-1.5'} inline-flex items-center gap-1 rounded-md text-[12px] font-medium transition ${note.view_mode === k ? 'bg-white shadow-[0_1px_2px_rgba(0,0,0,0.14)]' : 'opacity-55 hover:opacity-100'}`}>
-          <Icon size={big ? 16 : 14} />
-          {big && <span>{k === 'text' ? 'Văn bản' : 'Sơ đồ'}</span>}
-        </button>
-      ))}
-    </div>
+  // Ghi chú chữ: nút tạo 1 sơ đồ tư duy MỚI từ nội dung (thẻ: nằm trên dải tiêu đề trái; khung khác: thanh công cụ)
+  const toMapBtn = !readOnly && !isMap && props.onCreateMindmap && (
+    <ToolBtn big={big} keepFocus={false} disabled={!note.body.trim()} onClick={props.onCreateMindmap}
+      title={note.body.trim() ? 'Tạo sơ đồ tư duy mới từ ghi chú này (ghi chú giữ nguyên)' : 'Viết ghi chú trước rồi tạo sơ đồ tư duy từ nội dung'}>
+      <Network size={big ? 18 : 15} />
+    </ToolBtn>
   );
 
   const expandBtn = props.onToggleExpand && (
@@ -297,7 +297,13 @@ export default function NoteEditor(props: NoteEditorProps) {
       <ToolBtn big={big} title="Tìm trong ghi chú (Ctrl/⌘ F)" active={findOpen} keepFocus={false} onClick={() => (findOpen ? setFindOpen(false) : openFind())}>
         <Search size={big ? 18 : 15} />
       </ToolBtn>
+      {variant !== 'card' && toMapBtn}
         </>
+      )}
+      {isMap && (
+        <ToolBtn big={big} title={note.pinned ? 'Bỏ ghim' : 'Ghim lên đầu'} active={note.pinned} onClick={() => props.onChange({ pinned: !note.pinned })}>
+          <Pin size={big ? 18 : 15} fill={note.pinned ? 'currentColor' : 'none'} />
+        </ToolBtn>
       )}
       <ToolBtn big={big} keepFocus={false}
         title={recHere ? 'Đang ghi âm' : recElsewhere ? 'Đang ghi âm ở ghi chú khác' : 'Ghi âm cuộc trò chuyện / cuộc họp'}
@@ -305,7 +311,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         <Mic size={big ? 18 : 15} className={recHere ? 'text-[#FF3B30]' : ''} />
       </ToolBtn>
       {props.onOpenList && (
-        <ToolBtn big={big} title="Tất cả ghi chú" keepFocus={false} onClick={props.onOpenList}>
+        <ToolBtn big={big} title={isMap ? 'Tất cả sơ đồ tư duy' : 'Tất cả ghi chú'} keepFocus={false} onClick={props.onOpenList}>
           <List size={big ? 18 : 16} />
         </ToolBtn>
       )}
@@ -326,19 +332,31 @@ export default function NoteEditor(props: NoteEditorProps) {
         <>
           <div className="flex items-center gap-2 px-2 h-12 shrink-0" style={{ background: pal.header }}>
             <button type="button" onClick={props.onBack} className="inline-flex items-center gap-0.5 h-9 pr-2 rounded-lg text-[15px] font-medium active:opacity-60">
-              <ChevronLeft size={22} /> Ghi chú
+              <ChevronLeft size={22} /> {isMap ? 'Sơ đồ' : 'Ghi chú'}
             </button>
             <span className="flex-1" />
             {saveBadge}
           </div>
-          {tools && <div className="flex items-center justify-between gap-1 px-2 h-11 shrink-0 border-b border-black/[0.06]" style={{ background: pal.header }}>{viewSwitch}{tools}</div>}
+          {tools && <div className="flex items-center justify-between gap-1 px-2 h-11 shrink-0 border-b border-black/[0.06]" style={{ background: pal.header }}>{tools}</div>}
         </>
       ) : (
         <div className="flex items-center gap-1 pl-4 pr-2 h-12 shrink-0 border-b border-black/[0.05]" style={{ background: pal.header }}>
           <div className="flex-1 min-w-0 truncate text-[15px] font-semibold" title={title}>{title}</div>
           {saveBadge}
-          {viewSwitch && !vertical && <div className="ml-1">{viewSwitch}</div>}
           <div className="flex items-center gap-0.5 ml-1">{tools || (readOnly && expandBtn)}</div>
+        </div>
+      )}
+
+      {!readOnly && props.onSplitLegacy && (isMap ? !!note.body.trim() : !!note.mindmap) && (
+        <div className="flex items-center gap-2 px-3 py-1.5 shrink-0 bg-black/[0.045] text-[12.5px] border-b border-black/[0.05]">
+          <AlertCircle size={13} className="shrink-0 opacity-70" />
+          <span className="flex-1 min-w-0">
+            {isMap ? 'Sơ đồ này còn kèm phần chữ ghi chú cũ (đang bị ẩn).' : 'Ghi chú này còn kèm 1 sơ đồ tư duy cũ (đang bị ẩn).'}
+          </span>
+          <button type="button" onClick={props.onSplitLegacy}
+            className="shrink-0 h-7 px-2.5 rounded-full bg-white/70 hover:bg-white font-semibold shadow-[0_0_0_0.5px_rgba(0,0,0,0.1)]">
+            {isMap ? 'Tách ra ghi chú riêng' : 'Tách ra sơ đồ riêng'}
+          </button>
         </div>
       )}
 
@@ -407,10 +425,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               readOnly={readOnly} mobile={variant === 'sheet'}
               saveError={saveState === 'error' ? props.saveError ?? 'lỗi không rõ' : null}
               onChange={doc => props.onChange({ mindmap: doc })}
-              onInsertOutline={text => {
-                const b = note.body.trimEnd();
-                props.onChange({ body: b ? `${b}\n\n${text}\n` : `${text}\n` });
-              }} />
+              onCreateNote={props.onCreateNote} />
           </Suspense>
         </div>
       ) : (
@@ -491,7 +506,9 @@ export default function NoteEditor(props: NoteEditorProps) {
       <div className="flex h-full rounded-[18px] overflow-hidden shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_24px_60px_-16px_rgba(0,0,0,0.38)]"
         style={{ background: pal.paper, color: pal.ink }}>
         <div className="w-9 shrink-0 flex flex-col items-center gap-3 pt-2.5 pb-4" style={{ background: pal.strip }}>
-          {viewSwitch}
+          {isMap ? (
+            <span title="Sơ đồ tư duy" className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-white/55"><Network size={15} /></span>
+          ) : toMapBtn}
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <span className="qn-vertical max-h-full text-[11px] font-bold uppercase tracking-[0.08em] opacity-70">{title}</span>
           </div>

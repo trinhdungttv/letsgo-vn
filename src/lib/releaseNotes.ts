@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-01-quick-notes-mindmap-split',
+    date: '2026-11-01',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Ghi chú và Sơ đồ tư duy tách thành 2 loại riêng: dải mép phải có nút ⧉ tạo sơ đồ mới ngay dưới nút ＋',
+      'Cửa sổ danh sách chia 2 khu Ghi chú / Sơ đồ tư duy, mỗi khu có Tất cả / Lưu trữ / Đã xoá và ô tìm riêng',
+      'Từ ghi chú tạo nhanh 1 sơ đồ mới (ghi chú giữ nguyên); từ sơ đồ tạo 1 ghi chú chứa dàn ý',
+    ],
+  },
+  {
     id: '2026-11-01-quick-notes-mindmap',
     date: '2026-11-01',
     title: 'Ghi chú nhanh',

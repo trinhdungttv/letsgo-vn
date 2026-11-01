@@ -50,6 +50,7 @@ function toRecording(r: Record<string, unknown>): QuickNoteRecording {
 /** Dòng từ DB → QuickNote (numeric về number, giá trị lạ về mặc định). */
 export function toNote(raw: unknown): QuickNote {
   const r = (raw ?? {}) as Record<string, unknown>;
+  const mindmap = parseDoc(r.mindmap);
   const color = NOTE_COLORS.includes(r.color as never) ? (r.color as QuickNote['color']) : 'yellow';
   const font = NOTE_FONTS.includes(r.font as never) ? (r.font as QuickNote['font']) : 'sans';
   return {
@@ -65,8 +66,9 @@ export function toNote(raw: unknown): QuickNote {
     created_at: String(r.created_at ?? new Date().toISOString()),
     updated_at: String(r.updated_at ?? new Date().toISOString()),
     recordings: Array.isArray(r.recordings) ? (r.recordings as Record<string, unknown>[]).map(toRecording) : [],
-    mindmap: parseDoc(r.mindmap),
-    view_mode: r.view_mode === 'mindmap' ? 'mindmap' : 'text',
+    mindmap,
+    // Bản thử 01/11 cho đổi qua lại Văn bản ⇄ Sơ đồ trên cùng 1 mục: mục chữ trống mà có sơ đồ thì coi là Sơ đồ
+    view_mode: r.view_mode === 'mindmap' || (!String(r.body ?? '').trim() && mindmap) ? 'mindmap' : 'text',
   };
 }
 
@@ -75,13 +77,18 @@ const toNotes = (raw: unknown) => (Array.isArray(raw) ? raw.map(toNote) : []);
 export const listNotes = async () => toNotes(await notesRpc<unknown>('list'));
 export const listTrash = async () => toNotes(await notesRpc<unknown>('trash'));
 
+const mindmapClears = new Set<string>();
+/** Gỡ sơ đồ cũ khỏi 1 ghi chú chữ (đã tách ra mục Sơ đồ riêng) → lần lưu kế tiếp mới gửi mindmap = null. */
+export const markMindmapCleared = (id: string) => { mindmapClears.add(id); };
+
 export async function saveNote(n: QuickNote): Promise<QuickNote> {
   const raw = await notesRpc<Record<string, unknown>>('save', {
     id: n.id, title: n.title, body: n.body, color: n.color, font_size: n.font_size, font: n.font,
     pinned: n.pinned, archived: !!n.archived_at, view_mode: n.view_mode,
     // Không gửi sơ đồ rỗng: máy đang mở bản cũ (chưa có sơ đồ) sửa chữ thì không xoá mất sơ đồ vừa vẽ ở máy khác
-    ...(n.mindmap ? { mindmap: n.mindmap } : {}),
+    ...(n.mindmap ? { mindmap: n.mindmap } : mindmapClears.has(n.id) ? { mindmap: null } : {}),
   });
+  if (!n.mindmap) mindmapClears.delete(n.id);
   // DB chưa có cột mindmap (chưa chạy migration 189) thì hàm cũ bỏ qua 2 trường mới → báo lỗi để không âm thầm mất sơ đồ
   if ((n.mindmap || n.view_mode === 'mindmap') && raw && typeof raw === 'object' && !('view_mode' in raw)) {
     throw new QuickNotesError('cần chạy migration 189 (Sơ đồ tư duy) trên Supabase', true);

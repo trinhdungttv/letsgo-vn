@@ -2,8 +2,9 @@
 // QuickNotesDock — "Ghi chú nhanh": dải thẻ ghi chú dính mép phải trên MỌI trang (ý tưởng từ app MFinder).
 // ----------------------------------------------------------------------------
 // Máy tính: bình thường chỉ còn các vạch màu mỏng ở mép phải; rê chuột vào → hiện thẻ có tiêu đề dọc; rê lên 1 thẻ →
-// thẻ xem nhanh trượt ra; bấm → mở khung soạn đầy đủ (NoteEditor). Cuối dải: ＋ ghi chú mới, 🎙 ghi âm cuộc họp,
-// ☰ cửa sổ danh sách (Tất cả / Lưu trữ / Đã xoá).
+// thẻ xem nhanh trượt ra; bấm → mở khung soạn đầy đủ (NoteEditor). Cuối dải: ＋ ghi chú mới, ⧉ sơ đồ tư duy mới,
+// 🎙 ghi âm cuộc họp, ☰ cửa sổ danh sách (2 khu Ghi chú / Sơ đồ tư duy, mỗi khu có Tất cả / Lưu trữ / Đã xoá).
+// Trên dải: ghi chú xếp trước, sơ đồ xếp sau (thẻ sơ đồ có biểu tượng ⧉).
 // Điện thoại (< 768px, không có rê chuột): tay nắm nhỏ ở mép phải → bấm mở danh sách toàn màn.
 // Ghi chú riêng từng người (migration 188, qua quick_notes_rpc), tự lưu; ghi âm chạy tiếp khi đóng thẻ / đổi trang,
 // file lên Storage qua api/quick-notes-audio.ts — chưa lên được thì giữ trong IndexedDB của máy để thử lại.
@@ -15,11 +16,11 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from
 import { AlertCircle, List, Mic, Network, Plus } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
-import { deleteRecording, errText, renameRecording, transcribeRecording, uploadRecording } from '../../lib/quickNotes/api';
+import { deleteRecording, errText, markMindmapCleared, renameRecording, transcribeRecording, uploadRecording } from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
 import {
-  baseMime, checklistCount, clockDate, DEFAULT_TITLE, formatDuration, meetingTemplate, notePreview, railOrder, recordingName,
-  relativeTime, titleOf,
+  baseMime, checklistCount, clockDate, displayTitle, formatDuration, isMindmap, meetingTemplate, mindmapCount, notePreview, railOrder,
+  recordingName, relativeTime,
 } from '../../lib/quickNotes/noteText';
 import { downloadBlob, dropStashedAudio, listStashedAudio, stashAudio } from '../../lib/quickNotes/pendingAudio';
 import { summaryForNote, TRANSCRIBE_ENABLED } from '../../lib/quickNotes/transcript';
@@ -38,7 +39,7 @@ const TAB_HIDDEN = 24; // lúc thu gọn chỉ lộ TAB_W - TAB_HIDDEN = 10px
 const TAB_MAX = 116;
 const TAB_MIN = 60;
 const OVERLAP = 10;
-const BUTTONS_SPACE = 150;
+const BUTTONS_SPACE = 192;
 /** Ghi âm xong + tải lên xong thì tự cho Gemini chép lời & tóm tắt (như Notion AI meeting notes). Bản ghi quá ngắn thì bỏ qua. */
 const AUTO_TRANSCRIBE = TRANSCRIBE_ENABLED;
 const AUTO_TRANSCRIBE_MIN_SEC = 5;
@@ -235,8 +236,11 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     return n.id;
   };
 
-  const openNewOnRail = (meeting = false) => {
-    const id = newNote(meeting);
+  /** Sơ đồ tư duy mới (trống, hoặc dựng sẵn từ 1 ghi chú) — chưa sửa gì mà đóng thì tự bỏ. */
+  const newMap = (init: Partial<QuickNote> = {}): string => store.create({ ...init, view_mode: 'mindmap' }).id;
+
+  const openNewOnRail = (kind: 'note' | 'meeting' | 'map' = 'note') => {
+    const id = kind === 'map' ? newMap() : newNote(kind === 'meeting');
     if (isMobile) setWin({ selectedId: id, tab: 'all' });
     else openEditor(id, RAIL_TOP + 40);
   };
@@ -251,7 +255,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     const archiving = !n.archived_at;
     store.update(n.id, { archived_at: archiving ? new Date().toISOString() : null });
     if (archiving && openId === n.id) setOpenId(null);
-    setNotice(archiving ? 'Đã cất vào Lưu trữ' : 'Đã đưa lại lên dải ghi chú');
+    setNotice(archiving ? `Đã cất vào Lưu trữ (${isMindmap(n) ? 'Sơ đồ tư duy' : 'Ghi chú'})` : 'Đã đưa lại lên dải ghi chú');
   };
 
   const askDelete = (n: QuickNote) => {
@@ -262,8 +266,8 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     };
     if (!n.body.trim() && !recs && !n.mindmap) { void doDelete().catch(e => setNotice(errText(e))); return; }
     setConfirm({
-      title: 'Xoá ghi chú này?',
-      message: `“${titleOf(n) || DEFAULT_TITLE}”${recs ? ` cùng ${recs} bản ghi âm` : ''} sẽ chuyển vào mục Đã xoá — khôi phục được trong 30 ngày.`,
+      title: isMindmap(n) ? 'Xoá sơ đồ tư duy này?' : 'Xoá ghi chú này?',
+      message: `“${displayTitle(n)}”${recs ? ` cùng ${recs} bản ghi âm` : ''} sẽ chuyển vào mục Đã xoá — khôi phục được trong 30 ngày.`,
       confirmLabel: 'Xoá',
       danger: true,
       onConfirm: doDelete,
@@ -307,8 +311,33 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     if (u) void runUpload(u.item);
   };
 
+  // Tạo mục mới từ mục đang mở (ghi chú → sơ đồ, sơ đồ → ghi chú dàn ý) rồi mở luôn mục mới
+  const openCreated = (id: string, kind: NoteView, extra: EditorExtra, msg?: string) => {
+    if (extra.onOpenCreated) extra.onOpenCreated(id, kind);
+    else openEditor(id);
+    setNotice(msg ?? (kind === 'mindmap' ? 'Đã tạo sơ đồ tư duy mới — ghi chú gốc giữ nguyên' : 'Đã tạo ghi chú mới từ dàn ý của sơ đồ'));
+  };
+  // Mục từ bản thử đổi qua lại Văn bản ⇄ Sơ đồ: chuyển phần đang ẩn sang 1 mục riêng. Chỉ gỡ khỏi mục cũ SAU KHI mục
+  // mới đã lưu lên DB → mất mạng giữa chừng cũng không mất chữ / sơ đồ.
+  const splitLegacy = async (note: QuickNote, extra: EditorExtra) => {
+    const toNote = isMindmap(note);
+    const id = toNote ? store.create({ body: note.body, color: note.color }).id : newMap({ mindmap: note.mindmap, color: note.color });
+    await store.flush(id);
+    if (storeRef.current.isLocal(id)) { setNotice('Chưa lưu được mục mới — kiểm tra mạng rồi bấm lại'); return; }
+    if (toNote) store.update(note.id, { body: '' });
+    else { markMindmapCleared(note.id); store.update(note.id, { mindmap: null }); }
+    openCreated(id, toNote ? 'text' : 'mindmap', extra, toNote ? 'Đã tách phần chữ ra ghi chú riêng' : 'Đã tách sơ đồ ra mục Sơ đồ tư duy riêng');
+  };
+  const mapFromNote = async (note: QuickNote, extra: EditorExtra) => {
+    const { docFromText } = await import('../../lib/quickNotes/mindmap/model');
+    openCreated(newMap({ mindmap: docFromText(note.body), color: note.color }), 'mindmap', extra);
+  };
+
   const editorFor = (note: QuickNote, variant: 'card' | 'pane' | 'sheet', extra: EditorExtra & { onClose?: () => void; onOpenList?: () => void } = {}) => (
     <NoteEditor key={note.id} note={note} variant={variant}
+      onCreateMindmap={() => void mapFromNote(note, extra).catch(e => setNotice(errText(e)))}
+      onCreateNote={body => openCreated(store.create({ body }).id, 'text', extra)}
+      onSplitLegacy={() => void splitLegacy(note, extra).catch(e => setNotice(errText(e)))}
       saveState={store.saveState[note.id] ?? (store.isLocal(note.id) ? undefined : 'saved')} saveError={store.error}
       recorder={recorder}
       recordError={recorder.error && recTarget.current === note.id ? recorder.error : null}
@@ -331,7 +360,8 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   );
 
   // ── Dữ liệu cho dải ──
-  const railNotes = railOrder(store.notes.filter(n => !n.archived_at));
+  const onRail = store.notes.filter(n => !n.archived_at);
+  const railNotes = [...railOrder(onRail.filter(n => !isMindmap(n))), ...railOrder(onRail.filter(isMindmap))];
   const failedUploads = uploads.filter(u => u.state === 'error');
   const attentionIds = new Set(failedUploads.map(u => u.item.noteId));
   const openNote = openId ? store.notes.find(n => n.id === openId) ?? null : null;
@@ -348,7 +378,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
         <NotesWindow store={store} isMobile={isMobile} initialSelectedId={win.selectedId} initialTab={win.tab}
           recordingNoteId={recordingNoteId} attentionNoteIds={attentionIds} canRecord={!recorder.active && recorder.supported}
           onClose={() => setWin(null)}
-          onNew={() => newNote(false)} onNewMeeting={() => newNote(true)}
+          onNew={() => newNote(false)} onNewMeeting={() => newNote(true)} onNewMap={() => newMap()}
           renderEditor={(note, variant, extra) => editorFor(note, variant, { ...extra, autoFocus: !extra.readOnly && !note.body.trim() })} />
       )}
       {confirm && <ConfirmDialog req={confirm} onClose={() => setConfirm(null)} />}
@@ -416,7 +446,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     transform: expanded ? `translateX(${active ? -6 : 0}px)` : `translateX(${TAB_HIDDEN}px)`,
   });
 
-  const cardMode: NoteView = openNote?.view_mode ?? 'text';
+  const cardMode: NoteView = openNote && isMindmap(openNote) ? 'mindmap' : 'text';
   const card = cardLayout[cardMode];
   const cardW = Math.max(CARD_MIN.w, Math.min(card.w, view.w - 90));
   const cardH = Math.max(Math.min(CARD_MIN.h, view.h - 24), Math.min(card.h, view.h - 24));
@@ -480,16 +510,20 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
         <div className="relative" style={{ width: TAB_W, height: stackH }}>
           {shown.map((n, i) => {
             const pal = PALETTE[n.color];
-            const title = titleOf(n) || DEFAULT_TITLE;
+            const title = displayTitle(n);
+            const map = isMindmap(n);
             return (
-              <button key={n.id} type="button" aria-label={`Ghi chú: ${title}`}
+              <button key={n.id} type="button" aria-label={`${map ? 'Sơ đồ tư duy' : 'Ghi chú'}: ${title}`}
                 onMouseEnter={() => setPeekId(n.id)}
                 onFocus={() => { enter(); setPeekId(n.id); }}
                 onClick={e => (openId === n.id ? closeEditor() : openEditor(n.id, e.currentTarget.getBoundingClientRect().top))}
                 className="absolute right-0 rounded-l-[11px] flex items-center justify-center transition-transform duration-200 ease-out outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3]"
                 style={tabStyle(i, pal.tab, pal.ink, openId === n.id)}>
+                {map && (
+                  <Network size={11} className="absolute top-2 left-1/2 -translate-x-1/2 transition-opacity duration-200" style={{ opacity: expanded ? 0.75 : 0 }} />
+                )}
                 <span className="qn-vertical text-[10.5px] font-bold uppercase tracking-[0.06em] transition-opacity duration-200"
-                  style={{ maxHeight: tabH - 16, opacity: expanded ? 0.78 : 0 }}>
+                  style={{ maxHeight: tabH - (map ? 34 : 16), marginTop: map ? 14 : 0, opacity: expanded ? 0.78 : 0 }}>
                   {title}
                 </span>
                 {attentionIds.has(n.id) && <span className="absolute top-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-[#D70015]" />}
@@ -506,7 +540,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
           )}
 
           {placeholder && (
-            <button type="button" onClick={() => store.phase === 'ready' && openNewOnRail()} onMouseEnter={() => setPeekId('__status')}
+            <button type="button" onClick={() => store.phase === 'ready' && openNewOnRail('note')} onMouseEnter={() => setPeekId('__status')}
               className="absolute right-0 rounded-l-[11px] flex items-center justify-center transition-transform duration-200"
               style={tabStyle(0, '#E5E5EA', '#6E6E73', false)} aria-label="Ghi chú nhanh">
               <span className="qn-vertical text-[10.5px] font-bold uppercase tracking-[0.06em] transition-opacity" style={{ maxHeight: tabH - 16, opacity: expanded ? 0.8 : 0 }}>
@@ -523,23 +557,26 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
               <div className="flex rounded-[16px] overflow-hidden shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_18px_40px_-14px_rgba(0,0,0,0.4)]"
                 style={{ background: peekPal.paper, color: peekPal.ink, minHeight: Math.min(tabH + 8, 150), maxHeight: 220 }}>
                 <div className="w-8 shrink-0 flex items-center justify-center py-3" style={{ background: peekPal.strip }}>
-                  <span className="qn-vertical max-h-full text-[10.5px] font-bold uppercase tracking-[0.06em] opacity-70">{titleOf(peekNote) || DEFAULT_TITLE}</span>
+                  <span className="qn-vertical max-h-full text-[10.5px] font-bold uppercase tracking-[0.06em] opacity-70">{displayTitle(peekNote)}</span>
                 </div>
                 <div className="flex-1 min-w-0 pl-3.5 pr-4 py-3 flex flex-col">
-                  <div className="text-[14px] font-semibold truncate">{titleOf(peekNote) || DEFAULT_TITLE}</div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {isMindmap(peekNote) && <Network size={13} className="shrink-0 opacity-70" />}
+                    <div className="text-[14px] font-semibold truncate">{displayTitle(peekNote)}</div>
+                  </div>
                   <div className="h-px bg-black/10 my-2 shrink-0" />
                   {peekLines.length ? (
                     <div className="text-[13px] leading-[1.45] space-y-0.5 overflow-hidden">
                       {peekLines.map((l, i) => <div key={i} className="truncate">{l}</div>)}
                     </div>
                   ) : (
-                    <div className="text-[13px] opacity-50">{peekNote.body.trim() || peekNote.mindmap ? '' : 'Chưa có nội dung'}</div>
+                    <div className="text-[13px] opacity-50">{(isMindmap(peekNote) ? peekNote.mindmap : peekNote.body.trim()) ? '' : 'Chưa có nội dung'}</div>
                   )}
                   <div className="mt-auto pt-2 flex items-center gap-2 text-[11px] opacity-60">
                     <span>{relativeTime(peekNote.updated_at)}</span>
                     {peekCl && peekCl.total > 0 && <span>☑ {peekCl.done}/{peekCl.total}</span>}
                     {peekNote.recordings.length > 0 && <span className="inline-flex items-center gap-0.5"><Mic size={10} /> {peekNote.recordings.length}</span>}
-                    {peekNote.mindmap && <span className="inline-flex items-center gap-0.5"><Network size={10} /> Sơ đồ</span>}
+                    {isMindmap(peekNote) && peekNote.mindmap && <span className="inline-flex items-center gap-0.5"><Network size={10} /> {mindmapCount(peekNote.mindmap)} chủ đề</span>}
                   </div>
                 </div>
               </div>
@@ -557,7 +594,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
                 ) : (
                   <>
                     <div className="font-semibold text-[#1D1D1F]">Ghi chú nhanh</div>
-                    <div className="mt-0.5 text-[#6E6E73]">Bấm ＋ để ghi nhanh cuộc trò chuyện, việc cần làm — hoặc 🎙 để ghi âm cuộc họp.</div>
+                    <div className="mt-0.5 text-[#6E6E73]">Bấm ＋ để ghi nhanh, ⧉ để vẽ sơ đồ tư duy, 🎙 để ghi âm cuộc họp.</div>
                   </>
                 )}
                 {store.phase === 'error' && (
@@ -570,14 +607,17 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
 
         <div className="flex flex-col items-center gap-1.5 mt-2.5 mr-[1px] transition-opacity duration-200"
           style={{ width: TAB_W, opacity: expanded ? 1 : 0, pointerEvents: expanded ? 'auto' : 'none' }}>
-          <RoundBtn title="Ghi chú mới" onClick={() => openNewOnRail()} disabled={store.phase === 'missing'}>
+          <RoundBtn title="Ghi chú mới" onClick={() => openNewOnRail('note')} disabled={store.phase === 'missing'}>
             <Plus size={17} />
           </RoundBtn>
+          <RoundBtn title="Sơ đồ tư duy mới (kiểu XMind)" onClick={() => openNewOnRail('map')} disabled={store.phase === 'missing'}>
+            <Network size={15} className="text-[#2C7BF6]" />
+          </RoundBtn>
           <RoundBtn title={recorder.active ? 'Đang ghi âm ở ghi chú khác' : 'Ghi âm cuộc họp (tạo ghi chú mới + bật micro)'}
-            onClick={() => openNewOnRail(true)} disabled={recorder.active || !recorder.supported || store.phase === 'missing'}>
+            onClick={() => openNewOnRail('meeting')} disabled={recorder.active || !recorder.supported || store.phase === 'missing'}>
             <Mic size={15} className="text-[#FF3B30]" />
           </RoundBtn>
-          <RoundBtn title="Tất cả ghi chú" onClick={() => openWindow()} badge={failedUploads.length}>
+          <RoundBtn title="Tất cả ghi chú & sơ đồ" onClick={() => openWindow()} badge={failedUploads.length}>
             <List size={16} />
           </RoundBtn>
         </div>

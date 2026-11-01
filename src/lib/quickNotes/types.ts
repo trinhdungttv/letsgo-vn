@@ -7,7 +7,7 @@ export type NoteColor = typeof NOTE_COLORS[number];
 export const NOTE_FONTS = ['sans', 'serif', 'mono'] as const;
 export type NoteFont = typeof NOTE_FONTS[number];
 
-/** Ghi chú đang mở dạng văn bản hay sơ đồ tư duy. */
+/** Loại mục, cố định từ lúc tạo: 'text' = Ghi chú văn bản, 'mindmap' = Sơ đồ tư duy (cột view_mode). */
 export type NoteView = 'text' | 'mindmap';
 
 export interface QuickNoteRecording {
@@ -38,7 +38,7 @@ export interface QuickNote {
   created_at: string;
   updated_at: string;
   recordings: QuickNoteRecording[];
-  /** Sơ đồ tư duy kiểu XMind của ghi chú (null = chưa tạo) — migration 189 */
+  /** Nội dung của mục Sơ đồ tư duy (null = sơ đồ mới chưa vẽ gì) — migration 189 */
   mindmap: MindMapDoc | null;
   view_mode: NoteView;
 }

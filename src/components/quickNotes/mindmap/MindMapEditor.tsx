@@ -75,7 +75,7 @@ const Sep = () => <span className="shrink-0 w-px h-5 bg-black/10 mx-0.5" />;
 export interface MindMapEditorProps {
   noteId: string;
   doc: MindMapDoc | null;
-  /** nội dung văn bản của ghi chú — dựng sơ đồ lần đầu từ đây */
+  /** chữ đi kèm mục (sơ đồ cũ từng đổi qua lại với văn bản) — có thì dựng sơ đồ lần đầu từ đây */
   seedText: string;
   palette: NotePalette;
   title: string;
@@ -83,7 +83,8 @@ export interface MindMapEditorProps {
   mobile?: boolean;
   saveError?: string | null;
   onChange: (doc: MindMapDoc) => void;
-  onInsertOutline?: (text: string) => void;
+  /** tạo 1 ghi chú văn bản MỚI chứa dàn ý của sơ đồ */
+  onCreateNote?: (body: string) => void;
 }
 
 export default function MindMapEditor(props: MindMapEditorProps) {
@@ -96,7 +97,8 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   onChangeRef.current = props.onChange;
 
   useEffect(() => {
-    if (!props.doc && seeded.current) onChangeRef.current(seeded.current);
+    // Sơ đồ mới trống: chưa lưu tới khi sửa lần đầu (đóng ngay thì không để lại mục rỗng); dựng từ chữ thì lưu luôn
+    if (!props.doc && seeded.current && props.seedText.trim()) onChangeRef.current(seeded.current);
     // chỉ lần đầu: lưu sơ đồ vừa dựng từ văn bản
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -781,7 +783,7 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   }, [mobile, mode]);
 
   // ── Xuất ──
-  const doExport = async (kind: 'png' | 'svg' | 'pdf' | 'md' | 'copy' | 'toText' | 'fromText') => {
+  const doExport = async (kind: 'png' | 'svg' | 'pdf' | 'md' | 'copy' | 'toNote' | 'fromText') => {
     setExportOpen(false);
     if (editingRef.current) { finishEdit(); await new Promise(r => setTimeout(r, 40)); }
     const name = props.title || doc.root.text || 'Sơ đồ tư duy';
@@ -792,9 +794,8 @@ export default function MindMapEditor(props: MindMapEditorProps) {
         setToast('Đã sao chép dàn ý (Markdown)');
         return;
       }
-      if (kind === 'toText') {
-        props.onInsertOutline?.(M.docToOutline(docRef.current));
-        setToast('Đã chép dàn ý vào phần Văn bản của ghi chú');
+      if (kind === 'toNote') {
+        props.onCreateNote?.(M.docToOutline(docRef.current));
         return;
       }
       if (kind === 'fromText') {
@@ -802,7 +803,7 @@ export default function MindMapEditor(props: MindMapEditorProps) {
         commit({ ...next, theme: docRef.current.theme, structure: docRef.current.structure, line: docRef.current.line, font: docRef.current.font, rainbow: docRef.current.rainbow, compact: docRef.current.compact });
         select([next.root.id]);
         setTimeout(() => fitView('init'), 30);
-        setToast(`Đã dựng lại sơ đồ từ phần Văn bản (${MOD}Z để hoàn tác)`);
+        setToast(`Đã dựng lại sơ đồ từ chữ gốc (${MOD}Z để hoàn tác)`);
         return;
       }
       if (mode !== 'map') { setMode('map'); await new Promise(r => setTimeout(r, 60)); }
@@ -1107,8 +1108,8 @@ export default function MindMapEditor(props: MindMapEditorProps) {
             {!readOnly && (
               <>
                 <div className="h-px bg-black/[0.07] my-1" />
-                {props.onInsertOutline && <button type="button" onClick={() => void doExport('toText')} className="w-full text-left px-3 h-8 rounded-md text-[13px] hover:bg-[#2C7BF6] hover:text-white">Chép dàn ý vào phần Văn bản</button>}
-                <button type="button" disabled={!props.seedText.trim()} onClick={() => void doExport('fromText')} className="w-full text-left px-3 h-8 rounded-md text-[13px] hover:bg-[#2C7BF6] hover:text-white disabled:opacity-35">Dựng lại sơ đồ từ phần Văn bản</button>
+                {props.onCreateNote && <button type="button" onClick={() => void doExport('toNote')} className="w-full text-left px-3 h-8 rounded-md text-[13px] hover:bg-[#2C7BF6] hover:text-white">Tạo ghi chú mới từ dàn ý</button>}
+                {props.seedText.trim() && <button type="button" onClick={() => void doExport('fromText')} className="w-full text-left px-3 h-8 rounded-md text-[13px] hover:bg-[#2C7BF6] hover:text-white">Dựng lại sơ đồ từ chữ gốc</button>}
               </>
             )}
           </div>

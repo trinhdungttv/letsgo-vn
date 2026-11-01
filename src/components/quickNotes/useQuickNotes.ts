@@ -100,7 +100,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
     commit(notesRef.current.map(n => {
       if (n.id !== id) return n;
       const next = { ...n, ...patch };
-      return patch.body !== undefined || patch.mindmap !== undefined ? { ...next, title: titleOf(next) } : next;
+      return patch.body !== undefined || patch.mindmap !== undefined || patch.view_mode !== undefined ? { ...next, title: titleOf(next) } : next;
     }));
     schedule(id);
   }, [commit, schedule]);
@@ -110,7 +110,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
     const body = init.body ?? '';
     const note: QuickNote = {
       id: crypto.randomUUID(),
-      title: titleOf({ body, mindmap: init.mindmap ?? null }),
+      title: titleOf({ body, mindmap: init.mindmap ?? null, view_mode: init.view_mode ?? 'text' }),
       body,
       color: init.color ?? nextColor(notesRef.current.filter(n => !n.archived_at)),
       font_size: init.font_size ?? 15,
@@ -126,7 +126,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
     };
     localOnly.current.add(note.id);
     commit([...notesRef.current, note]);
-    if (body) schedule(note.id);
+    if (body || note.mindmap) schedule(note.id);
     return note;
   }, [commit, schedule]);
 

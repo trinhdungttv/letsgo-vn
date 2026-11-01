@@ -1,12 +1,18 @@
 // Ghi chú nhanh — các phép xử lý chữ thuần (không đụng React / Supabase) để test được.
 import type { MindMapDoc, MindTopic } from './mindmap/types';
-import { NOTE_COLORS, type NoteColor, type QuickNote } from './types';
+import { NOTE_COLORS, type NoteColor, type NoteView, type QuickNote } from './types';
 
 export const BOX_OPEN = '☐';
 export const BOX_DONE = '☑';
 const BOX_RE = /^([☐☑]) ?/;
 
 export const DEFAULT_TITLE = 'Ghi chú mới';
+export const DEFAULT_MAP_TITLE = 'Sơ đồ tư duy mới';
+
+type Kinded = { body: string; mindmap?: MindMapDoc | null; view_mode: NoteView };
+
+/** Mục là Sơ đồ tư duy (view_mode = 'mindmap') hay Ghi chú văn bản — loại cố định từ lúc tạo. */
+export const isMindmap = (n: Pick<Kinded, 'view_mode'>) => n.view_mode === 'mindmap';
 
 /** Tiêu đề = dòng đầu có chữ (bỏ ô checklist ở đầu dòng), tối đa 120 ký tự. */
 export function noteTitle(body: string): string {
@@ -17,12 +23,21 @@ export function noteTitle(body: string): string {
   return '';
 }
 
-/** Tiêu đề hiển thị: dòng đầu của văn bản, không có thì chủ đề trung tâm của sơ đồ tư duy. */
-export function titleOf(note: { body: string; mindmap?: MindMapDoc | null }): string {
-  const t = noteTitle(note.body);
-  if (t || !note.mindmap) return t;
-  const root = note.mindmap.root.text.replace(/\s*\n\s*/g, ' ').trim();
+/** Tiêu đề: ghi chú = dòng đầu của văn bản; sơ đồ = chủ đề trung tâm. */
+export function titleOf(note: Kinded): string {
+  if (!isMindmap(note)) return noteTitle(note.body);
+  const root = (note.mindmap?.root.text ?? '').replace(/\s*\n\s*/g, ' ').trim();
   return root.length > 120 ? `${root.slice(0, 119)}…` : root;
+}
+
+/** Tiêu đề để hiện (trống thì "Ghi chú mới" / "Sơ đồ tư duy mới"). */
+export const displayTitle = (note: Kinded) => titleOf(note) || (isMindmap(note) ? DEFAULT_MAP_TITLE : DEFAULT_TITLE);
+
+/** Số chủ đề trong sơ đồ (kể cả chủ đề trung tâm, chủ đề tự do). */
+export function mindmapCount(doc: MindMapDoc | null | undefined): number {
+  if (!doc) return 0;
+  const n = (t: MindTopic): number => 1 + t.children.reduce((s, c) => s + n(c), 0);
+  return n(doc.root) + doc.floating.reduce((s, f) => s + n(f), 0);
 }
 
 /** Mọi chữ trong sơ đồ tư duy (chủ đề, ghi chú, nhãn) — cho ô tìm. */
@@ -42,11 +57,10 @@ export function mindmapText(doc: MindMapDoc | null | undefined): string {
   return parts.join('\n');
 }
 
-/** Vài dòng xem trước: văn bản, không có thì các chủ đề chính của sơ đồ. */
-export function notePreview(note: { body: string; mindmap?: MindMapDoc | null }, max = 4): string[] {
-  const lines = previewLines(note.body, max);
-  if (lines.length || !note.mindmap || note.body.trim()) return lines;
-  return note.mindmap.root.children.slice(0, max).map(c => `• ${c.text.replace(/\s*\n\s*/g, ' ')}`);
+/** Vài dòng xem trước: ghi chú = các dòng sau tiêu đề; sơ đồ = các chủ đề chính. */
+export function notePreview(note: Kinded, max = 4): string[] {
+  if (!isMindmap(note)) return previewLines(note.body, max);
+  return (note.mindmap?.root.children ?? []).slice(0, max).map(c => `• ${c.text.replace(/\s*\n\s*/g, ' ')}`);
 }
 
 /** Vài dòng sau dòng tiêu đề — cho thẻ xem nhanh và danh sách. */
@@ -143,11 +157,10 @@ export function findMatches(text: string, q: string): number[] {
   return out;
 }
 
-export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings'> & { mindmap?: MindMapDoc | null }, q: string): boolean {
+export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings' | 'mindmap' | 'view_mode'>, q: string): boolean {
   if (!q.trim()) return true;
   // Tìm cả trong tên / tóm tắt / lời thoại bản ghi âm → gõ 1 câu khách đã nói cũng ra đúng ghi chú
-  return findMatches(note.body, q).length > 0
-    || (!!note.mindmap && findMatches(mindmapText(note.mindmap), q).length > 0)
+  return findMatches(isMindmap(note) ? mindmapText(note.mindmap) : note.body, q).length > 0
     || note.recordings.some(r => [r.title, r.summary ?? '', r.transcript ?? ''].some(t => findMatches(t, q).length > 0));
 }
 

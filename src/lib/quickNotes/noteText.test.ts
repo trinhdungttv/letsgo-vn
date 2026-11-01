@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  checklistCount, continueChecklist, findMatches, foldKeepLength, formatDuration, listOrder, nextColor, noteTitle,
-  pickRecorderMime, previewLines, railOrder, relativeTime, toggleBoxAt, toggleChecklist,
+  checklistCount, continueChecklist, displayTitle, findMatches, foldKeepLength, formatDuration, listOrder, mindmapCount,
+  nextColor, noteMatches, notePreview, noteTitle, pickRecorderMime, previewLines, railOrder, relativeTime, titleOf,
+  toggleBoxAt, toggleChecklist,
 } from './noteText';
+import type { MindMapDoc } from './mindmap/types';
 
 describe('noteTitle / previewLines', () => {
   it('lấy dòng đầu có chữ, bỏ ô checklist', () => {
@@ -98,5 +100,31 @@ describe('định dạng', () => {
     expect(pickRecorderMime(t => t.startsWith('audio/webm'))).toEqual({ mime: 'audio/webm;codecs=opus', ext: 'webm' });
     expect(pickRecorderMime(t => t === 'audio/mp4')).toEqual({ mime: 'audio/mp4', ext: 'mp4' });
     expect(pickRecorderMime(() => false)).toEqual({ mime: '', ext: 'webm' });
+  });
+});
+
+describe('Ghi chú / Sơ đồ tư duy là 2 loại mục riêng', () => {
+  const doc: MindMapDoc = {
+    v: 1, structure: 'map', theme: 'rainbow', floating: [], relations: [],
+    root: { id: 'r', text: 'Kế hoạch\nquý 4', children: [{ id: 'a', text: 'Tuyển dụng', children: [{ id: 'b', text: 'Kỹ sư Samsung', children: [] }] }] },
+  };
+  const map = { body: 'chữ cũ bị ẩn', mindmap: doc, view_mode: 'mindmap' as const, recordings: [] };
+  const note = { body: 'Gọi khách\nGửi báo giá', mindmap: doc, view_mode: 'text' as const, recordings: [] };
+
+  it('tiêu đề: sơ đồ = chủ đề trung tâm, ghi chú = dòng đầu; trống thì tên mặc định theo loại', () => {
+    expect(titleOf(map)).toBe('Kế hoạch quý 4');
+    expect(titleOf(note)).toBe('Gọi khách');
+    expect(displayTitle({ body: '', mindmap: null, view_mode: 'mindmap' })).toBe('Sơ đồ tư duy mới');
+    expect(displayTitle({ body: '', mindmap: null, view_mode: 'text' })).toBe('Ghi chú mới');
+  });
+
+  it('xem trước + tìm chỉ theo nội dung của đúng loại', () => {
+    expect(notePreview(map)).toEqual(['• Tuyển dụng']);
+    expect(notePreview(note)).toEqual(['Gửi báo giá']);
+    expect(noteMatches(map, 'samsung')).toBe(true);
+    expect(noteMatches(map, 'chữ cũ')).toBe(false);
+    expect(noteMatches(note, 'samsung')).toBe(false);
+    expect(noteMatches(note, 'bao gia')).toBe(true);
+    expect(mindmapCount(doc)).toBe(3);
   });
 });
