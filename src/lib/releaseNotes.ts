@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-01-branch-bulk-edit',
+    date: '2026-11-01',
+    title: 'Chi nhánh',
+    features: [
+      'Nút "Nhập nhanh" ở trang Chi nhánh: sửa ảnh đại diện và Thông tin & Liên hệ của mọi chi nhánh trong 1 cửa sổ, tự lưu khi gõ xong',
+      'Đặt ảnh nhanh: bấm vào ảnh, kéo-thả ảnh vào dòng, hoặc copy ảnh rồi dán (⌘V / Ctrl+V) vào dòng của chi nhánh đó',
+    ],
+  },
+  {
     id: '2026-11-01-quick-notes-same-size',
     date: '2026-11-01',
     title: 'Ghi chú nhanh',

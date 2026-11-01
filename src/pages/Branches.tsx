@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Building2, MapPin, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, ClipboardList, Wallet, Users,
   Plus, Save, Trash2, AlertTriangle, BadgeCheck, LayoutGrid, List, User, History, Pencil, X,
-  Filter, Check, Settings2, Eye, EyeOff,
+  Filter, Check, Settings2, Eye, EyeOff, Images,
 } from 'lucide-react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useBranchData } from '../hooks/useBranchData';
@@ -15,6 +15,7 @@ import BranchZones from '../components/branches/BranchZones';
 import RoleCombo from '../components/branches/RoleCombo';
 import BranchFinance from '../components/branches/BranchFinance';
 import AddBranchModal from '../components/branches/AddBranchModal';
+import BulkBranchInfoModal from '../components/branches/BulkBranchInfoModal';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
@@ -122,6 +123,7 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
   }, [branchStaffs]);
 
   const [adding, setAdding] = useState(false);
+  const [bulkEditing, setBulkEditing] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'contracted' | 'company'>('all');
 
   const [editPctMode, setEditPctMode] = useState(false);
@@ -1905,6 +1907,9 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
               </button>
             ))}
           </div>
+          <button onClick={() => setBulkEditing(true)} title="Nhập nhanh ảnh đại diện và thông tin liên hệ cho nhiều chi nhánh" className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-[#E8E7E2] bg-white text-[#555] hover:bg-[#F9F9F7] transition">
+            <Images size={12} /> <span className="hidden sm:inline">Nhập nhanh</span>
+          </button>
           <button onClick={() => setAdding(v => !v)} className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#0F6E56] text-white hover:opacity-90 transition shadow-sm">
             <Plus size={12} /> Thêm CN
           </button>
@@ -1923,6 +1928,18 @@ export default function Branches({ clients, toast, focusRegion, onFocusConsumed 
         toast={toast}
         onCreated={created => setSelectedId(created.id)}
       />
+      {bulkEditing && (
+        <BulkBranchInfoModal
+          branches={branches}
+          managerNames={managerNames}
+          provinces={PROVINCES}
+          addProvince={addProvince}
+          updateBranch={updateBranch}
+          resolveManager={resolveManager}
+          onClose={() => setBulkEditing(false)}
+          toast={toast}
+        />
+      )}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
