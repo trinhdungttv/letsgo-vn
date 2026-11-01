@@ -361,18 +361,20 @@ export default function BulkBranchInfoModal({ branches, managerNames, provinces,
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-0 md:p-4" onClick={handleClose}
+    // Chỉ đóng khi bấm đúng vào nền mờ. fileRef.click() cũng sinh 1 cú click nổi bọt lên đây — trước đây
+    // ô chọn file nằm ngoài khung nên bấm vào ảnh là cửa sổ đóng luôn, ảnh chọn xong không còn chỗ nhận để lưu.
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-0 md:p-4" onClick={e => { if (e.target === e.currentTarget) void handleClose(); }}
       // Thả nhầm ảnh ra ngoài dòng: chặn trình duyệt mở file ảnh (rời trang, mất phần đang gõ)
       onDragOver={e => { if (hasFiles(e)) e.preventDefault(); }} onDrop={e => { if (hasFiles(e)) e.preventDefault(); }}>
-      <datalist id="bulk-branch-manager-options">
-        {managerNames.map(m => <option key={m} value={m} />)}
-      </datalist>
-      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => {
-        const f = e.target.files?.[0]; const b = sorted.find(x => x.id === pickFor.current);
-        if (f && b) uploadAvatar(b, f);
-        e.target.value = '';
-      }} />
       <div className="bg-white md:rounded-[14px] shadow-2xl w-full max-w-[1180px] h-full md:h-auto md:max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <datalist id="bulk-branch-manager-options">
+          {managerNames.map(m => <option key={m} value={m} />)}
+        </datalist>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => {
+          const f = e.target.files?.[0]; const b = sorted.find(x => x.id === pickFor.current);
+          if (f && b) uploadAvatar(b, f);
+          e.target.value = '';
+        }} />
         <div className="flex items-start justify-between gap-3 px-4 md:px-5 py-3.5 border-b border-[#E8E7E2]">
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-[#111]">Nhập nhanh Ảnh & Thông tin — Chi nhánh</div>
