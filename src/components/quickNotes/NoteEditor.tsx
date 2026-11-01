@@ -1,20 +1,23 @@
 // Khung soạn 1 ghi chú (kiểu MFinder): tiêu đề = dòng đầu, checklist ☐, cỡ chữ A / A, ghim, kiểu chữ Aa, tìm trong
 // ghi chú, ghi âm, 8 màu, Lưu trữ / Xoá / Đóng, tự lưu ("Đã lưu").
 // 3 kiểu: 'card' = thẻ nổi cạnh dải (máy tính), 'pane' = khung phải của cửa sổ danh sách, 'sheet' = toàn màn (điện thoại).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+// Mỗi ghi chú có 2 dạng: Văn bản / Sơ đồ tư duy kiểu XMind (mindmap/MindMapEditor — tải riêng khi bấm sang Sơ đồ).
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import {
-  AlertCircle, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2, Mic,
-  Pause, Pin, Play, RotateCcw, Search, Square, Trash2, X,
+  AlertCircle, AlignLeft, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2,
+  Maximize2, Mic, Minimize2, Network, Pause, Pin, Play, RotateCcw, Search, Square, Trash2, X,
 } from 'lucide-react';
 import { FONT_FAMILY, FONT_LABEL, FONT_SIZES, PALETTE, stepFontSize } from '../../lib/quickNotes/colors';
 import {
-  continueChecklist, DEFAULT_TITLE, findMatches, formatDuration, noteTitle, relativeTime, toggleBoxAt, toggleChecklist,
+  continueChecklist, DEFAULT_TITLE, findMatches, formatDuration, relativeTime, titleOf, toggleBoxAt, toggleChecklist,
 } from '../../lib/quickNotes/noteText';
 import { NOTE_COLORS, NOTE_FONTS, type QuickNote, type QuickNoteRecording, type SaveState } from '../../lib/quickNotes/types';
 import RecordingList, { type UploadItem } from './RecordingList';
 import type { TranscribeJob } from './TranscriptPanel';
 import type { AudioRecorder } from './useAudioRecorder';
+
+const MindMapEditor = lazy(() => import('./mindmap/MindMapEditor'));
 
 export interface NoteEditorProps {
   note: QuickNote;
@@ -33,6 +36,9 @@ export interface NoteEditorProps {
   onClose?: () => void;
   onBack?: () => void;
   onOpenList?: () => void;
+  /** Thẻ / cửa sổ đang phóng to */
+  expanded?: boolean;
+  onToggleExpand?: () => void;
   onArchive: () => void;
   onDelete: () => void;
   onRestore?: () => void;
@@ -112,8 +118,9 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [hit, setHit] = useState(0);
   const [scrollbarW, setScrollbarW] = useState(0);
 
-  const title = noteTitle(note.body) || DEFAULT_TITLE;
+  const title = titleOf(note) || DEFAULT_TITLE;
   const archived = !!note.archived_at;
+  const isMap = note.view_mode === 'mindmap';
   const big = variant === 'sheet';
   const recHere = recorder.active && recorder.noteId === note.id;
   const recElsewhere = recorder.active && recorder.noteId !== note.id;
@@ -247,8 +254,31 @@ export default function NoteEditor(props: NoteEditorProps) {
     : saveState === 'dirty' || saveState === 'saving' ? 'Đang lưu…'
       : saveState === 'error' ? 'Chưa lưu' : '';
 
+  // Thẻ (card): 2 nút nằm dọc trên dải tiêu đề bên trái cho đỡ chật; khung khác: nằm ngang trên thanh công cụ
+  const vertical = variant === 'card';
+  const viewSwitch = !readOnly && (
+    <div className={`flex ${vertical ? 'flex-col' : ''} p-0.5 rounded-lg bg-black/[0.07] shrink-0`} role="tablist" aria-label="Dạng ghi chú">
+      {([['text', AlignLeft, 'Văn bản'], ['mindmap', Network, 'Sơ đồ tư duy (kiểu XMind)']] as const).map(([k, Icon, label]) => (
+        <button key={k} type="button" role="tab" aria-selected={note.view_mode === k} title={label} aria-label={label}
+          onClick={() => { if (note.view_mode !== k) { setFindOpen(false); props.onChange({ view_mode: k }); } }}
+          className={`${big ? 'h-8 px-2.5' : vertical ? 'w-6 h-6 justify-center' : 'h-6 px-1.5'} inline-flex items-center gap-1 rounded-md text-[12px] font-medium transition ${note.view_mode === k ? 'bg-white shadow-[0_1px_2px_rgba(0,0,0,0.14)]' : 'opacity-55 hover:opacity-100'}`}>
+          <Icon size={big ? 16 : 14} />
+          {big && <span>{k === 'text' ? 'Văn bản' : 'Sơ đồ'}</span>}
+        </button>
+      ))}
+    </div>
+  );
+
+  const expandBtn = props.onToggleExpand && (
+    <ToolBtn big={big} keepFocus={false} title={props.expanded ? 'Thu nhỏ lại' : 'Phóng to'} onClick={props.onToggleExpand}>
+      {props.expanded ? <Minimize2 size={big ? 17 : 15} /> : <Maximize2 size={big ? 17 : 15} />}
+    </ToolBtn>
+  );
+
   const tools = !readOnly && (
     <>
+      {!isMap && (
+        <>
       <ToolBtn big={big} title="Chữ nhỏ hơn" disabled={note.font_size <= FONT_SIZES[0]} onClick={() => props.onChange({ font_size: stepFontSize(note.font_size, -1) })}>
         <span className="text-[11px] font-semibold leading-none">A</span>
       </ToolBtn>
@@ -267,6 +297,8 @@ export default function NoteEditor(props: NoteEditorProps) {
       <ToolBtn big={big} title="Tìm trong ghi chú (Ctrl/⌘ F)" active={findOpen} keepFocus={false} onClick={() => (findOpen ? setFindOpen(false) : openFind())}>
         <Search size={big ? 18 : 15} />
       </ToolBtn>
+        </>
+      )}
       <ToolBtn big={big} keepFocus={false}
         title={recHere ? 'Đang ghi âm' : recElsewhere ? 'Đang ghi âm ở ghi chú khác' : 'Ghi âm cuộc trò chuyện / cuộc họp'}
         disabled={recElsewhere || !recorder.supported} active={recHere} onClick={() => { if (!recHere) props.onStartRecording(); }}>
@@ -277,6 +309,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           <List size={big ? 18 : 16} />
         </ToolBtn>
       )}
+      {expandBtn}
     </>
   );
 
@@ -298,17 +331,18 @@ export default function NoteEditor(props: NoteEditorProps) {
             <span className="flex-1" />
             {saveBadge}
           </div>
-          {tools && <div className="flex items-center justify-between px-2 h-11 shrink-0 border-b border-black/[0.06]" style={{ background: pal.header }}>{tools}</div>}
+          {tools && <div className="flex items-center justify-between gap-1 px-2 h-11 shrink-0 border-b border-black/[0.06]" style={{ background: pal.header }}>{viewSwitch}{tools}</div>}
         </>
       ) : (
         <div className="flex items-center gap-1 pl-4 pr-2 h-12 shrink-0 border-b border-black/[0.05]" style={{ background: pal.header }}>
           <div className="flex-1 min-w-0 truncate text-[15px] font-semibold" title={title}>{title}</div>
           {saveBadge}
-          <div className="flex items-center gap-0.5 ml-1">{tools}</div>
+          {viewSwitch && !vertical && <div className="ml-1">{viewSwitch}</div>}
+          <div className="flex items-center gap-0.5 ml-1">{tools || (readOnly && expandBtn)}</div>
         </div>
       )}
 
-      {findOpen && (
+      {findOpen && !isMap && (
         <div className="flex items-center gap-1.5 px-3 py-1.5 shrink-0 border-b border-black/[0.06] bg-white/45">
           <Search size={14} className="opacity-60 shrink-0" />
           <input ref={findInput} autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm trong ghi chú"
@@ -366,6 +400,20 @@ export default function NoteEditor(props: NoteEditorProps) {
         </div>
       )}
 
+      {isMap ? (
+        <div className="relative flex-1 min-h-[200px] flex flex-col">
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center opacity-60"><Loader2 size={20} className="animate-spin" /></div>}>
+            <MindMapEditor key={note.id} noteId={note.id} doc={note.mindmap} seedText={note.body} palette={pal} title={title}
+              readOnly={readOnly} mobile={variant === 'sheet'}
+              saveError={saveState === 'error' ? props.saveError ?? 'lỗi không rõ' : null}
+              onChange={doc => props.onChange({ mindmap: doc })}
+              onInsertOutline={text => {
+                const b = note.body.trimEnd();
+                props.onChange({ body: b ? `${b}\n\n${text}\n` : `${text}\n` });
+              }} />
+          </Suspense>
+        </div>
+      ) : (
       <div className="relative flex-1 min-h-[120px]">
         {layerContent && (
           <div ref={layer} aria-hidden
@@ -382,9 +430,10 @@ export default function NoteEditor(props: NoteEditorProps) {
           className="relative block w-full h-full resize-none bg-transparent outline-none px-4 py-3 whitespace-pre-wrap break-words placeholder:opacity-45"
           style={{ ...font, color: pal.ink }} />
       </div>
+      )}
 
       {(note.recordings.length > 0 || props.uploads.length > 0) && (
-        <div className="shrink-0 max-h-[50%] overflow-y-auto px-3 pt-2 pb-2 border-t border-black/[0.06]">
+        <div className={`shrink-0 ${isMap ? 'max-h-[26%]' : 'max-h-[50%]'} overflow-y-auto px-3 pt-2 pb-2 border-t border-black/[0.06]`}>
           <div className="text-[11px] font-semibold uppercase tracking-wide opacity-55 mb-1.5">
             Ghi âm ({note.recordings.length + props.uploads.length})
           </div>
@@ -441,8 +490,11 @@ export default function NoteEditor(props: NoteEditorProps) {
     return (
       <div className="flex h-full rounded-[18px] overflow-hidden shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_24px_60px_-16px_rgba(0,0,0,0.38)]"
         style={{ background: pal.paper, color: pal.ink }}>
-        <div className="w-9 shrink-0 flex items-center justify-center py-4" style={{ background: pal.strip }}>
-          <span className="qn-vertical max-h-full text-[11px] font-bold uppercase tracking-[0.08em] opacity-70">{title}</span>
+        <div className="w-9 shrink-0 flex flex-col items-center gap-3 pt-2.5 pb-4" style={{ background: pal.strip }}>
+          {viewSwitch}
+          <div className="flex-1 min-h-0 flex items-center justify-center">
+            <span className="qn-vertical max-h-full text-[11px] font-bold uppercase tracking-[0.08em] opacity-70">{title}</span>
+          </div>
         </div>
         {main}
       </div>

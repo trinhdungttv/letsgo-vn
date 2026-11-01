@@ -1,10 +1,14 @@
-// Ghi chú nhanh (dải thẻ dính mép phải) — kiểu dữ liệu khớp bảng quick_notes / quick_note_recordings (migration 188).
+// Ghi chú nhanh (dải thẻ dính mép phải) — kiểu dữ liệu khớp bảng quick_notes / quick_note_recordings (migration 188, 189).
+import type { MindMapDoc } from './mindmap/types';
 
 export const NOTE_COLORS = ['yellow', 'orange', 'pink', 'purple', 'blue', 'green', 'slate', 'gray'] as const;
 export type NoteColor = typeof NOTE_COLORS[number];
 
 export const NOTE_FONTS = ['sans', 'serif', 'mono'] as const;
 export type NoteFont = typeof NOTE_FONTS[number];
+
+/** Ghi chú đang mở dạng văn bản hay sơ đồ tư duy. */
+export type NoteView = 'text' | 'mindmap';
 
 export interface QuickNoteRecording {
   id: string;
@@ -34,6 +38,9 @@ export interface QuickNote {
   created_at: string;
   updated_at: string;
   recordings: QuickNoteRecording[];
+  /** Sơ đồ tư duy kiểu XMind của ghi chú (null = chưa tạo) — migration 189 */
+  mindmap: MindMapDoc | null;
+  view_mode: NoteView;
 }
 
 /** Trạng thái lưu của 1 ghi chú: dirty = vừa sửa, đang chờ tự lưu. */

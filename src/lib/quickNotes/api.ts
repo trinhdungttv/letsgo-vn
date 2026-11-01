@@ -4,6 +4,7 @@
 import { supabase } from '../supabase';
 import { getStoredSessionToken } from '../sessionToken';
 import { isMissingFunction } from '../recruit/api';
+import { parseDoc } from './mindmap/parse';
 import type { TranscribeEvent } from './transcript';
 import { NOTE_COLORS, NOTE_FONTS, type PendingAudio, type QuickNote, type QuickNoteRecording } from './types';
 
@@ -64,6 +65,8 @@ export function toNote(raw: unknown): QuickNote {
     created_at: String(r.created_at ?? new Date().toISOString()),
     updated_at: String(r.updated_at ?? new Date().toISOString()),
     recordings: Array.isArray(r.recordings) ? (r.recordings as Record<string, unknown>[]).map(toRecording) : [],
+    mindmap: parseDoc(r.mindmap),
+    view_mode: r.view_mode === 'mindmap' ? 'mindmap' : 'text',
   };
 }
 
@@ -73,10 +76,17 @@ export const listNotes = async () => toNotes(await notesRpc<unknown>('list'));
 export const listTrash = async () => toNotes(await notesRpc<unknown>('trash'));
 
 export async function saveNote(n: QuickNote): Promise<QuickNote> {
-  return toNote(await notesRpc<unknown>('save', {
+  const raw = await notesRpc<Record<string, unknown>>('save', {
     id: n.id, title: n.title, body: n.body, color: n.color, font_size: n.font_size, font: n.font,
-    pinned: n.pinned, archived: !!n.archived_at,
-  }));
+    pinned: n.pinned, archived: !!n.archived_at, view_mode: n.view_mode,
+    // Không gửi sơ đồ rỗng: máy đang mở bản cũ (chưa có sơ đồ) sửa chữ thì không xoá mất sơ đồ vừa vẽ ở máy khác
+    ...(n.mindmap ? { mindmap: n.mindmap } : {}),
+  });
+  // DB chưa có cột mindmap (chưa chạy migration 189) thì hàm cũ bỏ qua 2 trường mới → báo lỗi để không âm thầm mất sơ đồ
+  if ((n.mindmap || n.view_mode === 'mindmap') && raw && typeof raw === 'object' && !('view_mode' in raw)) {
+    throw new QuickNotesError('cần chạy migration 189 (Sơ đồ tư duy) trên Supabase', true);
+  }
+  return toNote(raw);
 }
 
 export const deleteNote = (id: string) => notesRpc<unknown>('delete', { id });

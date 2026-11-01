@@ -7,21 +7,23 @@
 // Điện thoại (< 768px, không có rê chuột): tay nắm nhỏ ở mép phải → bấm mở danh sách toàn màn.
 // Ghi chú riêng từng người (migration 188, qua quick_notes_rpc), tự lưu; ghi âm chạy tiếp khi đóng thẻ / đổi trang,
 // file lên Storage qua api/quick-notes-audio.ts — chưa lên được thì giữ trong IndexedDB của máy để thử lại.
+// Thẻ soạn: nút Phóng to (gần kín màn hình) + kéo góc dưới trái để đổi cỡ; nhớ riêng cho dạng Văn bản / Sơ đồ tư duy
+// (sơ đồ mặc định mở to) trong localStorage của máy.
 // ============================================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
-import { AlertCircle, List, Mic, Plus } from 'lucide-react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { AlertCircle, List, Mic, Network, Plus } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 import { deleteRecording, errText, renameRecording, transcribeRecording, uploadRecording } from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
 import {
-  baseMime, checklistCount, clockDate, DEFAULT_TITLE, formatDuration, meetingTemplate, noteTitle, previewLines, railOrder,
-  recordingName, relativeTime,
+  baseMime, checklistCount, clockDate, DEFAULT_TITLE, formatDuration, meetingTemplate, notePreview, railOrder, recordingName,
+  relativeTime, titleOf,
 } from '../../lib/quickNotes/noteText';
 import { downloadBlob, dropStashedAudio, listStashedAudio, stashAudio } from '../../lib/quickNotes/pendingAudio';
 import { summaryForNote, TRANSCRIBE_ENABLED } from '../../lib/quickNotes/transcript';
-import type { PendingAudio, QuickNote, QuickNoteRecording } from '../../lib/quickNotes/types';
+import type { NoteView, PendingAudio, QuickNote, QuickNoteRecording } from '../../lib/quickNotes/types';
 import ConfirmDialog, { type ConfirmRequest } from './ConfirmDialog';
 import NoteEditor from './NoteEditor';
 import NotesWindow, { type EditorExtra, type NotesTab } from './NotesWindow';
@@ -42,6 +44,26 @@ const AUTO_TRANSCRIBE = TRANSCRIBE_ENABLED;
 const AUTO_TRANSCRIBE_MIN_SEC = 5;
 
 const tabShadow = '-1px 0 0 rgba(0,0,0,0.05), -6px 2px 14px -6px rgba(0,0,0,0.3)';
+
+/** Cỡ thẻ soạn, nhớ riêng cho dạng văn bản / sơ đồ tư duy. */
+type CardLayout = Record<NoteView, { expanded: boolean; w: number; h: number }>;
+const CARD_KEY = 'qn-card-layout';
+const CARD_MIN = { w: 340, h: 320 };
+const CARD_DEFAULT: CardLayout = { text: { expanded: false, w: 460, h: 540 }, mindmap: { expanded: true, w: 760, h: 600 } };
+
+function loadCardLayout(): CardLayout {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CARD_KEY) ?? 'null') as Partial<CardLayout> | null;
+    if (!raw) return CARD_DEFAULT;
+    const pick = (k: NoteView) => {
+      const v = raw[k];
+      return v && Number.isFinite(v.w) && Number.isFinite(v.h) ? { expanded: !!v.expanded, w: v.w, h: v.h } : CARD_DEFAULT[k];
+    };
+    return { text: pick('text'), mindmap: pick('mindmap') };
+  } catch {
+    return CARD_DEFAULT;
+  }
+}
 const fileSafe = (s: string) => s.replace(/[\\/:*?"<>|·]+/g, '-').replace(/\s+/g, ' ').trim();
 
 function upsertUpload(list: UploadItem[], u: UploadItem): UploadItem[] {
@@ -86,6 +108,13 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   const [view, setView] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recTarget = useRef<string | null>(null);
+  const [cardLayout, setCardLayout] = useState<CardLayout>(loadCardLayout);
+  const [resizing, setResizing] = useState(false);
+
+  const saveCardLayout = (next: CardLayout) => {
+    setCardLayout(next);
+    try { localStorage.setItem(CARD_KEY, JSON.stringify(next)); } catch { /* máy chặn lưu — chỉ nhớ trong phiên */ }
+  };
 
   useEffect(() => {
     const onResize = () => setView({ w: window.innerWidth, h: window.innerHeight });
@@ -231,10 +260,10 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       await store.remove(n.id);
       if (openId === n.id) setOpenId(null);
     };
-    if (!n.body.trim() && !recs) { void doDelete().catch(e => setNotice(errText(e))); return; }
+    if (!n.body.trim() && !recs && !n.mindmap) { void doDelete().catch(e => setNotice(errText(e))); return; }
     setConfirm({
       title: 'Xoá ghi chú này?',
-      message: `“${noteTitle(n.body) || DEFAULT_TITLE}”${recs ? ` cùng ${recs} bản ghi âm` : ''} sẽ chuyển vào mục Đã xoá — khôi phục được trong 30 ngày.`,
+      message: `“${titleOf(n) || DEFAULT_TITLE}”${recs ? ` cùng ${recs} bản ghi âm` : ''} sẽ chuyển vào mục Đã xoá — khôi phục được trong 30 ngày.`,
       confirmLabel: 'Xoá',
       danger: true,
       onConfirm: doDelete,
@@ -387,12 +416,47 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     transform: expanded ? `translateX(${active ? -6 : 0}px)` : `translateX(${TAB_HIDDEN}px)`,
   });
 
-  const cardW = Math.min(460, view.w - 90);
-  const cardH = Math.min(540, view.h - 24);
+  const cardMode: NoteView = openNote?.view_mode ?? 'text';
+  const card = cardLayout[cardMode];
+  const cardW = Math.max(CARD_MIN.w, Math.min(card.w, view.w - 90));
+  const cardH = Math.max(Math.min(CARD_MIN.h, view.h - 24), Math.min(card.h, view.h - 24));
   const cardTop = Math.min(Math.max(anchorY - 12, 12), view.h - cardH - 12);
+  const cardStyle: CSSProperties = card.expanded
+    ? { right: TAB_W + 12, left: 16, top: 12, bottom: 12 }
+    : { right: TAB_W + 12, top: cardTop, width: cardW, height: cardH };
+
+  const toggleCardExpand = () => saveCardLayout({ ...cardLayout, [cardMode]: { ...card, expanded: !card.expanded } });
+
+  // Kéo góc dưới bên trái để đổi cỡ thẻ (thẻ bám mép phải nên kéo sang trái = rộng ra)
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const w0 = cardW;
+    const h0 = cardH;
+    const top = cardTop;
+    let last = { w: w0, h: h0 };
+    setResizing(true);
+    const move = (ev: PointerEvent) => {
+      last = {
+        w: Math.round(Math.max(CARD_MIN.w, Math.min(view.w - TAB_W - 40, w0 + (sx - ev.clientX)))),
+        h: Math.round(Math.max(CARD_MIN.h, Math.min(view.h - top - 12, h0 + (ev.clientY - sy)))),
+      };
+      setCardLayout(cl => ({ ...cl, [cardMode]: { ...cl[cardMode], expanded: false, ...last } }));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setResizing(false);
+      saveCardLayout({ ...cardLayout, [cardMode]: { ...card, expanded: false, ...last } });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   const peekPal = peekNote ? PALETTE[peekNote.color] : null;
-  const peekLines = peekNote ? previewLines(peekNote.body, 5) : [];
+  const peekLines = peekNote ? notePreview(peekNote, 5) : [];
   const peekCl = peekNote ? checklistCount(peekNote.body) : null;
 
   const statusText = store.phase === 'missing' ? (store.error ?? 'Chưa cài Ghi chú nhanh trên cơ sở dữ liệu.')
@@ -416,7 +480,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
         <div className="relative" style={{ width: TAB_W, height: stackH }}>
           {shown.map((n, i) => {
             const pal = PALETTE[n.color];
-            const title = noteTitle(n.body) || DEFAULT_TITLE;
+            const title = titleOf(n) || DEFAULT_TITLE;
             return (
               <button key={n.id} type="button" aria-label={`Ghi chú: ${title}`}
                 onMouseEnter={() => setPeekId(n.id)}
@@ -459,22 +523,23 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
               <div className="flex rounded-[16px] overflow-hidden shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_18px_40px_-14px_rgba(0,0,0,0.4)]"
                 style={{ background: peekPal.paper, color: peekPal.ink, minHeight: Math.min(tabH + 8, 150), maxHeight: 220 }}>
                 <div className="w-8 shrink-0 flex items-center justify-center py-3" style={{ background: peekPal.strip }}>
-                  <span className="qn-vertical max-h-full text-[10.5px] font-bold uppercase tracking-[0.06em] opacity-70">{noteTitle(peekNote.body) || DEFAULT_TITLE}</span>
+                  <span className="qn-vertical max-h-full text-[10.5px] font-bold uppercase tracking-[0.06em] opacity-70">{titleOf(peekNote) || DEFAULT_TITLE}</span>
                 </div>
                 <div className="flex-1 min-w-0 pl-3.5 pr-4 py-3 flex flex-col">
-                  <div className="text-[14px] font-semibold truncate">{noteTitle(peekNote.body) || DEFAULT_TITLE}</div>
+                  <div className="text-[14px] font-semibold truncate">{titleOf(peekNote) || DEFAULT_TITLE}</div>
                   <div className="h-px bg-black/10 my-2 shrink-0" />
                   {peekLines.length ? (
                     <div className="text-[13px] leading-[1.45] space-y-0.5 overflow-hidden">
                       {peekLines.map((l, i) => <div key={i} className="truncate">{l}</div>)}
                     </div>
                   ) : (
-                    <div className="text-[13px] opacity-50">{peekNote.body.trim() ? '' : 'Chưa có nội dung'}</div>
+                    <div className="text-[13px] opacity-50">{peekNote.body.trim() || peekNote.mindmap ? '' : 'Chưa có nội dung'}</div>
                   )}
                   <div className="mt-auto pt-2 flex items-center gap-2 text-[11px] opacity-60">
                     <span>{relativeTime(peekNote.updated_at)}</span>
                     {peekCl && peekCl.total > 0 && <span>☑ {peekCl.done}/{peekCl.total}</span>}
                     {peekNote.recordings.length > 0 && <span className="inline-flex items-center gap-0.5"><Mic size={10} /> {peekNote.recordings.length}</span>}
+                    {peekNote.mindmap && <span className="inline-flex items-center gap-0.5"><Network size={10} /> Sơ đồ</span>}
                   </div>
                 </div>
               </div>
@@ -519,13 +584,21 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       </div>
 
       {openNote && !win && (
-        <div className="fixed z-[49] qn-pop" style={{ right: TAB_W + 12, top: cardTop, width: cardW, height: cardH }}
+        <div className={`fixed z-[49] qn-pop ${resizing ? 'select-none' : ''}`} style={cardStyle}
           onKeyDown={e => { if (e.key === 'Escape' && !confirm) { e.stopPropagation(); closeEditor(); } }}>
           {editorFor(openNote, 'card', {
             onClose: closeEditor,
             onOpenList: () => openWindow(openNote.id, openNote.archived_at ? 'archive' : 'all'),
             autoFocus: true,
+            expanded: card.expanded,
+            onToggleExpand: toggleCardExpand,
           })}
+          {!card.expanded && (
+            <div onPointerDown={startResize} title="Kéo để đổi cỡ thẻ" aria-hidden
+              className="absolute -left-1 -bottom-1 w-5 h-5 cursor-nesw-resize z-[3] flex items-end justify-start p-[5px] opacity-40 hover:opacity-80">
+              <svg width={9} height={9} viewBox="0 0 9 9"><path d="M1 1v7h7M1 4.5L4.5 8" fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" /></svg>
+            </div>
+          )}
         </div>
       )}
 

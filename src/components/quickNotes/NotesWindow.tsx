@@ -1,13 +1,14 @@
 // Cửa sổ danh sách ghi chú (như cửa sổ MFinder): Tất cả ghi chú / Lưu trữ / Đã xoá, ô tìm, danh sách bên trái +
 // khung soạn bên phải. Điện thoại: toàn màn, bấm 1 dòng → mở ghi chú toàn màn, nút ‹ để quay lại danh sách.
+// Nút Phóng to trong khung soạn → cửa sổ gần kín màn hình (nhớ riêng cho Văn bản / Sơ đồ tư duy).
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertCircle, Circle, Loader2, Mic, Pin, Plus, StickyNote, X } from 'lucide-react';
+import { AlertCircle, Circle, Loader2, Mic, Network, Pin, Plus, StickyNote, X } from 'lucide-react';
 import { Segmented, SearchField } from '../../modules/cskh/components/apple';
 import { errText, listTrash, restoreNote } from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
-import { checklistCount, DEFAULT_TITLE, listOrder, noteMatches, noteTitle, previewLines, relativeTime } from '../../lib/quickNotes/noteText';
-import type { QuickNote } from '../../lib/quickNotes/types';
+import { checklistCount, DEFAULT_TITLE, listOrder, noteMatches, notePreview, relativeTime, titleOf } from '../../lib/quickNotes/noteText';
+import type { NoteView, QuickNote } from '../../lib/quickNotes/types';
 import type { QuickNotesStore } from './useQuickNotes';
 
 export type NotesTab = 'all' | 'archive' | 'trash';
@@ -17,6 +18,20 @@ export interface EditorExtra {
   readOnly?: boolean;
   onRestore?: () => void;
   autoFocus?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+}
+
+const WIN_KEY = 'qn-window-expanded';
+const WIN_DEFAULT: Record<NoteView, boolean> = { text: false, mindmap: true };
+
+function loadWinExpanded(): Record<NoteView, boolean> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WIN_KEY) ?? 'null') as Partial<Record<NoteView, boolean>> | null;
+    return { text: raw?.text ?? WIN_DEFAULT.text, mindmap: raw?.mindmap ?? WIN_DEFAULT.mindmap };
+  } catch {
+    return WIN_DEFAULT;
+  }
 }
 
 function NoteRow({ note, selected, recording, attention, onClick }: {
@@ -27,14 +42,14 @@ function NoteRow({ note, selected, recording, attention, onClick }: {
   onClick: () => void;
 }) {
   const cl = checklistCount(note.body);
-  const preview = previewLines(note.body, 1)[0] ?? '';
+  const preview = notePreview(note, 1)[0] ?? '';
   return (
     <button type="button" onClick={onClick}
       className={`w-full text-left flex gap-3 px-3 py-2.5 rounded-[10px] transition ${selected ? 'bg-black/[0.09]' : 'hover:bg-black/[0.04] active:bg-black/[0.06]'}`}>
       <span className="w-1 self-stretch rounded-full shrink-0" style={{ background: PALETTE[note.color].dot }} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate text-[15px] md:text-[14px] font-semibold text-[#1D1D1F]">{noteTitle(note.body) || DEFAULT_TITLE}</span>
+          <span className="truncate text-[15px] md:text-[14px] font-semibold text-[#1D1D1F]">{titleOf(note) || DEFAULT_TITLE}</span>
           {note.pinned && <Pin size={11} className="shrink-0 text-[#86868B]" fill="currentColor" />}
           {recording && <span className="shrink-0 w-2 h-2 rounded-full bg-[#FF3B30] qn-rec-pulse" title="Đang ghi âm" />}
           {attention && <span title="Có bản ghi âm chưa tải lên" className="shrink-0 text-[#D70015]"><AlertCircle size={12} /></span>}
@@ -43,6 +58,7 @@ function NoteRow({ note, selected, recording, attention, onClick }: {
           <span className="shrink-0">{relativeTime(note.deleted_at ?? note.updated_at)}</span>
           {cl.total > 0 && <span className="shrink-0 inline-flex items-center gap-1"><Circle size={11} /> {cl.done}/{cl.total}</span>}
           {note.recordings.length > 0 && <span className="shrink-0 inline-flex items-center gap-0.5"><Mic size={11} /> {note.recordings.length}</span>}
+          {note.mindmap && <span className="shrink-0 inline-flex items-center" title="Có sơ đồ tư duy"><Network size={11} /></span>}
           <span className="truncate text-[#AEAEB2]">{preview}</span>
         </span>
       </span>
@@ -71,6 +87,7 @@ export default function NotesWindow({
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [trash, setTrash] = useState<QuickNote[] | null>(null);
   const [trashErr, setTrashErr] = useState<string | null>(null);
+  const [winExpanded, setWinExpanded] = useState(loadWinExpanded);
 
   const live = store.notes;
   const activeCount = live.filter(n => !n.archived_at).length;
@@ -116,10 +133,20 @@ export default function NotesWindow({
   const createNew = () => { setTab('all'); setQ(''); setSelectedId(onNew()); };
   const createMeeting = () => { setTab('all'); setQ(''); setSelectedId(onNewMeeting()); };
 
+  const viewMode: NoteView = selected?.view_mode ?? 'text';
+  const expanded = !isMobile && winExpanded[viewMode];
+  const toggleExpand = () => {
+    const next = { ...winExpanded, [viewMode]: !winExpanded[viewMode] };
+    setWinExpanded(next);
+    try { localStorage.setItem(WIN_KEY, JSON.stringify(next)); } catch { /* chỉ nhớ trong phiên */ }
+  };
+
   const editor = selected && renderEditor(selected, isMobile ? 'sheet' : 'pane', {
     onBack: isMobile ? () => setSelectedId(null) : undefined,
     readOnly: selectedInTrash,
     onRestore: selectedInTrash ? () => void restore(selected.id) : undefined,
+    expanded,
+    onToggleExpand: isMobile ? undefined : toggleExpand,
   });
 
   const emptyText = store.phase === 'missing' ? (store.error ?? 'Chưa cài Ghi chú nhanh trên cơ sở dữ liệu.')
@@ -193,10 +220,10 @@ export default function NotesWindow({
   }
 
   return (
-    <div className="fixed inset-0 z-[85] bg-black/30 flex items-center justify-center p-6" data-qn-keep
+    <div className={`fixed inset-0 z-[85] bg-black/30 flex items-center justify-center ${expanded ? 'p-3' : 'p-6'}`} data-qn-keep
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="qn-pop w-full max-w-[1000px] h-[min(700px,calc(100vh-48px))] rounded-[16px] overflow-hidden flex bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12),0_30px_80px_-20px_rgba(0,0,0,0.45)]">
-        <aside className="w-[330px] shrink-0 flex flex-col bg-[#F2F2F4] border-r border-black/[0.06]">
+      <div className={`qn-pop w-full rounded-[16px] overflow-hidden flex bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12),0_30px_80px_-20px_rgba(0,0,0,0.45)] ${expanded ? 'h-full' : 'max-w-[1000px] h-[min(700px,calc(100vh-48px))]'}`}>
+        <aside className={`${expanded ? 'w-[280px]' : 'w-[330px]'} shrink-0 flex flex-col bg-[#F2F2F4] border-r border-black/[0.06]`}>
           <div className="flex items-center gap-2 px-4 h-12 shrink-0">
             <StickyNote size={16} className="text-[#86868B]" />
             <span className="flex-1 text-[14px] font-semibold text-[#1D1D1F]">Ghi chú nhanh</span>

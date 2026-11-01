@@ -1,4 +1,5 @@
 // Ghi chú nhanh — các phép xử lý chữ thuần (không đụng React / Supabase) để test được.
+import type { MindMapDoc, MindTopic } from './mindmap/types';
 import { NOTE_COLORS, type NoteColor, type QuickNote } from './types';
 
 export const BOX_OPEN = '☐';
@@ -14,6 +15,38 @@ export function noteTitle(body: string): string {
     if (line) return line.length > 120 ? `${line.slice(0, 119)}…` : line;
   }
   return '';
+}
+
+/** Tiêu đề hiển thị: dòng đầu của văn bản, không có thì chủ đề trung tâm của sơ đồ tư duy. */
+export function titleOf(note: { body: string; mindmap?: MindMapDoc | null }): string {
+  const t = noteTitle(note.body);
+  if (t || !note.mindmap) return t;
+  const root = note.mindmap.root.text.replace(/\s*\n\s*/g, ' ').trim();
+  return root.length > 120 ? `${root.slice(0, 119)}…` : root;
+}
+
+/** Mọi chữ trong sơ đồ tư duy (chủ đề, ghi chú, nhãn) — cho ô tìm. */
+export function mindmapText(doc: MindMapDoc | null | undefined): string {
+  if (!doc) return '';
+  const parts: string[] = [];
+  const go = (t: MindTopic) => {
+    parts.push(t.text);
+    if (t.note) parts.push(t.note);
+    if (t.labels) parts.push(...t.labels);
+    t.summaries?.forEach(s => parts.push(s.text));
+    t.children.forEach(go);
+  };
+  go(doc.root);
+  doc.floating.forEach(go);
+  doc.relations.forEach(r => parts.push(r.text));
+  return parts.join('\n');
+}
+
+/** Vài dòng xem trước: văn bản, không có thì các chủ đề chính của sơ đồ. */
+export function notePreview(note: { body: string; mindmap?: MindMapDoc | null }, max = 4): string[] {
+  const lines = previewLines(note.body, max);
+  if (lines.length || !note.mindmap || note.body.trim()) return lines;
+  return note.mindmap.root.children.slice(0, max).map(c => `• ${c.text.replace(/\s*\n\s*/g, ' ')}`);
 }
 
 /** Vài dòng sau dòng tiêu đề — cho thẻ xem nhanh và danh sách. */
@@ -110,10 +143,11 @@ export function findMatches(text: string, q: string): number[] {
   return out;
 }
 
-export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings'>, q: string): boolean {
+export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings'> & { mindmap?: MindMapDoc | null }, q: string): boolean {
   if (!q.trim()) return true;
   // Tìm cả trong tên / tóm tắt / lời thoại bản ghi âm → gõ 1 câu khách đã nói cũng ra đúng ghi chú
   return findMatches(note.body, q).length > 0
+    || (!!note.mindmap && findMatches(mindmapText(note.mindmap), q).length > 0)
     || note.recordings.some(r => [r.title, r.summary ?? '', r.transcript ?? ''].some(t => findMatches(t, q).length > 0));
 }
 

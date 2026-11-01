@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-01-quick-notes-mindmap',
+    date: '2026-11-01',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Sơ đồ tư duy kiểu XMind ngay trong ghi chú: bấm nút Sơ đồ, nội dung đang nháp tự thành nhánh',
+      'Phím như XMind: Tab thêm nhánh con, Enter thêm cùng cấp, chọn rồi gõ luôn để sửa; kéo thả đổi chỗ, thu gọn nhánh',
+      '6 kiểu sơ đồ (toả 2 bên, logic, tổ chức, cây, dòng thời gian) và 8 chủ đề màu',
+      'Biểu tượng ưu tiên / tiến độ / cờ, ghi chú, nhãn, đường liên kết, vùng bao, tóm tắt, chế độ Dàn ý',
+      'Xuất ảnh PNG, PDF, SVG, Markdown; nút Phóng to và kéo góc để đổi cỡ thẻ ghi chú',
+    ],
+  },
+  {
     id: '2026-11-01-quick-notes-gemini',
     date: '2026-11-01',
     title: 'Ghi chú nhanh',

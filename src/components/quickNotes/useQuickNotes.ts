@@ -2,7 +2,7 @@
 // tải lại khi quay về tab (điện thoại ↔ máy tính dùng chung). Ghi chú mới chỉ lên DB khi đã có chữ / đổi gì đó.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteNote, errText, listNotes, QuickNotesError, saveNote } from '../../lib/quickNotes/api';
-import { nextColor, noteTitle } from '../../lib/quickNotes/noteText';
+import { nextColor, titleOf } from '../../lib/quickNotes/noteText';
 import type { QuickNote, SaveState } from '../../lib/quickNotes/types';
 
 const SAVE_DELAY_MS = 700;
@@ -97,8 +97,11 @@ export function useQuickNotes(userId: string): QuickNotesStore {
   }, [save, setOne]);
 
   const update = useCallback((id: string, patch: Partial<QuickNote>) => {
-    const full = patch.body !== undefined ? { ...patch, title: noteTitle(patch.body) } : patch;
-    commit(notesRef.current.map(n => (n.id === id ? { ...n, ...full } : n)));
+    commit(notesRef.current.map(n => {
+      if (n.id !== id) return n;
+      const next = { ...n, ...patch };
+      return patch.body !== undefined || patch.mindmap !== undefined ? { ...next, title: titleOf(next) } : next;
+    }));
     schedule(id);
   }, [commit, schedule]);
 
@@ -107,7 +110,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
     const body = init.body ?? '';
     const note: QuickNote = {
       id: crypto.randomUUID(),
-      title: noteTitle(body),
+      title: titleOf({ body, mindmap: init.mindmap ?? null }),
       body,
       color: init.color ?? nextColor(notesRef.current.filter(n => !n.archived_at)),
       font_size: init.font_size ?? 15,
@@ -118,6 +121,8 @@ export function useQuickNotes(userId: string): QuickNotesStore {
       created_at: now,
       updated_at: now,
       recordings: [],
+      mindmap: init.mindmap ?? null,
+      view_mode: init.view_mode ?? 'text',
     };
     localOnly.current.add(note.id);
     commit([...notesRef.current, note]);
@@ -141,7 +146,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
   const discardIfEmpty = useCallback((id: string) => {
     const n = notesRef.current.find(x => x.id === id);
     if (!n || !localOnly.current.has(id) || inflight.current.has(id)) return;
-    if (n.body.trim() === '' && n.recordings.length === 0) dropLocal(id);
+    if (n.body.trim() === '' && n.recordings.length === 0 && !n.mindmap) dropLocal(id);
   }, [dropLocal]);
 
   const remove = useCallback(async (id: string) => {
