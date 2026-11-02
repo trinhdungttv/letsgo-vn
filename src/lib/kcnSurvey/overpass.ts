@@ -4,6 +4,7 @@
 // Kết quả nhớ trong máy (localStorage, 2 vùng gần nhất) để vào lại KCN lúc sóng yếu vẫn có.
 import { pointInRing, projector, pointSegDist, type Bounds, type RoadPiece, type RoadWay } from './track';
 import { isZoneLikeName, type OsmPlace } from './companies';
+import { osmZoneAt, zoneNameMatch } from './zones';
 import type { LatLng } from '../geo';
 
 const ENDPOINTS = [
@@ -12,8 +13,12 @@ const ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
 ];
 
-/** Đường cho xe máy / ô tô đi được. service = đường nhánh / nội bộ — tuỳ chọn vì trong KCN có rất nhiều đường nội bộ nhà máy. */
-const MAIN_ROADS = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
+/** Đường trục (vẽ đậm) và đường nhánh cho xe máy / ô tô đi được. service = đường nội bộ — tuỳ chọn vì trong KCN có
+ *  rất nhiều đường nội bộ nhà máy. */
+const MAIN_ROADS = 'motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
+const MINOR_ROADS = 'unclassified|residential|living_street|road';
+/** Mốc chia phần trong kết quả Overpass (lệnh `make`) — đường trục / đường nhánh / nhà máy. */
+const SPLIT = 'lgvn_split';
 
 /** Ranh giới 1 khu / cụm công nghiệp trên OSM (landuse=industrial có tên dạng "KCN …"). */
 export interface OsmZone {
@@ -39,12 +44,20 @@ export function areaKey(b: Bounds, includeService: boolean): string {
 
 export function buildQuery(b: Bounds, includeService: boolean): string {
   const bbox = `${b.minLat.toFixed(5)},${b.minLng.toFixed(5)},${b.maxLat.toFixed(5)},${b.maxLng.toFixed(5)}`;
-  const roads = includeService ? `${MAIN_ROADS}|service` : MAIN_ROADS;
+  const minor = includeService ? `${MINOR_ROADS}|service` : MINOR_ROADS;
+  const filter = '["service"!~"^(parking_aisle|driveway|drive-through)$"]["area"!="yes"]';
   // Đường: bỏ đường nội bộ bãi xe / lối vào nhà (service=parking_aisle|driveway) ngay cả khi lấy service.
-  // `out skel geom` = chỉ hình dạng, không kèm thẻ → nhẹ hơn vài lần (lọc loại đường đã làm ở máy chủ).
+  // `out ids geom` = chỉ hình dạng, không kèm thẻ / mã điểm → nhẹ (lọc loại đường làm ở máy chủ). Không có thẻ nên
+  // đường trục và đường nhánh xuất 2 lượt, giữa có mốc `make lgvn_split` để biết phần nào là phần nào.
   return `[out:json][timeout:35][bbox:${bbox}];
-way["highway"~"^(${roads})$"]["service"!~"^(parking_aisle|driveway|drive-through)$"]["area"!="yes"];
-out skel geom qt;
+way["highway"~"^(${MAIN_ROADS})$"]${filter};
+out ids geom qt;
+make ${SPLIT} kind="minor";
+out;
+way["highway"~"^(${minor})$"]${filter};
+out ids geom qt;
+make ${SPLIT} kind="places";
+out;
 (
   node["name"]["man_made"="works"];
   way["name"]["man_made"="works"];
@@ -64,7 +77,7 @@ out center;`;
 
 type OsmGeom = ({ lat: number; lon: number } | null)[];
 interface OsmElement {
-  type: 'node' | 'way' | 'relation';
+  type: 'node' | 'way' | 'relation' | typeof SPLIT;
   id: number;
   lat?: number;
   lon?: number;
@@ -116,12 +129,19 @@ export function parseOverpass(data: unknown): { roads: RoadWay[]; places: OsmPla
   const zones: OsmZone[] = [];
   const seenPlace = new Set<string>();
   if (!Array.isArray(elements)) return { roads, places, zones };
+  let section: 'main' | 'minor' | 'places' = 'main';
   for (const el of elements) {
+    if (el.type === SPLIT) {
+      const k = el.tags?.kind;
+      if (k === 'minor' || k === 'places') section = k;
+      continue;
+    }
     const tags = el.tags ?? {};
     const geom = (el.geometry ?? []).filter((g): g is { lat: number; lon: number } => !!g && Number.isFinite(g.lat) && Number.isFinite(g.lon));
-    // Đường đến từ `out skel` nên không có thẻ; nhà máy luôn có thẻ name
-    if (el.type === 'way' && (tags.highway || !el.tags)) {
-      if (geom.length >= 2) roads.push({ id: el.id, ...(tags.name ? { name: tags.name } : {}), kind: tags.highway ?? 'road', coords: geom.map(g => [g.lat, g.lon]) });
+    // Đường đến từ `out ids` nên không có thẻ (loại = phần đang đọc); nhà máy luôn có thẻ name
+    if (el.type === 'way' && (tags.highway || (!el.tags && section !== 'places'))) {
+      const kind = tags.highway ? (new RegExp(`^(${MAIN_ROADS})$`).test(tags.highway) ? 'main' : 'minor') : section === 'main' ? 'main' : 'minor';
+      if (geom.length >= 2) roads.push({ id: el.id, ...(tags.name ? { name: tags.name } : {}), kind, coords: geom.map(g => [g.lat, g.lon]) });
       continue;
     }
     const name = (tags.name ?? tags['name:vi'] ?? '').trim();
@@ -148,32 +168,25 @@ export function parseOverpass(data: unknown): { roads: RoadWay[]; places: OsmPla
   return { roads, places, zones };
 }
 
-/** Diện tích tương đối của vòng (để chọn ranh giới nhỏ nhất chứa điểm). */
-function ringArea(ring: readonly [number, number][]): number {
-  let a = 0;
-  for (let i = 1; i < ring.length; i++) a += ring[i - 1][1] * ring[i][0] - ring[i][1] * ring[i - 1][0];
-  return Math.abs(a / 2);
-}
-
-const foldName = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase()
-  .replace(/khu\s*cong\s*nghiep|cum\s*cong\s*nghiep|industrial\s*(park|zone|estate)|\bkcn\b|\bccn\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
-
 /**
- * Ranh giới của KCN đang khảo sát: vòng nhỏ nhất CHỨA tâm KCN; tâm nằm ngoài mọi vòng (ghim lệch) thì lấy khu trùng tên
- * gần nhất (≤ 3 km). Không có → null (tính cả vùng xung quanh).
+ * Ranh giới của KCN đang khảo sát: khu TRÙNG TÊN với KCN (gần nhất, ≤ 3 km — ghim tâm KCN lệch sang khu bên cạnh vẫn
+ * đúng); không có thì vòng nhỏ nhất CHỨA tâm KCN. Không có → null (tính cả vùng xung quanh).
  */
 export function pickZoneBoundary(zones: readonly OsmZone[], anchor: LatLng, zoneName: string | null): OsmZone | null {
-  const inside = zones.filter(z => z.rings.some(r => pointInRing(anchor.lat, anchor.lng, r)));
-  if (inside.length) return [...inside].sort((a, b) => Math.min(...a.rings.map(ringArea)) - Math.min(...b.rings.map(ringArea)))[0];
-  const want = zoneName ? foldName(zoneName) : '';
-  if (!want) return null;
-  const pr = projector(anchor.lat, anchor.lng);
-  const named = zones
-    .filter(z => { const n = foldName(z.name); return n && (n === want || n.includes(want) || want.includes(n)); })
-    .map(z => { const c = centroid(z.rings[0]); return { z, d: Math.hypot(pr.x(c.lng), pr.y(c.lat)) }; })
-    .filter(x => x.d <= 3000)
-    .sort((a, b) => a.d - b.d);
-  return named[0]?.z ?? null;
+  if (zoneName) {
+    const pr = projector(anchor.lat, anchor.lng);
+    const named = zones
+      .filter(z => zoneNameMatch(z.name, zoneName))
+      .map(z => {
+        const c = centroid(z.rings[0]);
+        const inside = z.rings.some(r => pointInRing(anchor.lat, anchor.lng, r));
+        return { z, d: inside ? 0 : Math.hypot(pr.x(c.lng), pr.y(c.lat)) };
+      })
+      .filter(x => x.d <= 3000)
+      .sort((a, b) => a.d - b.d);
+    if (named[0]) return named[0].z;
+  }
+  return osmZoneAt(anchor, zones);
 }
 
 /** Khúc đường nằm trong ranh giới (hoặc chạy sát viền ≤ margin mét — đường bao quanh KCN). */
@@ -191,7 +204,7 @@ export function piecesInZone(pieces: readonly RoadPiece[], zone: OsmZone, margin
   });
 }
 
-const CACHE_KEY = 'lgvn_kcn_survey_area_v2';
+const CACHE_KEY = 'lgvn_kcn_survey_area_v3';
 const CACHE_MAX = 2;
 
 function readCache(): AreaMap[] {
@@ -202,7 +215,12 @@ function readCache(): AreaMap[] {
   } catch { return []; }
 }
 function writeCache(list: AreaMap[]) {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(list.slice(0, CACHE_MAX))); }
+  try {
+    // Bản nhớ kiểu cũ (chưa tách đường trục / nhánh) — bỏ cho nhẹ máy
+    localStorage.removeItem('lgvn_kcn_survey_area_v1');
+    localStorage.removeItem('lgvn_kcn_survey_area_v2');
+    localStorage.setItem(CACHE_KEY, JSON.stringify(list.slice(0, CACHE_MAX)));
+  }
   catch { /* đầy bộ nhớ / chế độ riêng tư — lần sau tải lại */ }
 }
 
@@ -214,7 +232,7 @@ export function cachedArea(key: string): AreaMap | null {
 
 /** Chưa có trả lời sau bấy lâu thì gửi thêm sang máy chủ kế tiếp (máy chủ công cộng hay phải xếp hàng 20–30 giây). */
 const HEDGE_MS = 12_000;
-const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * Tải vùng từ Overpass. Gửi máy chủ đầu; quá HEDGE_MS chưa xong (hoặc vừa báo lỗi / quá tải) thì gửi thêm máy kế tiếp,

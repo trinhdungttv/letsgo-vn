@@ -176,7 +176,7 @@ export class TrackIndex {
 export interface RoadWay {
   id: number;
   name?: string;
-  /** highway=… của OSM: primary, tertiary, residential, service… */
+  /** 'main' = đường trục (primary / secondary / tertiary…), 'minor' = đường nhánh / nội bộ */
   kind: string;
   coords: [number, number][];
 }
@@ -184,6 +184,8 @@ export interface RoadWay {
 /** 1 khúc đường ngắn (≤ maxPiece mét) — đơn vị để tô "đã đi / chưa đi". */
 export interface RoadPiece {
   wayId: number;
+  /** Đường trục (primary / secondary / tertiary…) — vẽ đậm hơn đường nhánh */
+  main: boolean;
   a: [number, number];
   b: [number, number];
   /** Trung điểm — điểm đem đi tra với vết. */
@@ -205,7 +207,7 @@ export function splitRoads(ways: readonly RoadWay[], maxPiece = 25): RoadPiece[]
         const t0 = k / n, t1 = (k + 1) / n;
         const a: [number, number] = [lat1 + (lat2 - lat1) * t0, lng1 + (lng2 - lng1) * t0];
         const b: [number, number] = [lat1 + (lat2 - lat1) * t1, lng1 + (lng2 - lng1) * t1];
-        out.push({ wayId: w.id, a, b, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], len: len / n });
+        out.push({ wayId: w.id, main: w.kind === 'main', a, b, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], len: len / n });
       }
     }
   }

@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  Camera, ChevronLeft, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Minus, Pause, Play, Plus, Settings, Square, X, AlertTriangle, MapPin,
+  Camera, ChevronLeft, ChevronRight, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Minus, Navigation, Pause, Play, Plus, Settings, Square, X, AlertTriangle, MapPin,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -21,15 +21,19 @@ import { escapeMapHtml, SOUTH_VN_BOUNDS } from '../../../lib/mapGroups';
 import type { Branch, LaborHistoryEntry, MarketLead, MarketZone } from '../../../lib/types';
 import type { MarketTab } from '../../Market';
 import {
-  boundsAround, distM, fmtDistance, fmtDuration, roadCoverage, splitRoads, mergePieces, TrackIndex,
+  boundsAround, distM, distToShape, fmtDistance, fmtDuration, roadCoverage, splitRoads, mergePieces, TrackIndex,
   type Bounds, type TrackSegment,
 } from '../../../lib/kcnSurvey/track';
 import {
-  companiesNear, mergeOsmPlaces, notePassed, pickCurrent, STATUS_META, type NearbyCompany, type PassedCompany, type SurveyCompany,
+  companiesNear, mergeOsmPlaces, notePassed, pickCurrent, roadFactoryScores, STATUS_META, type NearbyCompany, type PassedCompany, type SurveyCompany,
 } from '../../../lib/kcnSurvey/companies';
+import { clusterShare, companiesInArea, dayRange, detectZone, surveyTitle, type ZoneCandidate } from '../../../lib/kcnSurvey/zones';
 import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type AreaMap } from '../../../lib/kcnSurvey/overpass';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
-import { listPhotos, listTrips, loadTracks, updateTrip, uploadPhoto, type PhotoMeta, type SurveyPhoto, type SurveyTrip } from '../../../lib/kcnSurvey/api';
+import {
+  countTripsBetween, listPhotos, listTrips, loadTracks, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, uploadPhoto,
+  type PhotoMeta, type SurveyPhoto, type SurveyTrip,
+} from '../../../lib/kcnSurvey/api';
 import { useSurveyRecorder, pendingActiveTrip, type SummaryResult } from './useSurveyRecorder';
 import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, zoomForSpeed, fold, type SurveyPrefs } from './surveyData';
 import SurveyCompanyCard, { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
@@ -46,7 +50,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby';
+type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby' | 'todo';
 
 interface UploadJob {
   id: string;
@@ -55,17 +59,6 @@ interface UploadJob {
   error?: string;
   file: File;
   meta: PhotoMeta;
-}
-
-/** Tâm KCN gần nhất trong 3 km — tự gợi ý khi vừa mở. */
-function nearestZone(zones: readonly MarketZone[], p: { lat: number; lng: number }, maxM = 3000) {
-  let best: { zone: MarketZone; dist: number } | null = null;
-  for (const z of zones) {
-    if (z.lat == null || z.lng == null) continue;
-    const d = distM(p, { lat: z.lat, lng: z.lng });
-    if (d <= maxM && (!best || d < best.dist)) best = { zone: z, dist: d };
-  }
-  return best;
 }
 
 const toLatLngs = (seg: TrackSegment) => seg.map(p => [p[0], p[1]] as [number, number]);
@@ -93,12 +86,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const [zoneId, setZoneId] = useState<string | null | undefined>(() => pending?.trip.zone_id ?? undefined);
   const zone = useMemo(() => (zoneId ? marketZones.find(z => z.id === zoneId) ?? null : null), [zoneId, marketZones]);
   const zoneName = zone?.name ?? (zoneId && pending?.trip.zone_id === zoneId ? pending.trip.zone_name : '') ?? '';
-  useEffect(() => {
-    if (zoneId !== undefined || !fix) return;
-    const hit = nearestZone(marketZones, fix);
-    setZoneId(hit ? hit.zone.id : null);
-    if (hit) say(`Đang ở gần ${hit.zone.name}`);
-  }, [fix, zoneId, marketZones, say]);
+  /** auto = app tự chọn theo tâm KCN gần nhất · boundary = đứng trong ranh giới OSM · manual = tự chọn · trip = theo chuyến dở */
+  const zoneSourceRef = useRef<'auto' | 'boundary' | 'manual' | 'trip'>(pending ? 'trip' : 'auto');
+  /** Tên chuyến do app đặt — còn giữ nguyên (chưa sửa tay) thì đổi KCN sẽ đặt lại tên */
+  const autoTitleRef = useRef(pending?.trip.title ?? '');
 
   // Tâm vùng: KCN có toạ độ → tâm KCN; không thì vị trí GPS đầu tiên
   const [gpsAnchor, setGpsAnchor] = useState<{ lat: number; lng: number } | null>(null);
@@ -142,6 +133,27 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const t = window.setTimeout(() => { areaRetries.current += 1; setAreaReload(n => n + 1); }, 30_000);
     return () => window.clearTimeout(t);
   }, [areaStatus.state, prefs.showRoads]);
+
+  // ── Đang ở KCN nào ─────────────────────────────────────────────────────────
+  // Lần đầu có GPS: chọn ngay theo tâm KCN gần nhất (≤ 3 km) để có vùng tải bản đồ. Khi bản đồ OSM về mà đang đứng
+  // TRONG ranh giới 1 KCN khác → đổi sang KCN đó (chỉ khi chưa bắt đầu chuyến và chưa tự chọn tay).
+  useEffect(() => {
+    if (zoneId !== undefined || !fix) return;
+    const d = detectZone(fix, area?.zones ?? [], marketZones);
+    setZoneId(d.best ? d.best.zone.id : null);
+    zoneSourceRef.current = d.best?.inside ? 'boundary' : 'auto';
+    if (d.best) say(d.best.inside ? `Đang trong ranh giới ${d.best.zone.name}` : `Đang ở gần ${d.best.zone.name}`);
+  }, [fix, zoneId, marketZones, area, say]);
+  useEffect(() => {
+    if (!fix || !area?.zones?.length || recorder.trip || pending) return;
+    if (zoneSourceRef.current === 'manual' || zoneSourceRef.current === 'trip') return;
+    const d = detectZone(fix, area.zones, marketZones);
+    if (d.best?.inside && d.best.zone.id !== zoneId) {
+      setZoneId(d.best.zone.id);
+      zoneSourceRef.current = 'boundary';
+      say(`Đang trong ranh giới ${d.best.zone.name}`);
+    }
+  }, [fix, area, marketZones, zoneId, recorder.trip, pending, say]);
 
   // ── Chuyến cũ + ảnh quanh vùng ─────────────────────────────────────────────
   const [oldTrips, setOldTrips] = useState<SurveyTrip[]>([]);
@@ -232,18 +244,22 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const c = allCompanies.find(x => x.key === pinnedKey);
     if (!c) return null;
     const near = nearby.find(n => n.company.key === pinnedKey);
-    return near ?? { company: c, dist: fix && c.points.length ? Math.min(...c.points.map(p => distM(fix, p))) : NaN };
+    return near ?? { company: c, dist: fix && (c.points.length || c.rings.length) ? distToShape(fix, c.points, c.rings) : NaN };
   }, [pinnedKey, allCompanies, nearby, fix]);
   const cardItem = pinned ?? (current && !dismissed.has(current.company.key) ? current : null);
 
   // ── Độ phủ đường ──────────────────────────────────────────────────────────
   // Ranh giới KCN trên OSM → chỉ tính đường bên trong (vùng tải là hình vuông nên dính cả khu dân cư xung quanh)
   const boundary = useMemo(() => (area && anchor ? pickZoneBoundary(area.zones ?? [], anchor, zone?.name ?? null) : null), [area, anchor, zone?.name]);
+  // Ranh giới CỤM (1 khối bao nhiều KCN) → chỉ lấy phần gần tâm KCN đang chọn hơn tâm các KCN khác trong cụm
+  const share = useMemo(() => (boundary && zone ? clusterShare(boundary, zone.id, marketZones) : null), [boundary, zone, marketZones]);
   const pieces = useMemo(() => {
     if (!area || !prefs.showRoads) return [];
     const all = splitRoads(area.roads);
-    return boundary && prefs.clipToZone ? piecesInZone(all, boundary) : all;
-  }, [area, prefs.showRoads, boundary, prefs.clipToZone]);
+    if (!boundary || !prefs.clipToZone) return all;
+    const inZone = piecesInZone(all, boundary);
+    return share ? inZone.filter(p => share({ lat: p.mid[0], lng: p.mid[1] })) : inZone;
+  }, [area, prefs.showRoads, boundary, prefs.clipToZone, share]);
   const [covTick, setCovTick] = useState(0);
   const covTimer = useRef<number | null>(null);
   useEffect(() => {
@@ -261,6 +277,35 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     return roadCoverage(pieces, idx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pieces, anchor, oldTracks, prefs.showOldTracks, covTick, recorder.trip?.id]);
+  // Khúc đường có nhà máy 2 bên (> 0) → tô đậm "nên đi"; đường trống tô nhạt
+  const roadScores = useMemo(() => roadFactoryScores(pieces, allCompanies), [pieces, allCompanies]);
+  const unvisitedFactoryM = useMemo(() => (coverage ? pieces.reduce((m, p, i) => (!coverage.covered[i] && roadScores[i] > 0 ? m + p.len : m), 0) : 0), [coverage, pieces, roadScores]);
+
+  // ── Công ty trong KCN chưa đi ngang ───────────────────────────────────────
+  const zoneCompanies = useMemo(() => {
+    const list = companiesInArea(allCompanies, boundary, anchor);
+    return share ? list.filter(c => { const p = c.points[0] ?? (c.rings[0]?.[0] ? { lat: c.rings[0][0][0], lng: c.rings[0][0][1] } : null); return !!p && share(p); }) : list;
+  }, [allCompanies, boundary, anchor, share]);
+  /** Công ty đã đi ngang ở các chuyến TRƯỚC → lần gần nhất */
+  const passedBefore = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of oldTrips) {
+      if (t.id === recorder.trip?.id) continue;
+      for (const p of t.passed) if (!m.has(p.key)) m.set(p.key, t.started_at);
+    }
+    return m;
+  }, [oldTrips, recorder.trip?.id]);
+  const [todoRich, setTodoRich] = useState(false);
+  const todo = useMemo(() => {
+    const from = fix ?? anchor;
+    const rows = zoneCompanies
+      .filter(c => !passedRef.current.has(c.key))
+      .map(c => ({ c, dist: from ? distToShape(from, c.points, c.rings) : NaN, before: prefs.showOldTracks ? passedBefore.get(c.key) ?? null : null }))
+      .sort((a, b) => STATUS_META[a.c.status].rank - STATUS_META[b.c.status].rank || a.dist - b.dist);
+    return { never: rows.filter(r => !r.before), before: rows.filter(r => r.before) };
+    // passedCount: passedRef đổi bên trong → đếm để tính lại
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneCompanies, passedCount, passedBefore, prefs.showOldTracks, fix?.lat, fix?.lng, anchor]);
 
   // ── Bản đồ ────────────────────────────────────────────────────────────────
   const mapDivRef = useRef<HTMLDivElement>(null);
@@ -406,19 +451,24 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     L.polygon(boundary.rings, { color: '#D97706', weight: 2, opacity: 0.85, dashArray: '2 6', fillColor: '#F59E0B', fillOpacity: 0.04, renderer: ly.renderer, interactive: false }).addTo(ly.outline);
   }, [boundary]);
 
-  // Đường đã đi / chưa đi
+  // Đường đã đi / chưa đi — đường trục đậm hơn đường nhánh; chưa đi mà có nhà máy 2 bên: cam đặc (nên đi), đường trống: cam nhạt nét đứt
   useEffect(() => {
     const ly = layersRef.current;
     if (!ly) return;
     ly.roads.clearLayers();
     if (!coverage || !pieces.length) return;
-    for (const line of mergePieces(pieces, i => coverage.covered[i])) {
-      L.polyline(line, { color: '#16A34A', weight: 3, opacity: 0.45, renderer: ly.renderer, interactive: false }).addTo(ly.roads);
-    }
-    for (const line of mergePieces(pieces, i => !coverage.covered[i])) {
-      L.polyline(line, { color: '#F97316', weight: 4, opacity: 0.9, dashArray: '7 6', renderer: ly.renderer, interactive: false }).addTo(ly.roads);
-    }
-  }, [coverage, pieces]);
+    const draw = (pick: (i: number) => boolean, style: L.PolylineOptions) => {
+      for (const line of mergePieces(pieces, pick)) L.polyline(line, { ...style, renderer: ly.renderer, interactive: false }).addTo(ly.roads);
+    };
+    const cov = (i: number) => coverage.covered[i];
+    const busy = (i: number) => roadScores[i] > 0;
+    draw(i => cov(i) && !pieces[i].main, { color: '#16A34A', weight: 3, opacity: 0.45 });
+    draw(i => cov(i) && pieces[i].main, { color: '#16A34A', weight: 5, opacity: 0.5 });
+    draw(i => !cov(i) && !busy(i) && !pieces[i].main, { color: '#FDBA74', weight: 3, opacity: 0.95, dashArray: '6 6' });
+    draw(i => !cov(i) && !busy(i) && pieces[i].main, { color: '#FB923C', weight: 5, opacity: 0.95, dashArray: '8 6' });
+    draw(i => !cov(i) && busy(i) && !pieces[i].main, { color: '#F97316', weight: 5, opacity: 0.95 });
+    draw(i => !cov(i) && busy(i) && pieces[i].main, { color: '#EA580C', weight: 7, opacity: 0.95 });
+  }, [coverage, pieces, roadScores]);
 
   // Ghim công ty trong khung nhìn (nhãn tên khi phóng gần)
   const passedKeysVersion = passedCount;
@@ -436,6 +486,18 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       shown.push({ c, p, d: distM({ lat: center.lat, lng: center.lng }, p) });
     }
     shown.sort((a, b) => a.d - b.d);
+    // Khối nhà xưởng (OSM) tô theo màu trạng thái — vẽ trước để chấm nằm trên
+    if (zoom >= 15) {
+      for (const { c } of shown.slice(0, 600)) {
+        if (!c.rings.length) continue;
+        const meta = STATUS_META[c.status];
+        const poly = L.polygon(c.rings, {
+          color: meta.color, weight: 1.5, opacity: 0.9, fillColor: meta.color, fillOpacity: c.status === 'osm' ? 0.12 : 0.3, renderer: ly.renderer,
+        });
+        poly.on('click', () => { setPinnedKey(c.key); setExpanded(true); });
+        poly.addTo(ly.companies);
+      }
+    }
     shown.slice(0, 600).forEach(({ c, p }, i) => {
       const meta = STATUS_META[c.status];
       const passed = passedRef.current.has(c.key);
@@ -620,6 +682,9 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<SummaryResult | null>(null);
   const [summaryNote, setSummaryNote] = useState('');
+  const [summaryTitle, setSummaryTitle] = useState('');
+  /** Bấm Bắt đầu mà 2 KCN gần ngang nhau (cụm Nhơn Trạch…) → hỏi lại đang ở KCN nào */
+  const [zonePrompt, setZonePrompt] = useState<ZoneCandidate[] | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (recorder.status !== 'recording') return;
@@ -627,22 +692,46 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     return () => window.clearInterval(t);
   }, [recorder.status]);
 
-  const start = async () => {
+  /** Tên tự đặt: "KCN … – Khảo sát dd/mm/yyyy", thêm "(lần n)" nếu hôm nay đã khảo sát KCN này. */
+  const makeTitle = async (z: { id: string; name: string } | null, at: Date) => {
+    if (!z) return surveyTitle(null, at);
+    const r = dayRange(at);
+    return surveyTitle(z.name, at, (await countTripsBetween(z.id, r.from, r.to)) + 1);
+  };
+
+  const start = async (z: { id: string; name: string } | null) => {
     setBusy(true);
     try {
-      await recorder.start({ id: zone?.id ?? null, name: zone?.name ?? '' }, { id: user?.id ?? null, name: user?.full_name ?? '' }, prefs.keepAwake);
+      const title = await makeTitle(z, new Date());
+      autoTitleRef.current = title;
+      await recorder.start({ id: z?.id ?? null, name: z?.name ?? '' }, { id: user?.id ?? null, name: user?.full_name ?? '' }, prefs.keepAwake, title);
       passedRef.current = new Map();
       setPassedCount(0);
       setPending(null);
       clearHighlight();
       setFollow(true);
       if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom);
-      say(fix ? 'Bắt đầu ghi đường đi' : 'Bắt đầu — đang chờ tín hiệu GPS…');
+      say(fix ? `Bắt đầu: ${title}` : `Bắt đầu: ${title} — đang chờ tín hiệu GPS…`);
     } catch (e) {
       say((e as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Nút Bắt đầu: KCN do app tự đoán theo tâm mà KCN thứ 2 cũng gần ngang → hỏi lại trước. */
+  const requestStart = () => {
+    if (fix && zoneSourceRef.current === 'auto') {
+      const d = detectZone(fix, area?.zones ?? [], marketZones);
+      if (!d.sure && d.candidates.length >= 2) { setZonePrompt(d.candidates.slice(0, 3)); return; }
+    }
+    void start(zone ? { id: zone.id, name: zone.name } : null);
+  };
+  const startWithZone = (z: { id: string; name: string } | null) => {
+    setZonePrompt(null);
+    setZoneId(z?.id ?? null);
+    zoneSourceRef.current = 'manual';
+    void start(z);
   };
 
   const resumePending = () => {
@@ -670,6 +759,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       if (res) {
         setSummary(res);
         setSummaryNote(res.trip.note ?? '');
+        setSummaryTitle(res.trip.title ?? '');
       }
       setHistoryTick(t => t + 1);
     } catch (e) {
@@ -681,13 +771,32 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   const changeZone = async (id: string | null) => {
     setZoneId(id);
+    zoneSourceRef.current = 'manual';
     setPanel('none');
     const z = id ? marketZones.find(x => x.id === id) : null;
     if (z?.lat != null && z?.lng != null && !fix) mapRef.current?.setView([z.lat, z.lng], 15);
-    if (recorder.trip) {
-      try { await updateTrip(recorder.trip.id, { zone_id: id, zone_name: z?.name ?? '' }); }
+    const trip = recorder.trip;
+    if (trip) {
+      const patch: { zone_id: string | null; zone_name: string; title?: string } = { zone_id: id, zone_name: z?.name ?? '' };
+      // Tên vẫn là tên app tự đặt (chưa sửa tay) → đặt lại theo KCN mới
+      if (!trip.title || trip.title === autoTitleRef.current) {
+        patch.title = await makeTitle(z ? { id: z.id, name: z.name } : null, new Date(trip.started_at));
+        autoTitleRef.current = patch.title;
+      }
+      recorder.patchTrip(patch);
+      try { await updateTrip(trip.id, patch); }
       catch (e) { say((e as Error).message); }
     }
+  };
+
+  /** Đưa bản đồ tới 1 công ty và mở thẻ của nó (từ danh sách "chưa đi ngang"). */
+  const focusCompany = (c: SurveyCompany) => {
+    const map = mapRef.current;
+    const p = c.points[0] ?? (c.rings[0]?.[0] ? { lat: c.rings[0][0][0], lng: c.rings[0][0][1] } : null);
+    setPinnedKey(c.key);
+    setExpanded(true);
+    setPanel('none');
+    if (map && p) { setFollow(false); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17)); }
   };
 
   const tryClose = async () => {
@@ -764,7 +873,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
             <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-3">
               <div className="text-[13.5px] font-semibold text-[#1D1D1F]">Chuyến khảo sát đang dở</div>
               <div className="text-[12px] text-[#3A3A3C] mt-0.5">
-                {pending.trip.zone_name || 'Không gắn KCN'} · bắt đầu {new Date(pending.trip.started_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })} · {fmtDistance(pending.distance)}
+                {pending.trip.title || pending.trip.zone_name || 'Không gắn KCN'} · bắt đầu {new Date(pending.trip.started_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })} · {fmtDistance(pending.distance)}
               </div>
               <div className="flex gap-2 mt-2.5">
                 <button onClick={resumePending} className="flex-1 h-10 rounded-full bg-[#0A84FF] text-white text-[13.5px] font-semibold">Đi tiếp</button>
@@ -803,15 +912,32 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {/* ── Thanh dưới ── */}
       <div className="absolute inset-x-0 bottom-0 z-[1100] pointer-events-none pb-[env(safe-area-inset-bottom)]">
+        {zoneCompanies.length > 0 && (
+          <div className="px-3 pb-1.5">
+            <button onClick={() => setPanel('todo')}
+              className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] max-w-[calc(100%-72px)]">
+              <Factory size={14} className="text-[#D97706] shrink-0" />
+              <span className="truncate">
+                {todo.never.length
+                  ? <><b>{todo.never.length}</b> công ty chưa qua{todo.never.filter(r => STATUS_META[r.c.status].rich).length ? ` · ${todo.never.filter(r => STATUS_META[r.c.status].rich).length} KH/Pipeline` : ''}</>
+                  : todo.before.length ? `Đã qua hết — ${todo.before.length} công ty chỉ qua ở lần trước` : 'Đã đi ngang hết công ty trong KCN'}
+              </span>
+              <ChevronRight size={14} className="text-[#C7C7CC] shrink-0" />
+            </button>
+          </div>
+        )}
         <div className="px-3 pb-1.5 flex items-end justify-between gap-2">
           <div className="pointer-events-auto rounded-xl bg-white/90 backdrop-blur shadow px-2.5 py-1.5 text-[11px] text-[#3A3A3C] space-y-0.5 max-w-[calc(100%-72px)]">
             <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#2563EB]" /> Chuyến này
               {prefs.showOldTracks && <><span className="w-4 h-1.5 rounded-full bg-[#64748B]/60 ml-1.5" /> Lần trước{oldTrips.filter(t => t.id !== recorder.trip?.id).length ? ` (${oldTrips.filter(t => t.id !== recorder.trip?.id).length})` : ''}</>}
             </div>
             {prefs.showRoads && coverage && (
-              <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-[#F97316]" /> Đường chưa đi
-                <span className="text-[#8E8E93]">({fmtDistance(coverage.totalM - coverage.coveredM)})</span>
-              </div>
+              <>
+                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full bg-[#EA580C] shrink-0" /> Chưa đi, có nhà máy
+                  <span className="text-[#8E8E93]">{fmtDistance(unvisitedFactoryM)}</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-[#FDBA74] shrink-0" /> Chưa đi, đường trống
+                  <span className="text-[#8E8E93]">{fmtDistance(Math.max(0, coverage.totalM - coverage.coveredM - unvisitedFactoryM))}</span></div>
+              </>
             )}
             {prefs.showRoads && areaStatus.state === 'loading' && <div className="flex items-center gap-1 text-[#8E8E93]"><Loader2 size={10} className="animate-spin" /> Đang tải mạng đường…</div>}
             {prefs.showRoads && areaStatus.state === 'error' && (
@@ -854,7 +980,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           {!hasTrip ? (
             <>
               <BarBtn onClick={() => { setHistoryInit({ tab: 'trips', filter: null }); setPanel('history'); }} label="Lịch sử"><History size={20} /></BarBtn>
-              <button onClick={start} disabled={busy || !!pending}
+              <button onClick={requestStart} disabled={busy || !!pending}
                 className="flex-1 h-14 rounded-2xl bg-[#0A84FF] text-white text-[16px] font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition disabled:opacity-50">
                 {busy ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />} Bắt đầu khảo sát
               </button>
@@ -888,7 +1014,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       {/* ── Panels ── */}
       {panel === 'settings' && (
         <SurveySettingsPanel prefs={prefs} onChange={setPref} zoom={zoom} onZoom={setMapZoom} onFitArea={fitArea}
-          area={areaStatus} boundaryName={boundary?.name ?? null} onClose={() => setPanel('none')}
+          area={areaStatus} boundaryName={boundary ? `${boundary.name}${share ? ' (cụm — chỉ lấy phần gần tâm KCN này)' : ''}` : null} onClose={() => setPanel('none')}
           onReloadArea={() => {
             const b = mapRef.current?.getBounds();
             if (!b) return;
@@ -932,6 +1058,73 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
               </button>
             ))}
             {!nearby.length && <div className="px-3 py-6 text-center text-[13px] text-[#8E8E93]">Không có công ty nào trong bán kính</div>}
+          </div>
+        </Sheet>
+      )}
+
+      {panel === 'todo' && (
+        <Sheet title={`${zoneName || 'Vùng này'} — công ty chưa đi ngang`} onClose={() => setPanel('none')}>
+          <div className="text-[11.5px] text-[#8E8E93] mb-2 leading-snug">
+            {boundary ? `Công ty có ghim trong ranh giới ${boundary.name}${share ? ', phần gần tâm KCN này hơn các KCN khác trong cụm' : ''}.` : 'KCN chưa có ranh giới trên OSM — lấy công ty trong 1,5 km quanh tâm KCN.'}
+            {' '}Khách hàng / Pipeline xếp trước, rồi tới gần nhất. Bấm 1 công ty để bản đồ chỉ tới.
+          </div>
+          <div className="flex gap-1.5 mb-2">
+            {[{ v: false, label: `Tất cả (${todo.never.length + todo.before.length})` }, { v: true, label: `KH & Pipeline (${[...todo.never, ...todo.before].filter(r => STATUS_META[r.c.status].rich).length})` }].map(o => (
+              <button key={String(o.v)} onClick={() => setTodoRich(o.v)}
+                className={`h-8 px-3 rounded-full text-[12.5px] font-medium ${todoRich === o.v ? 'bg-[#0A84FF] text-white' : 'bg-white text-[#1D1D1F]'}`}>{o.label}</button>
+            ))}
+          </div>
+          {([['Chưa đi ngang lần nào', todo.never], ['Chỉ đi ngang ở lần trước', todo.before]] as const).map(([label, rows]) => {
+            const list = rows.filter(r => !todoRich || STATUS_META[r.c.status].rich);
+            if (!list.length) return null;
+            return (
+              <div key={label} className="mb-3">
+                <div className="text-[12px] font-semibold text-[#8E8E93] uppercase tracking-wide mb-1">{label} ({list.length})</div>
+                <div className="rounded-xl bg-white divide-y divide-black/5 overflow-hidden">
+                  {list.slice(0, 150).map(({ c, dist, before }) => {
+                    const p = c.points[0];
+                    return (
+                      <div key={c.key} className="flex items-center gap-2 px-3 py-2.5">
+                        <button onClick={() => focusCompany(c)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                          <StatusDot status={c.status} />
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-[14px] text-[#1D1D1F] truncate">{c.name}</span>
+                            <span className="block text-[11.5px] text-[#8E8E93] truncate">
+                              {statusLabel(c, lookup)}{before ? ` · qua lần trước ${new Date(before).toLocaleDateString('vi-VN')}` : ''}
+                            </span>
+                          </span>
+                          {Number.isFinite(dist) && <span className="text-[12px] text-[#8E8E93] shrink-0">{fmtDistance(dist)}</span>}
+                        </button>
+                        {p && (
+                          <a href={`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`} target="_blank" rel="noopener noreferrer"
+                            className="shrink-0 h-8 px-2.5 rounded-full bg-[#F2F2F7] text-[11.5px] font-medium text-[#0A84FF] inline-flex items-center gap-1">
+                            <Navigation size={12} /> Chỉ đường
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {!todo.never.length && !todo.before.length && <div className="py-6 text-center text-[13px] text-[#8E8E93]">Đã đi ngang hết công ty trong KCN 🎉</div>}
+        </Sheet>
+      )}
+
+      {zonePrompt && (
+        <Sheet title="Đang ở KCN nào?" onClose={() => setZonePrompt(null)}>
+          <div className="text-[12.5px] text-[#3A3A3C] mb-2 leading-snug">Có {zonePrompt.length} KCN ở gần ngang nhau — chọn đúng KCN để chuyến được đặt tên và lưu đúng chỗ.</div>
+          <div className="rounded-xl bg-white divide-y divide-black/5 overflow-hidden">
+            {zonePrompt.map(c => (
+              <button key={c.zone.id} onClick={() => startWithZone({ id: c.zone.id, name: c.zone.name })} className="w-full px-3 py-3 text-left flex items-center gap-2">
+                <MapPin size={15} className="text-[#D97706] shrink-0" />
+                <span className="flex-1 min-w-0 text-[15px] text-[#1D1D1F] truncate">{c.zone.name}</span>
+                <span className="text-[12px] text-[#8E8E93] shrink-0">tâm cách {fmtDistance(c.dist)}</span>
+              </button>
+            ))}
+            <button onClick={() => { setZonePrompt(null); setPanel('zone'); }} className="w-full px-3 py-3 text-left text-[14px] text-[#0A84FF]">KCN khác…</button>
+            <button onClick={() => startWithZone(null)} className="w-full px-3 py-3 text-left text-[14px] text-[#3A3A3C]">Không gắn KCN</button>
           </div>
         </Sheet>
       )}
@@ -988,13 +1181,24 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
               </div>
             </div>
           )}
+          <div className="mt-3 text-[12px] font-semibold text-[#8E8E93] uppercase tracking-wide mb-1">Tên chuyến</div>
+          <input value={summaryTitle} onChange={e => setSummaryTitle(e.target.value)} placeholder={surveyTitle(summary.trip.zone_name, new Date(summary.trip.started_at))}
+            className="w-full h-11 px-3 rounded-xl bg-white text-[14px] outline-none border border-black/5 placeholder:text-[#8E8E93]" />
           <textarea value={summaryNote} onChange={e => setSummaryNote(e.target.value)} rows={3}
             placeholder="Ghi chú chuyến đi — VD: đường số 5 đang sửa, cổng sau Changshin tuyển nhiều…"
-            className="mt-3 w-full px-3 py-2.5 rounded-xl bg-white text-[14px] outline-none border border-black/5 resize-none placeholder:text-[#8E8E93]" />
+            className="mt-2 w-full px-3 py-2.5 rounded-xl bg-white text-[14px] outline-none border border-black/5 resize-none placeholder:text-[#8E8E93]" />
           <div className="flex gap-2 mt-3">
             <button onClick={async () => {
-              try { if (summaryNote.trim() !== (summary.trip.note ?? '')) await updateTrip(summary.trip.id, { note: summaryNote.trim() }); setSummary(null); }
-              catch (e) { say((e as Error).message); }
+              const patch: { note?: string; title?: string } = {};
+              if (summaryNote.trim() !== (summary.trip.note ?? '')) patch.note = summaryNote.trim();
+              const t = summaryTitle.trim() || surveyTitle(summary.trip.zone_name, new Date(summary.trip.started_at));
+              if (t !== (summary.trip.title ?? '')) patch.title = t;
+              try {
+                if (Object.keys(patch).length) await updateTrip(summary.trip.id, patch);
+                if (patch.title && titleColumnMissing()) say(TITLE_MIGRATION_HINT);
+                setSummary(null);
+                setHistoryTick(n => n + 1);
+              } catch (e) { say((e as Error).message); }
             }} className="flex-1 h-11 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold">Xong</button>
           </div>
         </Sheet>

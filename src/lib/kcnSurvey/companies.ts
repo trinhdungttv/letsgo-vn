@@ -6,7 +6,7 @@
 // (crm_pipeline.zone_sites, migration 187) và khối nhà xưởng OSM trùng tên.
 import type { LatLng } from '../geo';
 import { companyKey, compareKeys, type CompanyKey } from '../companyMatch';
-import { distM, distToShape } from './track';
+import { distM, distToShape, projector, type RoadPiece } from './track';
 
 /** client = đang hợp tác · pipeline = đang theo đuổi · declined = không hợp tác · stopped = ngưng HĐ
  *  prospect = KH tiềm năng (trang Khách hàng) · lead = mới có ở Thị trường · osm = chỉ có tên trên bản đồ OSM */
@@ -280,4 +280,50 @@ export function notePassed(passed: Map<string, PassedCompany>, nearby: readonly 
     }
   }
   return changed;
+}
+
+/** Trọng số khi chấm "đoạn đường đáng đi": khách hàng / Pipeline / KH tiềm năng nặng hơn công ty mới có tên. */
+const ROAD_WEIGHT: Record<SurveyStatus, number> = { client: 3, pipeline: 3, prospect: 3, lead: 2, declined: 1, stopped: 1, osm: 1 };
+
+/**
+ * Điểm từng khúc đường = tổng trọng số các công ty trong `radius` mét quanh khúc (nhà máy 2 bên đường).
+ * 0 = đường trống. Dùng lưới ô ~150 m để mỗi khúc chỉ so với công ty ở gần.
+ */
+export function roadFactoryScores(pieces: readonly RoadPiece[], companies: readonly SurveyCompany[], radius = 60): number[] {
+  const scores = new Array<number>(pieces.length).fill(0);
+  if (!pieces.length || !companies.length) return scores;
+  const pr = projector(pieces[0].mid[0], pieces[0].mid[1]);
+  const CELL = 150;
+  const cells = new Map<string, number[]>();
+  const register = (idx: number, x0: number, x1: number, y0: number, y1: number) => {
+    for (let cx = Math.floor((x0 - radius) / CELL); cx <= Math.floor((x1 + radius) / CELL); cx++) {
+      for (let cy = Math.floor((y0 - radius) / CELL); cy <= Math.floor((y1 + radius) / CELL); cy++) {
+        const k = `${cx},${cy}`;
+        const list = cells.get(k);
+        if (!list) cells.set(k, [idx]); else if (list[list.length - 1] !== idx) list.push(idx);
+      }
+    }
+  };
+  // Ghi TỪNG ghim / từng khối riêng (công ty nhiều nhà máy ở nhiều KCN không bị tính là 1 khối khổng lồ)
+  companies.forEach((c, idx) => {
+    for (const p of c.points) { const x = pr.x(p.lng), y = pr.y(p.lat); register(idx, x, x, y, y); }
+    for (const ring of c.rings) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const [lat, lng] of ring) {
+        const x = pr.x(lng), y = pr.y(lat);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      if (x1 - x0 < 5000 && y1 - y0 < 5000) register(idx, x0, x1, y0, y1);
+    }
+  });
+  pieces.forEach((piece, i) => {
+    const list = cells.get(`${Math.floor(pr.x(piece.mid[1]) / CELL)},${Math.floor(pr.y(piece.mid[0]) / CELL)}`);
+    if (!list) return;
+    const mid = { lat: piece.mid[0], lng: piece.mid[1] };
+    for (const idx of new Set(list)) {
+      const c = companies[idx];
+      if (distToShape(mid, c.points, c.rings) <= radius) scores[i] += ROAD_WEIGHT[c.status];
+    }
+  });
+  return scores;
 }

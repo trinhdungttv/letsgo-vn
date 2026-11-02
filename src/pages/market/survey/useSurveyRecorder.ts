@@ -234,8 +234,8 @@ export function useSurveyRecorder(opts: { onFix?: (fix: GpsFix) => void; maxAccu
   }, [persistNow, flush, releaseWake]);
 
   // ── Điều khiển ──────────────────────────────────────────────────────────────
-  const start = useCallback(async (zone: { id: string | null; name: string }, user: { id: string | null; name: string }, keepAwake: boolean) => {
-    const t = await createTrip({ zone_id: zone.id, zone_name: zone.name, user_id: user.id, user_name: user.name });
+  const start = useCallback(async (zone: { id: string | null; name: string }, user: { id: string | null; name: string }, keepAwake: boolean, title: string) => {
+    const t = await createTrip({ zone_id: zone.id, zone_name: zone.name, user_id: user.id, user_name: user.name, title });
     stateRef.current = { trip: t, t0: new Date(t.started_at).getTime(), seq: 0, segment: 0, segments: [[]], buffer: [], queue: [], passed: [] };
     persistNow();
     setTrip(t);
@@ -336,12 +336,21 @@ export function useSurveyRecorder(opts: { onFix?: (fix: GpsFix) => void; maxAccu
     persistSoon();
   }, [persistSoon]);
 
+  /** Đổi KCN / tên của chuyến đang đi trong máy (người gọi tự ghi DB). */
+  const patchTrip = useCallback((patch: Partial<Pick<SurveyTrip, 'zone_id' | 'zone_name' | 'title' | 'note'>>) => {
+    const s = stateRef.current;
+    if (!s) return;
+    s.trip = { ...s.trip, ...patch };
+    setTrip(s.trip);
+    persistNow();
+  }, [persistNow]);
+
   const segments = stateRef.current?.segments ?? NO_SEGMENTS;
   const startedAt = stateRef.current ? stateRef.current.t0 : null;
 
   return {
     fix, gpsError, status, trip, version, unsynced, syncError, wakeLockOn, segments, startedAt,
     initialPassed: stateRef.current?.passed ?? [],
-    start, resume, restorePaused, pause, finish, discardLocal, setPassed, retrySync: sendQueue,
+    start, resume, restorePaused, pause, finish, discardLocal, setPassed, patchTrip, retrySync: sendQueue,
   };
 }

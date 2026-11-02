@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Camera, ChevronDown, ChevronRight, ExternalLink, Loader2, MapPin, Pencil, Route, Trash2, X } from 'lucide-react';
 import type { MarketZone } from '../../../lib/types';
 import {
-  listPhotos, listTrips, loadTracks, softDeletePhoto, softDeleteTrip, updatePhoto, updateTrip,
+  listPhotos, listTrips, loadTracks, softDeletePhoto, softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updatePhoto, updateTrip,
   type SurveyPhoto, type SurveyTrip,
 } from '../../../lib/kcnSurvey/api';
+import { surveyTitle } from '../../../lib/kcnSurvey/zones';
 import { STATUS_META, type SurveyStatus } from '../../../lib/kcnSurvey/companies';
 import { fmtDistance, fmtDuration, trackBounds, trackLength, type TrackSegment } from '../../../lib/kcnSurvey/track';
 import { fold } from './surveyData';
@@ -107,8 +108,21 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
     }
   };
 
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const saveTitle = async (t: SurveyTrip) => {
+    if (!renaming) return;
+    const title = renaming.value.trim() || surveyTitle(t.zone_name, new Date(t.started_at));
+    try {
+      await updateTrip(t.id, { title });
+      if (titleColumnMissing()) { say(TITLE_MIGRATION_HINT); return; }
+      setTrips(list => list.map(x => (x.id === t.id ? { ...x, title } : x)));
+      setRenaming(null);
+      onChanged();
+    } catch (e) { say((e as Error).message); }
+  };
+
   const deleteTrip = async (t: SurveyTrip) => {
-    if (!window.confirm(`Xoá chuyến khảo sát ${t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến sẽ ẩn khỏi danh sách và bản đồ (không còn tính là đường đã đi). Vết GPS và ảnh chỉ tiêu vẫn được giữ trong cơ sở dữ liệu.`)) return;
+    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến sẽ ẩn khỏi danh sách và bản đồ (không còn tính là đường đã đi). Vết GPS và ảnh chỉ tiêu vẫn được giữ trong cơ sở dữ liệu.`)) return;
     try {
       await softDeleteTrip(t.id);
       say('Đã xoá chuyến');
@@ -167,9 +181,9 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
                   <div key={t.id} className="rounded-xl bg-white overflow-hidden">
                     <button onClick={() => setOpenTrip(open ? null : t.id)} className="w-full flex items-start gap-2 px-3 py-2.5 text-left">
                       <div className="flex-1 min-w-0">
-                        <div className="text-[14.5px] font-semibold text-[#1D1D1F] truncate">{t.zone_name || 'Không gắn KCN'}</div>
+                        <div className="text-[14.5px] font-semibold text-[#1D1D1F] line-clamp-2">{t.title || t.zone_name || 'Không gắn KCN'}</div>
                         <div className="text-[12px] text-[#8E8E93] mt-0.5">
-                          {fmtDateTime(t.started_at)}{t.user_name ? ` · ${t.user_name}` : ''}
+                          {t.title && t.zone_name && !t.title.includes(t.zone_name) ? `${t.zone_name} · ` : ''}{fmtDateTime(t.started_at)}{t.user_name ? ` · ${t.user_name}` : ''}
                         </div>
                         <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[11.5px]">
                           <Pill>{fmtDistance(t.distance_m)}</Pill>
@@ -193,12 +207,25 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
                             <button onClick={() => closeTrip(t)} disabled={busyTrip === t.id}
                               className="h-9 px-3 rounded-full bg-[#F2F2F7] text-[12.5px] font-medium text-[#1D1D1F] disabled:opacity-50">Kết thúc chuyến</button>
                           )}
+                          <button onClick={() => setRenaming({ id: t.id, value: t.title || surveyTitle(t.zone_name, new Date(t.started_at)) })}
+                            className="h-9 px-3 rounded-full bg-[#F2F2F7] text-[12.5px] font-medium text-[#1D1D1F] inline-flex items-center gap-1">
+                            <Pencil size={13} /> Đổi tên
+                          </button>
                           {t.id !== activeTripId && (
                             <button onClick={() => deleteTrip(t)} className="h-9 px-3 rounded-full bg-[#FFECEC] text-[12.5px] font-medium text-[#D70015] inline-flex items-center gap-1">
                               <Trash2 size={13} /> Xoá
                             </button>
                           )}
                         </div>
+                        {renaming?.id === t.id && (
+                          <div className="flex gap-1.5">
+                            <input value={renaming.value} onChange={e => setRenaming({ id: t.id, value: e.target.value })} autoFocus
+                              onKeyDown={e => { if (e.key === 'Enter') void saveTitle(t); }}
+                              className="flex-1 min-w-0 h-10 px-3 rounded-xl bg-[#F2F2F7] text-[14px] outline-none" />
+                            <button onClick={() => void saveTitle(t)} className="h-10 px-3 rounded-xl bg-[#0A84FF] text-white text-[13px] font-semibold shrink-0">Lưu</button>
+                            <button onClick={() => setRenaming(null)} className="h-10 px-2.5 rounded-xl bg-[#F2F2F7] text-[13px] shrink-0">Huỷ</button>
+                          </div>
+                        )}
                         {t.note && <div className="text-[12.5px] text-[#3A3A3C] whitespace-pre-line">{t.note}</div>}
                         {groups.length > 0 && (
                           <div className="space-y-2">

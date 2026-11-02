@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-02-kcn-survey-zone-title-factories',
+    date: '2026-11-02',
+    title: 'Khảo sát KCN',
+    features: [
+      'Tự đặt tên chuyến "KCN … – Khảo sát ngày …" (đi lại trong ngày: "lần 2"), sửa được tên',
+      'Nhận KCN theo ranh giới trên bản đồ; cụm KCN sát nhau (Nhơn Trạch…) thì hỏi lại trước khi bắt đầu',
+      'Tô khối nhà xưởng theo màu khách hàng / Pipeline; đường trục vẽ đậm hơn đường nhánh',
+      'Đường chưa đi có nhà máy hai bên tô cam đậm (nên đi trước), đường trống tô nhạt',
+      'Danh sách công ty trong KCN chưa đi ngang (khách hàng, Pipeline trước), bấm để bản đồ chỉ tới',
+    ],
+  },
+  {
     id: '2026-11-02-kcn-survey-gps',
     date: '2026-11-02',
     title: 'Thị trường · Bản đồ',

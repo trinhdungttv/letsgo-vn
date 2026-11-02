@@ -3,7 +3,8 @@ import {
   judgeFix, trackLength, trackBounds, TrackIndex, splitRoads, roadCoverage, mergePieces, distToShape, pointInRing,
   boundsAround, boundsIntersect, fmtDistance, fmtDuration, type TrackPoint, type RoadWay,
 } from './track';
-import { buildSurveyCompanies, mergeOsmPlaces, companiesNear, pickCurrent, notePassed, isZoneLikeName, type PassedCompany } from './companies';
+import { buildSurveyCompanies, mergeOsmPlaces, companiesNear, pickCurrent, notePassed, isZoneLikeName, roadFactoryScores, type PassedCompany, type SurveyCompany } from './companies';
+import { foldZoneName, zoneNameMatch, matchMarketZone, detectZone, surveyTitle, dayRange, companiesInArea, osmZoneAt, clusterShare } from './zones';
 import { parseOverpass, buildQuery, areaKey, stitchRings, pickZoneBoundary, piecesInZone } from './overpass';
 import { readExif } from './exif';
 import { groupChunks } from './api';
@@ -228,12 +229,34 @@ describe('Overpass', () => {
       ],
     });
     expect(roads).toEqual([
-      { id: 1, name: 'Đường 3A', kind: 'tertiary', coords: [[1, 2], [1.1, 2]] },
-      { id: 7, kind: 'road', coords: [[3, 4], [3.1, 4]] },
+      { id: 1, name: 'Đường 3A', kind: 'main', coords: [[1, 2], [1.1, 2]] },
+      { id: 7, kind: 'main', coords: [[3, 4], [3.1, 4]] },
     ]);
     expect(places.map(p => p.id)).toEqual(['w3', 'n4', 'r5']);
     expect(places[0].ring?.length).toBe(4);
     expect(places[2].point).toEqual({ lat: 7, lng: 8 });
+  });
+  it('tách đường trục / đường nhánh theo mốc lgvn_split', () => {
+    const { roads, places } = parseOverpass({
+      elements: [
+        { type: 'way', id: 1, geometry: [{ lat: 1, lon: 1 }, { lat: 1, lon: 2 }] },
+        { type: 'lgvn_split', id: 1, tags: { kind: 'minor' } },
+        { type: 'way', id: 2, geometry: [{ lat: 2, lon: 1 }, { lat: 2, lon: 2 }] },
+        { type: 'lgvn_split', id: 2, tags: { kind: 'places' } },
+        { type: 'way', id: 3, tags: { name: 'Xưởng X', building: 'factory' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }, { lat: 0, lon: 0 }] },
+        { type: 'way', id: 4, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }, // phần nhà máy mà không thẻ → bỏ
+      ],
+    });
+    expect(roads.map(r => [r.id, r.kind])).toEqual([[1, 'main'], [2, 'minor']]);
+    expect(places.map(p => p.id)).toEqual(['w3']);
+    expect(splitRoads(roads).map(p => p.main)).toContain(true);
+    expect(splitRoads(roads).filter(p => p.wayId === 2).every(p => !p.main)).toBe(true);
+  });
+  it('câu truy vấn có mốc chia phần', () => {
+    const q = buildQuery(boundsAround({ lat: LAT, lng: LNG }, 1000), false);
+    expect(q).toContain('make lgvn_split kind="minor"');
+    expect(q).toContain('make lgvn_split kind="places"');
+    expect(q).toContain('out ids geom qt');
   });
   it('dữ liệu hỏng → rỗng', () => {
     expect(parseOverpass(null)).toEqual({ roads: [], places: [], zones: [] });
@@ -355,5 +378,117 @@ describe('định dạng', () => {
     expect(fmtDuration(45 * 60)).toBe('45 phút');
     expect(fmtDuration(3900)).toBe('1 giờ 05 phút');
     expect(fmtDuration(20)).toBe('20 giây');
+  });
+});
+
+describe('nhận KCN đang đứng', () => {
+  const sq = (lat0: number, lng0: number, m: number): [number, number][] => {
+    const dLat = m / 111_320, dLng = m / (111_320 * Math.cos((lat0 * Math.PI) / 180));
+    return [[lat0, lng0], [lat0 + dLat, lng0], [lat0 + dLat, lng0 + dLng], [lat0, lng0 + dLng], [lat0, lng0]];
+  };
+  // NT1 ở gốc (vuông 1 km), NT3 ngay phía đông (vuông 1 km)
+  const osm = [
+    { id: 'w1', name: 'Khu công nghiệp Nhơn Trạch 1', rings: [sq(LAT, LNG, 1000)] },
+    { id: 'w3', name: 'Khu công nghiệp Nhơn Trạch III', rings: [sq(LAT, east(1000), 1000)] },
+  ];
+  const zones = [
+    { id: 'z0', name: 'KCN Nhơn Trạch', lat: north(500), lng: east(900) },
+    { id: 'z1', name: 'KCN Nhơn Trạch 1', lat: north(500), lng: east(500) },
+    { id: 'z3', name: 'KCN Nhơn Trạch 3', lat: north(500), lng: east(1500) },
+  ];
+
+  it('bỏ dấu + bỏ chữ KCN', () => {
+    expect(foldZoneName('KCN Nhơn Trạch 3')).toBe('nhon trach 3');
+    expect(foldZoneName('Khu công nghiệp Amata')).toBe('amata');
+    expect(foldZoneName('Khu công nghiệp Nhơn Trạch III')).toBe('nhon trach 3');
+  });
+  it('khác số là khác KCN', () => {
+    expect(zoneNameMatch('KCN Nhơn Trạch 3', 'Khu công nghiệp Nhơn Trạch 3')).toBe(true);
+    expect(zoneNameMatch('KCN Nhơn Trạch', 'Khu công nghiệp Nhơn Trạch 3')).toBe(false);
+    expect(zoneNameMatch('KCN Amata', 'Khu công nghiệp Amata Biên Hòa')).toBe(true);
+    expect(zoneNameMatch('KCN An', 'KCN An Phước')).toBe(false);
+  });
+  it('ranh giới tên La Mã vẫn nhận nhờ tâm KCN nằm trong', () => {
+    expect(matchMarketZone(osm[1], zones)?.id).toBe('z3');
+    expect(matchMarketZone(osm[0], zones)?.id).toBe('z1');
+  });
+  it('đứng trong ranh giới → chắc chắn, dù tâm KCN khác gần hơn', () => {
+    // đứng sát mép đông NT1: tâm "KCN Nhơn Trạch" (z0) gần hơn tâm NT1
+    const d = detectZone({ lat: north(500), lng: east(950) }, osm, zones);
+    expect(d.sure).toBe(true);
+    expect(d.best?.zone.id).toBe('z1');
+    expect(d.best?.inside).toBe(true);
+    expect(osmZoneAt({ lat: north(500), lng: east(950) }, osm)?.id).toBe('w1');
+  });
+  it('ranh giới CỤM (1 khối "Nhơn Trạch" bao cả NT1, NT3) không chốt KCN → hỏi lại', () => {
+    const cluster = [{ id: 'wc', name: 'Khu công nghiệp Nhơn Trạch', rings: [sq(LAT, LNG, 2000)] }];
+    expect(matchMarketZone(cluster[0], zones)).toBeNull();
+    const d = detectZone({ lat: north(500), lng: east(750) }, cluster, zones);
+    expect(d.sure).toBe(false);
+    expect(d.best?.inside).toBe(false);
+  });
+  it('trong ranh giới cụm: chia phần theo tâm KCN gần nhất, KCN chung không chia', () => {
+    const cluster = { id: 'wc', name: 'Khu công nghiệp Nhơn Trạch', rings: [sq(LAT, LNG, 2000)] };
+    const share3 = clusterShare(cluster, 'z3', zones)!;
+    expect(share3({ lat: north(500), lng: east(1400) })).toBe(true);   // gần tâm NT3
+    expect(share3({ lat: north(500), lng: east(300) })).toBe(false);   // gần tâm NT1
+    expect(clusterShare(cluster, 'z0', zones)).toBeNull();             // chọn "KCN Nhơn Trạch" chung → cả cụm
+    expect(clusterShare(osm[0], 'z1', zones)).toBeNull();              // ranh giới riêng NT1 (chỉ 1 KCN cụ thể) → không chia
+  });
+  it('không có ranh giới, 2 tâm gần ngang nhau → chưa chắc', () => {
+    const d = detectZone({ lat: north(500), lng: east(750) }, [], zones);
+    expect(d.sure).toBe(false);
+    expect(d.candidates.map(c => c.zone.id).slice(0, 2)).toEqual(['z0', 'z1']);
+  });
+  it('không có ranh giới, đứng ngay tâm 1 KCN, KCN khác xa → chắc', () => {
+    const far = [zones[1], { id: 'z9', name: 'KCN Xa', lat: north(3000), lng: LNG }];
+    expect(detectZone({ lat: north(500), lng: east(500) }, [], far).sure).toBe(true);
+  });
+  it('không có KCN nào trong 3 km', () => {
+    expect(detectZone({ lat: north(9000), lng: LNG }, [], zones)).toEqual({ best: null, candidates: [], sure: false });
+  });
+});
+
+describe('tên chuyến', () => {
+  const at = new Date(2026, 10, 3, 8, 5);
+  it('có KCN', () => {
+    expect(surveyTitle('KCN Nhơn Trạch 3', at)).toBe('KCN Nhơn Trạch 3 – Khảo sát 03/11/2026');
+    expect(surveyTitle('KCN Nhơn Trạch 3', at, 2)).toBe('KCN Nhơn Trạch 3 – Khảo sát 03/11/2026 (lần 2)');
+  });
+  it('không gắn KCN', () => {
+    expect(surveyTitle(null, at)).toBe('Khảo sát 03/11/2026 08:05');
+  });
+  it('khung ngày', () => {
+    const r = dayRange(at);
+    expect(new Date(r.from).getDate()).toBe(3);
+    expect(new Date(r.to).getTime() - new Date(r.from).getTime()).toBe(86_400_000);
+  });
+});
+
+describe('công ty thuộc KCN + đoạn đường có nhà máy', () => {
+  const mk = (key: string, status: SurveyCompany['status'], lat: number, lng: number): SurveyCompany => ({
+    key, name: key, status, clientId: null, crmId: null, leadId: null, points: [{ lat, lng }], rings: [], osmOnly: false,
+  });
+  const boundary = { id: 'w', name: 'KCN', rings: [[[LAT, LNG], [north(500), LNG], [north(500), east(500)], [LAT, east(500)], [LAT, LNG]] as [number, number][]] };
+  const cs = [mk('a', 'client', north(100), east(100)), mk('b', 'osm', north(800), east(100))];
+
+  it('lọc theo ranh giới, không có ranh giới thì theo bán kính', () => {
+    expect(companiesInArea(cs, boundary, null).map(c => c.key)).toEqual(['a']);
+    expect(companiesInArea(cs, null, { lat: LAT, lng: LNG }, 1000).map(c => c.key)).toEqual(['a', 'b']);
+    expect(companiesInArea(cs, null, { lat: LAT, lng: LNG }, 300).map(c => c.key)).toEqual(['a']);
+  });
+  it('khúc đường cạnh khách hàng được điểm cao, đường trống = 0', () => {
+    const pieces = splitRoads([
+      { id: 1, kind: 'minor', coords: [[north(100), east(50)], [north(100), east(150)]] }, // sát công ty a
+      { id: 2, kind: 'minor', coords: [[north(300), east(50)], [north(300), east(150)]] }, // cách 200 m
+    ]);
+    const sc = roadFactoryScores(pieces, cs);
+    pieces.forEach((p, i) => expect(sc[i] > 0).toBe(p.wayId === 1));
+    expect(Math.max(...sc)).toBe(3);
+  });
+  it('công ty có nhà máy ở 2 KCN xa nhau vẫn được tính ở từng nơi', () => {
+    const multi = { ...mk('m', 'pipeline', north(100), east(100)), points: [{ lat: north(100), lng: east(100) }, { lat: north(30_000), lng: LNG }] };
+    const pieces = splitRoads([{ id: 1, kind: 'main', coords: [[north(100), east(50)], [north(100), east(150)]] }]);
+    expect(roadFactoryScores(pieces, [multi]).every(v => v === 3)).toBe(true);
   });
 });

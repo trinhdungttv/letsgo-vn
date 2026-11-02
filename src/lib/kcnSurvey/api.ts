@@ -30,6 +30,8 @@ export interface SurveyTrip {
   passed: PassedCompany[];
   road_coverage: number | null;
   note: string;
+  /** "KCN Nhơn Trạch 3 – Khảo sát 03/11/2026" (migration 192; '' = chưa đặt / chưa có cột) */
+  title: string;
   created_at: string;
 }
 
@@ -62,25 +64,65 @@ export interface SurveyPhoto {
   created_at: string;
 }
 
-const TRIP_COLS = 'id, zone_id, zone_name, user_id, user_name, started_at, ended_at, distance_m, min_lat, min_lng, max_lat, max_lng, passed, road_coverage, note, created_at';
+const TRIP_COLS_BASE = 'id, zone_id, zone_name, user_id, user_name, started_at, ended_at, distance_m, min_lat, min_lng, max_lat, max_lng, passed, road_coverage, note, created_at';
+const TRIP_COLS = `${TRIP_COLS_BASE}, title`;
+
+export const TITLE_MIGRATION_HINT = 'Chưa chạy migration 192 nên chưa lưu được tiêu đề chuyến — chạy 192 rồi sửa lại tên';
+
+// Cột title (migration 192) có thể chưa có trên DB → biết thiếu 1 lần thì đọc / ghi không kèm cột đó, để danh sách
+// chuyến không trắng trơn (bài học PGRST201). null = chưa biết.
+let titleColumn: boolean | null = null;
+const isTitleColError = (e: unknown) => /title/i.test((e as { message?: string })?.message ?? '');
+export const titleColumnMissing = () => titleColumn === false;
+const tripCols = () => (titleColumn === false ? TRIP_COLS_BASE : TRIP_COLS);
+
+/** Chạy 1 lệnh đọc/ghi chuyến; lỗi do thiếu cột title thì nhớ lại và chạy lần nữa không kèm cột đó. */
+async function withTitleFallback<T>(run: (cols: string, withTitle: boolean) => PromiseLike<{ data: T; error: unknown }>): Promise<T> {
+  let res = await run(tripCols(), titleColumn !== false);
+  if (res.error && titleColumn !== false && isTitleColError(res.error)) {
+    titleColumn = false;
+    res = await run(TRIP_COLS_BASE, false);
+  } else if (!res.error && titleColumn === null) {
+    titleColumn = true;
+  }
+  if (res.error) throw new Error(surveyErrorText(res.error));
+  return res.data;
+}
 
 const normTrip = (r: SurveyTrip): SurveyTrip => ({
   ...r,
   distance_m: Number(r.distance_m) || 0,
   road_coverage: r.road_coverage == null ? null : Number(r.road_coverage),
   passed: Array.isArray(r.passed) ? r.passed : [],
+  title: r.title ?? '',
 });
 
 // ── Chuyến ───────────────────────────────────────────────────────────────────
-export async function createTrip(t: { zone_id: string | null; zone_name: string; user_id: string | null; user_name: string }): Promise<SurveyTrip> {
-  const { data, error } = await supabase.from('kcn_survey_trips').insert(t).select(TRIP_COLS).single();
-  if (error) throw new Error(surveyErrorText(error));
-  return normTrip(data as SurveyTrip);
+export async function createTrip(t: { zone_id: string | null; zone_name: string; user_id: string | null; user_name: string; title: string }): Promise<SurveyTrip> {
+  const { title, ...rest } = t;
+  const data = await withTitleFallback((cols, withTitle) =>
+    supabase.from('kcn_survey_trips').insert(withTitle ? t : rest).select(cols).single());
+  // Chưa có cột title vẫn giữ tên trong máy để hiện trên màn khảo sát
+  return normTrip({ ...(data as unknown as SurveyTrip), title: (data as unknown as SurveyTrip).title ?? title });
 }
 
-export async function updateTrip(id: string, patch: Partial<Pick<SurveyTrip, 'zone_id' | 'zone_name' | 'ended_at' | 'distance_m' | 'min_lat' | 'min_lng' | 'max_lat' | 'max_lng' | 'passed' | 'road_coverage' | 'note'>>) {
-  const { error } = await supabase.from('kcn_survey_trips').update(patch).eq('id', id);
-  if (error) throw new Error(surveyErrorText(error));
+export async function updateTrip(id: string, patch: Partial<Pick<SurveyTrip, 'zone_id' | 'zone_name' | 'ended_at' | 'distance_m' | 'min_lat' | 'min_lng' | 'max_lat' | 'max_lng' | 'passed' | 'road_coverage' | 'note' | 'title'>>) {
+  const { title, ...rest } = patch;
+  if (title === undefined || titleColumn === false) {
+    if (!Object.keys(rest).length) return;
+    const { error } = await supabase.from('kcn_survey_trips').update(rest).eq('id', id);
+    if (error) throw new Error(surveyErrorText(error));
+    return;
+  }
+  await withTitleFallback((_cols, withTitle) =>
+    supabase.from('kcn_survey_trips').update(withTitle ? patch : rest).eq('id', id).select('id'));
+}
+
+/** Số chuyến đã có ở 1 KCN trong khoảng thời gian (đặt tên "lần 2, lần 3…" trong ngày). Lỗi → 0. */
+export async function countTripsBetween(zoneId: string, from: string, to: string): Promise<number> {
+  const { count, error } = await supabase.from('kcn_survey_trips').select('id', { count: 'exact', head: true })
+    .eq('zone_id', zoneId).gte('started_at', from).lt('started_at', to).is('deleted_at', null);
+  return error ? 0 : count ?? 0;
 }
 
 /** Xoá mềm — chuyến và vết GPS vẫn nằm trong DB (khôi phục được bằng cách đặt deleted_at = NULL). */
@@ -90,9 +132,8 @@ export async function softDeleteTrip(id: string) {
 }
 
 export async function getTrip(id: string): Promise<SurveyTrip | null> {
-  const { data, error } = await supabase.from('kcn_survey_trips').select(TRIP_COLS).eq('id', id).is('deleted_at', null).maybeSingle();
-  if (error) throw new Error(surveyErrorText(error));
-  return data ? normTrip(data as SurveyTrip) : null;
+  const data = await withTitleFallback(cols => supabase.from('kcn_survey_trips').select(cols).eq('id', id).is('deleted_at', null).maybeSingle());
+  return data ? normTrip(data as unknown as SurveyTrip) : null;
 }
 
 /**
@@ -100,18 +141,19 @@ export async function getTrip(id: string): Promise<SurveyTrip | null> {
  * Không truyền gì = các chuyến mới nhất.
  */
 export async function listTrips(opts: { zoneId?: string | null; bounds?: Bounds | null; limit?: number } = {}): Promise<SurveyTrip[]> {
-  let q = supabase.from('kcn_survey_trips').select(TRIP_COLS).is('deleted_at', null).order('started_at', { ascending: false }).limit(opts.limit ?? 60);
   const b = opts.bounds;
-  if (opts.zoneId && b) {
-    q = q.or(`zone_id.eq.${opts.zoneId},and(min_lat.lte.${b.maxLat},max_lat.gte.${b.minLat},min_lng.lte.${b.maxLng},max_lng.gte.${b.minLng})`);
-  } else if (opts.zoneId) {
-    q = q.eq('zone_id', opts.zoneId);
-  } else if (b) {
-    q = q.lte('min_lat', b.maxLat).gte('max_lat', b.minLat).lte('min_lng', b.maxLng).gte('max_lng', b.minLng);
-  }
-  const { data, error } = await q;
-  if (error) throw new Error(surveyErrorText(error));
-  return ((data ?? []) as SurveyTrip[]).map(normTrip);
+  const data = await withTitleFallback(cols => {
+    let q = supabase.from('kcn_survey_trips').select(cols).is('deleted_at', null).order('started_at', { ascending: false }).limit(opts.limit ?? 60);
+    if (opts.zoneId && b) {
+      q = q.or(`zone_id.eq.${opts.zoneId},and(min_lat.lte.${b.maxLat},max_lat.gte.${b.minLat},min_lng.lte.${b.maxLng},max_lng.gte.${b.minLng})`);
+    } else if (opts.zoneId) {
+      q = q.eq('zone_id', opts.zoneId);
+    } else if (b) {
+      q = q.lte('min_lat', b.maxLat).gte('max_lat', b.minLat).lte('min_lng', b.maxLng).gte('max_lng', b.minLng);
+    }
+    return q;
+  });
+  return ((data ?? []) as unknown as SurveyTrip[]).map(normTrip);
 }
 
 // ── Vết GPS ──────────────────────────────────────────────────────────────────
