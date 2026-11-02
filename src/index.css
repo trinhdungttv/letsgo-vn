@@ -254,6 +254,69 @@ body {
   border: 3px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
 }
+/* Khảo sát KCN: vị trí (chấm + mũi tên hướng đi), ghim ảnh chỉ tiêu, nhãn tên công ty */
+.kcs-pos {
+  position: relative;
+  pointer-events: none;
+}
+.kcs-pos-dot {
+  position: absolute;
+  left: 13px;
+  top: 13px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #2563EB;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.kcs-pos-head {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+.kcs-pos-head::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  margin-left: -8px;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 14px solid #2563EB;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+.kcs-photo img,
+.kcs-photo span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 2px solid #fff;
+  background: #fff;
+  object-fit: cover;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 17px;
+}
+.kcs-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d1d1f;
+  background: rgba(255, 255, 255, 0.88);
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  padding: 1px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kcs-label::before {
+  display: none;
+}
 .lgmap-my-location-dot {
   display: block;
   width: 16px;

@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus } from 'lucide-react';
+import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus, Route } from 'lucide-react';
 import { createPopulationLayer, createCommuneLayer, createDensityLegend } from './populationDensity';
 import { fetchCommunes } from './populationData';
 import type { CommuneRow } from './populationData';
@@ -18,6 +18,7 @@ import { parseLatLngFromLink, nominatimGeocode, isValidVnLatLng, sleep, haversin
 import type { Branch, MarketLeadSupplier } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 import { streetTiles } from '../../lib/mapTiles';
+import KcnSurveyMode from './survey/KcnSurveyMode';
 import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, loadGroupIcons, DEFAULT_VIEW_KEY, loadDefaultView, SOUTH_VN_BOUNDS, type MapGroup, type SavedMapView } from '../../lib/mapGroups';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
@@ -99,8 +100,11 @@ interface MapClient {
   market_suppliers: MarketLeadSupplier[] | null;
 }
 
-export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh, toast }: MarketTabProps) {
+export default function MapViewTab({ marketZones, marketLeads, laborHistory, goTab, onRefresh, toast }: MarketTabProps) {
   const [prefsLoaded] = useState(() => loadMapPrefs());
+  // Chế độ Khảo sát KCN (toàn màn hình) — đang có chuyến dở trên máy thì nút báo "Đang dở"
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyPending, setSurveyPending] = useState(() => hasPendingSurvey());
   const [branches, setBranches] = useState<Branch[]>([]);
   const [allClients, setAllClients] = useState<MapClient[]>([]);
   const [activeGroups, setActiveGroups] = useState<Group[]>(prefsLoaded.activeGroups);
@@ -888,6 +892,13 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
       <div ref={mapWrapperRef} className={`relative bg-white border border-[#E8E7E2] overflow-hidden ${isFullscreen ? '' : 'rounded-[10px]'}`}>
         <div ref={mapDivRef} style={{ height: isFullscreen ? '100dvh' : 'calc(100dvh - 260px)', minHeight: 420 }} />
         {isFullscreen && <FullscreenControlsOverlay>{controls}</FullscreenControlsOverlay>}
+        {!isFullscreen && (
+          <button onClick={() => setSurveyOpen(true)}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] h-11 pl-4 pr-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold shadow-[0_6px_20px_rgba(10,132,255,0.45)] inline-flex items-center gap-2 active:scale-95 transition whitespace-nowrap">
+            <Route size={17} /> Khảo sát KCN
+            {surveyPending && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-white/25 text-[11px] font-semibold">Đang dở</span>}
+          </button>
+        )}
         <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
           <button onClick={locateMe} disabled={locating} title="Vị trí của tôi"
             className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7] disabled:opacity-50">
@@ -964,6 +975,14 @@ export default function MapViewTab({ marketZones, marketLeads, goTab, onRefresh,
         <div className="text-center py-6 text-[#aaa] text-[12.5px]">Chưa có dữ liệu để hiển thị trên bản đồ</div>
       )}
 
+      {surveyOpen && (
+        <KcnSurveyMode
+          marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory}
+          goTab={goTab}
+          onClose={() => { setSurveyOpen(false); setSurveyPending(hasPendingSurvey()); }}
+        />
+      )}
+
       {showPopulationPanel && (
         <PopulationDataPanel
           onClose={() => setShowPopulationPanel(false)}
@@ -1012,6 +1031,10 @@ function FullscreenControlsOverlay({ children }: { children: ReactNode }) {
       </div>
     </>
   );
+}
+
+function hasPendingSurvey() {
+  try { return !!localStorage.getItem('lgvn_kcn_survey_active_v1'); } catch { return false; }
 }
 
 function fmtKm(km: number) {

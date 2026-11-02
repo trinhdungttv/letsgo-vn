@@ -1,0 +1,362 @@
+// Lịch sử khảo sát: các chuyến đã đi (xem lại vết trên bản đồ) + thư viện ảnh chỉ tiêu (xem ảnh chụp ở đâu).
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Camera, ChevronDown, ChevronRight, ExternalLink, Loader2, MapPin, Pencil, Route, Trash2, X } from 'lucide-react';
+import type { MarketZone } from '../../../lib/types';
+import {
+  listPhotos, listTrips, loadTracks, softDeletePhoto, softDeleteTrip, updatePhoto, updateTrip,
+  type SurveyPhoto, type SurveyTrip,
+} from '../../../lib/kcnSurvey/api';
+import { STATUS_META, type SurveyStatus } from '../../../lib/kcnSurvey/companies';
+import { fmtDistance, fmtDuration, trackBounds, trackLength, type TrackSegment } from '../../../lib/kcnSurvey/track';
+import { fold } from './surveyData';
+
+export interface PhotoFilter {
+  label: string;
+  match: (p: SurveyPhoto) => boolean;
+}
+
+interface Props {
+  zones: MarketZone[];
+  defaultZoneId: string | null;
+  initialTab: 'trips' | 'photos';
+  photoFilter: PhotoFilter | null;
+  activeTripId: string | null;
+  onShowTrip: (trip: SurveyTrip, segments: TrackSegment[]) => void;
+  onShowPhoto: (photo: SurveyPhoto) => void;
+  onChanged: () => void;
+  onClose: () => void;
+  say: (msg: string) => void;
+}
+
+const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, photoFilter, activeTripId, onShowTrip, onShowPhoto, onChanged, onClose, say }: Props) {
+  const [tab, setTab] = useState<'trips' | 'photos'>(initialTab);
+  const [zoneFilter, setZoneFilter] = useState<string>(defaultZoneId ?? 'all');
+  const [filter, setFilter] = useState<PhotoFilter | null>(photoFilter);
+  const [trips, setTrips] = useState<SurveyTrip[]>([]);
+  const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [openTrip, setOpenTrip] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<SurveyPhoto | null>(null);
+  const [search, setSearch] = useState('');
+  const [busyTrip, setBusyTrip] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const zoneId = zoneFilter === 'all' ? null : zoneFilter;
+      const [t, p] = await Promise.all([listTrips({ zoneId, limit: 120 }), listPhotos({ zoneId, limit: 400 })]);
+      setTrips(t);
+      setPhotos(p);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [zoneFilter]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const zoneOptions = useMemo(() => [...zones].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [zones]);
+
+  const shownPhotos = useMemo(() => {
+    const q = fold(search.trim());
+    return photos.filter(p => (!filter || filter.match(p)) && (!q || fold([p.company_name, p.positions, p.note, p.zone_name, p.wage_text].join(' ')).includes(q)));
+  }, [photos, filter, search]);
+
+  const photosByTrip = useMemo(() => {
+    const m = new Map<string, number>();
+    photos.forEach(p => { if (p.trip_id) m.set(p.trip_id, (m.get(p.trip_id) ?? 0) + 1); });
+    return m;
+  }, [photos]);
+
+  const showTrip = async (t: SurveyTrip) => {
+    setBusyTrip(t.id);
+    try {
+      const tracks = await loadTracks([t.id]);
+      onShowTrip(t, tracks.get(t.id) ?? []);
+    } catch (e) {
+      say((e as Error).message);
+    } finally {
+      setBusyTrip(null);
+    }
+  };
+
+  /** Chuyến bị ngắt giữa chừng trên máy khác / đã xoá dữ liệu máy → tính tổng kết từ vết đã lưu. */
+  const closeTrip = async (t: SurveyTrip) => {
+    setBusyTrip(t.id);
+    try {
+      const segs = (await loadTracks([t.id])).get(t.id) ?? [];
+      const b = trackBounds(segs);
+      const lastT = segs.length ? Math.max(...segs.map(s => s[s.length - 1][2])) : 0;
+      await updateTrip(t.id, {
+        ended_at: new Date(new Date(t.started_at).getTime() + lastT * 1000).toISOString(),
+        distance_m: Math.round(trackLength(segs) * 10) / 10,
+        min_lat: b?.minLat ?? null, min_lng: b?.minLng ?? null, max_lat: b?.maxLat ?? null, max_lng: b?.maxLng ?? null,
+      });
+      say('Đã kết thúc chuyến');
+      await load();
+      onChanged();
+    } catch (e) {
+      say((e as Error).message);
+    } finally {
+      setBusyTrip(null);
+    }
+  };
+
+  const deleteTrip = async (t: SurveyTrip) => {
+    if (!window.confirm(`Xoá chuyến khảo sát ${t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến sẽ ẩn khỏi danh sách và bản đồ (không còn tính là đường đã đi). Vết GPS và ảnh chỉ tiêu vẫn được giữ trong cơ sở dữ liệu.`)) return;
+    try {
+      await softDeleteTrip(t.id);
+      say('Đã xoá chuyến');
+      await load();
+      onChanged();
+    } catch (e) { say((e as Error).message); }
+  };
+
+  return (
+    <div className="pointer-events-auto fixed md:absolute inset-0 md:inset-auto md:right-3 md:top-[68px] md:bottom-3 md:w-[400px] z-[1250] bg-[#F2F2F7] md:rounded-2xl md:shadow-2xl flex flex-col pt-[env(safe-area-inset-top)] md:pt-0 overflow-hidden">
+      <div className="flex items-center gap-2 px-4 pt-3 pb-2 shrink-0">
+        <div className="flex-1 text-[17px] font-semibold text-[#1D1D1F]">Lịch sử khảo sát</div>
+        <button onClick={onClose} className="h-9 px-3 rounded-full bg-[#E5E5EA] flex items-center gap-1 text-[13px] font-medium text-[#3A3A3C]" aria-label="Đóng">
+          <X size={15} /> Đóng
+        </button>
+      </div>
+      <div className="px-4 pb-2 space-y-2 shrink-0">
+        <div className="grid grid-cols-2 p-0.5 rounded-lg bg-[#E5E5EA]">
+          {(['trips', 'photos'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`h-8 rounded-md text-[13px] font-medium transition ${tab === t ? 'bg-white shadow-sm text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>
+              {t === 'trips' ? `Chuyến đi (${trips.length})` : `Ảnh chỉ tiêu (${photos.length})`}
+            </button>
+          ))}
+        </div>
+        <select value={zoneFilter} onChange={e => setZoneFilter(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-white text-[14px] text-[#1D1D1F] outline-none border border-black/5">
+          <option value="all">Tất cả KCN</option>
+          {zoneOptions.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+        </select>
+        {tab === 'photos' && (
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm công ty, vị trí tuyển, ghi chú…"
+            className="w-full h-10 px-3 rounded-xl bg-white text-[14px] outline-none border border-black/5 placeholder:text-[#8E8E93]" />
+        )}
+        {tab === 'photos' && filter && (
+          <div className="flex items-center gap-2 rounded-xl bg-[#E8F1FF] px-3 py-2 text-[12.5px] text-[#0A4DB5]">
+            <span className="flex-1 min-w-0 truncate">Đang lọc: {filter.label}</span>
+            <button onClick={() => setFilter(null)} className="font-semibold shrink-0">Bỏ lọc</button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-[calc(16px+env(safe-area-inset-bottom))]">
+        {loading && <div className="py-10 flex justify-center text-[#8E8E93]"><Loader2 className="animate-spin" size={20} /></div>}
+        {!loading && error && <div className="rounded-xl bg-[#FFECEC] text-[#B00020] text-[13px] px-3 py-2.5">{error}</div>}
+
+        {!loading && !error && tab === 'trips' && (
+          trips.length === 0
+            ? <Empty icon={<Route size={22} />} text="Chưa có chuyến khảo sát nào" />
+            : <div className="space-y-2">
+              {trips.map(t => {
+                const open = openTrip === t.id;
+                const dur = t.ended_at ? (new Date(t.ended_at).getTime() - new Date(t.started_at).getTime()) / 1000 : null;
+                const groups = groupPassed(t.passed);
+                return (
+                  <div key={t.id} className="rounded-xl bg-white overflow-hidden">
+                    <button onClick={() => setOpenTrip(open ? null : t.id)} className="w-full flex items-start gap-2 px-3 py-2.5 text-left">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14.5px] font-semibold text-[#1D1D1F] truncate">{t.zone_name || 'Không gắn KCN'}</div>
+                        <div className="text-[12px] text-[#8E8E93] mt-0.5">
+                          {fmtDateTime(t.started_at)}{t.user_name ? ` · ${t.user_name}` : ''}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[11.5px]">
+                          <Pill>{fmtDistance(t.distance_m)}</Pill>
+                          {dur != null && <Pill>{fmtDuration(dur)}</Pill>}
+                          {t.road_coverage != null && <Pill>Phủ {t.road_coverage.toLocaleString('vi-VN')}% đường</Pill>}
+                          {t.passed.length > 0 && <Pill>{t.passed.length} công ty</Pill>}
+                          {(photosByTrip.get(t.id) ?? 0) > 0 && <Pill>📷 {photosByTrip.get(t.id)}</Pill>}
+                          {!t.ended_at && <span className="px-1.5 py-0.5 rounded-md bg-[#FFF4E5] text-[#B25000] font-medium">{t.id === activeTripId ? 'Đang đi' : 'Chưa kết thúc'}</span>}
+                        </div>
+                      </div>
+                      {open ? <ChevronDown size={16} className="text-[#C7C7CC] mt-1" /> : <ChevronRight size={16} className="text-[#C7C7CC] mt-1" />}
+                    </button>
+                    {open && (
+                      <div className="px-3 pb-3 space-y-2.5 border-t border-black/5 pt-2.5">
+                        <div className="flex gap-1.5 flex-wrap">
+                          <button onClick={() => showTrip(t)} disabled={busyTrip === t.id}
+                            className="h-9 px-3 rounded-full bg-[#0A84FF] text-white text-[12.5px] font-semibold inline-flex items-center gap-1 disabled:opacity-50">
+                            {busyTrip === t.id ? <Loader2 size={13} className="animate-spin" /> : <MapPin size={13} />} Xem trên bản đồ
+                          </button>
+                          {!t.ended_at && t.id !== activeTripId && (
+                            <button onClick={() => closeTrip(t)} disabled={busyTrip === t.id}
+                              className="h-9 px-3 rounded-full bg-[#F2F2F7] text-[12.5px] font-medium text-[#1D1D1F] disabled:opacity-50">Kết thúc chuyến</button>
+                          )}
+                          {t.id !== activeTripId && (
+                            <button onClick={() => deleteTrip(t)} className="h-9 px-3 rounded-full bg-[#FFECEC] text-[12.5px] font-medium text-[#D70015] inline-flex items-center gap-1">
+                              <Trash2 size={13} /> Xoá
+                            </button>
+                          )}
+                        </div>
+                        {t.note && <div className="text-[12.5px] text-[#3A3A3C] whitespace-pre-line">{t.note}</div>}
+                        {groups.length > 0 && (
+                          <div className="space-y-2">
+                            {groups.map(g => (
+                              <div key={g.status}>
+                                <div className="text-[11px] font-semibold mb-0.5" style={{ color: STATUS_META[g.status].color }}>{STATUS_META[g.status].label} ({g.items.length})</div>
+                                <div className="text-[12.5px] text-[#1D1D1F] leading-relaxed">{g.items.map(i => i.name).join(' · ')}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+        )}
+
+        {!loading && !error && tab === 'photos' && (
+          shownPhotos.length === 0
+            ? <Empty icon={<Camera size={22} />} text={photos.length ? 'Không có ảnh khớp bộ lọc' : 'Chưa có ảnh chỉ tiêu nào'} />
+            : <div className="grid grid-cols-3 gap-1.5">
+              {shownPhotos.map(p => (
+                <button key={p.id} onClick={() => setViewer(p)} className="relative aspect-square rounded-lg overflow-hidden bg-[#E5E5EA] text-left">
+                  <img src={p.thumb_url || p.url} alt={p.company_name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
+                    <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
+                    <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+        )}
+      </div>
+
+      {viewer && (
+        <PhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
+          onShowOnMap={() => { onShowPhoto(viewer); setViewer(null); }}
+          onSaved={p => { setPhotos(list => list.map(x => x.id === p.id ? p : x)); setViewer(p); onChanged(); }}
+          onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); onChanged(); }} />
+      )}
+    </div>
+  );
+}
+
+function Pill({ children }: { children: ReactNode }) {
+  return <span className="px-1.5 py-0.5 rounded-md bg-[#F2F2F7] text-[#3A3A3C]">{children}</span>;
+}
+
+function Empty({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <div className="py-12 flex flex-col items-center gap-2 text-[#8E8E93]">
+      {icon}
+      <div className="text-[13px]">{text}</div>
+    </div>
+  );
+}
+
+function groupPassed(passed: SurveyTrip['passed']) {
+  const by = new Map<SurveyStatus, SurveyTrip['passed']>();
+  for (const p of passed) {
+    const st = (STATUS_META[p.status] ? p.status : 'osm') as SurveyStatus;
+    const list = by.get(st);
+    if (list) list.push(p); else by.set(st, [p]);
+  }
+  return [...by.entries()].sort((a, b) => STATUS_META[a[0]].rank - STATUS_META[b[0]].rank).map(([status, items]) => ({ status, items }));
+}
+
+const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ' };
+
+function PhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say }: {
+  photo: SurveyPhoto;
+  onClose: () => void;
+  onShowOnMap: () => void;
+  onSaved: (p: SurveyPhoto) => void;
+  onDeleted: (id: string) => void;
+  say: (m: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ company_name: photo.company_name, positions: photo.positions, headcount: photo.headcount?.toString() ?? '', wage_text: photo.wage_text, note: photo.note });
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setForm({ company_name: photo.company_name, positions: photo.positions, headcount: photo.headcount?.toString() ?? '', wage_text: photo.wage_text, note: photo.note });
+    setEditing(false);
+  }, [photo]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const patch = {
+        company_name: form.company_name.trim(), positions: form.positions.trim(), wage_text: form.wage_text.trim(), note: form.note.trim(),
+        headcount: form.headcount.trim() ? Math.max(0, parseInt(form.headcount, 10) || 0) : null,
+      };
+      await updatePhoto(photo.id, patch);
+      onSaved({ ...photo, ...patch });
+      setEditing(false);
+      say('Đã lưu');
+    } catch (e) { say((e as Error).message); } finally { setSaving(false); }
+  };
+  const del = async () => {
+    if (!window.confirm('Xoá ảnh chỉ tiêu này khỏi danh sách?\n\nẢnh sẽ ẩn khỏi lịch sử và bản đồ; file ảnh vẫn được giữ trong kho lưu trữ.')) return;
+    try { await softDeletePhoto(photo.id); onDeleted(photo.id); say('Đã xoá ảnh'); } catch (e) { say((e as Error).message); }
+  };
+  const gmaps = `https://www.google.com/maps?q=${photo.lat},${photo.lng}`;
+  const field = 'w-full h-10 px-3 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40';
+
+  return (
+    <div className="fixed inset-0 z-[1350] bg-black flex flex-col pt-[env(safe-area-inset-top)]">
+      <div className="flex items-center justify-between h-12 px-2 shrink-0">
+        <button onClick={onClose} className="h-10 px-3 text-[16px] text-white inline-flex items-center gap-1"><X size={18} /> Đóng</button>
+        <a href={photo.url} target="_blank" rel="noopener noreferrer" className="h-10 px-3 text-[14px] text-white/80 inline-flex items-center gap-1"><ExternalLink size={15} /> Ảnh gốc</a>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center">
+        <img src={photo.url} alt={photo.company_name} className="max-w-full max-h-full object-contain" />
+      </div>
+      <div className="shrink-0 bg-[#1C1C1E] text-white px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] space-y-2 max-h-[48vh] overflow-y-auto">
+        {!editing ? (
+          <>
+            <div className="text-[16px] font-semibold leading-snug">{photo.company_name || 'Chưa rõ công ty'}</div>
+            <div className="text-[12.5px] text-white/70">
+              {fmtDateTime(photo.taken_at)}{photo.zone_name ? ` · ${photo.zone_name}` : ''}{photo.user_name ? ` · ${photo.user_name}` : ''}
+            </div>
+            {(photo.positions || photo.headcount != null || photo.wage_text) && (
+              <div className="text-[13.5px] leading-snug">
+                {photo.positions && <div>Tuyển: <b>{photo.positions}</b></div>}
+                {photo.headcount != null && <div>Số lượng: <b>{photo.headcount}</b></div>}
+                {photo.wage_text && <div>Lương: <b>{photo.wage_text}</b></div>}
+              </div>
+            )}
+            {photo.note && <div className="text-[13px] text-white/85 whitespace-pre-line">{photo.note}</div>}
+            <div className="text-[11.5px] text-white/55">
+              📍 {photo.lat.toFixed(5)}, {photo.lng.toFixed(5)} · {POS_SOURCE[photo.position_source]}{photo.accuracy_m != null ? ` ±${Math.round(photo.accuracy_m)} m` : ''}
+            </div>
+            <div className="flex gap-1.5 flex-wrap pt-1">
+              <button onClick={onShowOnMap} className="h-9 px-3 rounded-full bg-[#0A84FF] text-[12.5px] font-semibold inline-flex items-center gap-1"><MapPin size={13} /> Xem chỗ chụp</button>
+              <a href={gmaps} target="_blank" rel="noopener noreferrer" className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><ExternalLink size={13} /> Google Maps</a>
+              <button onClick={() => setEditing(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><Pencil size={13} /> Sửa</button>
+              <button onClick={del} className="h-9 px-3 rounded-full bg-[#D70015]/80 text-[12.5px] font-medium inline-flex items-center gap-1"><Trash2 size={13} /> Xoá</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Tên công ty" className={field} />
+            <input value={form.positions} onChange={e => setForm(f => ({ ...f, positions: e.target.value }))} placeholder="Vị trí tuyển" className={field} />
+            <div className="grid grid-cols-2 gap-2">
+              <input value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value.replace(/[^\d]/g, '') }))} inputMode="numeric" placeholder="Số lượng" className={field} />
+              <input value={form.wage_text} onChange={e => setForm(f => ({ ...f, wage_text: e.target.value }))} placeholder="Lương" className={field} />
+            </div>
+            <textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} rows={2} placeholder="Ghi chú"
+              className="w-full px-3 py-2 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40 resize-none" />
+            <div className="flex gap-2">
+              <button onClick={() => setEditing(false)} className="flex-1 h-10 rounded-full bg-white/15 text-[14px]">Huỷ</button>
+              <button onClick={save} disabled={saving} className="flex-1 h-10 rounded-full bg-[#0A84FF] text-[14px] font-semibold disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu'}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

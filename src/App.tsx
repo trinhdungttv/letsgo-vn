@@ -279,6 +279,12 @@ function AppInner() {
     rememberBack('crm-pipeline');
     setPage('crm-pipeline');
   }, [setPage, rememberBack]);
+  // Mở hồ sơ công ty CRM Pipeline từ trang không có sẵn hàm này (VD Thị trường → Bản đồ → Khảo sát KCN)
+  useEffect(() => {
+    const onOpen = (e: Event) => { const id = (e as CustomEvent<string>).detail; if (id) openPipelineEntry(id); };
+    window.addEventListener('lgvn:open-pipeline', onOpen);
+    return () => window.removeEventListener('lgvn:open-pipeline', onOpen);
+  }, [openPipelineEntry]);
 
   const handleSelectDeal = useCallback((id: string) => {
     setSelectedDealId(id);

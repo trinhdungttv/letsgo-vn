@@ -16,6 +16,19 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-02-kcn-survey-gps',
+    date: '2026-11-02',
+    title: 'Thị trường · Bản đồ',
+    features: [
+      'Khảo sát KCN bằng GPS (nút trên Bản đồ): vẽ đường đã đi, kèm vết các lần khảo sát trước',
+      'Tô cam các đường trong KCN chưa đi + % đã phủ, biết rẽ hướng nào cho đủ 1 vòng',
+      'Đi ngang công ty nào hiện tên; khách hợp tác / Pipeline hiện luôn thẻ tổng quan',
+      'Chụp bảng chỉ tiêu tuyển dụng: lưu ảnh kèm chỗ chụp, công ty, vị trí tuyển, số lượng, lương',
+      'Lịch sử khảo sát: xem lại từng chuyến trên bản đồ, thư viện ảnh chỉ tiêu và chỗ chụp',
+      'Cài đặt: thu phóng nhanh, tự zoom theo tốc độ, bán kính nhận diện, giữ màn hình sáng',
+    ],
+  },
+  {
     id: '2026-11-02-current-workers-latest-week',
     date: '2026-11-02',
     title: 'Dashboard',

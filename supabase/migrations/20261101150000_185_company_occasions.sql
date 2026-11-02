@@ -18,7 +18,11 @@
 --     anh đã xoá (is_archived) cũng không bị nạp lại).
 --   • client_occasions.client_id ON DELETE CASCADE: chỉ khi XOÁ VĨNH VIỄN công ty ở Lưu trữ
 --     (đã có trong bảng "sẽ mất những gì" của clientPurge) — lưu trữ mềm thì không mất.
--- Rollback được: xem cuối file. Chạy lại nhiều lần vẫn an toàn.
+--   • Lịch sử dữ liệu (sửa 02/11): chỉ gắn trigger cho 2 bảng mới. Bản cũ gọi dh_attach_triggers() → gắn cho MỌI
+--     bảng, kể cả bảng riêng tư Tuyển dụng (180–183) / Ghi chú nhanh (188) → chép SĐT, CCCD, ghi chú riêng vào
+--     data_history (đọc được bằng anon key). Nay sửa luôn hàm đó để không bao giờ gắn bảng riêng tư, và gỡ trigger
+--     nếu đã lỡ gắn. Chỉ gỡ trigger, KHÔNG xoá dòng nào.
+-- Rollback được: xem cuối file. Chạy lại nhiều lần vẫn an toàn (đã lỡ chạy bản cũ thì chạy lại bản này để dọn).
 -- ============================================================================
 
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS leader_country text;
@@ -149,14 +153,96 @@ WHERE NOT EXISTS (
   WHERE lower(btrim(h.country)) = lower(v.country) AND lower(btrim(h.title)) = lower(v.title)
 );
 
--- Gắn trigger "Lịch sử dữ liệu" (data_history) cho bảng mới
-SELECT dh_attach_triggers();
+-- ── "Lịch sử dữ liệu" (data_history) ───────────────────────────────────────
+-- data_history đọc được bằng anon key (migration 090) → không được chép dòng của bảng riêng tư vào đó.
+--
+-- 1) Sửa hàm dùng chung dh_attach_triggers() (migration sau hay gọi): giữ nguyên danh sách loại trừ cũ (157), thêm
+--    bỏ qua bảng anon KHÔNG được đọc (REVOKE ALL — recruit_*, quick_notes*, cost_plans*…) và bảng bật RLS mà không có
+--    policy nào cho anon. Bảng đã có trigger từ trước mà nay bị bỏ qua thì trigger cũ vẫn giữ nguyên (hàm chỉ đụng
+--    bảng nó gắn) — bảng riêng tư được gỡ riêng ở bước 2.
+CREATE OR REPLACE FUNCTION dh_attach_triggers() RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  t RECORD;
+  n INT := 0;
+BEGIN
+  FOR t IN
+    SELECT c.relname AS tablename
+    FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    WHERE ns.nspname = 'public'
+      AND c.relkind IN ('r', 'p')
+      AND c.relname NOT IN (
+        'data_history',
+        'audit_logs',
+        'loan_audit_log',
+        'app_sessions',
+        'ai_chat_messages',
+        'google_connections',
+        'cost_plans',
+        'cost_plan_revisions',
+        'cost_plan_shares',
+        'quick_notes',
+        'quick_note_recordings',
+        'kcn_survey_track_chunks',
+        'app_users'              -- có mã băm mật khẩu — gỡ khỏi lịch sử ở migration 191
+      )
+      AND c.relname NOT LIKE 'recruit\_%'
+      AND has_table_privilege('anon', c.oid, 'SELECT')
+      AND NOT (c.relrowsecurity AND NOT EXISTS (
+        SELECT 1 FROM pg_policies p
+        WHERE p.schemaname = 'public' AND p.tablename = c.relname
+          AND ('anon' = ANY (p.roles) OR 'public' = ANY (p.roles))
+      ))
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS dh_track ON %I', t.tablename);
+    EXECUTE format(
+      'CREATE TRIGGER dh_track AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION dh_log_change()',
+      t.tablename
+    );
+    n := n + 1;
+  END LOOP;
+  RETURN n;
+END $$;
+REVOKE EXECUTE ON FUNCTION dh_attach_triggers() FROM anon, authenticated, PUBLIC;
 
--- ── Kiểm tra sau khi chạy (mong đợi: true · 2 · ≥ 36) ──────────────────────
+-- 2) Gỡ trigger lịch sử khỏi bảng riêng tư nếu đã lỡ gắn (bản 185 cũ). Chỉ gỡ trigger, không xoá dòng nào.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOR t IN
+    SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    WHERE ns.nspname = 'public' AND c.relkind IN ('r', 'p')
+      AND (c.relname LIKE 'recruit\_%' OR c.relname IN ('quick_notes', 'quick_note_recordings'))
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS dh_track ON %I', t);
+  END LOOP;
+END $$;
+
+-- 3) Gắn lịch sử cho đúng 2 bảng mới của migration này
+DROP TRIGGER IF EXISTS dh_track ON client_occasions;
+CREATE TRIGGER dh_track AFTER INSERT OR UPDATE OR DELETE ON client_occasions
+  FOR EACH ROW EXECUTE FUNCTION dh_log_change();
+DROP TRIGGER IF EXISTS dh_track ON national_holidays;
+CREATE TRIGGER dh_track AFTER INSERT OR UPDATE OR DELETE ON national_holidays
+  FOR EACH ROW EXECUTE FUNCTION dh_log_change();
+
+-- ── Kiểm tra sau khi chạy (mong đợi: true · 2 · ≥ 36 · 2 · 0) ──────────────
 -- SELECT
 --   EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'clients' AND column_name = 'leader_country') AS co_cot_quoc_gia,
 --   (SELECT count(*) FROM information_schema.tables WHERE table_name IN ('client_occasions', 'national_holidays')) AS so_bang_moi,
---   (SELECT count(*) FROM national_holidays) AS so_ngay_le;
+--   (SELECT count(*) FROM national_holidays) AS so_ngay_le,
+--   (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
+--     WHERE tg.tgname = 'dh_track' AND c.relname IN ('client_occasions', 'national_holidays')) AS trigger_bang_moi,
+--   (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
+--     WHERE tg.tgname = 'dh_track' AND (c.relname LIKE 'recruit\_%' OR c.relname IN ('quick_notes', 'quick_note_recordings'))) AS trigger_bang_rieng_tu;
+
+-- ── CHỈ KHI đã lỡ chạy bản 185 cũ: dữ liệu riêng tư đã bị chép vào data_history chưa? ──
+-- SELECT table_name, count(*) FROM data_history
+-- WHERE table_name LIKE 'recruit\_%' OR table_name IN ('quick_notes', 'quick_note_recordings')
+-- GROUP BY table_name;
+-- Có dòng = BẢN SAO bị lộ (dữ liệu gốc vẫn nguyên trong bảng recruit_* / quick_notes). Xoá bản sao (không hoàn tác được):
+-- DELETE FROM data_history WHERE table_name LIKE 'recruit\_%' OR table_name IN ('quick_notes', 'quick_note_recordings');
 
 -- ── ROLLBACK (chỉ chạy khi cần gỡ) ──────────────────────────────────────────
 -- Mất: mọi ngày lễ / kỷ niệm công ty, danh mục ngày lễ quốc gia, quốc gia người đứng đầu đã nhập.

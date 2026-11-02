@@ -4,6 +4,9 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { tableLabel, recordName, TABLE_LABELS } from '../../lib/historyTables';
 
+// Người dùng không còn được ghi lịch sử (migration 191 — tránh chép mã băm mật khẩu), cỗ máy thời gian không khôi phục được
+const TIME_MACHINE_EXCLUDED = new Set(['app_users']);
+
 interface Props {
   toast: (msg: string) => void;
   onReload: () => void;
@@ -78,7 +81,7 @@ export default function TimeMachineTab({ toast, onReload }: Props) {
         <div className="flex gap-2 flex-wrap items-center">
           <select value={table} onChange={e => { setTable(e.target.value); setPreview(null); }} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500">
             <option value="">— Chọn bảng —</option>
-            {Object.entries(TABLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {Object.entries(TABLE_LABELS).filter(([k]) => !TIME_MACHINE_EXCLUDED.has(k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
           <input
             type="datetime-local"
