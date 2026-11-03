@@ -20,12 +20,17 @@ function env() {
   const bucket = process.env.R2_BUCKET || '';
   const publicUrl = (process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '');
   const ok = !!(accountId && accessKeyId && secretAccessKey && bucket && /^https:\/\//.test(publicUrl));
-  return { ok, accountId, accessKeyId, secretAccessKey, bucket, publicUrl };
+  // Chỉ TÊN biến thiếu / sai (không bao giờ trả giá trị) để Tony tự dò khi enabled:false
+  const missing = [
+    !accountId && 'R2_ACCOUNT_ID', !accessKeyId && 'R2_ACCESS_KEY_ID', !secretAccessKey && 'R2_SECRET_ACCESS_KEY', !bucket && 'R2_BUCKET',
+    !/^https:\/\//.test(publicUrl) && 'R2_PUBLIC_URL (trống hoặc không bắt đầu bằng https://)',
+  ].filter(Boolean) as string[];
+  return { ok, missing, accountId, accessKeyId, secretAccessKey, bucket, publicUrl };
 }
 
 export default async function handler(req: Request): Promise<Response> {
   const e = env();
-  if (req.method === 'GET') return json({ enabled: e.ok, publicUrl: e.ok ? e.publicUrl : null }, 200);
+  if (req.method === 'GET') return json({ enabled: e.ok, publicUrl: e.ok ? e.publicUrl : null, ...(e.ok ? {} : { missing: e.missing }) }, 200);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const denied = await requireSession(req);
   if (denied) return denied;
