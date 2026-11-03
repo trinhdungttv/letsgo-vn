@@ -4,13 +4,15 @@
 //  - Đi ngang công ty nào thì hiện tên; khách hàng / pipeline / KH tiềm năng hiện luôn thẻ tổng quan.
 //  - Chụp bảng chỉ tiêu tuyển dụng ngoài cổng → lưu ảnh kèm toạ độ chỗ chụp (vẽ / ghi chữ lên ảnh được), xem lại ở Lịch sử.
 //  - Ghi âm nhanh những gì không chụp được, kèm chỗ ghi + công ty gần đó.
-//  - Mũi tên vị trí xoay theo la bàn / hướng chạy; "Dẫn đường" chỉ rẽ tới đoạn chưa đi tiếp theo hoặc tới 1 công ty.
+//  - Mũi tên vị trí xoay theo la bàn / hướng chạy, trượt mượt giữa các lần GPS báo (useSurveyCamera); "Dẫn đường" lập
+//    lộ trình đi 1 lượt qua hết đường chưa đi (coverTour) hoặc tới 1 công ty.
+//  - Xoay ngang điện thoại → giao diện gọn: bản đồ gần kín màn hình, chức năng gom vào nút nổi (SurveyQuickMenu).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, Pause, PenLine, Play, Plus, RefreshCw, Settings, Square, X, AlertTriangle, MapPin,
+  Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Info, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, NavigationOff, Pause, PenLine, Play, Plus, RefreshCw, Settings, Square, X, AlertTriangle, MapPin,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -33,9 +35,9 @@ import { clusterShare, companiesInArea, dayRange, detectZone, surveyTitle, type 
 import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type AreaMap, type OsmZone } from '../../../lib/kcnSurvey/overpass';
 import { ringsBounds, ringsCenter } from '../../../lib/kcnSurvey/areaSearch';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
-import { buildRoadGraph } from '../../../lib/kcnSurvey/navigate';
-import { angleDiff, bearing, displayHeading, smoothAngle } from '../../../lib/kcnSurvey/heading';
-import { aheadPoint, northOf, rotatedSize, smartZoom, unwrapBearing, visiblePadding } from '../../../lib/kcnSurvey/mapView';
+import { buildRoadGraph, pointAlong, type NavRoute } from '../../../lib/kcnSurvey/navigate';
+import { angleDiff, bearing, displayHeading } from '../../../lib/kcnSurvey/heading';
+import { fitRotated, rotatedSize, smartZoom } from '../../../lib/kcnSurvey/mapView';
 import {
   countTripsBetween, listPhotos, listSurveyAreas, listTrips, listVoiceNotes, loadTracks, markupColumnMissing, MARKUP_MIGRATION_HINT, titleColumnMissing, TITLE_MIGRATION_HINT,
   updateTrip, uploadPhoto, uploadVoiceNote,
@@ -43,7 +45,7 @@ import {
 } from '../../../lib/kcnSurvey/api';
 import { useAudioRecorder, type RecordedAudio } from '../../../components/quickNotes/useAudioRecorder';
 import { useSurveyRecorder, pendingActiveTrip, type SummaryResult } from './useSurveyRecorder';
-import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, fold, NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type SurveyPrefs } from './surveyData';
+import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, fold, NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type QuickActionId, type SurveyPrefs } from './surveyData';
 import SurveyCompanyCard, { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
 import SurveyPhotoSheet, { type PhotoFormValue, type PhotoPosition } from './SurveyPhotoSheet';
 import SurveySettingsPanel, { type AreaStatus } from './SurveySettingsPanel';
@@ -57,6 +59,8 @@ import SurveyScanPanel from './SurveyScanPanel';
 import { readScanCache, type ScanPlace } from '../../../lib/kcnSurvey/marketScan';
 import { useDeviceHeading } from './useDeviceHeading';
 import { useSurveyNavigation } from './useSurveyNavigation';
+import { useSurveyCamera } from './useSurveyCamera';
+import { AssistiveTouch, RailBtn, type QuickItem } from './SurveyQuickMenu';
 
 interface Props {
   marketZones: MarketZone[];
@@ -381,7 +385,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   }, [allPieces.length, zoneIdx, roadScores]);
   const nav = useSurveyNavigation({
     graph, fix, course: movingCourse, targets: navTargets, scores: navScores,
-    preferFactories: prefs.navPreferFactories, sound: prefs.navSound, say,
+    preferFactories: prefs.navPreferFactories, strategy: prefs.navStrategy, sound: prefs.navSound, say,
   });
 
   // ── Công ty trong KCN chưa đi ngang ───────────────────────────────────────
@@ -417,38 +421,36 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const viewBoxRef = useRef(viewBox);
   viewBoxRef.current = viewBox;
   const mapSide = rotatedSize(viewBox.w, viewBox.h);
-  /** Góc xoay bản đồ đang hiển thị (độ, liên tục — không nhảy 359 → 0); 0 / bội 360 = Bắc ở trên */
-  const [rot, setRot] = useState(0);
-  const rotRef = useRef(rot);
-  rotRef.current = rot;
-  const [rotAnim, setRotAnim] = useState(true);
+  /** Hướng đi gần nhất khi đang chạy (để xoay bản đồ); đứng yên thì giữ hướng cũ */
   const lastCourseRef = useRef<number | null>(null);
+  /** Hướng cho mũi tên: hướng của lộ trình khi đang bám đường dẫn, không thì hướng GPS */
+  const courseRef = useRef<number | null>(null);
   const zoomChangedAt = useRef(0);
   const navDistRef = useRef<number | null>(null);
   navDistRef.current = nav.route && nav.next && nav.next.kind !== 'arrive' ? nav.distToNext : null;
   const mapDivRef = useRef<HTMLDivElement>(null);
+  const needleRef = useRef<SVGSVGElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<{
     street: L.LayerGroup; sat: L.TileLayer; satLabels: L.TileLayer; renderer: L.Canvas;
     roads: L.LayerGroup; outline: L.LayerGroup; old: L.LayerGroup; highlight: L.LayerGroup; companies: L.LayerGroup; photos: L.LayerGroup; voice: L.LayerGroup;
-    route: L.LayerGroup; curCasing: L.Polyline; curLine: L.Polyline; pos: L.Marker | null; acc: L.Circle | null;
+    route: L.LayerGroup; curCasing: L.Polyline; curLine: L.Polyline; pos: L.Marker | null;
   } | null>(null);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(follow);
   followRef.current = follow;
-  const headingUp = follow && prefs.mapOrientation === 'heading';
-  const headingUpRef = useRef(headingUp);
-  headingUpRef.current = headingUp;
   const [zoom, setZoom] = useState(prefs.followZoom);
   const [viewTick, setViewTick] = useState(0);
 
   useEffect(() => {
     if (!mapDivRef.current || mapRef.current) return;
-    const map = L.map(mapDivRef.current, { zoomControl: false, attributionControl: true, maxZoom: 19 });
+    // Kéo bản đồ do useSurveyCamera tự làm (đúng hướng cả khi khung đang xoay) → tắt kéo của Leaflet
+    const map = L.map(mapDivRef.current, { zoomControl: false, attributionControl: true, maxZoom: 19, dragging: false, boxZoom: false });
     map.attributionControl.setPrefix(false);
     if (anchor) map.setView([anchor.lat, anchor.lng], prefs.followZoom);
     else map.fitBounds(SOUTH_VN_BOUNDS);
-    const renderer = L.canvas({ padding: 0.5 });
+    // Lớp vẽ đường chỉ vẽ lại khi bản đồ dịch xong — đệm 35% mỗi bên là đủ cho bám vị trí liên tục, vẽ lại nhẹ hơn
+    const renderer = L.canvas({ padding: 0.35 });
     const street = streetTiles();
     const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' });
     const satLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
@@ -462,8 +464,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const companies = L.layerGroup().addTo(map);
     const photosLayer = L.layerGroup().addTo(map);
     const voiceLayer = L.layerGroup().addTo(map);
-    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, voice: voiceLayer, route, curCasing, curLine, pos: null, acc: null };
-    map.on('dragstart', () => setFollow(false));
+    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, voice: voiceLayer, route, curCasing, curLine, pos: null };
     map.on('zoomend', () => setZoom(map.getZoom()));
     // Bám theo GPS là bản đồ dịch liên tục → chỉ vẽ lại ghim công ty khi đã dịch quá 1/4 khung nhìn hoặc đổi zoom
     let viewKey = '';
@@ -479,6 +480,38 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Camera kiểu Google Maps: mũi tên trượt mượt giữa các lần GPS báo, bản đồ bám từng khung hình, xoay dần theo hướng
+  // đi; kéo / chụm ngón trên bản đồ đang xoay vẫn đúng hướng (gọi SAU khi tạo bản đồ ở trên)
+  const camera = useSurveyCamera({
+    mapRef, frameRef: mapDivRef, needleRef,
+    getMarker: () => layersRef.current?.pos ?? null,
+    heading: () => displayHeading({ course: courseRef.current, speed: motionRef.current.speed, compass: prefs.compass ? readCompassRef.current() : null }),
+    onUserPan: () => { followRef.current = false; setFollow(false); },
+    onUserZoom: () => { zoomChangedAt.current = Date.now() + 4000; },
+  });
+  /**
+   * Góc xoay bản đồ muốn tới: "Bắc ở trên" → 0; xoay theo hướng đi + đang bám → hướng đi gần nhất (chưa chạy lần nào thì
+   * theo la bàn); đang xem tự do (đã kéo bản đồ) → null = GIỮ NGUYÊN góc đang xoay, không tự xoay làm rối mắt.
+   */
+  const rotGoal = () => (prefs.mapOrientation === 'north' ? 0
+    : followRef.current ? lastCourseRef.current ?? (prefs.compass ? readCompassRef.current() : null) : null);
+  /** Thôi bám (xem chỗ khác): bản đồ đứng yên ở góc đang xoay. */
+  const stopFollow = () => {
+    followRef.current = false;
+    setFollow(false);
+    camera.goal.current.follow = false;
+    camera.goal.current.rot = prefs.mapOrientation === 'north' ? 0 : null;
+  };
+  /** Bám lại theo vị trí ngay (bấm Bắt đầu / Dẫn đường / ◎): giữ nguyên kiểu xoay đang chọn. */
+  const followNow = (zoomTo?: number) => {
+    followRef.current = true;
+    setFollow(true);
+    camera.goal.current.follow = true;
+    camera.goal.current.rot = rotGoal();
+    if (zoomTo != null) zoomChangedAt.current = Date.now();
+    camera.jump(zoomTo);
+  };
+
   // Đo màn hình (xoay ngang / dọc điện thoại, thanh địa chỉ ẩn / hiện) → khung bản đồ đổi cỡ → Leaflet đo lại + bám lại
   useEffect(() => {
     const el = viewRef.current;
@@ -493,29 +526,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    map.invalidateSize({ pan: false });
-    followNowRef.current(true);
+    map.invalidateSize();
+    if (followRef.current) camera.jump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapSide, viewBox.w, viewBox.h]);
-
-  // Đang xoay theo hướng đi mà chạm vào bản đồ → về hướng Bắc ngay (kéo / bấm trên bản đồ xoay sẽ lệch) + thôi bám
-  useEffect(() => {
-    const el = viewRef.current;
-    if (!el) return;
-    const onDown = (e: PointerEvent) => {
-      if (!headingUpRef.current || !mapDivRef.current?.contains(e.target as Node)) return;
-      const north = northOf(rotRef.current);
-      const md = mapDivRef.current;
-      md.style.transition = 'none';
-      md.style.transform = `rotate(${-north}deg)`;
-      md.style.setProperty('--kcs-bearing', `${north}deg`);
-      setRotAnim(false);
-      setRot(north);
-      setFollow(false);
-      window.setTimeout(() => setRotAnim(true), 80);
-    };
-    el.addEventListener('pointerdown', onDown, { capture: true });
-    return () => el.removeEventListener('pointerdown', onDown, { capture: true });
-  }, []);
 
   // Nền đường phố / vệ tinh
   useEffect(() => {
@@ -525,45 +539,37 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     else { ly.sat.remove(); ly.satLabels.remove(); ly.street.addTo(map); }
   }, [prefs.satellite]);
 
-  // Bám theo vị trí kiểu Google Maps: xoay bản đồ theo hướng đi (mũi tên luôn hướng lên), mũi tên ở phần dưới màn hình,
-  // tự zoom theo tốc độ / chỗ rẽ sắp tới. Đứng yên giữ hướng cũ; chưa chạy lần nào thì theo la bàn (nếu có).
+  // Mỗi điểm GPS (hoặc vị trí trên lộ trình đổi): đích mới cho mũi tên + hướng xoay bản đồ. Đang dẫn đường mà GPS
+  // nằm sát lộ trình → mũi tên chạy dọc lộ trình (GPS lệch ngang vài mét không làm mũi tên / bản đồ lắc qua lại)
+  useEffect(() => {
+    if (!fix) return;
+    const snapped = nav.route && nav.status === 'routing' && nav.progress.off <= 20 ? pointAlong(nav.route, nav.progress.s) : null;
+    camera.setTarget(snapped ? { lat: snapped.lat, lng: snapped.lng } : { lat: fix.lat, lng: fix.lng }, fix.at);
+    camera.setAccuracy(fix.acc);
+    const m = motionRef.current;
+    const moving = (m.speed ?? 0) >= 1.5;
+    const c = moving ? snapped?.bearing ?? m.course : null;
+    if (c != null && (lastCourseRef.current == null || Math.abs(angleDiff(lastCourseRef.current, c)) >= 3)) lastCourseRef.current = c;
+    courseRef.current = moving && snapped?.bearing != null ? snapped.bearing : m.course;
+    camera.goal.current.rot = rotGoal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fix, nav.route, nav.progress, nav.status]);
+
+  // Lần đầu có GPS: đặt ngay bản đồ vào vị trí. Sau đó tự zoom kiểu dẫn đường (chạy nhanh nhìn xa, sắp rẽ thì canh vừa)
   const firstFixRef = useRef(true);
-  const followNowRef = useRef<(instant?: boolean) => void>(() => {});
-  followNowRef.current = (instant = false) => {
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !fix) return;
-    const m = motionRef.current;
-    if (m.course != null && (m.speed ?? 0) >= 1.5) lastCourseRef.current = m.course;
-    const up = headingUpRef.current;
-    const target = up ? lastCourseRef.current ?? (prefs.compass ? readCompassRef.current() : null) : null;
-    if (up && target != null) setRot(r => (Math.abs(angleDiff(r, target)) < 4 ? r : unwrapBearing(r, target)));
-    else if (!up) setRot(r => northOf(r));
-    if (!followRef.current) return;
-    let z = map.getZoom();
-    if (prefs.smartZoom) {
-      const want = smartZoom({ speed: m.speed, navDist: navDistRef.current, lat: fix.lat, viewH: viewBoxRef.current.h, base: prefs.followZoom });
-      if (want !== z && (instant || Date.now() - zoomChangedAt.current > 4000)) { z = want; zoomChangedAt.current = Date.now(); }
-    }
-    // Mũi tên ở khoảng 65% chiều cao màn hình (trên hàng nút dưới), phía trước rộng hơn phía sau
-    const vh = viewBoxRef.current.h;
-    const k = up && target != null ? Math.max(0, Math.min(vh * 0.15, vh / 2 - 140)) : 0;
-    const center = k ? map.unproject(L.point(aheadPoint(map.project([fix.lat, fix.lng], z), target!, k)), z) : L.latLng(fix.lat, fix.lng);
-    if (instant) map.setView(center, z, { animate: false });
-    else if (z !== map.getZoom()) map.setView(center, z, { animate: true });
-    else map.panTo(center, { animate: true, duration: 0.8, easeLinearity: 1 });
-  };
-  useEffect(() => {
-    if (!mapRef.current || !fix) return;
     if (firstFixRef.current) {
       firstFixRef.current = false;
-      if (followRef.current) { mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom, { animate: false }); followNowRef.current(true); }
+      if (followRef.current) camera.jump(prefs.followZoom);
       return;
     }
-    followNowRef.current();
+    if (!followRef.current || !prefs.smartZoom || Date.now() - zoomChangedAt.current < 4000) return;
+    const want = smartZoom({ speed: motionRef.current.speed, navDist: navDistRef.current, lat: fix.lat, viewH: viewBoxRef.current.h, base: prefs.followZoom });
+    if (want !== map.getZoom()) { zoomChangedAt.current = Date.now(); camera.zoomAroundUser(want); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);
-  // Bật / tắt xoay theo hướng đi → canh lại ngay
-  useEffect(() => { followNowRef.current(); }, [headingUp]);
 
   const setMapZoom = useCallback((z: number) => {
     const map = mapRef.current;
@@ -572,99 +578,128 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     setPref({ followZoom: nz });
     // Bấm +/− thì tôn trọng mức vừa chọn ít nhất 8 giây trước khi tự zoom lại
     zoomChangedAt.current = Date.now() + 4000;
-    if (followRef.current && fix) { map.setZoom(nz); window.setTimeout(() => followNowRef.current(), 300); }
-    else map.setZoom(nz);
-  }, [fix, setPref]);
+    camera.zoomAroundUser(nz);
+  }, [setPref, camera]);
 
-  /** Nút ◎: chưa bám → bám theo vị trí; đang bám → đổi xoay theo hướng đi ↔ Bắc ở trên (giống Google Maps). */
+  /** Nút ◎: bám lại theo vị trí, GIỮ kiểu xoay đang chọn (đổi kiểu xoay bằng nút la bàn). */
   const recenter = () => {
     if (prefs.compass && compass.status === 'need-permission') void compass.request();
     setPinnedKey(null);
     if (!fix) { setFollow(true); say(recorder.gpsError ?? 'Đang chờ tín hiệu GPS…'); return; }
-    if (follow) {
-      const next = prefs.mapOrientation === 'heading' ? 'north' : 'heading';
-      setPref({ mapOrientation: next });
-      say(next === 'heading' ? 'Bản đồ xoay theo hướng đi' : 'Hướng Bắc luôn ở trên');
-      return;
-    }
-    setFollow(true);
     followRef.current = true;
-    followNowRef.current(true);
+    setFollow(true);
+    camera.goal.current.follow = true;
+    camera.goal.current.rot = rotGoal();
+    zoomChangedAt.current = 0; // điểm GPS tới là tự zoom lại theo tốc độ
   };
 
-  /** Canh 1 vùng vừa phần màn hình đang thấy (khung bản đồ to hơn màn hình, trên / dưới có thanh nút). */
-  const fitVisible = useCallback((b: L.LatLngBoundsExpression, pad = 24) => {
-    const map = mapRef.current;
-    if (!map) return;
-    const sz = map.getSize();
-    map.fitBounds(b, { ...visiblePadding({ x: sz.x, y: sz.y }, viewBoxRef.current, { top: 70 + pad, bottom: 150 + pad, side: pad }), maxZoom: 18 });
-  }, []);
+  /** Nút la bàn: xoay theo hướng đi ↔ hướng Bắc luôn ở trên. Bật xoay thì bám lại luôn (đang xem tự do thì không xoay). */
+  const toggleOrientation = () => {
+    const next = prefs.mapOrientation === 'heading' ? 'north' : 'heading';
+    setPref({ mapOrientation: next });
+    if (next === 'heading') {
+      if (prefs.compass && compass.status === 'need-permission') void compass.request();
+      followRef.current = true;
+      setFollow(true);
+    }
+    say(next === 'heading' ? 'Bản đồ xoay theo hướng đi' : 'Hướng Bắc luôn ở trên');
+  };
 
-  const fitArea = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    setFollow(false);
-    if (boundary) fitVisible(L.polygon(boundary.rings).getBounds());
-    else if (areaBounds) fitVisible([[areaBounds.minLat, areaBounds.minLng], [areaBounds.maxLat, areaBounds.maxLng]], 20);
-    else if (anchor) map.setView([anchor.lat, anchor.lng], 15);
-  }, [boundary, areaBounds, anchor, fitVisible]);
-
-  // Vị trí hiện tại: chấm xanh + vòng sai số. Hướng (quạt la bàn / mũi tên chạy) xoay bằng biến CSS ở vòng rAF bên dưới
+  // Vị trí hiện tại: chấm xanh + vòng sai số + mũi tên — camera di chuyển / xoay mỗi khung hình
   useEffect(() => {
     const map = mapRef.current, ly = layersRef.current;
-    if (!map || !ly || !fix) return;
-    if (!ly.pos) {
-      const icon = L.divIcon({
-        className: 'kcs-pos',
-        html: '<span class="kcs-pos-beam"></span><span class="kcs-pos-arrow"><svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 3 L34 35 L20 27.5 L6 35 Z" fill="#2563EB" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg></span><span class="kcs-pos-dot"></span>',
-        iconSize: [44, 44], iconAnchor: [22, 22],
-      });
-      ly.pos = L.marker([fix.lat, fix.lng], { icon, zIndexOffset: 2000, interactive: false }).addTo(map);
-    } else ly.pos.setLatLng([fix.lat, fix.lng]);
-    if (!ly.acc) ly.acc = L.circle([fix.lat, fix.lng], { radius: fix.acc, color: '#2563EB', weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false, renderer: ly.renderer }).addTo(map);
-    else { ly.acc.setLatLng([fix.lat, fix.lng]); ly.acc.setRadius(fix.acc); }
+    if (!map || !ly || !fix || ly.pos) return;
+    const icon = L.divIcon({
+      className: 'kcs-pos',
+      html: '<span class="kcs-pos-acc"></span><span class="kcs-pos-beam"></span><span class="kcs-pos-arrow"><svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 3 L34 35 L20 27.5 L6 35 Z" fill="#2563EB" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg></span><span class="kcs-pos-dot"></span>',
+      iconSize: [44, 44], iconAnchor: [22, 22],
+    });
+    ly.pos = L.marker([fix.lat, fix.lng], { icon, zIndexOffset: 2000, interactive: false }).addTo(map);
   }, [fix]);
 
-  // Xoay hướng ~20 lần/giây: đang chạy → mũi tên theo hướng GPS; đứng yên → quạt sáng theo la bàn điện thoại
-  const readCompass = compass.read;
-  useEffect(() => {
-    let raf = 0, last = 0, shown: number | null = null, lastMode = '';
-    const tick = (t: number) => {
-      raf = requestAnimationFrame(tick);
-      if (t - last < 50) return;
-      last = t;
-      const el = layersRef.current?.pos?.getElement();
-      if (!el) return;
-      const m = motionRef.current;
-      const h = displayHeading({ course: m.course, speed: m.speed, compass: prefs.compass ? readCompass() : null });
-      const mode = h ? h.source : 'none';
-      if (mode !== lastMode) { el.dataset.mode = mode; lastMode = mode; if (!h) shown = null; }
-      if (h) {
-        shown = smoothAngle(shown, h.deg, h.source === 'compass' ? 0.22 : 0.4);
-        el.style.setProperty('--kcs-head', `${shown.toFixed(1)}deg`);
-      }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [prefs.compass, readCompass]);
+  /** Phần màn hình bị nút / thanh che (px) — để canh vùng vừa phần còn thấy (ghi lại mỗi lần vẽ, theo bố cục) */
+  const fitInsetsRef = useRef({ top: 70, bottom: 150, left: 0, right: 64 });
+  /**
+   * Canh 1 nhóm điểm vừa phần màn hình đang thấy, GIỮ NGUYÊN góc xoay bản đồ (khung bản đồ to hơn màn hình, có thể đang
+   * xoay; trên / dưới / bên có thanh nút). Thôi bám vị trí.
+   */
+  const fitVisible = (pts: readonly [number, number][], pad = 24) => {
+    const map = mapRef.current;
+    if (!map || !pts.length) return;
+    stopFollow();
+    const z0 = map.getZoom();
+    const step = Math.max(1, Math.floor(pts.length / 800));
+    const xy = pts.filter((_, i) => i % step === 0).map(p => map.project(p, z0));
+    const ins = fitInsetsRef.current;
+    const r = fitRotated(xy, camera.rotRef.current, z0, viewBoxRef.current,
+      { top: ins.top + pad, bottom: ins.bottom + pad, left: ins.left + pad, right: ins.right + pad });
+    if (r) map.setView(map.unproject(L.point(r.center.x, r.center.y), r.zoom), r.zoom, { animate: true });
+  };
+  const cornersOf = (b: L.LatLngBounds): [number, number][] => [
+    [b.getSouth(), b.getWest()], [b.getSouth(), b.getEast()], [b.getNorth(), b.getEast()], [b.getNorth(), b.getWest()],
+  ];
 
-  // Lộ trình dẫn đường: xanh = đường tới, tím = đoạn chưa đi sẽ khảo sát
+  const fitArea = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (boundary) fitVisible(boundary.rings.flat());
+    else if (areaBounds) fitVisible([[areaBounds.minLat, areaBounds.minLng], [areaBounds.minLat, areaBounds.maxLng], [areaBounds.maxLat, areaBounds.maxLng], [areaBounds.maxLat, areaBounds.minLng]], 20);
+    else if (anchor) { stopFollow(); map.setView([anchor.lat, anchor.lng], 15); }
+  };
+
+  // Lộ trình dẫn đường: xanh = đường tới / đoạn đi lại, tím = đường chưa đi sẽ khảo sát. Chỉ vẽ phần CÒN LẠI (đi qua
+  // rồi thì mất), ~600 m sắp đi vẽ đậm, phần sau vẽ mờ (lộ trình 1 lượt dài cả chục km — nhìn là biết đi đâu trước).
+  // Vẽ lại mỗi khi đi thêm ~25 m cho nhẹ máy.
+  const routeDrawn = useRef<{ r: NavRoute | null; s: number }>({ r: null, s: -1e9 });
   useEffect(() => {
     const ly = layersRef.current;
     if (!ly) return;
-    ly.route.clearLayers();
     const r = nav.route;
+    const s = nav.progress.s;
+    if (r === routeDrawn.current.r && Math.abs(s - routeDrawn.current.s) < 25) return;
+    routeDrawn.current = { r, s };
+    ly.route.clearLayers();
     if (!r || r.coords.length < 2) return;
-    L.polyline(r.coords, { color: '#fff', weight: 11, opacity: 0.95, renderer: ly.renderer, interactive: false }).addTo(ly.route);
-    L.polyline(r.coords, { color: '#1A73E8', weight: 7, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
-    if (r.target.kind === 'run') {
-      const k = r.cum.findIndex(c => c >= r.approach - 0.5);
-      const run = k >= 0 ? r.coords.slice(Math.max(0, k)) : [];
-      if (run.length >= 2) L.polyline(run, { color: '#7C3AED', weight: 7, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
-    } else {
+    const from = Math.max(0, s - 5);
+    if (from >= r.total - 1) return;
+    /** Các điểm lộ trình trong khoảng quãng [a, b] (m) */
+    const slice = (a: number, b: number): [number, number][] => {
+      const pa = pointAlong(r, a), pb = pointAlong(r, b);
+      const pts: [number, number][] = [[pa.lat, pa.lng]];
+      for (let i = 1; i < r.coords.length; i++) if (r.cum[i] > a && r.cum[i] < b) pts.push(r.coords[i]);
+      pts.push([pb.lat, pb.lng]);
+      return pts;
+    };
+    const line = (pts: [number, number][], color: string, weight: number, opacity: number) => {
+      if (pts.length >= 2) L.polyline(pts, { color, weight, opacity, renderer: ly.renderer, interactive: false }).addTo(ly.route);
+    };
+    // Khoảng tím: đoạn chưa đi lần đầu qua (1 lượt) / từ đầu đoạn tới hết (từng đoạn)
+    const purple: [number, number][] = [];
+    if (r.target.kind === 'tour' && r.coverAt) {
+      for (let i = 1; i < r.coords.length; i++) {
+        if (!r.coverAt[i]) continue;
+        const last = purple[purple.length - 1];
+        if (last && Math.abs(last[1] - r.cum[i - 1]) < 0.01) last[1] = r.cum[i];
+        else purple.push([r.cum[i - 1], r.cum[i]]);
+      }
+    } else if (r.target.kind === 'run') purple.push([r.approach, r.total]);
+    const draw = (a: number, b: number, faded: boolean) => {
+      if (b - a < 0.5) return;
+      const base = slice(a, b);
+      if (!faded) line(base, '#fff', 11, 0.95);
+      line(base, '#1A73E8', faded ? 5 : 7, faded ? 0.35 : 1);
+      for (const [p, q] of purple) {
+        const x = Math.max(p, a), y = Math.min(q, b);
+        if (y - x > 0.5) line(slice(x, y), '#7C3AED', faded ? 5 : 7, faded ? 0.4 : 1);
+      }
+    };
+    const near = Math.min(r.total, from + 600);
+    draw(near, r.total, true);
+    draw(from, near, false);
+    if (r.target.kind === 'point') {
       L.circleMarker([r.target.point.lat, r.target.point.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1A73E8', fillOpacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
     }
-  }, [nav.route]);
+  }, [nav.route, nav.progress.s]);
 
   // Vết chuyến đang đi
   useEffect(() => {
@@ -806,8 +841,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (!lines.length) { say('Chuyến này chưa có vết GPS'); return; }
     L.polyline(lines, { color: '#fff', weight: 10, opacity: 0.9, renderer: ly.renderer, interactive: false }).addTo(ly.highlight);
     const pl = L.polyline(lines, { color: '#F59E0B', weight: 6, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.highlight);
-    setFollow(false);
-    fitVisible(pl.getBounds(), 40);
+    fitVisible(cornersOf(pl.getBounds()), 40);
     setHighlightTrip(trip);
     setPanel('none');
   };
@@ -815,6 +849,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   // ── Panel / sheet ─────────────────────────────────────────────────────────
   const [panel, setPanel] = useState<Panel>(startWith === 'area' ? 'area' : 'none');
+  /** Giao diện gọn: đang mở xem chú thích màu đường (từ nút nổi) */
+  const [legendPeek, setLegendPeek] = useState(false);
   /** Màn khoanh vùng: null = thêm KCN / vùng mới, có giá trị = khoanh lại vùng cho KCN đó */
   const [areaTarget, setAreaTarget] = useState<MarketZone | null>(null);
   const [historyInit, setHistoryInit] = useState<{ tab: 'trips' | 'photos'; filter: PhotoFilter | null }>({ tab: 'trips', filter: null });
@@ -826,7 +862,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const showPhoto = (p: SurveyPhoto) => {
     const map = mapRef.current;
     setPanel('none');
-    setFollow(false);
+    stopFollow();
     setPref({ showPhotos: true });
     map?.setView([p.lat, p.lng], Math.max(map.getZoom(), 18));
     setPhotos(list => (list.some(x => x.id === p.id) ? list : [p, ...list]));
@@ -1028,8 +1064,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       setPassedCount(0);
       setPending(null);
       clearHighlight();
-      setFollow(true);
-      if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom);
+      if (fix) followNow(prefs.followZoom); else setFollow(true);
       say(fix ? `Bắt đầu: ${title}` : `Bắt đầu: ${title} — đang chờ tín hiệu GPS…`);
     } catch (e) {
       say((e as Error).message);
@@ -1062,7 +1097,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (pending.trip.zone_id) setZoneId(pending.trip.zone_id);
     recorder.resume(prefs.keepAwake);
     setPending(null);
-    setFollow(true);
+    if (fix) followNow(); else setFollow(true);
     say('Đi tiếp chuyến khảo sát');
   };
 
@@ -1118,7 +1153,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     setAreaOverride(null);
     if (zoneId !== r.zone.id) await changeZone(r.zone.id, r.zone);
     const map = mapRef.current;
-    if (map && r.rings.length) { setFollow(false); fitVisible(L.polygon(r.rings).getBounds(), 30); }
+    if (map && r.rings.length) fitVisible(r.rings.flat(), 30);
     say(r.areaError
       ? `${r.createdZone ? `Đã thêm ${r.zone.name}. ` : ''}Vùng chỉ dùng trong lần này: ${r.areaError}`
       : `${r.createdZone ? `Đã thêm ${r.zone.name} vào Thị trường → Khu vực. ` : ''}Đã lưu vùng — đang tải đường trong vùng…`);
@@ -1132,7 +1167,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     setPinnedKey(c.key);
     setExpanded(true);
     setPanel('none');
-    if (map && p) { setFollow(false); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17)); }
+    if (map && p) { stopFollow(); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17)); }
   };
 
   const startNavAuto = () => {
@@ -1140,8 +1175,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (prefs.compass && compass.status === 'need-permission') void compass.request();
     clearHighlight();
     setPinnedKey(null);
-    setFollow(true);
-    if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], Math.max(prefs.followZoom, 16));
+    if (fix) followNow(Math.max(prefs.followZoom, 16)); else setFollow(true);
     nav.start({ kind: 'auto' });
   };
   const navToCompany = (c: SurveyCompany) => {
@@ -1149,8 +1183,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (!p) return;
     if (!allPieces.length) { say('Chưa có mạng đường OSM — dùng nút Google Maps'); return; }
     setPanel('none');
-    setFollow(true);
-    if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], Math.max(prefs.followZoom, 16));
+    if (fix) followNow(Math.max(prefs.followZoom, 16)); else setFollow(true);
     nav.start({ kind: 'point', name: c.name, point: p });
   };
 
@@ -1186,245 +1219,390 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const failedUploads = uploads.filter(u => u.state === 'failed');
   const uploading = uploads.filter(u => u.state === 'uploading');
 
+  // ── Bố cục: thường (cầm dọc) · gọn (xoay ngang, hoặc bật "Luôn gọn") ─────
+  // Gọn: bỏ thanh nút dưới + chú thích, chỉ giữ nút người dùng chọn "luôn hiện" ở mép phải, còn lại gom vào nút nổi
+  const landscape = viewBox.w > viewBox.h;
+  const compact = prefs.compactMode === 'always' || (prefs.compactMode === 'auto' && landscape && viewBox.h < 560);
+  /** Gọn + ngang: băng dẫn đường / thẻ công ty xếp thành cột bên trái, mũi tên dời sang phần bản đồ bên phải */
+  const sideCol = compact && landscape;
+  const colW = sideCol ? Math.min(360, Math.max(270, Math.round(viewBox.w * 0.38))) : 0;
+  /** Bề ngang cột nút bên phải (kể cả lề) */
+  const RAIL = compact ? 72 : 64;
+  const tallLeft = nav.mode.kind !== 'off' || !!cardItem || !!pending || !!highlightTrip;
+  const headingUp = follow && prefs.mapOrientation === 'heading';
+  // Chỗ đặt mũi tên khi bám: xoay theo hướng đi → phần dưới màn hình (nhìn xa phía trước); có cột trái → giữa phần bản đồ còn lại
+  camera.goal.current = {
+    follow,
+    rot: rotGoal(),
+    offset: sideCol
+      ? { x: Math.round(tallLeft ? (colW + 12 - RAIL) / 2 : -RAIL / 2), y: headingUp ? Math.round(Math.max(0, Math.min(viewBox.h * 0.2, viewBox.h / 2 - 70))) : 0 }
+      : { x: 0, y: headingUp ? Math.round(Math.max(0, Math.min(viewBox.h * (compact ? 0.2 : 0.15), viewBox.h / 2 - (compact ? 90 : 140)))) : 0 },
+  };
+  fitInsetsRef.current = sideCol ? { top: 12, bottom: 12, left: colW + 12, right: RAIL }
+    : compact ? { top: 70, bottom: 20, left: 0, right: RAIL } : { top: 70, bottom: 150, left: 0, right: 64 };
+  const showLegend = compact ? prefs.pinned.includes('legend') || legendPeek : !prefs.legendCollapsed;
+
+  const tripStatus = hasTrip ? (
+    <>
+      <span className={recording ? 'text-[#D70015]' : 'text-[#8E8E93]'}>{recording ? '● Đang ghi' : '❚❚ Tạm dừng'}</span>
+      {' · '}{fmtDuration(elapsed / 1000)} · {fmtDistance(distance)}
+      {coverage?.pct != null && ` · phủ ${coverage.pct.toLocaleString('vi-VN')}%`}
+    </>
+  ) : null;
+
+  // Các khối dùng chung cho 2 bố cục
+  const alerts = (
+    <>
+      {recorder.gpsError && (
+        <div className="pointer-events-auto rounded-xl bg-[#FFF4E5] text-[#8A4B00] text-[12.5px] px-3 py-2 shadow flex items-start gap-1.5">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {recorder.gpsError}
+        </div>
+      )}
+      {dbError && (
+        <div className="pointer-events-auto rounded-xl bg-[#FFECEC] text-[#B00020] text-[12.5px] px-3 py-2 shadow">{dbError}</div>
+      )}
+      {pending && !hasTrip && (
+        <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-3">
+          <div className="text-[13.5px] font-semibold text-[#1D1D1F]">Chuyến khảo sát đang dở</div>
+          <div className="text-[12px] text-[#3A3A3C] mt-0.5">
+            {pending.trip.title || pending.trip.zone_name || 'Không gắn KCN'} · bắt đầu {new Date(pending.trip.started_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })} · {fmtDistance(pending.distance)}
+          </div>
+          <div className="flex gap-2 mt-2.5">
+            <button onClick={resumePending} className="flex-1 h-10 rounded-full bg-[#0A84FF] text-white text-[13.5px] font-semibold">Đi tiếp</button>
+            <button onClick={() => finish(true)} className="flex-1 h-10 rounded-full bg-[#F2F2F7] text-[13.5px] font-medium text-[#1D1D1F]">Kết thúc</button>
+          </div>
+        </div>
+      )}
+      {zone && !hasTrip && !pending && scanHint && !readScanCache(zone.id) && panel === 'none' && (
+        <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-2.5 flex items-center gap-2">
+          <RefreshCw size={16} className="text-[#137333] shrink-0" />
+          <div className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug">
+            Trước khi đi: tải thông tin <b>{zone.name}</b> — công ty trong KCN và nhà cung ứng lao động quanh đây
+          </div>
+          <button onClick={() => setPanel('scan')} className="h-8 px-3 rounded-full bg-[#137333] text-white text-[12.5px] font-semibold shrink-0">Tải</button>
+          <button onClick={() => setScanHint(false)} className="w-7 h-7 rounded-full text-[#8E8E93] flex items-center justify-center shrink-0" aria-label="Để sau"><X size={15} /></button>
+        </div>
+      )}
+      {highlightTrip && (
+        <div className="pointer-events-auto rounded-xl bg-[#FFF8E6] shadow px-3 py-2 flex items-center gap-2 text-[12.5px] text-[#7A4B00]">
+          <span className="w-3 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
+          <span className="flex-1 min-w-0 truncate">Đang xem chuyến {new Date(highlightTrip.started_at).toLocaleDateString('vi-VN')} · {highlightTrip.zone_name || 'không gắn KCN'} · {fmtDistance(highlightTrip.distance_m)}</span>
+          <button onClick={clearHighlight} className="font-semibold shrink-0">Ẩn</button>
+        </div>
+      )}
+    </>
+  );
+  const navBanner = (
+    <SurveyNavBanner mode={nav.mode} status={nav.status} route={nav.route} next={nav.next} after={nav.after}
+      distToNext={nav.distToNext} remaining={nav.remaining} toApproach={nav.toApproach} compact={compact}
+      sound={prefs.navSound} onSound={v => { setPref({ navSound: v }); nav.previewSound(v); say(`Âm thanh dẫn đường: ${NAV_SOUND_LABEL[v]}`); }}
+      onReplan={nav.replan} onStop={nav.stop} />
+  );
+  const companyCard = cardItem && panel === 'none' && (
+    <div className={compact ? 'max-h-[46vh] overflow-y-auto overscroll-contain rounded-2xl pointer-events-auto' : ''}>
+      <SurveyCompanyCard
+        item={cardItem} lookup={lookup} photos={photosOf(cardItem.company)}
+        expanded={expanded} onToggle={() => setExpanded(v => !v)}
+        onClose={() => { if (pinnedKey) setPinnedKey(null); else if (current) setDismissed(prev => new Set(prev).add(current.company.key)); }}
+        onOpenProfile={openProfile} onPhoto={c => beginCapture(c)} onAddToMarket={addOsmCompany}
+        onShowPhotos={c => { setHistoryInit({ tab: 'photos', filter: { label: c.name, match: p => photosOf(c).some(x => x.id === p.id) } }); setPanel('history'); }}
+        otherCount={pinned ? 0 : Math.max(0, nearby.length - 1)} onShowNearby={() => setPanel('nearby')}
+      />
+    </div>
+  );
+  const areaNotice = (
+    <>
+      {prefs.showRoads && areaStatus.state === 'ok' && !boundary && (
+        <button onClick={e => { e.stopPropagation(); openAreaFinder(zone); }} className="text-[#0A84FF] font-semibold text-left">
+          {zone ? 'KCN chưa có ranh giới — khoanh vùng để chỉ tô đường trong KCN' : 'Chưa chọn KCN — thêm / khoanh vùng khảo sát'}
+        </button>
+      )}
+      {prefs.showRoads && areaStatus.state === 'loading' && <div className="flex items-center gap-1 text-[#8E8E93]"><Loader2 size={10} className="animate-spin" /> Đang tải mạng đường…</div>}
+      {prefs.showRoads && areaStatus.state === 'error' && (
+        <div className="text-[#D70015]">
+          Chưa tải được mạng đường{areaRetries.current < 3 ? ' — tự thử lại sau 30 giây' : ''}{' '}
+          <button onClick={e => { e.stopPropagation(); setAreaReload(n => n + 1); }} className="font-semibold underline">Thử ngay</button>
+        </div>
+      )}
+    </>
+  );
+  const gpsText = `${fix ? `GPS ±${Math.round(fix.acc)} m` : 'Chờ GPS…'}${hasTrip && passedCount > 0 ? ` · ${passedCount} công ty đã qua` : ''}${recorder.unsynced > 0 ? ` · ${recorder.unsynced} đoạn chờ gửi` : ''}${recording && prefs.keepAwake && !recorder.wakeLockOn ? ' · ⚠ màn hình có thể tự tắt' : ''}`;
+  const legendBox = (
+    <div onClick={() => { if (compact) setLegendPeek(false); else setPref({ legendCollapsed: true }); }}
+      className="pointer-events-auto rounded-xl bg-white/90 backdrop-blur shadow px-2.5 py-1.5 text-[11px] text-[#3A3A3C] space-y-0.5 max-w-full cursor-pointer">
+      {nav.route && (
+        <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#1A73E8]" /> {nav.route.target.kind === 'tour' ? 'Đi nối / đi lại' : 'Đường tới'}
+          {nav.route.target.kind !== 'point' && <><span className="w-4 h-1.5 rounded-full bg-[#7C3AED] ml-1.5" /> {nav.route.target.kind === 'tour' ? 'Đường chưa đi sẽ qua' : 'Đoạn sẽ khảo sát'}</>}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#2563EB]" /> Chuyến này
+        {prefs.showOldTracks && <><span className="w-4 h-1.5 rounded-full bg-[#64748B]/60 ml-1.5" /> Lần trước{oldTrips.filter(t => t.id !== recorder.trip?.id).length ? ` (${oldTrips.filter(t => t.id !== recorder.trip?.id).length})` : ''}</>}
+      </div>
+      {prefs.showRoads && coverage && (
+        <>
+          <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_TODO_COLORS[prefs.roadTodo].strong }} /> Cần đi, có nhà máy
+            <span className="text-[#8E8E93]">{fmtDistance(unvisitedFactoryM)}</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed shrink-0" style={{ borderColor: ROAD_TODO_COLORS[prefs.roadTodo].light }} /> Cần đi, đường trống
+            <span className="text-[#8E8E93]">{fmtDistance(Math.max(0, coverage.totalM - coverage.coveredM - unvisitedFactoryM))}</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_DONE_COLORS[prefs.roadDone].color }} /> Đã đi
+            <span className="text-[#8E8E93]">{fmtDistance(coverage.coveredM)}</span></div>
+        </>
+      )}
+      {areaNotice}
+      <div className="text-[#8E8E93] tabular-nums">{gpsText}</div>
+    </div>
+  );
+  const audioBar = audio.active && (
+    <div className="pointer-events-auto w-full flex items-center gap-2 rounded-2xl bg-[#1D1D1F]/90 backdrop-blur text-white pl-3 pr-1.5 py-1.5 shadow-lg">
+      <span className="w-2.5 h-2.5 rounded-full bg-[#FF3B30] animate-pulse shrink-0" />
+      <span className="flex-1 min-w-0 text-[13px] truncate">
+        {audio.phase === 'starting' ? 'Đang bật micro…' : <>Đang ghi âm <b className="tabular-nums">{fmtClock(audio.elapsedMs / 1000)}</b></>}
+        {recordingCompany && <span className="text-white/70"> · gần {recordingCompany}</span>}
+      </span>
+      <button onClick={() => { if (window.confirm('Huỷ bản ghi âm này (không lưu)?')) audio.cancel(); }} className="h-8 px-3 rounded-full bg-white/15 text-[12.5px] shrink-0">Huỷ</button>
+      <button onClick={() => audio.stop()} className="h-8 px-3 rounded-full bg-[#FF3B30] text-[12.5px] font-semibold shrink-0 inline-flex items-center gap-1"><Square size={11} fill="currentColor" /> Dừng & lưu</button>
+    </div>
+  );
+  const uploadsBox = (uploading.length > 0 || failedUploads.length > 0 || recorder.syncError) && (
+    <div className="space-y-1.5 w-full">
+      {uploading.length > 0 && (
+        <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[#1D1D1F]/85 text-white text-[12px] px-3 py-1.5">
+          <Loader2 size={12} className="animate-spin" /> Đang lưu {uploading.length} {uploading.every(u => u.kind === 'voice') ? 'ghi âm' : uploading.every(u => u.kind === 'photo') ? 'ảnh' : 'ảnh / ghi âm'}…
+        </div>
+      )}
+      {failedUploads.map(u => (
+        <div key={u.id} className="pointer-events-auto flex items-center gap-2 rounded-xl bg-[#FFECEC] text-[#B00020] text-[12px] px-3 py-1.5 shadow">
+          <span className="flex-1 min-w-0 truncate">Chưa lưu được {u.kind === 'voice' ? '' : 'ảnh '}“{u.label}”: {u.error}</span>
+          <button onClick={() => runUpload(u)} className="font-semibold shrink-0">Thử lại</button>
+          <button onClick={() => { if (window.confirm(`Bỏ ${u.kind === 'voice' ? 'bản ghi âm' : 'ảnh'} này (chưa được lưu)?`)) setUploads(list => list.filter(j => j.id !== u.id)); }} className="shrink-0" aria-label="Bỏ"><X size={14} /></button>
+        </div>
+      ))}
+      {recorder.syncError && (
+        <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-[#FFF4E5] text-[#8A4B00] text-[12px] px-3 py-1.5 shadow">
+          <span className="flex-1 min-w-0">Vết GPS chưa gửi được (đã lưu trong máy, sẽ gửi lại khi có mạng): {recorder.syncError}</span>
+          <button onClick={() => void recorder.retrySync()} className="font-semibold shrink-0">Gửi lại</button>
+        </div>
+      )}
+    </div>
+  );
+  // Kim la bàn: hướng Bắc trên bản đồ (camera xoay kim theo bản đồ mỗi khung hình)
+  const needle = (
+    <svg ref={needleRef} viewBox="0 0 24 24" width={compact ? 22 : 26} height={compact ? 22 : 26} aria-hidden>
+      <path d="M12 2.5 L16 12 H8 Z" fill="#FF3B30" /><path d="M12 21.5 L8 12 H16 Z" fill="#8E8E93" />
+    </svg>
+  );
+  const orientationLabel = prefs.mapOrientation === 'heading' ? 'Đang xoay theo hướng đi — bấm để Bắc lên trên' : 'Bắc ở trên — bấm để xoay theo hướng đi';
+  const recenterLabel = follow ? 'Đang bám theo vị trí' : 'Bám theo vị trí';
+
+  // Chức năng cho nút gắn mép phải / bảng nút nổi (giao diện gọn)
+  const openHistory = () => { setHistoryInit({ tab: 'trips', filter: null }); setPanel('history'); };
+  const quick = (id: QuickActionId): QuickItem[] => {
+    switch (id) {
+      case 'photo': return [{ id, label: hasTrip ? 'Chụp chỉ tiêu' : 'Chụp', short: 'Chụp', icon: <Camera size={22} />, tone: 'primary', onClick: () => beginCapture(null) }];
+      case 'voice': return [{ id, label: audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm', icon: <Mic size={22} />, tone: audio.active ? 'rec' : undefined, onClick: toggleVoice }];
+      case 'library': return [{ id, label: 'Ảnh có sẵn', short: 'Ảnh sẵn', icon: <ImagePlus size={22} />, onClick: () => beginCapture(null, true) }];
+      case 'pause': return !hasTrip ? [] : recording
+        ? [{ id, label: 'Tạm dừng', icon: <Pause size={22} />, onClick: () => void recorder.pause() }]
+        : [{ id, label: 'Đi tiếp', icon: <Play size={22} />, tone: 'blue', onClick: () => recorder.resume(prefs.keepAwake) }];
+      case 'finish': return hasTrip ? [{ id, label: 'Kết thúc', icon: <Square size={19} fill="currentColor" />, tone: 'red', disabled: busy, onClick: () => void finish() }] : [];
+      case 'nav': return !allPieces.length ? [] : nav.mode.kind === 'off'
+        ? [{ id, label: 'Dẫn đường', short: 'Dẫn', icon: <Navigation size={22} fill="currentColor" />, tone: 'green', onClick: startNavAuto }]
+        : [{ id, label: 'Tắt dẫn', icon: <NavigationOff size={22} />, onClick: nav.stop }];
+      case 'todo': return zoneCompanies.length ? [{ id, label: `${todo.never.length} chưa qua`, icon: <Factory size={22} />, onClick: () => setPanel('todo') }] : [];
+      case 'zoom': return [
+        { id: 'zoom-in', label: 'Phóng to', icon: <Plus size={22} />, onClick: () => setMapZoom(zoom + 1), keepOpen: true },
+        { id: 'zoom-out', label: 'Thu nhỏ', icon: <Minus size={22} />, onClick: () => setMapZoom(zoom - 1), keepOpen: true },
+      ];
+      case 'fit': return [{ id, label: 'Cả KCN', icon: <Maximize size={21} />, onClick: fitArea }];
+      case 'satellite': return [{ id, label: 'Vệ tinh', icon: <Layers size={21} />, active: prefs.satellite, onClick: () => setPref({ satellite: !prefs.satellite }) }];
+      case 'legend': return [{ id, label: 'Chú thích', icon: <Info size={21} />, active: showLegend, onClick: () => setLegendPeek(v => !v) }];
+      case 'history': return [{ id, label: 'Lịch sử', icon: <History size={21} />, onClick: openHistory }];
+      case 'settings': return [{ id, label: 'Cài đặt', icon: <Settings size={21} />, onClick: () => setPanel('settings') }];
+    }
+  };
+  const railItems = compact ? prefs.pinned.filter(id => id !== 'legend').flatMap(quick) : [];
+  const menuItems: QuickItem[] = compact ? [
+    ...(hasTrip ? quick('pause') : [{ id: 'start', label: 'Bắt đầu', icon: <Play size={22} fill="currentColor" />, tone: 'primary' as const, disabled: busy || !!pending, onClick: requestStart }]),
+    ...(['photo', 'voice', 'library', 'nav', 'todo', 'fit', 'satellite'] as QuickActionId[]).flatMap(quick),
+    { id: 'orientation', label: prefs.mapOrientation === 'heading' ? 'Bắc lên trên' : 'Xoay theo hướng', icon: <Navigation size={21} />, onClick: toggleOrientation },
+    ...(prefs.pinned.includes('legend') ? [] : quick('legend')),
+    ...(['zoom', 'history', 'settings', 'finish'] as QuickActionId[]).flatMap(quick),
+  ] : [];
+
   return createPortal(
     <div className="fixed inset-0 z-[1200] bg-[#E5E3DF] select-none" style={{ touchAction: 'manipulation' }}>
       <div ref={viewRef} className="absolute inset-0 overflow-hidden">
+        {/* Góc xoay + biến --kcs-bearing do camera đặt trực tiếp mỗi khung hình (không qua React) */}
         <div ref={mapDivRef} className="absolute kcs-rot"
-          style={{
-            width: mapSide, height: mapSide, left: (viewBox.w - mapSide) / 2, top: (viewBox.h - mapSide) / 2,
-            transform: `rotate(${-rot}deg)`, transition: rotAnim ? 'transform 0.8s ease-out' : 'none',
-            ['--kcs-bearing' as string]: `${rot}deg`,
-          } as React.CSSProperties} />
+          style={{ width: mapSide, height: mapSide, left: (viewBox.w - mapSide) / 2, top: (viewBox.h - mapSide) / 2, touchAction: 'none' }} />
       </div>
 
-      {/* ── Thanh trên ── */}
-      <div className="absolute inset-x-0 top-0 z-[1100] pointer-events-none pt-[env(safe-area-inset-top)]">
-        <div className="flex items-start gap-2 px-3 pt-3">
-          <button onClick={tryClose} className="pointer-events-auto h-11 pl-2.5 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow-lg flex items-center gap-1 text-[14px] font-medium text-[#1D1D1F]">
-            <ChevronLeft size={19} /> Thoát
-          </button>
-          <button onClick={() => setPanel(panel === 'zone' ? 'none' : 'zone')}
-            className="pointer-events-auto flex-1 md:flex-none md:w-[400px] min-w-0 h-11 px-3.5 rounded-full bg-white/95 backdrop-blur shadow-lg text-left flex items-center gap-2">
-            <MapPin size={15} className="text-[#D97706] shrink-0" />
-            <span className="flex-1 min-w-0">
-              <span className="block text-[14px] font-semibold text-[#1D1D1F] truncate leading-tight">{zoneName || (zoneId === undefined ? 'Đang tìm KCN gần nhất…' : 'Chọn KCN')}</span>
-              {hasTrip && (
-                <span className="block text-[11px] text-[#3A3A3C] leading-tight tabular-nums">
-                  <span className={recording ? 'text-[#D70015]' : 'text-[#8E8E93]'}>{recording ? '● Đang ghi' : '❚❚ Tạm dừng'}</span>
-                  {' · '}{fmtDuration(elapsed / 1000)} · {fmtDistance(distance)}
-                  {coverage?.pct != null && ` · phủ ${coverage.pct.toLocaleString('vi-VN')}%`}
+      {!compact ? (
+        <>
+          {/* ── Thanh trên ── */}
+          <div className="absolute inset-x-0 top-0 z-[1100] pointer-events-none pt-[env(safe-area-inset-top)]">
+            <div className="flex items-start gap-2 px-3 pt-3">
+              <button onClick={tryClose} className="pointer-events-auto h-11 pl-2.5 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow-lg flex items-center gap-1 text-[14px] font-medium text-[#1D1D1F]">
+                <ChevronLeft size={19} /> Thoát
+              </button>
+              <button onClick={() => setPanel(panel === 'zone' ? 'none' : 'zone')}
+                className="pointer-events-auto flex-1 md:flex-none md:w-[400px] min-w-0 h-11 px-3.5 rounded-full bg-white/95 backdrop-blur shadow-lg text-left flex items-center gap-2">
+                <MapPin size={15} className="text-[#D97706] shrink-0" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[14px] font-semibold text-[#1D1D1F] truncate leading-tight">{zoneName || (zoneId === undefined ? 'Đang tìm KCN gần nhất…' : 'Chọn KCN')}</span>
+                  {tripStatus && <span className="block text-[11px] text-[#3A3A3C] leading-tight tabular-nums truncate">{tripStatus}</span>}
+                  {!hasTrip && coverage?.pct != null && (
+                    <span className="block text-[11px] text-[#8E8E93] leading-tight">Đã đi {coverage.pct.toLocaleString('vi-VN')}% đường trong vùng (các lần trước)</span>
+                  )}
                 </span>
-              )}
-              {!hasTrip && coverage?.pct != null && (
-                <span className="block text-[11px] text-[#8E8E93] leading-tight">Đã đi {coverage.pct.toLocaleString('vi-VN')}% đường trong vùng (các lần trước)</span>
-              )}
-            </span>
-          </button>
-          <button onClick={() => setPanel(panel === 'settings' ? 'none' : 'settings')} aria-label="Cài đặt"
-            className={`pointer-events-auto md:ml-auto shrink-0 w-11 h-11 rounded-full shadow-lg flex items-center justify-center ${panel === 'settings' ? 'bg-[#0A84FF] text-white' : 'bg-white/95 backdrop-blur text-[#1D1D1F]'}`}>
-            <Settings size={19} />
-          </button>
-        </div>
+              </button>
+              <button onClick={() => setPanel(panel === 'settings' ? 'none' : 'settings')} aria-label="Cài đặt"
+                className={`pointer-events-auto md:ml-auto shrink-0 w-11 h-11 rounded-full shadow-lg flex items-center justify-center ${panel === 'settings' ? 'bg-[#0A84FF] text-white' : 'bg-white/95 backdrop-blur text-[#1D1D1F]'}`}>
+                <Settings size={19} />
+              </button>
+            </div>
 
-        {/* Báo lỗi / trạng thái */}
-        <div className="px-3 mt-2 space-y-2 md:max-w-[440px]">
-          {recorder.gpsError && (
-            <div className="pointer-events-auto rounded-xl bg-[#FFF4E5] text-[#8A4B00] text-[12.5px] px-3 py-2 shadow flex items-start gap-1.5">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {recorder.gpsError}
+            {/* Báo lỗi / trạng thái */}
+            <div className="px-3 mt-2 space-y-2 md:max-w-[440px]">
+              {alerts}
+              {navBanner}
+              {companyCard}
             </div>
-          )}
-          {dbError && (
-            <div className="pointer-events-auto rounded-xl bg-[#FFECEC] text-[#B00020] text-[12.5px] px-3 py-2 shadow">{dbError}</div>
-          )}
-          {pending && !hasTrip && (
-            <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-3">
-              <div className="text-[13.5px] font-semibold text-[#1D1D1F]">Chuyến khảo sát đang dở</div>
-              <div className="text-[12px] text-[#3A3A3C] mt-0.5">
-                {pending.trip.title || pending.trip.zone_name || 'Không gắn KCN'} · bắt đầu {new Date(pending.trip.started_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })} · {fmtDistance(pending.distance)}
-              </div>
-              <div className="flex gap-2 mt-2.5">
-                <button onClick={resumePending} className="flex-1 h-10 rounded-full bg-[#0A84FF] text-white text-[13.5px] font-semibold">Đi tiếp</button>
-                <button onClick={() => finish(true)} className="flex-1 h-10 rounded-full bg-[#F2F2F7] text-[13.5px] font-medium text-[#1D1D1F]">Kết thúc</button>
-              </div>
-            </div>
-          )}
-          {zone && !hasTrip && !pending && scanHint && !readScanCache(zone.id) && panel === 'none' && (
-            <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-2.5 flex items-center gap-2">
-              <RefreshCw size={16} className="text-[#137333] shrink-0" />
-              <div className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug">
-                Trước khi đi: tải thông tin <b>{zone.name}</b> — công ty trong KCN và nhà cung ứng lao động quanh đây
-              </div>
-              <button onClick={() => setPanel('scan')} className="h-8 px-3 rounded-full bg-[#137333] text-white text-[12.5px] font-semibold shrink-0">Tải</button>
-              <button onClick={() => setScanHint(false)} className="w-7 h-7 rounded-full text-[#8E8E93] flex items-center justify-center shrink-0" aria-label="Để sau"><X size={15} /></button>
-            </div>
-          )}
-          {highlightTrip && (
-            <div className="pointer-events-auto rounded-xl bg-[#FFF8E6] shadow px-3 py-2 flex items-center gap-2 text-[12.5px] text-[#7A4B00]">
-              <span className="w-3 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
-              <span className="flex-1 min-w-0 truncate">Đang xem chuyến {new Date(highlightTrip.started_at).toLocaleDateString('vi-VN')} · {highlightTrip.zone_name || 'không gắn KCN'} · {fmtDistance(highlightTrip.distance_m)}</span>
-              <button onClick={clearHighlight} className="font-semibold shrink-0">Ẩn</button>
-            </div>
-          )}
-          <SurveyNavBanner mode={nav.mode} status={nav.status} route={nav.route} next={nav.next} after={nav.after}
-            distToNext={nav.distToNext} remaining={nav.remaining} toApproach={nav.toApproach}
-            sound={prefs.navSound} onSound={v => { setPref({ navSound: v }); nav.previewSound(v); say(`Âm thanh dẫn đường: ${NAV_SOUND_LABEL[v]}`); }}
-            onReplan={nav.replan} onStop={nav.stop} />
-          {cardItem && panel === 'none' && (
-            <SurveyCompanyCard
-              item={cardItem} lookup={lookup} photos={photosOf(cardItem.company)}
-              expanded={expanded} onToggle={() => setExpanded(v => !v)}
-              onClose={() => { if (pinnedKey) setPinnedKey(null); else if (current) setDismissed(prev => new Set(prev).add(current.company.key)); }}
-              onOpenProfile={openProfile} onPhoto={c => beginCapture(c)} onAddToMarket={addOsmCompany}
-              onShowPhotos={c => { setHistoryInit({ tab: 'photos', filter: { label: c.name, match: p => photosOf(c).some(x => x.id === p.id) } }); setPanel('history'); }}
-              otherCount={pinned ? 0 : Math.max(0, nearby.length - 1)} onShowNearby={() => setPanel('nearby')}
-            />
-          )}
-        </div>
-      </div>
+          </div>
 
-      {/* ── Nút bên phải: neo sát thanh dưới (gần ngón cái, không bị thẻ công ty phía trên che) ── */}
-      <div className="absolute right-3 bottom-[calc(96px+env(safe-area-inset-bottom))] z-[1050] flex flex-col gap-2">
-        {headingUp
-          ? (
-            <MapBtn onClick={() => { setPref({ mapOrientation: 'north' }); say('Hướng Bắc luôn ở trên'); }} label="Đang xoay theo hướng đi — bấm để Bắc lên trên">
-              <svg viewBox="0 0 24 24" width="26" height="26" style={{ transform: `rotate(${-rot}deg)`, transition: rotAnim ? 'transform 0.8s ease-out' : 'none' }} aria-hidden>
-                <path d="M12 2.5 L16 12 H8 Z" fill="#FF3B30" /><path d="M12 21.5 L8 12 H16 Z" fill="#8E8E93" />
-              </svg>
+          {/* ── Nút bên phải: neo sát thanh dưới (gần ngón cái, không bị thẻ công ty phía trên che) ── */}
+          <div className="absolute right-3 bottom-[calc(96px+env(safe-area-inset-bottom))] z-[1050] flex flex-col gap-2">
+            <MapBtn onClick={toggleOrientation} label={orientationLabel} active={prefs.mapOrientation === 'heading'} light>{needle}</MapBtn>
+            <MapBtn onClick={fitArea} label="Xem cả KCN"><Maximize size={19} /></MapBtn>
+            <MapBtn onClick={recenter} label={recenterLabel} active={follow}>
+              {headingUp ? <Navigation size={19} fill="currentColor" /> : <LocateFixed size={20} />}
             </MapBtn>
-          )
-          : <MapBtn onClick={() => setPref({ satellite: !prefs.satellite })} label="Nền vệ tinh" active={prefs.satellite}><Layers size={19} /></MapBtn>}
-        <MapBtn onClick={fitArea} label="Xem cả KCN"><Maximize size={19} /></MapBtn>
-        <MapBtn onClick={recenter} label={!follow ? 'Bám theo vị trí' : headingUp ? 'Đang xoay theo hướng đi — bấm để Bắc lên trên' : 'Bấm để bản đồ xoay theo hướng đi'} active={follow}>
-          {headingUp ? <Navigation size={19} fill="currentColor" /> : <LocateFixed size={20} />}
-        </MapBtn>
-        <MapBtn onClick={() => setMapZoom(zoom + 1)} label="Phóng to"><Plus size={22} /></MapBtn>
-        <MapBtn onClick={() => setMapZoom(zoom - 1)} label="Thu nhỏ"><Minus size={22} /></MapBtn>
-      </div>
+            <MapBtn onClick={() => setMapZoom(zoom + 1)} label="Phóng to"><Plus size={22} /></MapBtn>
+            <MapBtn onClick={() => setMapZoom(zoom - 1)} label="Thu nhỏ"><Minus size={22} /></MapBtn>
+          </div>
 
-      {/* ── Thanh dưới ── */}
-      <div className="absolute inset-x-0 bottom-0 z-[1100] pointer-events-none pb-[env(safe-area-inset-bottom)]">
-        {audio.active && (
-          <div className="pl-3 pb-1.5 pr-[72px] md:pr-3">
-            <div className="pointer-events-auto md:mx-auto md:w-[560px] flex items-center gap-2 rounded-2xl bg-[#1D1D1F]/90 backdrop-blur text-white pl-3 pr-1.5 py-1.5 shadow-lg">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#FF3B30] animate-pulse shrink-0" />
-              <span className="flex-1 min-w-0 text-[13px] truncate">
-                {audio.phase === 'starting' ? 'Đang bật micro…' : <>Đang ghi âm <b className="tabular-nums">{fmtClock(audio.elapsedMs / 1000)}</b></>}
-                {recordingCompany && <span className="text-white/70"> · gần {recordingCompany}</span>}
-              </span>
-              <button onClick={() => { if (window.confirm('Huỷ bản ghi âm này (không lưu)?')) audio.cancel(); }} className="h-8 px-3 rounded-full bg-white/15 text-[12.5px] shrink-0">Huỷ</button>
-              <button onClick={() => audio.stop()} className="h-8 px-3 rounded-full bg-[#FF3B30] text-[12.5px] font-semibold shrink-0 inline-flex items-center gap-1"><Square size={11} fill="currentColor" /> Dừng & lưu</button>
+          {/* ── Thanh dưới ── */}
+          <div className="absolute inset-x-0 bottom-0 z-[1100] pointer-events-none pb-[env(safe-area-inset-bottom)]">
+            {audioBar && <div className="pl-3 pb-1.5 pr-[72px] md:pr-3"><div className="md:mx-auto md:w-[560px]">{audioBar}</div></div>}
+            {(zoneCompanies.length > 0 || (allPieces.length > 0 && nav.mode.kind === 'off')) && (
+              <div className="px-3 pb-1.5 flex items-center gap-2 pr-[72px] md:pr-3">
+                {zoneCompanies.length > 0 && <button onClick={() => setPanel('todo')}
+                  className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] min-w-0">
+                  <Factory size={14} className="text-[#D97706] shrink-0" />
+                  <span className="truncate">
+                    {todo.never.length
+                      ? <><b>{todo.never.length}</b> công ty chưa qua{todo.never.filter(r => STATUS_META[r.c.status].rich).length ? ` · ${todo.never.filter(r => STATUS_META[r.c.status].rich).length} KH/Pipeline` : ''}</>
+                      : todo.before.length ? `Đã qua hết — ${todo.before.length} công ty chỉ qua ở lần trước` : 'Đã đi ngang hết công ty trong KCN'}
+                  </span>
+                  <ChevronRight size={14} className="text-[#C7C7CC] shrink-0" />
+                </button>}
+                {allPieces.length > 0 && nav.mode.kind === 'off' && (
+                  <button onClick={startNavAuto}
+                    className="pointer-events-auto shrink-0 inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-[#137333] text-white shadow text-[12.5px] font-semibold">
+                    <Navigation size={14} fill="currentColor" /> Dẫn đường
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="px-3 pb-1.5 flex items-end justify-between gap-2">
+              {showLegend ? <div className="max-w-[calc(100%-72px)]">{legendBox}</div> : (
+                <button onClick={() => setPref({ legendCollapsed: false })}
+                  className="pointer-events-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-white/90 backdrop-blur shadow text-[11px] text-[#3A3A3C] tabular-nums max-w-[calc(100%-72px)] truncate">
+                  <Info size={12} className="shrink-0" /> Chú thích · {gpsText}
+                </button>
+              )}
+            </div>
+            {uploadsBox && <div className="px-3 pb-1.5">{uploadsBox}</div>}
+            <div className="pointer-events-auto mx-3 md:mx-auto md:w-[560px] mb-3 rounded-[22px] bg-white/95 backdrop-blur-xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2 flex items-center gap-2">
+              {!hasTrip ? (
+                <>
+                  <BarBtn onClick={openHistory} label="Lịch sử" narrow><History size={20} /></BarBtn>
+                  <button onClick={requestStart} disabled={busy || !!pending}
+                    className="flex-1 min-w-0 h-14 rounded-2xl bg-[#0A84FF] text-white text-[15px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition disabled:opacity-50 whitespace-nowrap">
+                    {busy ? <Loader2 size={20} className="animate-spin" /> : <Play size={19} fill="currentColor" />} Bắt đầu<span className="hidden min-[390px]:inline"> khảo sát</span>
+                  </button>
+                  <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} narrow><Mic size={20} /></BarBtn>
+                  <BarBtn onClick={() => beginCapture(null)} label="Chụp" narrow><Camera size={20} /></BarBtn>
+                </>
+              ) : (
+                <>
+                  {recording
+                    ? <BarBtn onClick={() => void recorder.pause()} label="Tạm dừng" grow><Pause size={20} /></BarBtn>
+                    : <BarBtn onClick={() => recorder.resume(prefs.keepAwake)} label="Đi tiếp" tone="blue" grow><Play size={20} /></BarBtn>}
+                  <BarBtn onClick={() => beginCapture(null)} label="Chụp chỉ tiêu" tone="primary" grow><Camera size={21} /></BarBtn>
+                  <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} grow><Mic size={20} /></BarBtn>
+                  <BarBtn onClick={() => beginCapture(null, true)} label="Ảnh có sẵn" grow><ImagePlus size={20} /></BarBtn>
+                  <BarBtn onClick={() => void finish()} label="Kết thúc" tone="red" disabled={busy} grow><Square size={18} fill="currentColor" /></BarBtn>
+                </>
+              )}
             </div>
           </div>
-        )}
-        {(zoneCompanies.length > 0 || (allPieces.length > 0 && nav.mode.kind === 'off')) && (
-          <div className="px-3 pb-1.5 flex items-center gap-2 pr-[72px] md:pr-3">
-            {zoneCompanies.length > 0 && <button onClick={() => setPanel('todo')}
-              className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] min-w-0">
-              <Factory size={14} className="text-[#D97706] shrink-0" />
-              <span className="truncate">
-                {todo.never.length
-                  ? <><b>{todo.never.length}</b> công ty chưa qua{todo.never.filter(r => STATUS_META[r.c.status].rich).length ? ` · ${todo.never.filter(r => STATUS_META[r.c.status].rich).length} KH/Pipeline` : ''}</>
-                  : todo.before.length ? `Đã qua hết — ${todo.before.length} công ty chỉ qua ở lần trước` : 'Đã đi ngang hết công ty trong KCN'}
-              </span>
-              <ChevronRight size={14} className="text-[#C7C7CC] shrink-0" />
-            </button>}
-            {allPieces.length > 0 && nav.mode.kind === 'off' && (
-              <button onClick={startNavAuto}
-                className="pointer-events-auto shrink-0 inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-[#137333] text-white shadow text-[12.5px] font-semibold">
-                <Navigation size={14} fill="currentColor" /> Dẫn đường
+        </>
+      ) : (
+        <>
+          {/* ── Giao diện gọn: cột trên (bên trái khi xoay ngang) ── */}
+          <div className="absolute z-[1100] pointer-events-none flex flex-col gap-2"
+            style={{ left: 'calc(10px + env(safe-area-inset-left))', top: 'calc(10px + env(safe-area-inset-top))', width: sideCol ? colW : `calc(100% - ${20 + RAIL}px)` }}>
+            <div className="flex items-center gap-2">
+              <button onClick={tryClose} aria-label="Thoát" title="Thoát"
+                className="pointer-events-auto w-10 h-10 shrink-0 rounded-full bg-white/95 backdrop-blur shadow-lg flex items-center justify-center text-[#1D1D1F]">
+                <ChevronLeft size={20} />
               </button>
-            )}
-          </div>
-        )}
-        <div className="px-3 pb-1.5 flex items-end justify-between gap-2">
-          <div className="pointer-events-auto rounded-xl bg-white/90 backdrop-blur shadow px-2.5 py-1.5 text-[11px] text-[#3A3A3C] space-y-0.5 max-w-[calc(100%-72px)]">
-            {nav.route && (
-              <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#1A73E8]" /> Đường tới
-                {nav.route.target.kind === 'run' && <><span className="w-4 h-1.5 rounded-full bg-[#7C3AED] ml-1.5" /> Đoạn sẽ khảo sát</>}
-              </div>
-            )}
-            <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#2563EB]" /> Chuyến này
-              {prefs.showOldTracks && <><span className="w-4 h-1.5 rounded-full bg-[#64748B]/60 ml-1.5" /> Lần trước{oldTrips.filter(t => t.id !== recorder.trip?.id).length ? ` (${oldTrips.filter(t => t.id !== recorder.trip?.id).length})` : ''}</>}
+              <button onClick={() => setPanel(panel === 'zone' ? 'none' : 'zone')}
+                className="pointer-events-auto flex-1 min-w-0 h-10 px-3 rounded-full bg-white/95 backdrop-blur shadow-lg text-left flex flex-col justify-center">
+                <span className="block text-[13px] font-semibold text-[#1D1D1F] truncate leading-tight">{zoneName || (zoneId === undefined ? 'Đang tìm KCN gần nhất…' : 'Chọn KCN')}</span>
+                <span className="block text-[10.5px] text-[#3A3A3C] leading-tight tabular-nums truncate">
+                  {tripStatus ?? (coverage?.pct != null ? `Đã đi ${coverage.pct.toLocaleString('vi-VN')}% đường (các lần trước)` : null)}
+                  {(tripStatus || coverage?.pct != null) ? ' · ' : ''}{fix ? `GPS ±${Math.round(fix.acc)} m` : 'Chờ GPS…'}
+                  {recorder.unsynced > 0 && ` · ${recorder.unsynced} đoạn chờ gửi`}
+                </span>
+              </button>
             </div>
-            {prefs.showRoads && coverage && (
-              <>
-                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_TODO_COLORS[prefs.roadTodo].strong }} /> Cần đi, có nhà máy
-                  <span className="text-[#8E8E93]">{fmtDistance(unvisitedFactoryM)}</span></div>
-                <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed shrink-0" style={{ borderColor: ROAD_TODO_COLORS[prefs.roadTodo].light }} /> Cần đi, đường trống
-                  <span className="text-[#8E8E93]">{fmtDistance(Math.max(0, coverage.totalM - coverage.coveredM - unvisitedFactoryM))}</span></div>
-                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_DONE_COLORS[prefs.roadDone].color }} /> Đã đi
-                  <span className="text-[#8E8E93]">{fmtDistance(coverage.coveredM)}</span></div>
-              </>
-            )}
-            {prefs.showRoads && areaStatus.state === 'ok' && !boundary && (
-              <button onClick={() => openAreaFinder(zone)} className="text-[#0A84FF] font-semibold text-left">
-                {zone ? 'KCN chưa có ranh giới — khoanh vùng để chỉ tô đường trong KCN' : 'Chưa chọn KCN — thêm / khoanh vùng khảo sát'}
+            {alerts}
+            {prefs.showRoads && areaStatus.state === 'error' && !showLegend && (
+              <button onClick={() => setAreaReload(n => n + 1)} className="pointer-events-auto self-start rounded-full bg-[#FFECEC] text-[#B00020] text-[11.5px] px-3 py-1.5 shadow font-medium">
+                Chưa tải được mạng đường — bấm để thử lại
               </button>
             )}
-            {prefs.showRoads && areaStatus.state === 'loading' && <div className="flex items-center gap-1 text-[#8E8E93]"><Loader2 size={10} className="animate-spin" /> Đang tải mạng đường…</div>}
-            {prefs.showRoads && areaStatus.state === 'error' && (
-              <div className="text-[#D70015]">
-                Chưa tải được mạng đường{areaRetries.current < 3 ? ' — tự thử lại sau 30 giây' : ''}{' '}
-                <button onClick={() => setAreaReload(n => n + 1)} className="font-semibold underline">Thử ngay</button>
-              </div>
-            )}
-            <div className="text-[#8E8E93] tabular-nums">
-              {fix ? `GPS ±${Math.round(fix.acc)} m` : 'Chờ GPS…'}
-              {hasTrip && passedCount > 0 && ` · ${passedCount} công ty đã qua`}
-              {recorder.unsynced > 0 && ` · ${recorder.unsynced} đoạn chờ gửi`}
-              {recording && prefs.keepAwake && !recorder.wakeLockOn && ' · ⚠ màn hình có thể tự tắt'}
-            </div>
+            {navBanner}
+            {companyCard}
           </div>
-        </div>
-        {(uploading.length > 0 || failedUploads.length > 0 || recorder.syncError) && (
-          <div className="px-3 pb-1.5 space-y-1.5">
-            {uploading.length > 0 && (
-              <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[#1D1D1F]/85 text-white text-[12px] px-3 py-1.5">
-                <Loader2 size={12} className="animate-spin" /> Đang lưu {uploading.length} {uploading.every(u => u.kind === 'voice') ? 'ghi âm' : uploading.every(u => u.kind === 'photo') ? 'ảnh' : 'ảnh / ghi âm'}…
-              </div>
-            )}
-            {failedUploads.map(u => (
-              <div key={u.id} className="pointer-events-auto flex items-center gap-2 rounded-xl bg-[#FFECEC] text-[#B00020] text-[12px] px-3 py-1.5 shadow">
-                <span className="flex-1 min-w-0 truncate">Chưa lưu được {u.kind === 'voice' ? '' : 'ảnh '}“{u.label}”: {u.error}</span>
-                <button onClick={() => runUpload(u)} className="font-semibold shrink-0">Thử lại</button>
-                <button onClick={() => { if (window.confirm(`Bỏ ${u.kind === 'voice' ? 'bản ghi âm' : 'ảnh'} này (chưa được lưu)?`)) setUploads(list => list.filter(j => j.id !== u.id)); }} className="shrink-0" aria-label="Bỏ"><X size={14} /></button>
-              </div>
-            ))}
-            {recorder.syncError && (
-              <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-[#FFF4E5] text-[#8A4B00] text-[12px] px-3 py-1.5 shadow">
-                <span className="flex-1 min-w-0">Vết GPS chưa gửi được (đã lưu trong máy, sẽ gửi lại khi có mạng): {recorder.syncError}</span>
-                <button onClick={() => void recorder.retrySync()} className="font-semibold shrink-0">Gửi lại</button>
+
+          {/* ── Dưới trái: chú thích / ghi âm / đang lưu / nút Bắt đầu ── */}
+          <div className="absolute z-[1100] pointer-events-none flex flex-col items-start gap-1.5"
+            style={{ left: 'calc(10px + env(safe-area-inset-left))', bottom: 'calc(10px + env(safe-area-inset-bottom))', width: sideCol ? colW : `calc(100% - ${20 + RAIL}px)` }}>
+            {showLegend && legendBox}
+            {audioBar}
+            {uploadsBox}
+            {!hasTrip && (
+              <div className="pointer-events-auto flex items-center gap-1.5 rounded-[18px] bg-white/95 backdrop-blur-xl shadow-lg p-1.5">
+                <button onClick={openHistory} aria-label="Lịch sử" className="w-10 h-10 rounded-xl bg-[#F2F2F7] text-[#1D1D1F] flex items-center justify-center"><History size={18} /></button>
+                <button onClick={requestStart} disabled={busy || !!pending}
+                  className="h-10 px-4 rounded-xl bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap">
+                  {busy ? <Loader2 size={17} className="animate-spin" /> : <Play size={16} fill="currentColor" />} Bắt đầu khảo sát
+                </button>
               </div>
             )}
           </div>
-        )}
-        <div className="pointer-events-auto mx-3 md:mx-auto md:w-[560px] mb-3 rounded-[22px] bg-white/95 backdrop-blur-xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2 flex items-center gap-2">
-          {!hasTrip ? (
-            <>
-              <BarBtn onClick={() => { setHistoryInit({ tab: 'trips', filter: null }); setPanel('history'); }} label="Lịch sử" narrow><History size={20} /></BarBtn>
-              <button onClick={requestStart} disabled={busy || !!pending}
-                className="flex-1 min-w-0 h-14 rounded-2xl bg-[#0A84FF] text-white text-[15px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition disabled:opacity-50 whitespace-nowrap">
-                {busy ? <Loader2 size={20} className="animate-spin" /> : <Play size={19} fill="currentColor" />} Bắt đầu<span className="hidden min-[390px]:inline"> khảo sát</span>
-              </button>
-              <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} narrow><Mic size={20} /></BarBtn>
-              <BarBtn onClick={() => beginCapture(null)} label="Chụp" narrow><Camera size={20} /></BarBtn>
-            </>
-          ) : (
-            <>
-              {recording
-                ? <BarBtn onClick={() => void recorder.pause()} label="Tạm dừng" grow><Pause size={20} /></BarBtn>
-                : <BarBtn onClick={() => recorder.resume(prefs.keepAwake)} label="Đi tiếp" tone="blue" grow><Play size={20} /></BarBtn>}
-              <BarBtn onClick={() => beginCapture(null)} label="Chụp chỉ tiêu" tone="primary" grow><Camera size={21} /></BarBtn>
-              <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} grow><Mic size={20} /></BarBtn>
-              <BarBtn onClick={() => beginCapture(null, true)} label="Ảnh có sẵn" grow><ImagePlus size={20} /></BarBtn>
-              <BarBtn onClick={() => void finish()} label="Kết thúc" tone="red" disabled={busy} grow><Square size={18} fill="currentColor" /></BarBtn>
-            </>
-          )}
-        </div>
-      </div>
+
+          {/* ── Mép phải: nút luôn hiện (chọn trong Cài đặt) + bám vị trí + la bàn ── */}
+          <div className="absolute z-[1050] pointer-events-none flex flex-col-reverse flex-wrap-reverse content-start gap-2"
+            style={{ right: 'calc(10px + env(safe-area-inset-right))', bottom: 'calc(10px + env(safe-area-inset-bottom))', top: 'calc(10px + env(safe-area-inset-top))' }}>
+            {railItems.map(it => <RailBtn key={it.id} item={it} />)}
+            <RailBtn item={{ id: 'recenter', label: follow ? 'Đang bám' : 'Về vị trí', icon: headingUp ? <Navigation size={21} fill="currentColor" /> : <LocateFixed size={22} />, active: follow, onClick: recenter }} />
+            <RailBtn item={{ id: 'orientation', label: prefs.mapOrientation === 'heading' ? 'Hướng đi' : 'Bắc trên', icon: null, onClick: toggleOrientation }}>{needle}</RailBtn>
+          </div>
+
+          <AssistiveTouch items={menuItems} pos={prefs.assistive} onMove={p => setPref({ assistive: p })} view={viewBox}
+            title={[zoneName || 'Khảo sát KCN', hasTrip ? (recording ? 'đang ghi' : 'tạm dừng') : null].filter(Boolean).join(' · ')} />
+        </>
+      )}
 
       {flashMsg && (
-        <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(150px+env(safe-area-inset-bottom))] z-[1400] max-w-[90vw] rounded-xl bg-[#1D1D1F]/90 text-white text-[13px] px-4 py-2.5 shadow-lg pointer-events-none text-center">
+        <div className="absolute -translate-x-1/2 z-[1400] max-w-[90vw] rounded-xl bg-[#1D1D1F]/90 text-white text-[13px] px-4 py-2.5 shadow-lg pointer-events-none text-center"
+          style={compact
+            ? { left: sideCol ? colW + 10 + (viewBox.w - colW - 10 - RAIL) / 2 : '50%', bottom: 'calc(16px + env(safe-area-inset-bottom))', maxWidth: sideCol ? viewBox.w - colW - RAIL - 20 : undefined }
+            : { left: '50%', bottom: 'calc(150px + env(safe-area-inset-bottom))' }}>
           {flashMsg}
         </div>
       )}
@@ -1580,7 +1758,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           onResults={list => setScanPlaces(list)}
           onFocus={p => {
             setPanel('none');
-            setFollow(false);
+            stopFollow();
             mapRef.current?.setView([p.lat, p.lng], Math.max(mapRef.current.getZoom(), 17));
             const hit = allCompanies.find(c => c.key === `o:scan-${p.key}`) ?? allCompanies.find(c => c.points.some(q => distM(q, p) < 60) && c.name === p.name);
             if (hit) { setPinnedKey(hit.key); setExpanded(true); }
@@ -1620,7 +1798,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           onShowOnMap={voiceSheet.lat != null && voiceSheet.lng != null ? () => {
             const n = voiceSheet;
             setVoiceSheet(null);
-            setFollow(false);
+            stopFollow();
             mapRef.current?.setView([n.lat!, n.lng!], Math.max(mapRef.current.getZoom(), 18));
           } : null}
           onSaved={n => { setVoiceNotes(list => list.map(x => (x.id === n.id ? n : x))); setVoiceSheet(n); }}
@@ -1687,10 +1865,15 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   );
 }
 
-function MapBtn({ onClick, label, active, children }: { onClick: () => void; label: string; active?: boolean; children: ReactNode }) {
+function MapBtn({ onClick, label, active, light, children }: {
+  onClick: () => void; label: string; active?: boolean;
+  /** đang bật mà vẫn nền trắng, viền xanh (nút la bàn — kim đỏ / xám trên nền xanh khó nhìn) */ light?: boolean;
+  children: ReactNode;
+}) {
+  const on = active ? (light ? 'bg-white text-[#1D1D1F] ring-2 ring-[#0A84FF]' : 'bg-[#0A84FF] text-white') : 'bg-white/95 backdrop-blur text-[#1D1D1F]';
   return (
     <button onClick={onClick} aria-label={label} title={label}
-      className={`w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center active:scale-95 transition ${active ? 'bg-[#0A84FF] text-white' : 'bg-white/95 backdrop-blur text-[#1D1D1F]'}`}>
+      className={`w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center active:scale-95 transition ${on}`}>
       {children}
     </button>
   );

@@ -33,9 +33,11 @@ interface Props {
   onSound: (next: NavSound) => void;
   onReplan: () => void;
   onStop: () => void;
+  /** Giao diện gọn (màn ngang): băng thấp hơn, chữ nhỏ hơn để chừa chỗ cho bản đồ */
+  compact?: boolean;
 }
 
-export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop }: Props) {
+export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop, compact }: Props) {
   if (mode.kind === 'off') return null;
   const target = route?.target;
   const onRun = target?.kind === 'run' && toApproach != null && toApproach <= 0;
@@ -46,7 +48,8 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
       : status === 'no-target' ? 'Đã đi hết đường trong KCN'
       : mode.kind === 'auto' ? 'Chưa tìm được đoạn chưa đi để dẫn tới' : 'Không tìm được đường tới công ty'
     : arriving
-      ? target?.kind === 'run' ? `Đi hết đoạn chưa đi${target.name ? ` trên ${target.name}` : ''}` : `Đến ${target?.kind === 'point' ? target.name : ''}`
+      ? target?.kind === 'run' ? `Đi hết đoạn chưa đi${target.name ? ` trên ${target.name}` : ''}`
+        : target?.kind === 'tour' ? 'Đi tiếp tới hết lộ trình' : `Đến ${target?.kind === 'point' ? target.name : ''}`
       : next?.text ?? 'Đi thẳng';
   const bigDist = !route ? null : arriving ? remaining : next ? distToNext : null;
   const sub = !route
@@ -55,31 +58,33 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
       ? onRun
         ? `Đang đi đoạn chưa đi · còn ${navDist(remaining ?? 0)}`
         : `Tới đoạn chưa đi ${navDist(toApproach ?? 0)}${target.name ? ` · ${target.name}` : ''} · đoạn dài ${navDist(target.len)}${target.factory ? ' · có nhà máy' : ''}`
+      : target?.kind === 'tour' ? `Lộ trình 1 lượt · còn ${navDist(remaining ?? 0)} · qua ${navDist(target.len)} đường chưa đi`
       : target?.kind === 'point' ? `Tới ${target.name} · còn ${navDist(remaining ?? 0)}` : '';
+  const iconSize = compact ? 24 : 30;
 
   return (
     <div className="pointer-events-auto rounded-2xl overflow-hidden shadow-xl">
-      <div className="bg-[#137333] text-white px-3 py-2.5 flex items-center gap-3">
-        <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+      <div className={`bg-[#137333] text-white flex items-center ${compact ? 'px-2.5 py-1.5 gap-2.5' : 'px-3 py-2.5 gap-3'}`}>
+        <div className={`${compact ? 'w-10 h-10 rounded-lg' : 'w-12 h-12 rounded-xl'} bg-white/15 flex items-center justify-center shrink-0`}>
           {!route
-            ? status === 'waiting-gps' ? <Loader2 size={26} className="animate-spin" /> : <Route size={26} />
-            : next && !arriving ? ICON[next.kind](30) : arriving && target?.kind === 'run' ? <ArrowUp size={30} strokeWidth={2.6} /> : next ? ICON[next.kind](30) : <ArrowUp size={30} strokeWidth={2.6} />}
+            ? status === 'waiting-gps' ? <Loader2 size={iconSize - 4} className="animate-spin" /> : <Route size={iconSize - 4} />
+            : next && !arriving ? ICON[next.kind](iconSize) : arriving && target?.kind !== 'point' ? <ArrowUp size={iconSize} strokeWidth={2.6} /> : next ? ICON[next.kind](iconSize) : <ArrowUp size={iconSize} strokeWidth={2.6} />}
         </div>
         <div className="flex-1 min-w-0">
-          {bigDist != null && <div className="text-[22px] font-bold leading-none tabular-nums">{navDist(bigDist)}</div>}
-          <div className={`${bigDist != null ? 'text-[14.5px] mt-1' : 'text-[16px]'} font-semibold leading-snug line-clamp-2`}>{headline}</div>
+          {bigDist != null && <div className={`${compact ? 'text-[18px]' : 'text-[22px]'} font-bold leading-none tabular-nums`}>{navDist(bigDist)}</div>}
+          <div className={`${bigDist != null ? (compact ? 'text-[13px] mt-0.5 line-clamp-1' : 'text-[14.5px] mt-1 line-clamp-2') : (compact ? 'text-[14px] line-clamp-1' : 'text-[16px] line-clamp-2')} font-semibold leading-snug`}>{headline}</div>
         </div>
-        <button onClick={onStop} className="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center shrink-0" aria-label="Tắt dẫn đường"><X size={18} /></button>
+        <button onClick={onStop} className={`${compact ? 'w-8 h-8' : 'w-9 h-9'} rounded-full bg-white/15 flex items-center justify-center shrink-0`} aria-label="Tắt dẫn đường"><X size={compact ? 16 : 18} /></button>
       </div>
-      <div className="bg-[#0D5A28] text-white/90 px-3 py-1.5 flex items-center gap-2 text-[12px]">
+      <div className={`bg-[#0D5A28] text-white/90 flex items-center gap-2 ${compact ? 'px-2.5 py-1 text-[11.5px]' : 'px-3 py-1.5 text-[12px]'}`}>
         <div className="flex-1 min-w-0 truncate">
           {after && after.kind !== 'arrive' && route
             ? <>Sau đó: <b>{after.text}</b>{sub ? ` · ${sub}` : ''}</>
             : sub}
         </div>
-        <button onClick={onReplan} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 shrink-0" aria-label="Tìm đường khác" title="Tìm đường khác"><RefreshCw size={15} /></button>
+        <button onClick={onReplan} className={`${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full flex items-center justify-center hover:bg-white/10 shrink-0`} aria-label="Tìm đường khác" title="Tìm đường khác"><RefreshCw size={15} /></button>
         <button onClick={() => onSound(nextNavSound(sound))}
-          className="h-8 pl-2 pr-2.5 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium"
+          className={`${compact ? 'h-7' : 'h-8'} pl-2 pr-2.5 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}
           aria-label={`Âm thanh: ${NAV_SOUND_LABEL[sound]} — bấm để đổi`} title={`Âm thanh: ${NAV_SOUND_LABEL[sound]} — bấm để đổi`}>
           {sound === 'voice' ? <Volume2 size={15} /> : sound === 'beep' ? <Bell size={15} /> : <VolumeX size={15} />}
           {sound === 'voice' ? 'Giọng' : sound === 'beep' ? 'Bíp' : 'Tắt'}

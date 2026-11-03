@@ -62,7 +62,7 @@ export function nodeDegree(g: RoadGraph, n: number): number {
   return seen.size;
 }
 
-const canGo = (e: GraphEdge, from: number) => e.dir === 0 || (e.dir === 1 ? e.a === from : e.b === from);
+export const canGo = (e: GraphEdge, from: number) => e.dir === 0 || (e.dir === 1 ? e.a === from : e.b === from);
 
 // ── Bám vị trí vào đường ────────────────────────────────────────────────────
 export interface Snap {
@@ -122,7 +122,7 @@ export interface Search {
 /** Quãng "phạt" khi phải quay đầu ngay lúc đang chạy (m) — đường phía trước dài hơn chút vẫn được ưu tiên. */
 export const UTURN_PENALTY_M = 120;
 
-class MinHeap {
+export class MinHeap {
   private k: number[] = [];
   private v: number[] = [];
   get size() { return this.k.length; }
@@ -200,7 +200,7 @@ export function shortestFrom(g: RoadGraph, start: Snap, heading: number | null =
 }
 
 /** Các nút từ chỗ xuất phát tới `node` (nút đầu là 1 trong 2 đầu khúc đang đứng). */
-function nodesTo(s: Search, node: number): number[] {
+export function nodesTo(s: Search, node: number): number[] {
   const out: number[] = [];
   let cur = node;
   for (let guard = 0; cur >= 0 && guard < 1e6; guard++) {
@@ -297,6 +297,8 @@ export interface Maneuver {
 
 export type NavTarget =
   | { kind: 'run'; len: number; factory: boolean; pieces: number[]; name: string | null }
+  /** Lộ trình 1 lượt qua mọi khúc chưa đi (len = tổng chiều dài đường chưa đi sẽ qua) */
+  | { kind: 'tour'; len: number; pieces: number[] }
   | { kind: 'point'; name: string; point: LatLng };
 
 export interface NavRoute {
@@ -308,6 +310,10 @@ export interface NavRoute {
   approach: number;
   maneuvers: Maneuver[];
   target: NavTarget;
+  /** cạnh (khúc đường) của đoạn coords[i-1] → coords[i]; -1 = đoạn từ chỗ đứng / tới điểm đích */
+  edgeAt?: number[];
+  /** đoạn coords[i-1] → coords[i] là đường chưa đi sẽ khảo sát (lần đầu qua) — để tô tím; chỉ có ở lộ trình 1 lượt */
+  coverAt?: boolean[];
 }
 
 const TURN_TEXT: Record<'left' | 'right' | 'slight-left' | 'slight-right' | 'uturn', string> = {
@@ -339,12 +345,14 @@ function dirAround(coords: readonly [number, number][], cum: readonly number[], 
 
 /**
  * Ghép lộ trình từ dãy nút (+ điểm đầu = chỗ đứng, điểm cuối tuỳ chọn) và tính các chỗ rẽ: báo ở ngã ba / ngã tư
- * (nút ≥ 3 ngả) khi góc rẽ ≥ 35°, và ở góc cua sang đường khác (≥ 60°); khúc cong trên cùng 1 đường thì không báo.
+ * (nút ≥ 3 ngả) khi góc rẽ ≥ 35°, ở góc cua sang đường khác (≥ 60°), và chỗ phải quay đầu (đi ngược lại đúng khúc vừa
+ * đi — cuối ngõ cụt); khúc cong trên cùng 1 đường thì không báo.
  */
-function assemble(g: RoadGraph, startPt: [number, number], nodes: readonly number[], endPt: [number, number] | null, heading: number | null) {
+export function assemble(g: RoadGraph, startPt: [number, number], nodes: readonly number[], endPt: [number, number] | null, heading: number | null) {
   const coords: [number, number][] = [startPt];
   const nodeAt: number[] = [-1];
   const wayAt: (number | null)[] = [null]; // đường của đoạn đi TỚI điểm i
+  const edgeAt: number[] = [-1]; // cạnh của đoạn đi TỚI điểm i
   const edgeBetween = (u: number, v: number) => g.adj[u].find(e => (g.edges[e].a === u && g.edges[e].b === v) || (g.edges[e].b === u && g.edges[e].a === v));
   nodes.forEach((n, k) => {
     const p = g.pts[n];
@@ -354,8 +362,9 @@ function assemble(g: RoadGraph, startPt: [number, number], nodes: readonly numbe
     nodeAt.push(n);
     const e = k > 0 ? edgeBetween(nodes[k - 1], n) : undefined;
     wayAt.push(e != null ? g.edges[e].way : null);
+    edgeAt.push(e ?? -1);
   });
-  if (endPt) { coords.push(endPt); nodeAt.push(-1); wayAt.push(wayAt[wayAt.length - 1] ?? null); }
+  if (endPt) { coords.push(endPt); nodeAt.push(-1); wayAt.push(wayAt[wayAt.length - 1] ?? null); edgeAt.push(-1); }
   const cum = [0];
   const pr = projector(startPt[0], startPt[1]);
   for (let i = 1; i < coords.length; i++) {
@@ -378,6 +387,11 @@ function assemble(g: RoadGraph, startPt: [number, number], nodes: readonly numbe
     const n = nodeAt[i];
     if (n < 0) continue;
     const deg = nodeDegree(g, n);
+    // Đi ngược lại đúng khúc vừa tới (cuối ngõ cụt / hết đoạn phải quay ra) → "Quay đầu", ở nút mấy ngả cũng báo
+    if (deg < 3 && nodeAt[i - 1] >= 0 && nodeAt[i - 1] === nodeAt[i + 1]) {
+      maneuvers.push({ s: cum[i], kind: 'uturn', text: deg <= 1 ? 'Cuối đường — quay đầu' : 'Quay đầu' });
+      continue;
+    }
     const way = wayAt[i + 1];
     const corner = deg === 2 && way != null && wayAt[i] != null && way !== wayAt[i];
     if (deg < 3 && !corner) continue;
@@ -390,7 +404,7 @@ function assemble(g: RoadGraph, startPt: [number, number], nodes: readonly numbe
     const road = way != null ? g.wayName.get(way) : undefined;
     maneuvers.push({ s: cum[i], kind, text: `${TURN_TEXT[kind]}${road ? ` vào ${road}` : ''}` });
   }
-  return { coords, cum, nodeAt, total: cum[cum.length - 1] ?? 0, maneuvers };
+  return { coords, cum, nodeAt, edgeAt, total: cum[cum.length - 1] ?? 0, maneuvers };
 }
 
 export interface PlanOpts {
@@ -506,6 +520,26 @@ export function routeProgress(route: NavRoute, p: LatLng, hintS = 0): RouteProgr
   if (near.off <= 30) return near;
   const all = scan(-Infinity, Infinity);
   return all.off < near.off ? all : near;
+}
+
+/**
+ * Điểm trên lộ trình ở vị trí s (m) + hướng của lộ trình tại đó — để mũi tên chạy êm dọc theo đường đang dẫn
+ * (GPS lệch ngang vài mét không làm mũi tên lắc qua lại).
+ */
+export function pointAlong(route: NavRoute, s: number): { lat: number; lng: number; bearing: number | null } {
+  const { coords, cum } = route;
+  if (coords.length === 1) return { lat: coords[0][0], lng: coords[0][1], bearing: null };
+  const x = Math.max(0, Math.min(route.total, s));
+  let lo = 1, hi = coords.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] < x) lo = m + 1; else hi = m; }
+  const i = lo;
+  const seg = cum[i] - cum[i - 1];
+  const t = seg > 0 ? (x - cum[i - 1]) / seg : 1;
+  const a = coords[i - 1], b = coords[i];
+  return {
+    lat: a[0] + (b[0] - a[0]) * t, lng: a[1] + (b[1] - a[1]) * t,
+    bearing: seg > 0.5 ? bearing(ll(a), ll(b)) : dirAround(coords, cum, i, true),
+  };
 }
 
 /** Chỗ rẽ kế tiếp (và chỗ sau đó) tính từ vị trí s. */

@@ -16,6 +16,19 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-kcn-survey-smooth-nav',
+    date: '2026-11-04',
+    title: 'Khảo sát KCN',
+    features: [
+      'Mũi tên vị trí và bản đồ chạy mượt như Google Maps; rẽ thì bản đồ xoay dần, không còn giật',
+      'Dẫn đường "Đi 1 lượt hết đường": 1 lộ trình qua mọi đường chưa đi trong KCN, hạn chế đi lặp',
+      'Lộ trình: 600 m sắp đi tô đậm, phần sau mờ; đường 1 chiều đi đúng chiều; cuối ngõ cụt báo quay đầu',
+      'Đang xoay theo hướng đi mà kéo / zoom / căn giữa bản đồ thì vẫn giữ kiểu xoay, không tự quay về Bắc',
+      'Xoay ngang điện thoại: giao diện gọn, bản đồ gần kín màn hình, chức năng gom vào 1 nút nổi',
+      'Cài đặt chọn nút luôn hiện ở mép phải; nút nổi kéo tới chỗ tiện tay, tự dính mép trái / phải',
+    ],
+  },
+  {
     id: '2026-11-04-image-links-r2',
     date: '2026-11-04',
     title: 'Lưu trữ ảnh',

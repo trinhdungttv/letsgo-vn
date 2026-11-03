@@ -6,8 +6,10 @@ import type { LatLng } from '../../../lib/geo';
 import {
   nextManeuvers, planNextRun, planToPoint, routeProgress, spokenInstruction, type NavRoute, type RoadGraph,
 } from '../../../lib/kcnSurvey/navigate';
+import { planCoverTour, tourOverhead } from '../../../lib/kcnSurvey/coverTour';
+import { fmtDistance } from '../../../lib/kcnSurvey/track';
 import type { GpsFix } from './useSurveyRecorder';
-import type { NavSound } from './surveyData';
+import type { NavSound, NavStrategy } from './surveyData';
 
 export type NavMode = { kind: 'off' } | { kind: 'auto' } | { kind: 'point'; name: string; point: LatLng };
 export type NavStatus = 'off' | 'waiting-gps' | 'no-road' | 'no-target' | 'routing';
@@ -21,6 +23,8 @@ interface Inputs {
   targets: readonly number[];
   scores: ArrayLike<number>;
   preferFactories: boolean;
+  /** tour = 1 lộ trình đi qua hết đường chưa đi, ít lặp · nearest = từng đoạn đáng đi nhất gần nhất */
+  strategy: NavStrategy;
   sound: NavSound;
   say: (msg: string) => void;
 }
@@ -105,7 +109,7 @@ function useSpeech(enabled: boolean) {
   }, [enabled]);
 }
 
-export function useSurveyNavigation({ graph, fix, course, targets, scores, preferFactories, sound, say }: Inputs) {
+export function useSurveyNavigation({ graph, fix, course, targets, scores, preferFactories, strategy, sound, say }: Inputs) {
   const [mode, setMode] = useState<NavMode>({ kind: 'off' });
   const [route, setRoute] = useState<NavRoute | null>(null);
   const [progress, setProgress] = useState<{ s: number; off: number }>({ s: 0, off: 0 });
@@ -118,8 +122,8 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     else if (sound === 'beep') chime.play(kind, side);
   }, [sound, speak, chime]);
 
-  const inputsRef = useRef({ graph, targets, scores, preferFactories, course });
-  inputsRef.current = { graph, targets, scores, preferFactories, course };
+  const inputsRef = useRef({ graph, targets, scores, preferFactories, course, strategy });
+  inputsRef.current = { graph, targets, scores, preferFactories, course, strategy };
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const routeRef = useRef(route);
@@ -128,21 +132,26 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
   const lastPlanAt = useRef(0);
   const offCount = useRef(0);
   const sRef = useRef(0);
+  /** Đoạn lộ trình đã đi qua tới đâu (chỉ số coords) — khúc đi qua rồi thì tính lại đường không dẫn lại */
+  const passIdx = useRef(1);
   const spoken = useRef<Set<string>>(new Set());
   const routeId = useRef(0);
 
   const plan = useCallback((p: LatLng, why: 'start' | 'reroute' | 'next' | 'coverage') => {
     const m = modeRef.current;
-    const { graph: g, targets: t, scores: sc, preferFactories: pf, course: h } = inputsRef.current;
+    const { graph: g, targets: t, scores: sc, preferFactories: pf, course: h, strategy: st } = inputsRef.current;
     if (m.kind === 'off') return;
     lastPlanAt.current = Date.now();
     if (!g || !g.edges.length) { setRoute(null); setStatus('no-road'); return; }
     const r = m.kind === 'auto'
-      ? planNextRun(g, p, { heading: h, targets: t, scores: sc, preferFactories: pf, skip: skipRef.current })
+      // 1 lượt: không lập được (quá nhiều khúc / chỉ còn khúc lẻ) thì dẫn từng đoạn như cũ
+      ? (st === 'tour' ? planCoverTour(g, p, { heading: h, targets: t, skip: skipRef.current }) : null)
+        ?? planNextRun(g, p, { heading: h, targets: t, scores: sc, preferFactories: pf, skip: skipRef.current })
       : planToPoint(g, p, m.point, m.name, h);
     routeId.current += 1;
     spoken.current = new Set();
     sRef.current = 0;
+    passIdx.current = 1;
     offCount.current = 0;
     setRoute(r);
     setProgress({ s: 0, off: 0 });
@@ -156,8 +165,11 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     }
     setStatus('routing');
     const first = r.maneuvers[0];
+    if (r.target.kind === 'tour' && (why === 'start' || why === 'next')) {
+      say(`Lộ trình 1 lượt ${fmtDistance(r.total)} — qua ${fmtDistance(r.target.len)} đường chưa đi, đi lặp / nối ${fmtDistance(tourOverhead(r))}`);
+    }
     if (why === 'reroute') announce('Đã tính lại đường', 'reroute');
-    else if (why === 'next') announce(`Đoạn tiếp theo cách ${Math.max(50, Math.round(r.approach / 50) * 50)} mét`, 'soon');
+    else if (why === 'next') announce(r.target.kind === 'tour' ? 'Còn vài khúc chưa đi, dẫn tiếp' : `Đoạn tiếp theo cách ${Math.max(50, Math.round(r.approach / 50) * 50)} mét`, 'soon');
     else if (why === 'start' && first && sound === 'voice') speak(first.s < 40 ? first.text : spokenInstruction(first, first.s));
   }, [say, speak, announce, sound]);
 
@@ -201,11 +213,19 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     }
     const s = sRef.current;
     setProgress({ s, off: pr.off });
+    // Khúc đã đi qua trên lộ trình → không dẫn lại khi tính lại đường (GPS lệch có khi chưa tô kịp là "đã đi")
+    if (r.edgeAt) {
+      while (passIdx.current < r.coords.length && r.cum[passIdx.current] <= s - 3) {
+        const e = r.edgeAt[passIdx.current];
+        if (e >= 0) skipRef.current.add(e);
+        passIdx.current += 1;
+      }
+    }
     // Tới nơi
     if (s >= r.total - 12) {
-      if (mode.kind === 'auto' && r.target.kind === 'run') {
+      if (mode.kind === 'auto' && r.target.kind !== 'point') {
         r.target.pieces.forEach(i => skipRef.current.add(i));
-        announce('Hết đoạn chưa đi', 'done');
+        announce(r.target.kind === 'tour' ? 'Hết lộ trình' : 'Hết đoạn chưa đi', 'done');
         plan(p, 'next');
       } else if (mode.kind === 'point') {
         announce(`Đã đến ${mode.name}`, 'done');

@@ -125,8 +125,18 @@ export interface SurveyPrefs {
   compass: boolean;
   /** Âm thanh dẫn đường: tắt hẳn · chỉ tiếng bíp báo chỗ rẽ · đọc to bằng giọng nói */
   navSound: NavSound;
-  /** Dẫn đường ưu tiên đoạn có nhà máy hai bên (đường trống để sau) */
+  /** Dẫn đường ưu tiên đoạn có nhà máy hai bên (đường trống để sau) — chỉ ở kiểu "Đoạn gần nhất" */
   navPreferFactories: boolean;
+  /** Kiểu dẫn đường: 1 lộ trình đi 1 lượt hết đường chưa đi (ít lặp) · từng đoạn gần nhất */
+  navStrategy: NavStrategy;
+  /** Giao diện gọn (bản đồ rộng, chức năng gom vào nút nổi): tự bật khi xoay ngang · luôn bật · tắt */
+  compactMode: CompactMode;
+  /** Giao diện gọn: nút luôn hiện ở mép phải (các chức năng khác nằm trong nút nổi) */
+  pinned: QuickActionId[];
+  /** Vị trí nút nổi: mép trái / phải + độ cao (0..1 chiều cao màn hình) */
+  assistive: { side: 'left' | 'right'; y: number };
+  /** Thu gọn ô chú thích màu đường (giao diện thường) */
+  legendCollapsed: boolean;
   /** Ghi âm khảo sát: lọc tạp âm (gió, tiếng xe), làm rõ giọng nói */
   voiceEnhance: boolean;
   /** Màu đường cần đi (chưa đi) */
@@ -136,6 +146,11 @@ export interface SurveyPrefs {
 }
 
 export type NavSound = 'off' | 'beep' | 'voice';
+export type NavStrategy = 'tour' | 'nearest';
+export type CompactMode = 'auto' | 'always' | 'never';
+/** Chức năng gắn được lên mép phải ở giao diện gọn */
+export type QuickActionId = 'photo' | 'voice' | 'library' | 'pause' | 'finish' | 'nav' | 'todo' | 'zoom' | 'fit' | 'satellite' | 'legend' | 'history' | 'settings';
+export const QUICK_ACTION_IDS: QuickActionId[] = ['photo', 'voice', 'library', 'pause', 'finish', 'nav', 'todo', 'zoom', 'fit', 'satellite', 'legend', 'history', 'settings'];
 export const NAV_SOUND_LABEL: Record<NavSound, string> = { off: 'Tắt hẳn', beep: 'Chỉ tiếng bíp', voice: 'Giọng đọc' };
 /** Nút loa trên băng dẫn đường: bấm lần lượt Tắt → Bíp → Giọng đọc → Tắt */
 export const nextNavSound = (s: NavSound): NavSound => (s === 'off' ? 'beep' : s === 'beep' ? 'voice' : 'off');
@@ -160,6 +175,7 @@ export const DEFAULT_SURVEY_PREFS: SurveyPrefs = {
   followZoom: 17, smartZoom: true, mapOrientation: 'heading', radiusM: 150, showOldTracks: true, showRoads: true, includeService: false,
   areaRadiusM: 2000, clipToZone: true, labels: true, satellite: false, keepAwake: true, vibrate: true, showPhotos: true, maxAccuracy: 35,
   compass: true, navSound: 'voice', navPreferFactories: true, roadTodo: 'orange', roadDone: 'green', voiceEnhance: true,
+  navStrategy: 'tour', compactMode: 'auto', pinned: ['photo', 'voice'], assistive: { side: 'right', y: 0 }, legendCollapsed: false,
 };
 
 const PREFS_KEY = 'lgvn_kcn_survey_prefs_v1';
@@ -174,6 +190,13 @@ export function parseSurveyPrefs(raw: unknown): SurveyPrefs {
   if (!(p.roadDone in ROAD_DONE_COLORS)) p.roadDone = DEFAULT_SURVEY_PREFS.roadDone;
   if (p.mapOrientation !== 'heading' && p.mapOrientation !== 'north') p.mapOrientation = DEFAULT_SURVEY_PREFS.mapOrientation;
   if (typeof p.smartZoom !== 'boolean') p.smartZoom = DEFAULT_SURVEY_PREFS.smartZoom;
+  if (p.navStrategy !== 'tour' && p.navStrategy !== 'nearest') p.navStrategy = DEFAULT_SURVEY_PREFS.navStrategy;
+  if (!['auto', 'always', 'never'].includes(p.compactMode)) p.compactMode = DEFAULT_SURVEY_PREFS.compactMode;
+  p.pinned = Array.isArray(p.pinned) ? QUICK_ACTION_IDS.filter(id => (p.pinned as unknown[]).includes(id)) : [...DEFAULT_SURVEY_PREFS.pinned];
+  const a = p.assistive as { side?: unknown; y?: unknown } | undefined;
+  p.assistive = a && (a.side === 'left' || a.side === 'right') && typeof a.y === 'number' && Number.isFinite(a.y)
+    ? { side: a.side, y: Math.max(0, Math.min(1, a.y)) } : { ...DEFAULT_SURVEY_PREFS.assistive };
+  if (typeof p.legendCollapsed !== 'boolean') p.legendCollapsed = false;
   // "Tự zoom theo tốc độ" cũ (mặc định tắt) → thay bằng tự zoom kiểu dẫn đường (mặc định bật)
   delete p.navVoice;
   delete p.autoZoom;

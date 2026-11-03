@@ -1,7 +1,11 @@
 // Cài đặt chế độ Khảo sát KCN — thu phóng bản đồ khi di chuyển, bán kính nhận diện công ty, lớp hiển thị.
 import type { ReactNode } from 'react';
 import { Loader2, Maximize, Minus, Plus, RefreshCw, X } from 'lucide-react';
-import { NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type NavSound, type RoadDoneColor, type RoadTodoColor, type SurveyPrefs } from './surveyData';
+import {
+  DEFAULT_SURVEY_PREFS, NAV_SOUND_LABEL, QUICK_ACTION_IDS, ROAD_DONE_COLORS, ROAD_TODO_COLORS,
+  type CompactMode, type NavSound, type NavStrategy, type RoadDoneColor, type RoadTodoColor, type SurveyPrefs,
+} from './surveyData';
+import { QUICK_META } from './SurveyQuickMenu';
 import type { CompassStatus } from './useDeviceHeading';
 
 export interface AreaStatus {
@@ -117,9 +121,9 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
             </div>
             <div className="text-[11.5px] text-[#8E8E93] leading-snug">
               {prefs.mapOrientation === 'heading'
-                ? 'Giống Google Maps: hướng đang đi luôn ở phía trên, mũi tên nằm phần dưới màn hình để nhìn xa phía trước. Chạm vào bản đồ để xem tự do; bấm ◎ để bám lại.'
+                ? 'Giống Google Maps: hướng đang đi luôn ở phía trên, mũi tên nằm phần dưới màn hình để nhìn xa phía trước. Kéo / chụm ngón để xem tự do — bản đồ đứng yên ở góc đang xoay, không tự quay; bấm ◎ để bám lại.'
                 : 'Hướng Bắc cố định ở trên, mũi tên xoay theo hướng đi.'}
-              {' '}Nút ◎ khi đang bám cũng đổi qua lại 2 kiểu này.
+              {' '}Nút la bàn trên bản đồ đổi qua lại 2 kiểu này.
             </div>
           </div>
           <Switch on={prefs.smartZoom} onChange={v => onChange({ smartZoom: v })} label="Tự zoom khi di chuyển"
@@ -148,8 +152,61 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
               {prefs.navSound === 'voice' && 'Đọc to "Sau 150 mét, rẽ trái vào Đường số 5" bằng giọng tiếng Việt có sẵn trong máy — nhớ mở âm lượng.'}
             </div>
           </div>
-          <Switch on={prefs.navPreferFactories} onChange={v => onChange({ navPreferFactories: v })} label="Dẫn tới đường có nhà máy trước"
-            hint="Đường trống (không có công ty hai bên) để sau cùng" />
+          <div className="py-3 space-y-1.5">
+            <div className="text-[13px] text-[#1D1D1F]">Kiểu dẫn đường</div>
+            <div className="grid grid-cols-2 p-0.5 rounded-lg bg-[#E5E5EA]">
+              {([['tour', 'Đi 1 lượt hết đường'], ['nearest', 'Từng đoạn gần nhất']] as [NavStrategy, string][]).map(([v, label]) => (
+                <button key={v} onClick={() => onChange({ navStrategy: v })}
+                  className={`h-8 rounded-md text-[12.5px] font-medium transition ${prefs.navStrategy === v ? 'bg-white shadow-sm text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>{label}</button>
+              ))}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">
+              {prefs.navStrategy === 'tour'
+                ? 'Tính sẵn 1 lộ trình đi qua TẤT CẢ đường chưa đi trong KCN, hạn chế đi lặp (KCN bàn cờ: hết dãy này sang dãy kia, ít quay đầu, ưu tiên đi thẳng / rẽ phải). Đường 1 chiều đi đúng chiều. Đường tím = chưa đi sẽ qua, xanh = đoạn nối phải đi lại.'
+                : 'Mỗi lần chỉ dẫn tới 1 đoạn chưa đi đáng đi nhất ở gần, đi hết đoạn thì tìm đoạn tiếp theo.'}
+            </div>
+          </div>
+          {prefs.navStrategy === 'nearest' && (
+            <Switch on={prefs.navPreferFactories} onChange={v => onChange({ navPreferFactories: v })} label="Dẫn tới đường có nhà máy trước"
+              hint="Đường trống (không có công ty hai bên) để sau cùng" />
+          )}
+        </Section>
+
+        <Section title="Giao diện màn hình">
+          <div className="py-3 space-y-1.5">
+            <div className="text-[13px] text-[#1D1D1F]">Giao diện gọn (bản đồ rộng)</div>
+            <div className="grid grid-cols-3 p-0.5 rounded-lg bg-[#E5E5EA]">
+              {([['auto', 'Khi xoay ngang'], ['always', 'Luôn gọn'], ['never', 'Tắt']] as [CompactMode, string][]).map(([v, label]) => (
+                <button key={v} onClick={() => onChange({ compactMode: v })}
+                  className={`h-8 rounded-md text-[12.5px] font-medium transition ${prefs.compactMode === v ? 'bg-white shadow-sm text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>{label}</button>
+              ))}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">
+              Bỏ thanh nút dưới và ô chú thích để bản đồ gần kín màn hình. Chức năng gom vào nút tròn nổi (giống AssistiveTouch của iPhone) — kéo nút tới chỗ tiện tay, nó tự dính vào mép trái / phải.
+            </div>
+          </div>
+          <div className="py-3 space-y-1.5">
+            <div className="text-[13px] text-[#1D1D1F]">Nút luôn hiện ở mép phải (giao diện gọn)</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {QUICK_ACTION_IDS.map(id => {
+                const on = prefs.pinned.includes(id);
+                return (
+                  <button key={id} onClick={() => onChange({ pinned: on ? prefs.pinned.filter(x => x !== id) : QUICK_ACTION_IDS.filter(x => x === id || prefs.pinned.includes(x)) })}
+                    className={`h-8 pl-2 pr-2.5 rounded-full inline-flex items-center gap-1.5 text-[12.5px] font-medium transition ${on ? 'bg-[#0A84FF] text-white' : 'bg-[#F2F2F7] text-[#1D1D1F]'}`}>
+                    {QUICK_META[id].icon(14)} {QUICK_META[id].label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">
+              Nút bám vị trí ◎ và la bàn luôn có. "Chú thích màu đường" được chọn thì ô chú thích luôn hiện; không thì mở từ nút nổi. Gợi ý khi chạy xe: chỉ để Chụp chỉ tiêu + Ghi âm.
+            </div>
+            <button onClick={() => onChange({ assistive: { ...DEFAULT_SURVEY_PREFS.assistive } })} className="h-8 px-3 rounded-full bg-[#F2F2F7] text-[12px] font-medium text-[#0A84FF]">
+              Đưa nút nổi về chỗ cũ
+            </button>
+          </div>
+          <Switch on={!prefs.legendCollapsed} onChange={v => onChange({ legendCollapsed: !v })} label="Ô chú thích màu đường (giao diện thường)"
+            hint="Tắt thì chỉ còn 1 dòng nhỏ — bấm vào để mở lại. Bấm vào ô chú thích cũng thu gọn được" />
         </Section>
 
         <Section title="Nhận diện công ty đi ngang">

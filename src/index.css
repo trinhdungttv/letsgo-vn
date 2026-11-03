@@ -259,6 +259,18 @@ body {
   position: relative;
   pointer-events: none;
 }
+/* Vòng sai số GPS — nằm chung với mũi tên để trượt cùng nhau (cỡ px do camera đặt theo mức zoom) */
+.kcs-pos-acc {
+  position: absolute;
+  left: 22px;
+  top: 22px;
+  width: var(--kcs-acc, 0px);
+  height: var(--kcs-acc, 0px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.35);
+}
 .kcs-pos-dot {
   position: absolute;
   left: 13px;
@@ -301,7 +313,8 @@ body {
 .kcs-pos[data-mode='course'] .kcs-pos-dot {
   display: none;
 }
-/* Bản đồ khảo sát xoay theo hướng đi (khung .kcs-rot quay −góc) → xoay ngược nhãn tên, ảnh, micro cho đứng thẳng */
+/* Bản đồ khảo sát xoay theo hướng đi (khung .kcs-rot quay −góc) → xoay ngược nhãn tên, ảnh, micro cho đứng thẳng.
+   Góc do camera đổi dần mỗi khung hình → không cần transition */
 .kcs-up {
   display: inline-block;
 }
@@ -310,7 +323,6 @@ body {
 .kcs-rot .kcs-photo span,
 .kcs-rot .kcs-voice span {
   transform: rotate(var(--kcs-bearing, 0deg));
-  transition: transform 0.8s ease-out;
 }
 .kcs-voice span {
   display: flex;
@@ -338,12 +350,19 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   font-size: 17px;
 }
-.kcs-label {
+/* Nền trắng nằm ở chữ (.kcs-up) chứ không ở khung tooltip → bản đồ xoay thì cả nền lẫn chữ cùng đứng thẳng.
+   Ghép .leaflet-tooltip để thắng CSS mặc định của Leaflet bất kể file nào nạp sau */
+.leaflet-tooltip.kcs-label {
   font-size: 11px;
   font-weight: 600;
   color: #1d1d1f;
-  background: rgba(255, 255, 255, 0.88);
+  background: transparent;
   border: none;
+  box-shadow: none;
+  padding: 0;
+}
+.kcs-label .kcs-up {
+  background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   padding: 1px 6px;
   border-radius: 6px;
@@ -351,8 +370,9 @@ body {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
 }
-.kcs-label::before {
+.leaflet-tooltip.kcs-label::before {
   display: none;
 }
 .lgmap-my-location-dot {
