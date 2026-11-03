@@ -7,10 +7,11 @@ import { isZoneLikeName, type OsmPlace } from './companies';
 import { osmZoneAt, zoneNameMatch } from './zones';
 import type { LatLng } from '../geo';
 
-const ENDPOINTS = [
+export const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
 /** Đường trục (vẽ đậm) và đường nhánh cho xe máy / ô tô đi được. service = đường nội bộ — tuỳ chọn vì trong KCN có
@@ -47,15 +48,15 @@ export function buildQuery(b: Bounds, includeService: boolean): string {
   const minor = includeService ? `${MINOR_ROADS}|service` : MINOR_ROADS;
   const filter = '["service"!~"^(parking_aisle|driveway|drive-through)$"]["area"!="yes"]';
   // Đường: bỏ đường nội bộ bãi xe / lối vào nhà (service=parking_aisle|driveway) ngay cả khi lấy service.
-  // `out ids geom` = chỉ hình dạng, không kèm thẻ / mã điểm → nhẹ (lọc loại đường làm ở máy chủ). Không có thẻ nên
-  // đường trục và đường nhánh xuất 2 lượt, giữa có mốc `make lgvn_split` để biết phần nào là phần nào.
+  // `out tags geom` = hình dạng + thẻ (tên đường để đọc "rẽ vào Đường số 5", oneway để không dẫn đi ngược chiều),
+  // không kèm mã điểm. Đường trục và đường nhánh xuất 2 lượt, giữa có mốc `make lgvn_split`.
   return `[out:json][timeout:35][bbox:${bbox}];
 way["highway"~"^(${MAIN_ROADS})$"]${filter};
-out ids geom qt;
+out tags geom qt;
 make ${SPLIT} kind="minor";
 out;
 way["highway"~"^(${minor})$"]${filter};
-out ids geom qt;
+out tags geom qt;
 make ${SPLIT} kind="places";
 out;
 (
@@ -121,6 +122,16 @@ const centroid = (ring: readonly [number, number][]): LatLng => ({
   lng: ring.reduce((s, p) => s + p[1], 0) / ring.length,
 });
 
+/** Chiều đi của đường theo thẻ OSM (oneway=yes / -1, vòng xuyến, đường cao tốc). Đi xe máy vẫn theo chiều này. */
+export function onewayOf(tags: Record<string, string>): 1 | -1 | undefined {
+  const v = (tags.oneway ?? '').toLowerCase();
+  if (v === '-1' || v === 'reverse') return -1;
+  if (v === 'yes' || v === '1' || v === 'true') return 1;
+  if (v === 'no' || v === 'false' || v === '0') return undefined;
+  if (tags.junction === 'roundabout' || tags.junction === 'circular' || tags.highway === 'motorway') return 1;
+  return undefined;
+}
+
 /** Đọc kết quả Overpass → đường + nhà máy có tên + ranh giới KCN. Bỏ phần tử thiếu toạ độ. */
 export function parseOverpass(data: unknown): { roads: RoadWay[]; places: OsmPlace[]; zones: OsmZone[] } {
   const elements = (data as { elements?: OsmElement[] })?.elements;
@@ -138,10 +149,11 @@ export function parseOverpass(data: unknown): { roads: RoadWay[]; places: OsmPla
     }
     const tags = el.tags ?? {};
     const geom = (el.geometry ?? []).filter((g): g is { lat: number; lon: number } => !!g && Number.isFinite(g.lat) && Number.isFinite(g.lon));
-    // Đường đến từ `out ids` nên không có thẻ (loại = phần đang đọc); nhà máy luôn có thẻ name
+    // Đường có thẻ highway (bản cũ `out ids` không có thẻ → loại = phần đang đọc); nhà máy luôn có thẻ name
     if (el.type === 'way' && (tags.highway || (!el.tags && section !== 'places'))) {
       const kind = tags.highway ? (new RegExp(`^(${MAIN_ROADS})$`).test(tags.highway) ? 'main' : 'minor') : section === 'main' ? 'main' : 'minor';
-      if (geom.length >= 2) roads.push({ id: el.id, ...(tags.name ? { name: tags.name } : {}), kind, coords: geom.map(g => [g.lat, g.lon]) });
+      const oneway = onewayOf(tags);
+      if (geom.length >= 2) roads.push({ id: el.id, ...(tags.name ? { name: tags.name } : {}), kind, ...(oneway ? { oneway } : {}), coords: geom.map(g => [g.lat, g.lon]) });
       continue;
     }
     const name = (tags.name ?? tags['name:vi'] ?? '').trim();
@@ -204,7 +216,7 @@ export function piecesInZone(pieces: readonly RoadPiece[], zone: OsmZone, margin
   });
 }
 
-const CACHE_KEY = 'lgvn_kcn_survey_area_v3';
+const CACHE_KEY = 'lgvn_kcn_survey_area_v4';
 const CACHE_MAX = 2;
 
 function readCache(): AreaMap[] {
@@ -216,9 +228,10 @@ function readCache(): AreaMap[] {
 }
 function writeCache(list: AreaMap[]) {
   try {
-    // Bản nhớ kiểu cũ (chưa tách đường trục / nhánh) — bỏ cho nhẹ máy
+    // Bản nhớ kiểu cũ (chưa tách đường trục / nhánh, chưa có tên đường / chiều đi) — bỏ cho nhẹ máy
     localStorage.removeItem('lgvn_kcn_survey_area_v1');
     localStorage.removeItem('lgvn_kcn_survey_area_v2');
+    localStorage.removeItem('lgvn_kcn_survey_area_v3');
     localStorage.setItem(CACHE_KEY, JSON.stringify(list.slice(0, CACHE_MAX)));
   }
   catch { /* đầy bộ nhớ / chế độ riêng tư — lần sau tải lại */ }
@@ -254,16 +267,16 @@ export function fetchArea(bounds: Bounds, includeService: boolean, signal?: Abor
       lastErr = msg;
       failed += 1;
       if (done) return;
-      if (next < ENDPOINTS.length) launch();
-      else if (failed >= ENDPOINTS.length) { stopAll(); signal?.removeEventListener('abort', onAbort); reject(new Error(`Không tải được bản đồ đường OSM (${lastErr || 'lỗi không rõ'})`)); }
+      if (next < OVERPASS_ENDPOINTS.length) launch();
+      else if (failed >= OVERPASS_ENDPOINTS.length) { stopAll(); signal?.removeEventListener('abort', onAbort); reject(new Error(`Không tải được bản đồ đường OSM (${lastErr || 'lỗi không rõ'})`)); }
     };
     const launch = () => {
-      const url = ENDPOINTS[next++];
+      const url = OVERPASS_ENDPOINTS[next++];
       const ctrl = new AbortController();
       ctrls.push(ctrl);
       const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
       if (hedgeTimer) clearTimeout(hedgeTimer);
-      if (next < ENDPOINTS.length) hedgeTimer = setTimeout(() => { if (!done) launch(); }, HEDGE_MS);
+      if (next < OVERPASS_ENDPOINTS.length) hedgeTimer = setTimeout(() => { if (!done) launch(); }, HEDGE_MS);
       fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, signal: ctrl.signal })
         .then(async res => {
           if (!res.ok) throw new Error([429, 502, 503, 504].includes(res.status) ? 'máy chủ OSM đang quá tải' : `máy chủ trả lỗi ${res.status}`);

@@ -3,6 +3,7 @@ import { supabase } from '../supabase';
 import { resizeImage } from '../imageResize';
 import type { Bounds, TrackPoint, TrackSegment } from './track';
 import type { PassedCompany } from './companies';
+import { sanitizeMarks, type PhotoMark } from './markup';
 
 export const SURVEY_MIGRATION_HINT = 'Chưa chạy migration 190 (Khảo sát KCN) trên Supabase — chạy file 20261102100000_190_kcn_survey_trips.sql rồi thử lại';
 export const PHOTO_BUCKET = 'kcn-survey';
@@ -59,6 +60,8 @@ export interface SurveyPhoto {
   headcount: number | null;
   wage_text: string;
   note: string;
+  /** Nét vẽ / chữ ghi lên ảnh (migration 193; [] = chưa có / chưa có cột) */
+  annotations: PhotoMark[];
   user_id: string | null;
   user_name: string;
   created_at: string;
@@ -214,22 +217,45 @@ export function groupChunks(rows: readonly TrackChunk[]): Map<string, TrackSegme
 }
 
 // ── Ảnh chỉ tiêu ─────────────────────────────────────────────────────────────
-const PHOTO_COLS = 'id, trip_id, zone_id, zone_name, lat, lng, accuracy_m, position_source, taken_at, storage_path, url, thumb_url, width, height, size_bytes, company_name, client_id, lead_id, crm_id, positions, headcount, wage_text, note, user_id, user_name, created_at';
+const PHOTO_COLS_BASE = 'id, trip_id, zone_id, zone_name, lat, lng, accuracy_m, position_source, taken_at, storage_path, url, thumb_url, width, height, size_bytes, company_name, client_id, lead_id, crm_id, positions, headcount, wage_text, note, user_id, user_name, created_at';
+const PHOTO_COLS = `${PHOTO_COLS_BASE}, annotations`;
+
+export const MARKUP_MIGRATION_HINT = 'Chưa chạy migration 193 nên chưa lưu được nét vẽ trên ảnh — chạy 193 rồi vẽ lại';
+
+// Cột annotations (migration 193) có thể chưa có → biết thiếu 1 lần thì đọc / ghi không kèm, ảnh vẫn hiện bình thường.
+let annotColumn: boolean | null = null;
+const isAnnotColError = (e: unknown) => /annotations/i.test((e as { message?: string })?.message ?? '');
+export const markupColumnMissing = () => annotColumn === false;
+
+async function withAnnotFallback<T>(run: (cols: string, withAnnot: boolean) => PromiseLike<{ data: T; error: unknown }>): Promise<T> {
+  let res = await run(annotColumn === false ? PHOTO_COLS_BASE : PHOTO_COLS, annotColumn !== false);
+  if (res.error && annotColumn !== false && isAnnotColError(res.error)) {
+    annotColumn = false;
+    res = await run(PHOTO_COLS_BASE, false);
+  } else if (!res.error && annotColumn === null) {
+    annotColumn = true;
+  }
+  if (res.error) throw new Error(surveyErrorText(res.error));
+  return res.data;
+}
+
+const normPhoto = (r: SurveyPhoto): SurveyPhoto => ({ ...r, annotations: sanitizeMarks((r as { annotations?: unknown }).annotations) });
 
 export async function listPhotos(opts: { zoneId?: string | null; tripId?: string | null; bounds?: Bounds | null; limit?: number } = {}): Promise<SurveyPhoto[]> {
-  let q = supabase.from('kcn_survey_photos').select(PHOTO_COLS).is('deleted_at', null).order('taken_at', { ascending: false }).limit(opts.limit ?? 300);
-  if (opts.tripId) q = q.eq('trip_id', opts.tripId);
-  const b = opts.bounds;
-  if (opts.zoneId && b) {
-    q = q.or(`zone_id.eq.${opts.zoneId},and(lat.gte.${b.minLat},lat.lte.${b.maxLat},lng.gte.${b.minLng},lng.lte.${b.maxLng})`);
-  } else if (opts.zoneId) {
-    q = q.eq('zone_id', opts.zoneId);
-  } else if (b) {
-    q = q.gte('lat', b.minLat).lte('lat', b.maxLat).gte('lng', b.minLng).lte('lng', b.maxLng);
-  }
-  const { data, error } = await q;
-  if (error) throw new Error(surveyErrorText(error));
-  return (data ?? []) as SurveyPhoto[];
+  const data = await withAnnotFallback(cols => {
+    let q = supabase.from('kcn_survey_photos').select(cols).is('deleted_at', null).order('taken_at', { ascending: false }).limit(opts.limit ?? 300);
+    if (opts.tripId) q = q.eq('trip_id', opts.tripId);
+    const b = opts.bounds;
+    if (opts.zoneId && b) {
+      q = q.or(`zone_id.eq.${opts.zoneId},and(lat.gte.${b.minLat},lat.lte.${b.maxLat},lng.gte.${b.minLng},lng.lte.${b.maxLng})`);
+    } else if (opts.zoneId) {
+      q = q.eq('zone_id', opts.zoneId);
+    } else if (b) {
+      q = q.gte('lat', b.minLat).lte('lat', b.maxLat).gte('lng', b.minLng).lte('lng', b.maxLng);
+    }
+    return q;
+  });
+  return ((data ?? []) as unknown as SurveyPhoto[]).map(normPhoto);
 }
 
 export type PhotoMeta = Omit<SurveyPhoto, 'id' | 'storage_path' | 'url' | 'thumb_url' | 'width' | 'height' | 'size_bytes' | 'created_at'>;
@@ -263,13 +289,25 @@ export async function uploadPhoto(id: string, file: Blob, meta: PhotoMeta): Prom
     thumb_url: bucket.getPublicUrl(thumbPath).data.publicUrl,
     width: big.width, height: big.height, size_bytes: big.size,
   };
-  const { data, error } = await supabase.from('kcn_survey_photos').upsert(row, { onConflict: 'id' }).select(PHOTO_COLS).single();
-  if (error) throw new Error(surveyErrorText(error));
-  return data as SurveyPhoto;
+  const { annotations, ...rowBase } = row;
+  const data = await withAnnotFallback((cols, withAnnot) =>
+    supabase.from('kcn_survey_photos').upsert(withAnnot ? row : rowBase, { onConflict: 'id' }).select(cols).single());
+  // Chưa có cột annotations → nét vẽ vẫn giữ trong máy để hiện ngay (lần mở sau mới mất)
+  return normPhoto({ ...(data as unknown as SurveyPhoto), annotations: (data as unknown as SurveyPhoto).annotations ?? annotations });
 }
 
-export async function updatePhoto(id: string, patch: Partial<Pick<SurveyPhoto, 'company_name' | 'client_id' | 'lead_id' | 'crm_id' | 'positions' | 'headcount' | 'wage_text' | 'note' | 'lat' | 'lng' | 'position_source'>>) {
+export async function updatePhoto(id: string, patch: Partial<Pick<SurveyPhoto, 'company_name' | 'client_id' | 'lead_id' | 'crm_id' | 'positions' | 'headcount' | 'wage_text' | 'note' | 'lat' | 'lng' | 'position_source' | 'annotations'>>) {
+  const { annotations, ...rest } = patch;
+  if (annotations !== undefined && annotColumn === false) throw new Error(MARKUP_MIGRATION_HINT);
   const { error } = await supabase.from('kcn_survey_photos').update(patch).eq('id', id);
+  if (error && annotations !== undefined && isAnnotColError(error)) {
+    annotColumn = false;
+    if (Object.keys(rest).length) {
+      const r2 = await supabase.from('kcn_survey_photos').update(rest).eq('id', id);
+      if (r2.error) throw new Error(surveyErrorText(r2.error));
+    }
+    throw new Error(MARKUP_MIGRATION_HINT);
+  }
   if (error) throw new Error(surveyErrorText(error));
 }
 
@@ -277,4 +315,151 @@ export async function updatePhoto(id: string, patch: Partial<Pick<SurveyPhoto, '
 export async function softDeletePhoto(id: string) {
   const { error } = await supabase.from('kcn_survey_photos').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw new Error(surveyErrorText(error));
+}
+
+// ── Ghi âm khi khảo sát (migration 193) ──────────────────────────────────────
+export const VOICE_MIGRATION_HINT = 'Chưa chạy migration 193 (ghi âm khảo sát) — chạy file 20261103090000_193_kcn_survey_markup_voice.sql rồi thử lại';
+
+export interface SurveyVoiceNote {
+  id: string;
+  trip_id: string | null;
+  zone_id: string | null;
+  zone_name: string;
+  lat: number | null;
+  lng: number | null;
+  accuracy_m: number | null;
+  recorded_at: string;
+  duration_s: number;
+  storage_path: string;
+  url: string;
+  mime_type: string;
+  size_bytes: number | null;
+  company_name: string;
+  client_id: string | null;
+  lead_id: string | null;
+  crm_id: string | null;
+  note: string;
+  user_id: string | null;
+  user_name: string;
+  created_at: string;
+}
+
+const VOICE_COLS = 'id, trip_id, zone_id, zone_name, lat, lng, accuracy_m, recorded_at, duration_s, storage_path, url, mime_type, size_bytes, company_name, client_id, lead_id, crm_id, note, user_id, user_name, created_at';
+
+function voiceErrorText(e: unknown): string {
+  const msg = (e as { message?: string })?.message ?? String(e);
+  if (/kcn_survey_voice|schema cache|does not exist|PGRST20[45]/i.test(msg)) return VOICE_MIGRATION_HINT;
+  return surveyErrorText(e);
+}
+
+const normVoice = (r: SurveyVoiceNote): SurveyVoiceNote => ({ ...r, duration_s: Number(r.duration_s) || 0 });
+
+export async function listVoiceNotes(opts: { zoneId?: string | null; tripId?: string | null; bounds?: Bounds | null; limit?: number } = {}): Promise<SurveyVoiceNote[]> {
+  let q = supabase.from('kcn_survey_voice_notes').select(VOICE_COLS).is('deleted_at', null).order('recorded_at', { ascending: false }).limit(opts.limit ?? 300);
+  if (opts.tripId) q = q.eq('trip_id', opts.tripId);
+  const b = opts.bounds;
+  if (opts.zoneId && b) {
+    q = q.or(`zone_id.eq.${opts.zoneId},and(lat.gte.${b.minLat},lat.lte.${b.maxLat},lng.gte.${b.minLng},lng.lte.${b.maxLng})`);
+  } else if (opts.zoneId) {
+    q = q.eq('zone_id', opts.zoneId);
+  } else if (b) {
+    q = q.gte('lat', b.minLat).lte('lat', b.maxLat).gte('lng', b.minLng).lte('lng', b.maxLng);
+  }
+  const { data, error } = await q;
+  if (error) throw new Error(voiceErrorText(error));
+  return ((data ?? []) as SurveyVoiceNote[]).map(normVoice);
+}
+
+export type VoiceMeta = Omit<SurveyVoiceNote, 'id' | 'storage_path' | 'url' | 'size_bytes' | 'created_at'>;
+
+/** Tải file ghi âm lên bucket (thư mục voice/) rồi ghi 1 dòng. `id` do app sinh → bấm Thử lại không tạo trùng. */
+export async function uploadVoiceNote(id: string, blob: Blob, ext: string, meta: VoiceMeta): Promise<SurveyVoiceNote> {
+  const day = meta.recorded_at.slice(0, 10);
+  const path = `voice/${meta.zone_id ?? 'khac'}/${day}/${id}.${ext}`;
+  const bucket = supabase.storage.from(PHOTO_BUCKET);
+  const { error: upErr } = await bucket.upload(path, blob, { upsert: false, contentType: meta.mime_type || blob.type || 'audio/webm', cacheControl: '31536000' });
+  if (upErr && !/exists|duplicate/i.test(upErr.message)) throw new Error(surveyErrorText(upErr));
+  const row = { id, ...meta, storage_path: path, url: bucket.getPublicUrl(path).data.publicUrl, size_bytes: blob.size };
+  const { data, error } = await supabase.from('kcn_survey_voice_notes').upsert(row, { onConflict: 'id' }).select(VOICE_COLS).single();
+  if (error) throw new Error(voiceErrorText(error));
+  return normVoice(data as SurveyVoiceNote);
+}
+
+export async function updateVoiceNote(id: string, patch: Partial<Pick<SurveyVoiceNote, 'note' | 'company_name' | 'client_id' | 'lead_id' | 'crm_id'>>) {
+  const { error } = await supabase.from('kcn_survey_voice_notes').update(patch).eq('id', id);
+  if (error) throw new Error(voiceErrorText(error));
+}
+
+/** Xoá mềm — file ghi âm vẫn trong Storage, dòng vẫn trong DB (deleted_at). */
+export async function softDeleteVoiceNote(id: string) {
+  const { error } = await supabase.from('kcn_survey_voice_notes').update({ deleted_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw new Error(voiceErrorText(error));
+}
+
+// ── Vùng khảo sát đã khoanh (migration 194) ──────────────────────────────────
+export const AREA_MIGRATION_HINT = 'Chưa chạy migration 194 (vùng khảo sát) nên chưa lưu được vùng khoanh — chạy file 20261103120000_194_kcn_survey_areas.sql rồi lưu lại';
+
+export interface SurveyArea {
+  id: string;
+  zone_id: string | null;
+  name: string;
+  rings: [number, number][][];
+  source: 'osm' | 'drawn' | 'view';
+  osm_ref: string | null;
+  center_lat: number | null;
+  center_lng: number | null;
+  area_m2: number | null;
+  user_id: string | null;
+  user_name: string;
+  updated_at: string;
+}
+
+const AREA_COLS = 'id, zone_id, name, rings, source, osm_ref, center_lat, center_lng, area_m2, user_id, user_name, updated_at';
+
+function areaErrorText(e: unknown): string {
+  const msg = (e as { message?: string })?.message ?? String(e);
+  if (/kcn_survey_areas|schema cache|does not exist|PGRST20[45]/i.test(msg)) return AREA_MIGRATION_HINT;
+  return msg;
+}
+
+/** Vòng hợp lệ: ≥ 4 điểm số thực (đã khép kín). Dữ liệu sửa tay được nên luôn lọc lại. */
+const cleanRings = (raw: unknown): [number, number][][] => (Array.isArray(raw) ? raw : [])
+  .map(r => (Array.isArray(r) ? r : []).filter((p): p is [number, number] => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])).map(p => [p[0], p[1]] as [number, number]))
+  .filter(r => r.length >= 4);
+
+const normArea = (r: SurveyArea): SurveyArea => ({ ...r, rings: cleanRings(r.rings), area_m2: r.area_m2 == null ? null : Number(r.area_m2) });
+
+export async function listSurveyAreas(): Promise<SurveyArea[]> {
+  const { data, error } = await supabase.from('kcn_survey_areas').select(AREA_COLS).is('deleted_at', null).limit(500);
+  if (error) throw new Error(areaErrorText(error));
+  return ((data ?? []) as SurveyArea[]).map(normArea).filter(a => a.rings.length);
+}
+
+/** Lưu vùng cho 1 KCN: đã có vùng → sửa dòng đó (lịch sử dữ liệu giữ bản trước); chưa có → thêm mới. */
+export async function saveSurveyArea(a: Omit<SurveyArea, 'id' | 'updated_at'>): Promise<SurveyArea> {
+  let existingId: string | null = null;
+  if (a.zone_id) {
+    const { data, error } = await supabase.from('kcn_survey_areas').select('id').eq('zone_id', a.zone_id).is('deleted_at', null).maybeSingle();
+    if (error) throw new Error(areaErrorText(error));
+    existingId = (data as { id: string } | null)?.id ?? null;
+  }
+  const q = existingId
+    ? supabase.from('kcn_survey_areas').update(a).eq('id', existingId).select(AREA_COLS).single()
+    : supabase.from('kcn_survey_areas').insert(a).select(AREA_COLS).single();
+  const { data, error } = await q;
+  if (error) throw new Error(areaErrorText(error));
+  return normArea(data as SurveyArea);
+}
+
+/** Thêm nhanh 1 KCN / vùng vào Thị trường → Khu vực (tên, tỉnh, toạ độ tâm, link bản đồ). */
+export async function createMarketZoneQuick(z: { name: string; location: string | null; lat: number; lng: number; map_link: string | null }): Promise<{ id: string; name: string; location: string | null; lat: number | null; lng: number | null }> {
+  const { data, error } = await supabase.from('market_zones').insert({
+    name: z.name, location: z.location, lat: z.lat, lng: z.lng, map_link: z.map_link, geocoded_at: new Date().toISOString(),
+    notes: 'Thêm nhanh từ Khảo sát KCN',
+  }).select('id, name, location, lat, lng').single();
+  if (error) {
+    if (/duplicate key|unique/i.test(error.message)) throw new Error(`Đã có khu vực tên "${z.name}" — chọn "Gắn vào KCN có sẵn" hoặc đặt tên khác`);
+    throw new Error(error.message);
+  }
+  return data as { id: string; name: string; location: string | null; lat: number | null; lng: number | null };
 }

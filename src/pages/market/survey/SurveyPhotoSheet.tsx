@@ -1,13 +1,16 @@
 // Màn lưu ảnh chỉ tiêu tuyển dụng vừa chụp: gắn công ty (gợi ý công ty quanh chỗ chụp), vị trí tuyển, số lượng, lương.
 // Công ty chưa có trong hệ thống → tuỳ chọn thêm luôn vào Thị trường → Công ty/Dự án, ghim tại chỗ chụp.
 import { useEffect, useMemo, useState } from 'react';
-import { Check, MapPin, Search, X } from 'lucide-react';
+import { Check, MapPin, PenLine, Search, X } from 'lucide-react';
 import { useCompanyDuplicates } from '../../../hooks/useCompanyDuplicates';
 import DuplicateCompanyNotice from '../../../components/common/DuplicateCompanyNotice';
 import type { NearbyCompany, SurveyCompany } from '../../../lib/kcnSurvey/companies';
 import { fmtDistance } from '../../../lib/kcnSurvey/track';
 import { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
 import { fold } from './surveyData';
+import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
+import { MarkedImage } from './PhotoMarks';
+import PhotoMarkupEditor from './PhotoMarkupEditor';
 
 export interface PhotoPosition {
   lat: number;
@@ -24,6 +27,8 @@ export interface PhotoFormValue {
   headcount: number | null;
   wage_text: string;
   note: string;
+  /** Nét vẽ / chữ ghi lên ảnh */
+  annotations: PhotoMark[];
 }
 
 interface Props {
@@ -50,6 +55,8 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
   const [headcount, setHeadcount] = useState('');
   const [wage, setWage] = useState('');
   const [note, setNote] = useState('');
+  const [marks, setMarks] = useState<PhotoMark[]>([]);
+  const [marking, setMarking] = useState(false);
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -79,6 +86,7 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
     headcount: headcount.trim() ? Math.max(0, parseInt(headcount, 10) || 0) : null,
     wage_text: wage.trim(),
     note: note.trim(),
+    annotations: marks,
   });
 
   return (
@@ -90,8 +98,12 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
       </div>
 
       <div className="flex-1 overflow-y-auto pb-[calc(24px+env(safe-area-inset-bottom))]">
-        <div className="bg-black flex items-center justify-center" style={{ maxHeight: '38vh' }}>
-          {preview && <img src={preview} alt="Ảnh vừa chụp" className="max-h-[38vh] w-auto object-contain" />}
+        <div className="relative bg-black" style={{ height: '38vh' }}>
+          {preview && <MarkedImage src={preview} alt="Ảnh vừa chụp" marks={marks} className="w-full h-full" />}
+          <button onClick={() => setMarking(true)} disabled={!preview}
+            className="absolute right-3 bottom-3 h-9 pl-3 pr-3.5 rounded-full bg-white/90 backdrop-blur text-[13px] font-semibold text-[#1D1D1F] inline-flex items-center gap-1.5 shadow">
+            <PenLine size={14} /> {marks.length ? `Sửa ghi chú (${marks.length})` : 'Ghi chú lên ảnh'}
+          </button>
         </div>
 
         <div className={`flex items-center gap-1.5 px-4 py-2 text-[12.5px] ${position ? 'text-[#3A3A3C]' : 'text-[#D70015] font-medium'}`}>
@@ -195,6 +207,7 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
           </section>
         </div>
       </div>
+      {marking && preview && <PhotoMarkupEditor src={preview} initial={marks} onCancel={() => setMarking(false)} onDone={m => { setMarks(m); setMarking(false); }} />}
     </div>
   );
 }

@@ -256,7 +256,7 @@ describe('Overpass', () => {
     const q = buildQuery(boundsAround({ lat: LAT, lng: LNG }, 1000), false);
     expect(q).toContain('make lgvn_split kind="minor"');
     expect(q).toContain('make lgvn_split kind="places"');
-    expect(q).toContain('out ids geom qt');
+    expect(q).toContain('out tags geom qt');
   });
   it('dữ liệu hỏng → rỗng', () => {
     expect(parseOverpass(null)).toEqual({ roads: [], places: [], zones: [] });

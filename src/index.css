@@ -270,21 +270,48 @@ body {
   border: 3px solid #fff;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(0, 0, 0, 0.35);
 }
-.kcs-pos-head {
+/* Hướng: data-mode = compass (quạt sáng theo la bàn) · course (mũi tên theo hướng chạy) · none */
+.kcs-pos-beam,
+.kcs-pos-arrow {
   position: absolute;
-  inset: 0;
+  display: none;
+  transform: rotate(var(--kcs-head, 0deg));
   transform-origin: 50% 50%;
 }
-.kcs-pos-head::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  margin-left: -8px;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 14px solid #2563EB;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+.kcs-pos-beam {
+  left: -22px;
+  top: -22px;
+  width: 88px;
+  height: 88px;
+  background: conic-gradient(from -32deg at 50% 50%, rgba(37, 99, 235, 0.5) 0deg 64deg, transparent 64deg);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 8%, rgba(0, 0, 0, 0.6) 30%, transparent 50%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 8%, rgba(0, 0, 0, 0.6) 30%, transparent 50%);
+}
+.kcs-pos-arrow {
+  left: 2px;
+  top: 2px;
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+.kcs-pos[data-mode='compass'] .kcs-pos-beam,
+.kcs-pos[data-mode='course'] .kcs-pos-arrow {
+  display: block;
+}
+.kcs-pos[data-mode='course'] .kcs-pos-dot {
+  display: none;
+}
+.kcs-voice span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #FF3B30;
+  font-size: 15px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 .kcs-photo img,
 .kcs-photo span {

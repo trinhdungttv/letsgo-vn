@@ -1,15 +1,17 @@
 // Lịch sử khảo sát: các chuyến đã đi (xem lại vết trên bản đồ) + thư viện ảnh chỉ tiêu (xem ảnh chụp ở đâu).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Camera, ChevronDown, ChevronRight, ExternalLink, Loader2, MapPin, Pencil, Route, Trash2, X } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight, Loader2, MapPin, Pencil, Route, Trash2, X } from 'lucide-react';
 import type { MarketZone } from '../../../lib/types';
 import {
-  listPhotos, listTrips, loadTracks, softDeletePhoto, softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updatePhoto, updateTrip,
+  listPhotos, listTrips, loadTracks, softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip,
   type SurveyPhoto, type SurveyTrip,
 } from '../../../lib/kcnSurvey/api';
 import { surveyTitle } from '../../../lib/kcnSurvey/zones';
 import { STATUS_META, type SurveyStatus } from '../../../lib/kcnSurvey/companies';
 import { fmtDistance, fmtDuration, trackBounds, trackLength, type TrackSegment } from '../../../lib/kcnSurvey/track';
 import { fold } from './surveyData';
+import SurveyPhotoViewer, { PhotoThumb } from './SurveyPhotoViewer';
+import { fmtDateTime } from './surveyFormat';
 
 export interface PhotoFilter {
   label: string;
@@ -28,8 +30,6 @@ interface Props {
   onClose: () => void;
   say: (msg: string) => void;
 }
-
-const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
 
 export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, photoFilter, activeTripId, onShowTrip, onShowPhoto, onChanged, onClose, say }: Props) {
   const [tab, setTab] = useState<'trips' | 'photos'>(initialTab);
@@ -251,7 +251,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
             : <div className="grid grid-cols-3 gap-1.5">
               {shownPhotos.map(p => (
                 <button key={p.id} onClick={() => setViewer(p)} className="relative aspect-square rounded-lg overflow-hidden bg-[#E5E5EA] text-left">
-                  <img src={p.thumb_url || p.url} alt={p.company_name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                  <PhotoThumb photo={p} />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
                     <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
                     <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}</div>
@@ -263,7 +263,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
       </div>
 
       {viewer && (
-        <PhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
+        <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
           onShowOnMap={() => { onShowPhoto(viewer); setViewer(null); }}
           onSaved={p => { setPhotos(list => list.map(x => x.id === p.id ? p : x)); setViewer(p); onChanged(); }}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); onChanged(); }} />
@@ -293,97 +293,4 @@ function groupPassed(passed: SurveyTrip['passed']) {
     if (list) list.push(p); else by.set(st, [p]);
   }
   return [...by.entries()].sort((a, b) => STATUS_META[a[0]].rank - STATUS_META[b[0]].rank).map(([status, items]) => ({ status, items }));
-}
-
-const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ' };
-
-function PhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say }: {
-  photo: SurveyPhoto;
-  onClose: () => void;
-  onShowOnMap: () => void;
-  onSaved: (p: SurveyPhoto) => void;
-  onDeleted: (id: string) => void;
-  say: (m: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ company_name: photo.company_name, positions: photo.positions, headcount: photo.headcount?.toString() ?? '', wage_text: photo.wage_text, note: photo.note });
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setForm({ company_name: photo.company_name, positions: photo.positions, headcount: photo.headcount?.toString() ?? '', wage_text: photo.wage_text, note: photo.note });
-    setEditing(false);
-  }, [photo]);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const patch = {
-        company_name: form.company_name.trim(), positions: form.positions.trim(), wage_text: form.wage_text.trim(), note: form.note.trim(),
-        headcount: form.headcount.trim() ? Math.max(0, parseInt(form.headcount, 10) || 0) : null,
-      };
-      await updatePhoto(photo.id, patch);
-      onSaved({ ...photo, ...patch });
-      setEditing(false);
-      say('Đã lưu');
-    } catch (e) { say((e as Error).message); } finally { setSaving(false); }
-  };
-  const del = async () => {
-    if (!window.confirm('Xoá ảnh chỉ tiêu này khỏi danh sách?\n\nẢnh sẽ ẩn khỏi lịch sử và bản đồ; file ảnh vẫn được giữ trong kho lưu trữ.')) return;
-    try { await softDeletePhoto(photo.id); onDeleted(photo.id); say('Đã xoá ảnh'); } catch (e) { say((e as Error).message); }
-  };
-  const gmaps = `https://www.google.com/maps?q=${photo.lat},${photo.lng}`;
-  const field = 'w-full h-10 px-3 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40';
-
-  return (
-    <div className="fixed inset-0 z-[1350] bg-black flex flex-col pt-[env(safe-area-inset-top)]">
-      <div className="flex items-center justify-between h-12 px-2 shrink-0">
-        <button onClick={onClose} className="h-10 px-3 text-[16px] text-white inline-flex items-center gap-1"><X size={18} /> Đóng</button>
-        <a href={photo.url} target="_blank" rel="noopener noreferrer" className="h-10 px-3 text-[14px] text-white/80 inline-flex items-center gap-1"><ExternalLink size={15} /> Ảnh gốc</a>
-      </div>
-      <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center">
-        <img src={photo.url} alt={photo.company_name} className="max-w-full max-h-full object-contain" />
-      </div>
-      <div className="shrink-0 bg-[#1C1C1E] text-white px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] space-y-2 max-h-[48vh] overflow-y-auto">
-        {!editing ? (
-          <>
-            <div className="text-[16px] font-semibold leading-snug">{photo.company_name || 'Chưa rõ công ty'}</div>
-            <div className="text-[12.5px] text-white/70">
-              {fmtDateTime(photo.taken_at)}{photo.zone_name ? ` · ${photo.zone_name}` : ''}{photo.user_name ? ` · ${photo.user_name}` : ''}
-            </div>
-            {(photo.positions || photo.headcount != null || photo.wage_text) && (
-              <div className="text-[13.5px] leading-snug">
-                {photo.positions && <div>Tuyển: <b>{photo.positions}</b></div>}
-                {photo.headcount != null && <div>Số lượng: <b>{photo.headcount}</b></div>}
-                {photo.wage_text && <div>Lương: <b>{photo.wage_text}</b></div>}
-              </div>
-            )}
-            {photo.note && <div className="text-[13px] text-white/85 whitespace-pre-line">{photo.note}</div>}
-            <div className="text-[11.5px] text-white/55">
-              📍 {photo.lat.toFixed(5)}, {photo.lng.toFixed(5)} · {POS_SOURCE[photo.position_source]}{photo.accuracy_m != null ? ` ±${Math.round(photo.accuracy_m)} m` : ''}
-            </div>
-            <div className="flex gap-1.5 flex-wrap pt-1">
-              <button onClick={onShowOnMap} className="h-9 px-3 rounded-full bg-[#0A84FF] text-[12.5px] font-semibold inline-flex items-center gap-1"><MapPin size={13} /> Xem chỗ chụp</button>
-              <a href={gmaps} target="_blank" rel="noopener noreferrer" className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><ExternalLink size={13} /> Google Maps</a>
-              <button onClick={() => setEditing(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><Pencil size={13} /> Sửa</button>
-              <button onClick={del} className="h-9 px-3 rounded-full bg-[#D70015]/80 text-[12.5px] font-medium inline-flex items-center gap-1"><Trash2 size={13} /> Xoá</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Tên công ty" className={field} />
-            <input value={form.positions} onChange={e => setForm(f => ({ ...f, positions: e.target.value }))} placeholder="Vị trí tuyển" className={field} />
-            <div className="grid grid-cols-2 gap-2">
-              <input value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value.replace(/[^\d]/g, '') }))} inputMode="numeric" placeholder="Số lượng" className={field} />
-              <input value={form.wage_text} onChange={e => setForm(f => ({ ...f, wage_text: e.target.value }))} placeholder="Lương" className={field} />
-            </div>
-            <textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} rows={2} placeholder="Ghi chú"
-              className="w-full px-3 py-2 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40 resize-none" />
-            <div className="flex gap-2">
-              <button onClick={() => setEditing(false)} className="flex-1 h-10 rounded-full bg-white/15 text-[14px]">Huỷ</button>
-              <button onClick={save} disabled={saving} className="flex-1 h-10 rounded-full bg-[#0A84FF] text-[14px] font-semibold disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu'}</button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
 }

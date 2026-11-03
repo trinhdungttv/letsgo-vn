@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon, Factory } from 'lucide-react';
+import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon, Factory, Route } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client, LaborHistoryEntry } from '../lib/types';
@@ -9,9 +9,10 @@ import WageTab from './market/WageTab';
 import CompetitorsTab from './market/CompetitorsTab';
 import LeadsTab from './market/LeadsTab';
 import MapViewTab from './market/MapViewTab';
+import SurveyTab from './market/SurveyTab';
 import Quotes from './Quotes';
 
-export type MarketTab = 'zones' | 'industry' | 'wage' | 'comp' | 'leads' | 'quote' | 'map';
+export type MarketTab = 'zones' | 'industry' | 'wage' | 'comp' | 'leads' | 'quote' | 'map' | 'survey';
 
 interface MarketProps {
   marketSurveys: MarketSurvey[];
@@ -32,10 +33,11 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'leads', label: 'Công ty / Dự án', icon: <Building2 size={13} /> },
   { id: 'quote', label: 'Báo giá', icon: <FileText size={13} /> },
   { id: 'map', label: 'Bản đồ', icon: <MapIcon size={13} /> },
+  { id: 'survey', label: 'Khảo sát KCN', icon: <Route size={13} /> },
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, laborHistory, onRefresh, toast }: MarketProps) {
-  const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'quote', 'map'] as const;
+  const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'quote', 'map', 'survey'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
@@ -52,9 +54,9 @@ export default function Market({ marketSurveys, competitors, marketZones, market
 
   return (
     <>
-      <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Báo giá" />
+      <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Báo giá · Khảo sát KCN" />
       <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
-        {/* Điện thoại: 7 tab thành 1 dải cuộn ngang thay vì xếp 3 dòng */}
+        {/* Điện thoại: 8 tab thành 1 dải cuộn ngang thay vì xếp 3 dòng */}
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 md:flex-wrap">
           {TABS.map(t => (
             <button
@@ -75,6 +77,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
         {tab === 'comp' && <CompetitorsTab {...shared} />}
         {tab === 'leads' && <LeadsTab {...shared} />}
         {tab === 'map' && <MapViewTab {...shared} />}
+        {tab === 'survey' && <SurveyTab {...shared} />}
         {tab === 'quote' && (
           <Quotes
             key={zoneFilter}

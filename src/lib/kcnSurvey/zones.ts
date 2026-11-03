@@ -83,14 +83,21 @@ export interface ZoneDetection {
 /** Cách nhau ít hơn bấy nhiêu mét giữa KCN gần nhất và gần thứ 2 thì coi là "chưa chắc". */
 export const ZONE_AMBIGUOUS_M = 800;
 
-export function detectZone(p: LatLng, osmZones: readonly OsmZone[], zones: readonly ZoneRefLite[], maxM = 3000): ZoneDetection {
+/** Vùng đã khoanh & lưu cho 1 KCN (kcn_survey_areas) — đứng trong vùng này là chắc chắn đúng KCN, hơn cả ranh giới OSM. */
+export interface SavedZoneArea {
+  zoneId: string;
+  rings: readonly (readonly [number, number][])[];
+}
+
+export function detectZone(p: LatLng, osmZones: readonly OsmZone[], zones: readonly ZoneRefLite[], maxM = 3000, saved: readonly SavedZoneArea[] = []): ZoneDetection {
   const near: ZoneCandidate[] = zones
     .filter(z => z.lat != null && z.lng != null)
     .map(z => ({ zone: z, dist: distM(p, { lat: z.lat!, lng: z.lng! }), inside: false }))
     .filter(c => c.dist <= maxM)
     .sort((a, b) => a.dist - b.dist);
+  const own = saved.find(a => a.rings.some(r => pointInRing(p.lat, p.lng, r)));
   const osm = osmZoneAt(p, osmZones);
-  const hit = osm ? matchMarketZone(osm, zones) : null;
+  const hit = (own ? zones.find(z => z.id === own.zoneId) : null) ?? (osm ? matchMarketZone(osm, zones) : null);
   if (hit) {
     const own = near.find(c => c.zone.id === hit.id) ?? { zone: hit, dist: hit.lat != null && hit.lng != null ? distM(p, { lat: hit.lat, lng: hit.lng }) : 0, inside: true };
     const best = { ...own, inside: true };

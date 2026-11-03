@@ -1,7 +1,8 @@
 // Cài đặt chế độ Khảo sát KCN — thu phóng bản đồ khi di chuyển, bán kính nhận diện công ty, lớp hiển thị.
 import type { ReactNode } from 'react';
 import { Loader2, Maximize, Minus, Plus, RefreshCw, X } from 'lucide-react';
-import type { SurveyPrefs } from './surveyData';
+import { NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type NavSound, type RoadDoneColor, type RoadTodoColor, type SurveyPrefs } from './surveyData';
+import type { CompassStatus } from './useDeviceHeading';
 
 export interface AreaStatus {
   state: 'idle' | 'loading' | 'ok' | 'error';
@@ -22,7 +23,23 @@ interface Props {
   boundaryName: string | null;
   onReloadArea: () => void;
   onClose: () => void;
+  compassStatus: CompassStatus;
+  /** iPhone: xin quyền la bàn (phải nằm trong lần bấm) */
+  onRequestCompass: () => void;
+  /** Mở màn khoanh vùng cho KCN đang chọn */
+  onEditArea: () => void;
+  /** KCN đang chọn đã có vùng tự khoanh / đã lưu */
+  areaSaved: boolean;
 }
+
+const COMPASS_TEXT: Record<CompassStatus, string> = {
+  off: 'Đang tắt',
+  'need-permission': 'iPhone cần cho phép “Chuyển động & hướng” — bấm Cho phép bên dưới',
+  waiting: 'Đang chờ la bàn… (xoay nhẹ điện thoại)',
+  on: 'Đang dùng la bàn — đứng yên xoay máy, quạt sáng xoay theo',
+  denied: 'Đã bị từ chối — mở Cài đặt Safari → Chuyển động & hướng để bật lại',
+  unsupported: 'Máy / trình duyệt này không có la bàn — mũi tên chỉ theo hướng chạy GPS',
+};
 
 function Switch({ on, onChange, label, hint }: { on: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
   return (
@@ -60,7 +77,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onFitArea, area, boundaryName, onReloadArea, onClose }: Props) {
+export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onFitArea, area, boundaryName, onReloadArea, onClose, compassStatus, onRequestCompass, onEditArea, areaSaved }: Props) {
   const z = Math.round(zoom);
   return (
     <div className="pointer-events-auto fixed md:absolute inset-x-0 bottom-0 md:inset-x-auto md:bottom-auto md:right-3 md:top-[68px] z-[1250] md:w-[360px]
@@ -94,6 +111,32 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
             hint="Chạy nhanh thì nhìn xa hơn, đi chậm / dừng xem cổng thì phóng gần — chỉ khi đang bám theo vị trí" />
         </Section>
 
+        <Section title="Hướng & dẫn đường">
+          <Switch on={prefs.compass} onChange={v => { onChange({ compass: v }); if (v) onRequestCompass(); }} label="Mũi tên xoay theo la bàn điện thoại"
+            hint={prefs.compass ? COMPASS_TEXT[compassStatus] : 'Tắt: mũi tên chỉ hiện khi đang chạy (theo hướng GPS)'} />
+          {prefs.compass && compassStatus === 'need-permission' && (
+            <div className="py-2.5">
+              <button onClick={onRequestCompass} className="h-9 px-4 rounded-full bg-[#0A84FF] text-white text-[13px] font-semibold">Cho phép la bàn</button>
+            </div>
+          )}
+          <div className="py-3 space-y-1.5">
+            <div className="text-[13px] text-[#1D1D1F]">Âm thanh dẫn đường</div>
+            <div className="grid grid-cols-3 p-0.5 rounded-lg bg-[#E5E5EA]">
+              {(['off', 'beep', 'voice'] as NavSound[]).map(v => (
+                <button key={v} onClick={() => onChange({ navSound: v })}
+                  className={`h-8 rounded-md text-[12.5px] font-medium transition ${prefs.navSound === v ? 'bg-white shadow-sm text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>{NAV_SOUND_LABEL[v]}</button>
+              ))}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">
+              {prefs.navSound === 'off' && 'Không phát tiếng gì — chỉ xem chữ trên băng xanh.'}
+              {prefs.navSound === 'beep' && 'Bíp 1 tiếng khi sắp tới chỗ rẽ, 2 tiếng khi phải rẽ ngay (đeo tai nghe: rẽ trái kêu bên trái, rẽ phải bên phải). Android rung kèm.'}
+              {prefs.navSound === 'voice' && 'Đọc to "Sau 150 mét, rẽ trái vào Đường số 5" bằng giọng tiếng Việt có sẵn trong máy — nhớ mở âm lượng.'}
+            </div>
+          </div>
+          <Switch on={prefs.navPreferFactories} onChange={v => onChange({ navPreferFactories: v })} label="Dẫn tới đường có nhà máy trước"
+            hint="Đường trống (không có công ty hai bên) để sau cùng" />
+        </Section>
+
         <Section title="Nhận diện công ty đi ngang">
           <div className="py-3 space-y-1.5">
             <div className="text-[13px] text-[#1D1D1F]">Bán kính</div>
@@ -104,15 +147,41 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
           <Switch on={prefs.vibrate} onChange={v => onChange({ vibrate: v })} label="Rung khi tới gần khách hàng / Pipeline" hint="Điện thoại Android; iPhone không hỗ trợ rung từ web" />
         </Section>
 
+        <Section title="Màu đường">
+          <div className="py-3 space-y-2">
+            <div className="text-[13px] text-[#1D1D1F]">Đường cần đi (chưa đi)</div>
+            <div className="flex gap-2 flex-wrap">
+              {(Object.keys(ROAD_TODO_COLORS) as RoadTodoColor[]).map(k => (
+                <ColorChip key={k} on={prefs.roadTodo === k} color={ROAD_TODO_COLORS[k].strong} label={ROAD_TODO_COLORS[k].label} onClick={() => onChange({ roadTodo: k })} />
+              ))}
+            </div>
+            <div className="text-[13px] text-[#1D1D1F] pt-1">Đường đã đi qua</div>
+            <div className="flex gap-2 flex-wrap">
+              {(Object.keys(ROAD_DONE_COLORS) as RoadDoneColor[]).map(k => (
+                <ColorChip key={k} on={prefs.roadDone === k} color={ROAD_DONE_COLORS[k].color} label={ROAD_DONE_COLORS[k].label} onClick={() => onChange({ roadDone: k })} />
+              ))}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">Đường cần đi có nhà máy hai bên tô đậm, đường trống tô nhạt nét đứt. Đi qua rồi thì đổi sang màu "đã đi" để không đi lặp.</div>
+          </div>
+        </Section>
+
         <Section title="Đường đã đi / chưa đi">
           <Switch on={prefs.showOldTracks} onChange={v => onChange({ showOldTracks: v })} label="Hiện vết các lần khảo sát trước" hint="Màu xám; cũng được tính là đường đã đi" />
-          <Switch on={prefs.showRoads} onChange={v => onChange({ showRoads: v })} label="Tô màu đường chưa đi" hint="Tải mạng đường từ OpenStreetMap: cam = chưa đi, xanh = đã đi" />
+          <Switch on={prefs.showRoads} onChange={v => onChange({ showRoads: v })} label="Tô màu đường chưa đi" hint="Tải mạng đường từ OpenStreetMap, tô theo 2 màu đã chọn ở mục Màu đường" />
           {prefs.showRoads && (
             <>
               <Switch on={prefs.clipToZone} onChange={v => onChange({ clipToZone: v })} label="Chỉ tính đường trong ranh giới KCN"
                 hint={area.state !== 'ok' ? 'Dùng ranh giới KCN trên OpenStreetMap (viền cam chấm)'
                   : boundaryName ? `Đã có ranh giới “${boundaryName}” — bỏ đường khu dân cư xung quanh`
                   : 'OSM chưa có ranh giới KCN này → đang tính mọi đường trong vùng tải'} />
+              <div className="py-2.5 flex items-center gap-2">
+                <div className="flex-1 min-w-0 text-[12px] text-[#3A3A3C] leading-snug">
+                  {areaSaved ? 'Đang dùng vùng đã khoanh & lưu cho KCN này' : boundaryName ? 'Ranh giới lấy tự động từ OpenStreetMap' : 'KCN chưa có ranh giới'}
+                </div>
+                <button onClick={onEditArea} className="h-8 px-3 rounded-full bg-[#F2F2F7] text-[12px] font-medium text-[#0A84FF] shrink-0">
+                  {areaSaved || boundaryName ? 'Khoanh lại vùng' : 'Khoanh vùng'}
+                </button>
+              </div>
               <Switch on={prefs.includeService} onChange={v => onChange({ includeService: v })} label="Tính cả đường nhánh / nội bộ" hint="Trong KCN có nhiều đường nội bộ nhà máy — thường nên tắt" />
               <div className="py-3 space-y-1.5">
                 <div className="text-[13px] text-[#1D1D1F]">Vùng tải đường quanh KCN</div>
@@ -136,7 +205,7 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
 
         <Section title="Khác">
           <Switch on={prefs.satellite} onChange={v => onChange({ satellite: v })} label="Nền vệ tinh" hint="Nhìn mái nhà xưởng, cổng, bãi xe" />
-          <Switch on={prefs.showPhotos} onChange={v => onChange({ showPhotos: v })} label="Ảnh chỉ tiêu trên bản đồ" />
+          <Switch on={prefs.showPhotos} onChange={v => onChange({ showPhotos: v })} label="Ảnh chỉ tiêu + ghi âm trên bản đồ" />
           <Switch on={prefs.keepAwake} onChange={v => onChange({ keepAwake: v })} label="Giữ màn hình luôn sáng khi đang ghi"
             hint="Tắt màn hình / chuyển app thì trình duyệt ngừng nhận GPS → vết bị đứt" />
           <div className="py-3 space-y-1.5">
@@ -146,5 +215,13 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
         </Section>
       </div>
     </div>
+  );
+}
+
+function ColorChip({ on, color, label, onClick }: { on: boolean; color: string; label: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={`h-8 pl-1.5 pr-2.5 rounded-full inline-flex items-center gap-1.5 text-[12.5px] font-medium ${on ? 'bg-[#1D1D1F] text-white' : 'bg-[#F2F2F7] text-[#1D1D1F]'}`}>
+      <span className="w-5 h-5 rounded-full border-2 border-white shadow-sm" style={{ background: color }} />{label}
+    </button>
   );
 }

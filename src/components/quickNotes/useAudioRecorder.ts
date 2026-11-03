@@ -228,10 +228,13 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void): AudioR
     return Math.min(1, Math.sqrt(sum / data.length) * 3);
   }, []);
 
-  // Rời khỏi app (đăng xuất) giữa chừng → dừng và vẫn giao file đã ghi
+  // Rời khỏi app (đăng xuất) giữa chừng → dừng và vẫn giao file đã ghi (cộng nốt đoạn đang ghi vào thời lượng)
   useEffect(() => () => {
     const r = recRef.current;
-    if (r && r.state !== 'inactive') r.stop();
+    if (r && r.state !== 'inactive') {
+      if (since.current !== null) { accMs.current += Date.now() - since.current; since.current = null; }
+      r.stop();
+    }
   }, []);
 
   const active = phase === 'starting' || phase === 'recording' || phase === 'paused' || phase === 'stopping';

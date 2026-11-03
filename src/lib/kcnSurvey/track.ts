@@ -178,6 +178,8 @@ export interface RoadWay {
   name?: string;
   /** 'main' = đường trục (primary / secondary / tertiary…), 'minor' = đường nhánh / nội bộ */
   kind: string;
+  /** Đường 1 chiều: 1 = chỉ đi theo thứ tự toạ độ, -1 = chỉ đi ngược lại (OSM oneway=-1) */
+  oneway?: 1 | -1;
   coords: [number, number][];
 }
 

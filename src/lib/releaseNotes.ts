@@ -16,6 +16,32 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-03-kcn-survey-areas-sound',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Thêm nhanh KCN / vùng chưa có: tìm theo tên hoặc dán link Google Maps, xem khoanh vùng trên bản đồ',
+      'KCN chưa có ranh giới thì tự chấm vùng trên bản đồ; vùng được lưu, lần sau khảo sát dùng lại',
+      'Khảo sát chỉ tô đường trong vùng đã khoanh; đứng trong vùng là tự nhận đúng KCN',
+      'Âm thanh dẫn đường 3 chế độ: tắt hẳn, chỉ tiếng bíp báo chỗ rẽ, hoặc giọng đọc',
+      'Tự chọn màu cho đường cần đi và đường đã đi qua',
+    ],
+  },
+  {
+    id: '2026-11-03-kcn-survey-nav-voice-markup',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Tab "Khảo sát KCN" riêng cạnh Bản đồ: chuyến đi, ảnh chỉ tiêu, ghi âm, tổng hợp theo KCN',
+      'Mũi tên vị trí xoay theo la bàn điện thoại; đang chạy xe thì chỉ theo hướng đi',
+      'Nút Dẫn đường: chỉ rẽ tới đoạn đường chưa đi tiếp theo (ưu tiên có nhà máy), đọc to chỗ rẽ',
+      'Dẫn đường tới công ty chưa đi ngang ngay trong app, đi lệch thì tự tính lại đường',
+      'Ghi chú lên ảnh chỉ tiêu: khoanh, mũi tên, bút, ghi chữ — ảnh gốc vẫn giữ nguyên',
+      'Ghi âm nhanh khi khảo sát: lưu kèm chỗ ghi + công ty gần đó, nghe lại trên bản đồ',
+      'Tải danh sách ảnh chỉ tiêu ra file CSV (mở bằng Excel)',
+    ],
+  },
+  {
     id: '2026-11-02-kcn-survey-zone-title-factories',
     date: '2026-11-02',
     title: 'Khảo sát KCN',

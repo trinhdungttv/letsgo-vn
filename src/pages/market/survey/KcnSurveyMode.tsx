@@ -2,13 +2,15 @@
 //  - Bấm Bắt đầu: ghi vết GPS, vẽ đường đã đi (xanh dương) chồng lên vết các lần trước (xám) và tô cam các con đường
 //    trong KCN chưa đi (mạng đường OpenStreetMap) → nhìn là biết rẽ hướng nào.
 //  - Đi ngang công ty nào thì hiện tên; khách hàng / pipeline / KH tiềm năng hiện luôn thẻ tổng quan.
-//  - Chụp bảng chỉ tiêu tuyển dụng ngoài cổng → lưu ảnh kèm toạ độ chỗ chụp, xem lại ở Lịch sử.
+//  - Chụp bảng chỉ tiêu tuyển dụng ngoài cổng → lưu ảnh kèm toạ độ chỗ chụp (vẽ / ghi chữ lên ảnh được), xem lại ở Lịch sử.
+//  - Ghi âm nhanh những gì không chụp được, kèm chỗ ghi + công ty gần đó.
+//  - Mũi tên vị trí xoay theo la bàn / hướng chạy; "Dẫn đường" chỉ rẽ tới đoạn chưa đi tiếp theo hoặc tới 1 công ty.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  Camera, ChevronLeft, ChevronRight, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Minus, Navigation, Pause, Play, Plus, Settings, Square, X, AlertTriangle, MapPin,
+  Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, Pause, PenLine, Play, Plus, Settings, Square, X, AlertTriangle, MapPin,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -28,18 +30,30 @@ import {
   companiesNear, mergeOsmPlaces, notePassed, pickCurrent, roadFactoryScores, STATUS_META, type NearbyCompany, type PassedCompany, type SurveyCompany,
 } from '../../../lib/kcnSurvey/companies';
 import { clusterShare, companiesInArea, dayRange, detectZone, surveyTitle, type ZoneCandidate } from '../../../lib/kcnSurvey/zones';
-import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type AreaMap } from '../../../lib/kcnSurvey/overpass';
+import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type AreaMap, type OsmZone } from '../../../lib/kcnSurvey/overpass';
+import { ringsBounds, ringsCenter } from '../../../lib/kcnSurvey/areaSearch';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
+import { buildRoadGraph } from '../../../lib/kcnSurvey/navigate';
+import { bearing, displayHeading, smoothAngle } from '../../../lib/kcnSurvey/heading';
 import {
-  countTripsBetween, listPhotos, listTrips, loadTracks, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, uploadPhoto,
-  type PhotoMeta, type SurveyPhoto, type SurveyTrip,
+  countTripsBetween, listPhotos, listSurveyAreas, listTrips, listVoiceNotes, loadTracks, markupColumnMissing, MARKUP_MIGRATION_HINT, titleColumnMissing, TITLE_MIGRATION_HINT,
+  updateTrip, uploadPhoto, uploadVoiceNote,
+  type PhotoMeta, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote, type VoiceMeta,
 } from '../../../lib/kcnSurvey/api';
+import { useAudioRecorder, type RecordedAudio } from '../../../components/quickNotes/useAudioRecorder';
 import { useSurveyRecorder, pendingActiveTrip, type SummaryResult } from './useSurveyRecorder';
-import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, zoomForSpeed, fold, type SurveyPrefs } from './surveyData';
+import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, zoomForSpeed, fold, NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type SurveyPrefs } from './surveyData';
 import SurveyCompanyCard, { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
 import SurveyPhotoSheet, { type PhotoFormValue, type PhotoPosition } from './SurveyPhotoSheet';
 import SurveySettingsPanel, { type AreaStatus } from './SurveySettingsPanel';
 import SurveyHistoryPanel, { type PhotoFilter } from './SurveyHistoryPanel';
+import { MarkedImage } from './PhotoMarks';
+import SurveyVoiceSheet from './SurveyVoiceSheet';
+import { fmtClock } from './surveyFormat';
+import SurveyNavBanner from './SurveyNavBanner';
+import SurveyAreaFinder, { type AreaSaved } from './SurveyAreaFinder';
+import { useDeviceHeading } from './useDeviceHeading';
+import { useSurveyNavigation } from './useSurveyNavigation';
 
 interface Props {
   marketZones: MarketZone[];
@@ -48,22 +62,25 @@ interface Props {
   laborHistory: Record<string, LaborHistoryEntry[]>;
   goTab: (tab: MarketTab) => void;
   onClose: () => void;
+  /** Mở thẳng màn "Thêm KCN / vùng khảo sát" (nút ở tab Khảo sát KCN) */
+  startWith?: 'area';
 }
 
-type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby' | 'todo';
+type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby' | 'todo' | 'area';
 
-interface UploadJob {
+type UploadJob = {
   id: string;
   label: string;
   state: 'uploading' | 'failed';
   error?: string;
-  file: File;
-  meta: PhotoMeta;
-}
+} & ({ kind: 'photo'; file: File; meta: PhotoMeta } | { kind: 'voice'; blob: Blob; ext: string; meta: VoiceMeta });
+
+/** Ghi âm khảo sát tự dừng + lưu sau bấy lâu (ghi chú nhanh, không phải ghi cuộc họp). */
+const VOICE_MAX_MS = 15 * 60 * 1000;
 
 const toLatLngs = (seg: TrackSegment) => seg.map(p => [p[0], p[1]] as [number, number]);
 
-export default function KcnSurveyMode({ marketZones, marketLeads, branches, laborHistory, goTab, onClose }: Props) {
+export default function KcnSurveyMode({ marketZones, marketLeads, branches, laborHistory, goTab, onClose, startWith }: Props) {
   const { user } = useAuth();
   const [prefs, setPrefs] = useState<SurveyPrefs>(() => loadSurveyPrefs());
   const setPref = useCallback((p: Partial<SurveyPrefs>) => setPrefs(prev => { const next = { ...prev, ...p }; saveSurveyPrefs(next); return next; }), []);
@@ -82,9 +99,20 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const [pending, setPending] = useState(() => pendingActiveTrip());
 
   // ── KCN đang khảo sát ─────────────────────────────────────────────────────
+  // KCN vừa thêm nhanh ở màn khoanh vùng — dùng ngay, trong lúc App nạp lại danh sách Thị trường
+  const [extraZones, setExtraZones] = useState<MarketZone[]>([]);
+  const allZones = useMemo(() => [...marketZones, ...extraZones.filter(z => !marketZones.some(m => m.id === z.id))], [marketZones, extraZones]);
+  // Vùng đã khoanh & lưu theo KCN (kcn_survey_areas, migration 194) — ưu tiên hơn ranh giới tự đoán trên OSM
+  const [savedAreas, setSavedAreas] = useState<{ zoneId: string; name: string; rings: [number, number][][]; source: string }[]>([]);
+  useEffect(() => {
+    listSurveyAreas()
+      .then(list => setSavedAreas(prev => [...list.filter(a => a.zone_id).map(a => ({ zoneId: a.zone_id!, name: a.name, rings: a.rings, source: a.source })), ...prev.filter(p => !list.some(a => a.zone_id === p.zoneId))]))
+      .catch(() => { /* chưa chạy 194 — dùng ranh giới OSM như cũ */ });
+  }, []);
   /** undefined = chưa chọn (tự gợi ý theo GPS lần đầu), null = không gắn KCN */
   const [zoneId, setZoneId] = useState<string | null | undefined>(() => pending?.trip.zone_id ?? undefined);
-  const zone = useMemo(() => (zoneId ? marketZones.find(z => z.id === zoneId) ?? null : null), [zoneId, marketZones]);
+  const zone = useMemo(() => (zoneId ? allZones.find(z => z.id === zoneId) ?? null : null), [zoneId, allZones]);
+  const savedArea = useMemo(() => (zone ? savedAreas.find(a => a.zoneId === zone.id) ?? null : null), [zone, savedAreas]);
   const zoneName = zone?.name ?? (zoneId && pending?.trip.zone_id === zoneId ? pending.trip.zone_name : '') ?? '';
   /** auto = app tự chọn theo tâm KCN gần nhất · boundary = đứng trong ranh giới OSM · manual = tự chọn · trip = theo chuyến dở */
   const zoneSourceRef = useRef<'auto' | 'boundary' | 'manual' | 'trip'>(pending ? 'trip' : 'auto');
@@ -94,9 +122,22 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   // Tâm vùng: KCN có toạ độ → tâm KCN; không thì vị trí GPS đầu tiên
   const [gpsAnchor, setGpsAnchor] = useState<{ lat: number; lng: number } | null>(null);
   useEffect(() => { if (fix && !gpsAnchor) setGpsAnchor({ lat: fix.lat, lng: fix.lng }); }, [fix, gpsAnchor]);
-  const anchor = useMemo(() => (zone?.lat != null && zone?.lng != null ? { lat: zone.lat, lng: zone.lng } : gpsAnchor), [zone, gpsAnchor]);
+  const anchor = useMemo(() => (savedArea ? ringsCenter(savedArea.rings)
+    : zone?.lat != null && zone?.lng != null ? { lat: zone.lat, lng: zone.lng } : gpsAnchor), [savedArea, zone, gpsAnchor]);
   const [areaOverride, setAreaOverride] = useState<Bounds | null>(null);
-  const areaBounds = useMemo(() => areaOverride ?? (anchor ? boundsAround(anchor, prefs.areaRadiusM) : null), [areaOverride, anchor, prefs.areaRadiusM]);
+  // Có vùng đã khoanh → tải đường theo khung vùng (+ 300 m viền); không thì hình vuông quanh tâm KCN
+  const areaBounds = useMemo(() => {
+    if (areaOverride) return areaOverride;
+    if (savedArea) {
+      const b = ringsBounds(savedArea.rings);
+      if (b) {
+        const pad = boundsAround({ lat: (b.minLat + b.maxLat) / 2, lng: (b.minLng + b.maxLng) / 2 }, 300);
+        const dLat = (pad.maxLat - pad.minLat) / 2, dLng = (pad.maxLng - pad.minLng) / 2;
+        return { minLat: b.minLat - dLat, maxLat: b.maxLat + dLat, minLng: b.minLng - dLng, maxLng: b.maxLng + dLng };
+      }
+    }
+    return anchor ? boundsAround(anchor, prefs.areaRadiusM) : null;
+  }, [areaOverride, savedArea, anchor, prefs.areaRadiusM]);
   useEffect(() => { setAreaOverride(null); }, [zoneId]);
 
   // ── Bản đồ đường + nhà máy OSM ────────────────────────────────────────────
@@ -139,26 +180,27 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   // TRONG ranh giới 1 KCN khác → đổi sang KCN đó (chỉ khi chưa bắt đầu chuyến và chưa tự chọn tay).
   useEffect(() => {
     if (zoneId !== undefined || !fix) return;
-    const d = detectZone(fix, area?.zones ?? [], marketZones);
+    const d = detectZone(fix, area?.zones ?? [], allZones, 3000, savedAreas);
     setZoneId(d.best ? d.best.zone.id : null);
     zoneSourceRef.current = d.best?.inside ? 'boundary' : 'auto';
     if (d.best) say(d.best.inside ? `Đang trong ranh giới ${d.best.zone.name}` : `Đang ở gần ${d.best.zone.name}`);
-  }, [fix, zoneId, marketZones, area, say]);
+  }, [fix, zoneId, allZones, area, savedAreas, say]);
   useEffect(() => {
     if (!fix || !area?.zones?.length || recorder.trip || pending) return;
     if (zoneSourceRef.current === 'manual' || zoneSourceRef.current === 'trip') return;
-    const d = detectZone(fix, area.zones, marketZones);
+    const d = detectZone(fix, area.zones, allZones, 3000, savedAreas);
     if (d.best?.inside && d.best.zone.id !== zoneId) {
       setZoneId(d.best.zone.id);
       zoneSourceRef.current = 'boundary';
       say(`Đang trong ranh giới ${d.best.zone.name}`);
     }
-  }, [fix, area, marketZones, zoneId, recorder.trip, pending, say]);
+  }, [fix, area, allZones, zoneId, recorder.trip, pending, savedAreas, say]);
 
   // ── Chuyến cũ + ảnh quanh vùng ─────────────────────────────────────────────
   const [oldTrips, setOldTrips] = useState<SurveyTrip[]>([]);
   const [oldTracks, setOldTracks] = useState<Map<string, TrackSegment[]>>(new Map());
   const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
+  const [voiceNotes, setVoiceNotes] = useState<SurveyVoiceNote[]>([]);
   const [dbError, setDbError] = useState<string | null>(null);
   const [historyTick, setHistoryTick] = useState(0);
   useEffect(() => {
@@ -171,7 +213,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           listPhotos({ zoneId: zoneId ?? null, bounds: areaBounds, limit: 300 }),
         ]);
         const tracks = await loadTracks(trips.map(t => t.id));
+        // Bảng ghi âm (migration 193) chưa có thì thôi — không làm hỏng phần còn lại
+        const voices = await listVoiceNotes({ zoneId: zoneId ?? null, bounds: areaBounds, limit: 300 }).catch(() => [] as SurveyVoiceNote[]);
         if (!alive) return;
+        setVoiceNotes(voices);
         setOldTrips(trips);
         setOldTracks(tracks);
         setPhotos(ph);
@@ -250,16 +295,22 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   // ── Độ phủ đường ──────────────────────────────────────────────────────────
   // Ranh giới KCN trên OSM → chỉ tính đường bên trong (vùng tải là hình vuông nên dính cả khu dân cư xung quanh)
-  const boundary = useMemo(() => (area && anchor ? pickZoneBoundary(area.zones ?? [], anchor, zone?.name ?? null) : null), [area, anchor, zone?.name]);
+  // Vùng đã khoanh & lưu cho KCN này → dùng luôn (đúng ý người khảo sát, không phải đoán)
+  const boundary = useMemo<OsmZone | null>(() => {
+    if (savedArea) return { id: `saved:${savedArea.zoneId}`, name: savedArea.name || zone?.name || 'Vùng đã khoanh', rings: savedArea.rings };
+    return area && anchor ? pickZoneBoundary(area.zones ?? [], anchor, zone?.name ?? null) : null;
+  }, [savedArea, area, anchor, zone?.name]);
   // Ranh giới CỤM (1 khối bao nhiều KCN) → chỉ lấy phần gần tâm KCN đang chọn hơn tâm các KCN khác trong cụm
-  const share = useMemo(() => (boundary && zone ? clusterShare(boundary, zone.id, marketZones) : null), [boundary, zone, marketZones]);
-  const pieces = useMemo(() => {
-    if (!area || !prefs.showRoads) return [];
-    const all = splitRoads(area.roads);
-    if (!boundary || !prefs.clipToZone) return all;
-    const inZone = piecesInZone(all, boundary);
-    return share ? inZone.filter(p => share({ lat: p.mid[0], lng: p.mid[1] })) : inZone;
-  }, [area, prefs.showRoads, boundary, prefs.clipToZone, share]);
+  const share = useMemo(() => (boundary && zone && !savedArea ? clusterShare(boundary, zone.id, allZones) : null), [boundary, zone, savedArea, allZones]);
+  // Mọi khúc đường trong vùng tải (để dẫn đường đi qua cả đường ngoài KCN) + chỉ số các khúc thuộc KCN (để tô / tính phủ)
+  const allPieces = useMemo(() => (area && prefs.showRoads ? splitRoads(area.roads) : []), [area, prefs.showRoads]);
+  const zoneIdx = useMemo(() => {
+    const idx = allPieces.map((_, i) => i);
+    if (!boundary || !prefs.clipToZone) return idx;
+    const inZone = new Set(piecesInZone(allPieces, boundary));
+    return idx.filter(i => inZone.has(allPieces[i]) && (!share || share({ lat: allPieces[i].mid[0], lng: allPieces[i].mid[1] })));
+  }, [allPieces, boundary, prefs.clipToZone, share]);
+  const pieces = useMemo(() => zoneIdx.map(i => allPieces[i]), [zoneIdx, allPieces]);
   const [covTick, setCovTick] = useState(0);
   const covTimer = useRef<number | null>(null);
   useEffect(() => {
@@ -280,6 +331,40 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   // Khúc đường có nhà máy 2 bên (> 0) → tô đậm "nên đi"; đường trống tô nhạt
   const roadScores = useMemo(() => roadFactoryScores(pieces, allCompanies), [pieces, allCompanies]);
   const unvisitedFactoryM = useMemo(() => (coverage ? pieces.reduce((m, p, i) => (!coverage.covered[i] && roadScores[i] > 0 ? m + p.len : m), 0) : 0), [coverage, pieces, roadScores]);
+
+  // ── Hướng đi + la bàn ─────────────────────────────────────────────────────
+  const compass = useDeviceHeading(prefs.compass);
+  /** Hướng + tốc độ đang chạy: GPS báo sẵn, không có thì tính từ 2 điểm cách nhau ≥ 8 m */
+  const [motion, setMotion] = useState<{ course: number | null; speed: number | null }>({ course: null, speed: null });
+  const motionRef = useRef(motion);
+  motionRef.current = motion;
+  const prevPosRef = useRef<{ lat: number; lng: number; at: number } | null>(null);
+  useEffect(() => {
+    if (!fix) return;
+    const prev = prevPosRef.current;
+    const d = prev ? distM(prev, fix) : 0;
+    const dt = prev ? (fix.at - prev.at) / 1000 : 0;
+    const derivedSpeed = prev && dt > 0 && dt < 20 ? d / dt : null;
+    const speed = fix.speed ?? derivedSpeed;
+    if (fix.heading != null && (fix.speed ?? 0) > 1) setMotion({ course: fix.heading, speed });
+    else if (prev && d >= 8 && dt < 20) setMotion({ course: bearing(prev, fix), speed });
+    else if (dt >= 20) setMotion(m => ({ course: m.course, speed: 0 }));
+    if (!prev || d >= 8 || dt >= 20) prevPosRef.current = { lat: fix.lat, lng: fix.lng, at: fix.at };
+  }, [fix]);
+  const movingCourse = (motion.speed ?? 0) >= 2 ? motion.course : null;
+
+  // ── Dẫn đường ─────────────────────────────────────────────────────────────
+  const graph = useMemo(() => (area && allPieces.length ? buildRoadGraph(allPieces, area.roads) : null), [area, allPieces]);
+  const navTargets = useMemo(() => (coverage ? zoneIdx.filter((_, j) => !coverage.covered[j]) : []), [coverage, zoneIdx]);
+  const navScores = useMemo(() => {
+    const a = new Float32Array(allPieces.length);
+    zoneIdx.forEach((i, j) => { a[i] = roadScores[j] ?? 0; });
+    return a;
+  }, [allPieces.length, zoneIdx, roadScores]);
+  const nav = useSurveyNavigation({
+    graph, fix, course: movingCourse, targets: navTargets, scores: navScores,
+    preferFactories: prefs.navPreferFactories, sound: prefs.navSound, say,
+  });
 
   // ── Công ty trong KCN chưa đi ngang ───────────────────────────────────────
   const zoneCompanies = useMemo(() => {
@@ -312,8 +397,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<{
     street: L.LayerGroup; sat: L.TileLayer; satLabels: L.TileLayer; renderer: L.Canvas;
-    roads: L.LayerGroup; outline: L.LayerGroup; old: L.LayerGroup; highlight: L.LayerGroup; companies: L.LayerGroup; photos: L.LayerGroup;
-    curCasing: L.Polyline; curLine: L.Polyline; pos: L.Marker | null; acc: L.Circle | null;
+    roads: L.LayerGroup; outline: L.LayerGroup; old: L.LayerGroup; highlight: L.LayerGroup; companies: L.LayerGroup; photos: L.LayerGroup; voice: L.LayerGroup;
+    route: L.LayerGroup; curCasing: L.Polyline; curLine: L.Polyline; pos: L.Marker | null; acc: L.Circle | null;
   } | null>(null);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(follow);
@@ -335,11 +420,13 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const roads = L.layerGroup().addTo(map);
     const old = L.layerGroup().addTo(map);
     const highlight = L.layerGroup().addTo(map);
+    const route = L.layerGroup().addTo(map);
     const curCasing = L.polyline([], { color: '#fff', weight: 10, opacity: 0.9, renderer, interactive: false }).addTo(map);
     const curLine = L.polyline([], { color: '#2563EB', weight: 5.5, opacity: 1, renderer, interactive: false }).addTo(map);
     const companies = L.layerGroup().addTo(map);
     const photosLayer = L.layerGroup().addTo(map);
-    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, curCasing, curLine, pos: null, acc: null };
+    const voiceLayer = L.layerGroup().addTo(map);
+    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, voice: voiceLayer, route, curCasing, curLine, pos: null, acc: null };
     map.on('dragstart', () => setFollow(false));
     map.on('zoomend', () => setZoom(map.getZoom()));
     // Bám theo GPS là bản đồ dịch liên tục → chỉ vẽ lại ghim công ty khi đã dịch quá 1/4 khung nhìn hoặc đổi zoom
@@ -391,6 +478,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   }, [fix, setPref]);
 
   const recenter = () => {
+    if (prefs.compass && compass.status === 'need-permission') void compass.request();
     setFollow(true);
     setPinnedKey(null);
     if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom);
@@ -406,17 +494,62 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     else if (anchor) map.setView([anchor.lat, anchor.lng], 15);
   }, [boundary, areaBounds, anchor]);
 
-  // Vị trí hiện tại: chấm xanh + vòng sai số + mũi tên hướng đi
+  // Vị trí hiện tại: chấm xanh + vòng sai số. Hướng (quạt la bàn / mũi tên chạy) xoay bằng biến CSS ở vòng rAF bên dưới
   useEffect(() => {
     const map = mapRef.current, ly = layersRef.current;
     if (!map || !ly || !fix) return;
-    const head = fix.heading != null && (fix.speed ?? 0) > 1 ? `<span class="kcs-pos-head" style="transform:rotate(${Math.round(fix.heading)}deg)"></span>` : '';
-    const icon = L.divIcon({ className: 'kcs-pos', html: `${head}<span class="kcs-pos-dot"></span>`, iconSize: [44, 44], iconAnchor: [22, 22] });
-    if (!ly.pos) ly.pos = L.marker([fix.lat, fix.lng], { icon, zIndexOffset: 2000, interactive: false }).addTo(map);
-    else { ly.pos.setLatLng([fix.lat, fix.lng]); ly.pos.setIcon(icon); }
+    if (!ly.pos) {
+      const icon = L.divIcon({
+        className: 'kcs-pos',
+        html: '<span class="kcs-pos-beam"></span><span class="kcs-pos-arrow"><svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 3 L34 35 L20 27.5 L6 35 Z" fill="#2563EB" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg></span><span class="kcs-pos-dot"></span>',
+        iconSize: [44, 44], iconAnchor: [22, 22],
+      });
+      ly.pos = L.marker([fix.lat, fix.lng], { icon, zIndexOffset: 2000, interactive: false }).addTo(map);
+    } else ly.pos.setLatLng([fix.lat, fix.lng]);
     if (!ly.acc) ly.acc = L.circle([fix.lat, fix.lng], { radius: fix.acc, color: '#2563EB', weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false, renderer: ly.renderer }).addTo(map);
     else { ly.acc.setLatLng([fix.lat, fix.lng]); ly.acc.setRadius(fix.acc); }
   }, [fix]);
+
+  // Xoay hướng ~20 lần/giây: đang chạy → mũi tên theo hướng GPS; đứng yên → quạt sáng theo la bàn điện thoại
+  const readCompass = compass.read;
+  useEffect(() => {
+    let raf = 0, last = 0, shown: number | null = null, lastMode = '';
+    const tick = (t: number) => {
+      raf = requestAnimationFrame(tick);
+      if (t - last < 50) return;
+      last = t;
+      const el = layersRef.current?.pos?.getElement();
+      if (!el) return;
+      const m = motionRef.current;
+      const h = displayHeading({ course: m.course, speed: m.speed, compass: prefs.compass ? readCompass() : null });
+      const mode = h ? h.source : 'none';
+      if (mode !== lastMode) { el.dataset.mode = mode; lastMode = mode; if (!h) shown = null; }
+      if (h) {
+        shown = smoothAngle(shown, h.deg, h.source === 'compass' ? 0.22 : 0.4);
+        el.style.setProperty('--kcs-head', `${shown.toFixed(1)}deg`);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [prefs.compass, readCompass]);
+
+  // Lộ trình dẫn đường: xanh = đường tới, tím = đoạn chưa đi sẽ khảo sát
+  useEffect(() => {
+    const ly = layersRef.current;
+    if (!ly) return;
+    ly.route.clearLayers();
+    const r = nav.route;
+    if (!r || r.coords.length < 2) return;
+    L.polyline(r.coords, { color: '#fff', weight: 11, opacity: 0.95, renderer: ly.renderer, interactive: false }).addTo(ly.route);
+    L.polyline(r.coords, { color: '#1A73E8', weight: 7, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
+    if (r.target.kind === 'run') {
+      const k = r.cum.findIndex(c => c >= r.approach - 0.5);
+      const run = k >= 0 ? r.coords.slice(Math.max(0, k)) : [];
+      if (run.length >= 2) L.polyline(run, { color: '#7C3AED', weight: 7, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
+    } else {
+      L.circleMarker([r.target.point.lat, r.target.point.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1A73E8', fillOpacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.route);
+    }
+  }, [nav.route]);
 
   // Vết chuyến đang đi
   useEffect(() => {
@@ -462,13 +595,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     };
     const cov = (i: number) => coverage.covered[i];
     const busy = (i: number) => roadScores[i] > 0;
-    draw(i => cov(i) && !pieces[i].main, { color: '#16A34A', weight: 3, opacity: 0.45 });
-    draw(i => cov(i) && pieces[i].main, { color: '#16A34A', weight: 5, opacity: 0.5 });
-    draw(i => !cov(i) && !busy(i) && !pieces[i].main, { color: '#FDBA74', weight: 3, opacity: 0.95, dashArray: '6 6' });
-    draw(i => !cov(i) && !busy(i) && pieces[i].main, { color: '#FB923C', weight: 5, opacity: 0.95, dashArray: '8 6' });
-    draw(i => !cov(i) && busy(i) && !pieces[i].main, { color: '#F97316', weight: 5, opacity: 0.95 });
-    draw(i => !cov(i) && busy(i) && pieces[i].main, { color: '#EA580C', weight: 7, opacity: 0.95 });
-  }, [coverage, pieces, roadScores]);
+    const todo = ROAD_TODO_COLORS[prefs.roadTodo], done = ROAD_DONE_COLORS[prefs.roadDone].color;
+    draw(i => cov(i) && !pieces[i].main, { color: done, weight: 3, opacity: 0.55 });
+    draw(i => cov(i) && pieces[i].main, { color: done, weight: 5, opacity: 0.6 });
+    draw(i => !cov(i) && !busy(i) && !pieces[i].main, { color: todo.light, weight: 3, opacity: 0.95, dashArray: '6 6' });
+    draw(i => !cov(i) && !busy(i) && pieces[i].main, { color: todo.lightMain, weight: 5, opacity: 0.95, dashArray: '8 6' });
+    draw(i => !cov(i) && busy(i) && !pieces[i].main, { color: todo.mid, weight: 5, opacity: 0.95 });
+    draw(i => !cov(i) && busy(i) && pieces[i].main, { color: todo.strong, weight: 7, opacity: 0.95 });
+  }, [coverage, pieces, roadScores, prefs.roadTodo, prefs.roadDone]);
 
   // Ghim công ty trong khung nhìn (nhãn tên khi phóng gần)
   const passedKeysVersion = passedCount;
@@ -530,6 +664,23 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     }
   }, [photos, prefs.showPhotos]);
 
+  // Ghi âm khảo sát (micro đỏ) — bấm để nghe lại
+  const openVoiceRef = useRef<(n: SurveyVoiceNote) => void>(() => {});
+  useEffect(() => {
+    const ly = layersRef.current;
+    if (!ly) return;
+    ly.voice.clearLayers();
+    if (!prefs.showPhotos) return;
+    for (const n of voiceNotes) {
+      if (n.lat == null || n.lng == null) continue;
+      const icon = L.divIcon({ className: 'kcs-voice', html: '<span>🎙</span>', iconSize: [30, 30], iconAnchor: [15, 15] });
+      const m = L.marker([n.lat, n.lng], { icon, zIndexOffset: 450 });
+      m.bindTooltip(escapeMapHtml([n.company_name || 'Ghi âm', fmtClock(n.duration_s), new Date(n.recorded_at).toLocaleDateString('vi-VN')].join(' · ')), { direction: 'top', offset: [0, -14], className: 'lgmap-tooltip' });
+      m.on('click', () => openVoiceRef.current(n));
+      m.addTo(ly.voice);
+    }
+  }, [voiceNotes, prefs.showPhotos]);
+
   // Chuyến đang xem lại từ Lịch sử
   const [highlightTrip, setHighlightTrip] = useState<SurveyTrip | null>(null);
   const showTripOnMap = (trip: SurveyTrip, segs: TrackSegment[]) => {
@@ -548,10 +699,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const clearHighlight = () => { layersRef.current?.highlight.clearLayers(); setHighlightTrip(null); };
 
   // ── Panel / sheet ─────────────────────────────────────────────────────────
-  const [panel, setPanel] = useState<Panel>('none');
+  const [panel, setPanel] = useState<Panel>(startWith === 'area' ? 'area' : 'none');
+  /** Màn khoanh vùng: null = thêm KCN / vùng mới, có giá trị = khoanh lại vùng cho KCN đó */
+  const [areaTarget, setAreaTarget] = useState<MarketZone | null>(null);
   const [historyInit, setHistoryInit] = useState<{ tab: 'trips' | 'photos'; filter: PhotoFilter | null }>({ tab: 'trips', filter: null });
   const [viewerPhoto, setViewerPhoto] = useState<SurveyPhoto | null>(null);
   openViewerRef.current = p => setViewerPhoto(p);
+  const [voiceSheet, setVoiceSheet] = useState<SurveyVoiceNote | null>(null);
+  openVoiceRef.current = n => setVoiceSheet(n);
 
   const showPhoto = (p: SurveyPhoto) => {
     const map = mapRef.current;
@@ -600,13 +755,26 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   const runUpload = useCallback((job: UploadJob) => {
     setUploads(list => [...list.filter(j => j.id !== job.id), { ...job, state: 'uploading', error: undefined }]);
-    uploadPhoto(job.id, job.file, job.meta)
-      .then(photo => {
-        setUploads(list => list.filter(j => j.id !== job.id));
-        setPhotos(list => [photo, ...list.filter(p => p.id !== photo.id)]);
-        say(`Đã lưu ảnh chỉ tiêu${photo.company_name ? ` — ${photo.company_name}` : ''}`);
-      })
-      .catch(e => setUploads(list => list.map(j => (j.id === job.id ? { ...j, state: 'failed', error: (e as Error).message } : j))));
+    const fail = (e: unknown) => setUploads(list => list.map(j => (j.id === job.id ? { ...j, state: 'failed', error: (e as Error).message } : j)));
+    if (job.kind === 'photo') {
+      uploadPhoto(job.id, job.file, job.meta)
+        .then(photo => {
+          setUploads(list => list.filter(j => j.id !== job.id));
+          setPhotos(list => [photo, ...list.filter(p => p.id !== photo.id)]);
+          say(job.meta.annotations.length && markupColumnMissing()
+            ? `Đã lưu ảnh — ${MARKUP_MIGRATION_HINT}`
+            : `Đã lưu ảnh chỉ tiêu${photo.company_name ? ` — ${photo.company_name}` : ''}`);
+        })
+        .catch(fail);
+    } else {
+      uploadVoiceNote(job.id, job.blob, job.ext, job.meta)
+        .then(note => {
+          setUploads(list => list.filter(j => j.id !== job.id));
+          setVoiceNotes(list => [note, ...list.filter(n => n.id !== note.id)]);
+          say(`Đã lưu ghi âm ${fmtClock(note.duration_s)}${note.company_name ? ` — gần ${note.company_name}` : ''}`);
+        })
+        .catch(fail);
+    }
   }, [say]);
 
   const savePhoto = async (v: PhotoFormValue) => {
@@ -638,12 +806,48 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, position_source: pos.source,
       taken_at: draft.takenAt,
       company_name: v.companyName, client_id: v.company?.clientId ?? null, lead_id: leadId, crm_id: v.company?.crmId ?? null,
-      positions: v.positions, headcount: v.headcount, wage_text: v.wage_text, note: v.note,
+      positions: v.positions, headcount: v.headcount, wage_text: v.wage_text, note: v.note, annotations: v.annotations,
       user_id: user?.id ?? null, user_name: user?.full_name ?? '',
     };
-    runUpload({ id: crypto.randomUUID(), label: v.companyName || 'Ảnh chỉ tiêu', state: 'uploading', file: draft.file, meta });
+    runUpload({ kind: 'photo', id: crypto.randomUUID(), label: v.companyName || 'Ảnh chỉ tiêu', state: 'uploading', file: draft.file, meta });
     setDraft(null);
   };
+
+  // ── Ghi âm nhanh ──────────────────────────────────────────────────────────
+  // Ghim theo chỗ BẮT ĐẦU ghi (chỗ nhìn thấy thông tin), gắn công ty đang hiện thẻ / gần nhất. Bấm dừng là lưu luôn —
+  // đang chạy xe không phải điền gì; ghi chú chữ thêm sau ở Lịch sử / tab Khảo sát KCN.
+  const voiceStartRef = useRef<{ position: PhotoPosition | null; company: SurveyCompany | null } | null>(null);
+  const onVoiceDone = (rec: RecordedAudio) => {
+    const st = voiceStartRef.current;
+    voiceStartRef.current = null;
+    if (rec.durationSec < 1) { say('Bản ghi quá ngắn (dưới 1 giây) — không lưu'); return; }
+    const pos = st?.position ?? fixPosition();
+    const c = st?.company ?? null;
+    const meta: VoiceMeta = {
+      trip_id: recorder.trip?.id ?? null, zone_id: zone?.id ?? null, zone_name: zone?.name ?? '',
+      lat: pos?.lat ?? null, lng: pos?.lng ?? null, accuracy_m: pos?.acc ?? null,
+      recorded_at: rec.startedAt.toISOString(), duration_s: Math.round(rec.durationSec * 10) / 10, mime_type: rec.mime,
+      company_name: c?.name ?? '', client_id: c?.clientId ?? null, lead_id: c?.leadId ?? null, crm_id: c?.crmId ?? null,
+      note: '', user_id: user?.id ?? null, user_name: user?.full_name ?? '',
+    };
+    runUpload({ kind: 'voice', id: rec.noteId, label: `Ghi âm ${fmtClock(rec.durationSec)}`, state: 'uploading', blob: rec.blob, ext: rec.ext, meta });
+  };
+  const audio = useAudioRecorder(onVoiceDone);
+  const toggleVoice = () => {
+    if (audio.active) { audio.stop(); return; }
+    const pos = fixPosition();
+    const near = pos ? companiesNear(pos, allCompanies, Math.min(prefs.radiusM, 150))[0]?.company ?? null : null;
+    voiceStartRef.current = { position: pos, company: cardItem?.company ?? near };
+    void audio.start(crypto.randomUUID());
+  };
+  const { phase: audioPhase, elapsedMs: audioMs, error: audioError, stop: stopAudio, clearError: clearAudioError } = audio;
+  useEffect(() => {
+    if (audioPhase === 'recording' && audioMs >= VOICE_MAX_MS) { stopAudio(); say('Ghi âm đã 15 phút nên tự dừng và lưu — bấm Ghi âm để ghi tiếp'); }
+  }, [audioPhase, audioMs, stopAudio, say]);
+  useEffect(() => {
+    if (audioError) { say(audioError); clearAudioError(); }
+  }, [audioError, clearAudioError, say]);
+  const recordingCompany = voiceStartRef.current?.company?.name ?? null;
 
   // ── Thêm công ty OSM vào Thị trường ───────────────────────────────────────
   const addOsmCompany = async (c: SurveyCompany) => {
@@ -721,8 +925,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   /** Nút Bắt đầu: KCN do app tự đoán theo tâm mà KCN thứ 2 cũng gần ngang → hỏi lại trước. */
   const requestStart = () => {
+    // iPhone: xin quyền la bàn ngay trong lần bấm này
+    if (prefs.compass && compass.status === 'need-permission') void compass.request();
     if (fix && zoneSourceRef.current === 'auto') {
-      const d = detectZone(fix, area?.zones ?? [], marketZones);
+      const d = detectZone(fix, area?.zones ?? [], allZones, 3000, savedAreas);
       if (!d.sure && d.candidates.length >= 2) { setZonePrompt(d.candidates.slice(0, 3)); return; }
     }
     void start(zone ? { id: zone.id, name: zone.name } : null);
@@ -769,11 +975,11 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     }
   };
 
-  const changeZone = async (id: string | null) => {
+  const changeZone = async (id: string | null, known?: { id: string; name: string; lat?: number | null; lng?: number | null } | null) => {
     setZoneId(id);
     zoneSourceRef.current = 'manual';
     setPanel('none');
-    const z = id ? marketZones.find(x => x.id === id) : null;
+    const z = known ?? (id ? allZones.find(x => x.id === id) : null);
     if (z?.lat != null && z?.lng != null && !fix) mapRef.current?.setView([z.lat, z.lng], 15);
     const trip = recorder.trip;
     if (trip) {
@@ -789,6 +995,21 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     }
   };
 
+  /** Lưu xong vùng ở màn khoanh vùng: dùng ngay KCN + vùng đó (kể cả khi chưa chạy 194 — chỉ trong phiên này). */
+  const onAreaSaved = async (r: AreaSaved) => {
+    setPanel('none');
+    if (r.createdZone) setExtraZones(list => [...list.filter(z => z.id !== r.zone.id), quickZone(r.zone)]);
+    setSavedAreas(list => [...list.filter(a => a.zoneId !== r.zone.id), { zoneId: r.zone.id, name: r.zone.name, rings: r.rings, source: r.area?.source ?? 'drawn' }]);
+    setAreaOverride(null);
+    if (zoneId !== r.zone.id) await changeZone(r.zone.id, r.zone);
+    const map = mapRef.current;
+    if (map && r.rings.length) { setFollow(false); map.fitBounds(L.polygon(r.rings).getBounds(), { padding: [30, 30] }); }
+    say(r.areaError
+      ? `${r.createdZone ? `Đã thêm ${r.zone.name}. ` : ''}Vùng chỉ dùng trong lần này: ${r.areaError}`
+      : `${r.createdZone ? `Đã thêm ${r.zone.name} vào Thị trường → Khu vực. ` : ''}Đã lưu vùng — đang tải đường trong vùng…`);
+  };
+  const openAreaFinder = (target: MarketZone | null) => { setAreaTarget(target); setPanel('area'); };
+
   /** Đưa bản đồ tới 1 công ty và mở thẻ của nó (từ danh sách "chưa đi ngang"). */
   const focusCompany = (c: SurveyCompany) => {
     const map = mapRef.current;
@@ -799,7 +1020,31 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (map && p) { setFollow(false); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17)); }
   };
 
+  const startNavAuto = () => {
+    if (!allPieces.length) { say(prefs.showRoads ? 'Chưa tải xong mạng đường OSM — chờ chút rồi bấm lại' : 'Bật "Tô màu đường chưa đi" trong Cài đặt để dẫn đường'); return; }
+    if (prefs.compass && compass.status === 'need-permission') void compass.request();
+    clearHighlight();
+    setPinnedKey(null);
+    setFollow(true);
+    if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], Math.max(prefs.followZoom, 16));
+    nav.start({ kind: 'auto' });
+  };
+  const navToCompany = (c: SurveyCompany) => {
+    const p = c.points[0] ?? (c.rings[0]?.[0] ? { lat: c.rings[0][0][0], lng: c.rings[0][0][1] } : null);
+    if (!p) return;
+    if (!allPieces.length) { say('Chưa có mạng đường OSM — dùng nút Google Maps'); return; }
+    setPanel('none');
+    setFollow(true);
+    if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], Math.max(prefs.followZoom, 16));
+    nav.start({ kind: 'point', name: c.name, point: p });
+  };
+
   const tryClose = async () => {
+    if (audio.active) {
+      if (!window.confirm('Đang ghi âm — thoát sẽ dừng ghi và lưu phần đã ghi. Thoát?')) return;
+      audio.stop();
+    }
+    if (uploads.length && !window.confirm(`Còn ${uploads.length} ảnh / ghi âm chưa lưu xong${uploads.some(u => u.state === 'failed') ? ' (có cái bị lỗi)' : ''} — thoát bây giờ sẽ MẤT. Vẫn thoát?`)) return;
     if (recorder.status === 'recording' && !window.confirm('Đang ghi đường đi — thoát sẽ TẠM DỪNG khảo sát (mở lại để đi tiếp). Thoát?')) return;
     if (recorder.status === 'recording') await recorder.pause();
     onClose();
@@ -815,10 +1060,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   const zonesByDistance = useMemo(() => {
     const p = fix ?? anchor;
-    return [...marketZones]
+    return [...allZones]
       .map(z => ({ z, d: p && z.lat != null && z.lng != null ? distM(p, { lat: z.lat, lng: z.lng }) : null }))
       .sort((a, b) => (a.d ?? 1e12) - (b.d ?? 1e12) || a.z.name.localeCompare(b.z.name, 'vi'));
-  }, [marketZones, fix, anchor]);
+  }, [allZones, fix, anchor]);
   const [zoneQuery, setZoneQuery] = useState('');
 
   const recording = recorder.status === 'recording';
@@ -888,6 +1133,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
               <button onClick={clearHighlight} className="font-semibold shrink-0">Ẩn</button>
             </div>
           )}
+          <SurveyNavBanner mode={nav.mode} status={nav.status} route={nav.route} next={nav.next} after={nav.after}
+            distToNext={nav.distToNext} remaining={nav.remaining} toApproach={nav.toApproach}
+            sound={prefs.navSound} onSound={v => { setPref({ navSound: v }); nav.previewSound(v); say(`Âm thanh dẫn đường: ${NAV_SOUND_LABEL[v]}`); }}
+            onReplan={nav.replan} onStop={nav.stop} />
           {cardItem && panel === 'none' && (
             <SurveyCompanyCard
               item={cardItem} lookup={lookup} photos={photosOf(cardItem.company)}
@@ -912,10 +1161,23 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {/* ── Thanh dưới ── */}
       <div className="absolute inset-x-0 bottom-0 z-[1100] pointer-events-none pb-[env(safe-area-inset-bottom)]">
-        {zoneCompanies.length > 0 && (
-          <div className="px-3 pb-1.5">
-            <button onClick={() => setPanel('todo')}
-              className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] max-w-[calc(100%-72px)]">
+        {audio.active && (
+          <div className="pl-3 pb-1.5 pr-[72px] md:pr-3">
+            <div className="pointer-events-auto md:mx-auto md:w-[560px] flex items-center gap-2 rounded-2xl bg-[#1D1D1F]/90 backdrop-blur text-white pl-3 pr-1.5 py-1.5 shadow-lg">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#FF3B30] animate-pulse shrink-0" />
+              <span className="flex-1 min-w-0 text-[13px] truncate">
+                {audio.phase === 'starting' ? 'Đang bật micro…' : <>Đang ghi âm <b className="tabular-nums">{fmtClock(audio.elapsedMs / 1000)}</b></>}
+                {recordingCompany && <span className="text-white/70"> · gần {recordingCompany}</span>}
+              </span>
+              <button onClick={() => { if (window.confirm('Huỷ bản ghi âm này (không lưu)?')) audio.cancel(); }} className="h-8 px-3 rounded-full bg-white/15 text-[12.5px] shrink-0">Huỷ</button>
+              <button onClick={() => audio.stop()} className="h-8 px-3 rounded-full bg-[#FF3B30] text-[12.5px] font-semibold shrink-0 inline-flex items-center gap-1"><Square size={11} fill="currentColor" /> Dừng & lưu</button>
+            </div>
+          </div>
+        )}
+        {(zoneCompanies.length > 0 || (allPieces.length > 0 && nav.mode.kind === 'off')) && (
+          <div className="px-3 pb-1.5 flex items-center gap-2 pr-[72px] md:pr-3">
+            {zoneCompanies.length > 0 && <button onClick={() => setPanel('todo')}
+              className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] min-w-0">
               <Factory size={14} className="text-[#D97706] shrink-0" />
               <span className="truncate">
                 {todo.never.length
@@ -923,21 +1185,39 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
                   : todo.before.length ? `Đã qua hết — ${todo.before.length} công ty chỉ qua ở lần trước` : 'Đã đi ngang hết công ty trong KCN'}
               </span>
               <ChevronRight size={14} className="text-[#C7C7CC] shrink-0" />
-            </button>
+            </button>}
+            {allPieces.length > 0 && nav.mode.kind === 'off' && (
+              <button onClick={startNavAuto}
+                className="pointer-events-auto shrink-0 inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-[#137333] text-white shadow text-[12.5px] font-semibold">
+                <Navigation size={14} fill="currentColor" /> Dẫn đường
+              </button>
+            )}
           </div>
         )}
         <div className="px-3 pb-1.5 flex items-end justify-between gap-2">
           <div className="pointer-events-auto rounded-xl bg-white/90 backdrop-blur shadow px-2.5 py-1.5 text-[11px] text-[#3A3A3C] space-y-0.5 max-w-[calc(100%-72px)]">
+            {nav.route && (
+              <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#1A73E8]" /> Đường tới
+                {nav.route.target.kind === 'run' && <><span className="w-4 h-1.5 rounded-full bg-[#7C3AED] ml-1.5" /> Đoạn sẽ khảo sát</>}
+              </div>
+            )}
             <div className="flex items-center gap-1.5"><span className="w-4 h-1.5 rounded-full bg-[#2563EB]" /> Chuyến này
               {prefs.showOldTracks && <><span className="w-4 h-1.5 rounded-full bg-[#64748B]/60 ml-1.5" /> Lần trước{oldTrips.filter(t => t.id !== recorder.trip?.id).length ? ` (${oldTrips.filter(t => t.id !== recorder.trip?.id).length})` : ''}</>}
             </div>
             {prefs.showRoads && coverage && (
               <>
-                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full bg-[#EA580C] shrink-0" /> Chưa đi, có nhà máy
+                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_TODO_COLORS[prefs.roadTodo].strong }} /> Cần đi, có nhà máy
                   <span className="text-[#8E8E93]">{fmtDistance(unvisitedFactoryM)}</span></div>
-                <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-[#FDBA74] shrink-0" /> Chưa đi, đường trống
+                <div className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed shrink-0" style={{ borderColor: ROAD_TODO_COLORS[prefs.roadTodo].light }} /> Cần đi, đường trống
                   <span className="text-[#8E8E93]">{fmtDistance(Math.max(0, coverage.totalM - coverage.coveredM - unvisitedFactoryM))}</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-4 h-[3px] rounded-full shrink-0" style={{ background: ROAD_DONE_COLORS[prefs.roadDone].color }} /> Đã đi
+                  <span className="text-[#8E8E93]">{fmtDistance(coverage.coveredM)}</span></div>
               </>
+            )}
+            {prefs.showRoads && areaStatus.state === 'ok' && !boundary && (
+              <button onClick={() => openAreaFinder(zone)} className="text-[#0A84FF] font-semibold text-left">
+                {zone ? 'KCN chưa có ranh giới — khoanh vùng để chỉ tô đường trong KCN' : 'Chưa chọn KCN — thêm / khoanh vùng khảo sát'}
+              </button>
             )}
             {prefs.showRoads && areaStatus.state === 'loading' && <div className="flex items-center gap-1 text-[#8E8E93]"><Loader2 size={10} className="animate-spin" /> Đang tải mạng đường…</div>}
             {prefs.showRoads && areaStatus.state === 'error' && (
@@ -958,14 +1238,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           <div className="px-3 pb-1.5 space-y-1.5">
             {uploading.length > 0 && (
               <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[#1D1D1F]/85 text-white text-[12px] px-3 py-1.5">
-                <Loader2 size={12} className="animate-spin" /> Đang lưu {uploading.length} ảnh…
+                <Loader2 size={12} className="animate-spin" /> Đang lưu {uploading.length} {uploading.every(u => u.kind === 'voice') ? 'ghi âm' : uploading.every(u => u.kind === 'photo') ? 'ảnh' : 'ảnh / ghi âm'}…
               </div>
             )}
             {failedUploads.map(u => (
               <div key={u.id} className="pointer-events-auto flex items-center gap-2 rounded-xl bg-[#FFECEC] text-[#B00020] text-[12px] px-3 py-1.5 shadow">
-                <span className="flex-1 min-w-0 truncate">Chưa lưu được ảnh “{u.label}”: {u.error}</span>
+                <span className="flex-1 min-w-0 truncate">Chưa lưu được {u.kind === 'voice' ? '' : 'ảnh '}“{u.label}”: {u.error}</span>
                 <button onClick={() => runUpload(u)} className="font-semibold shrink-0">Thử lại</button>
-                <button onClick={() => { if (window.confirm('Bỏ ảnh này (chưa được lưu)?')) setUploads(list => list.filter(j => j.id !== u.id)); }} className="shrink-0" aria-label="Bỏ ảnh"><X size={14} /></button>
+                <button onClick={() => { if (window.confirm(`Bỏ ${u.kind === 'voice' ? 'bản ghi âm' : 'ảnh'} này (chưa được lưu)?`)) setUploads(list => list.filter(j => j.id !== u.id)); }} className="shrink-0" aria-label="Bỏ"><X size={14} /></button>
               </div>
             ))}
             {recorder.syncError && (
@@ -979,24 +1259,23 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
         <div className="pointer-events-auto mx-3 md:mx-auto md:w-[560px] mb-3 rounded-[22px] bg-white/95 backdrop-blur-xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2 flex items-center gap-2">
           {!hasTrip ? (
             <>
-              <BarBtn onClick={() => { setHistoryInit({ tab: 'trips', filter: null }); setPanel('history'); }} label="Lịch sử"><History size={20} /></BarBtn>
+              <BarBtn onClick={() => { setHistoryInit({ tab: 'trips', filter: null }); setPanel('history'); }} label="Lịch sử" narrow><History size={20} /></BarBtn>
               <button onClick={requestStart} disabled={busy || !!pending}
-                className="flex-1 h-14 rounded-2xl bg-[#0A84FF] text-white text-[16px] font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition disabled:opacity-50">
-                {busy ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />} Bắt đầu khảo sát
+                className="flex-1 min-w-0 h-14 rounded-2xl bg-[#0A84FF] text-white text-[15px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition disabled:opacity-50 whitespace-nowrap">
+                {busy ? <Loader2 size={20} className="animate-spin" /> : <Play size={19} fill="currentColor" />} Bắt đầu<span className="hidden min-[390px]:inline"> khảo sát</span>
               </button>
-              <BarBtn onClick={() => beginCapture(null)} label="Chụp"><Camera size={20} /></BarBtn>
+              <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} narrow><Mic size={20} /></BarBtn>
+              <BarBtn onClick={() => beginCapture(null)} label="Chụp" narrow><Camera size={20} /></BarBtn>
             </>
           ) : (
             <>
               {recording
-                ? <BarBtn onClick={() => void recorder.pause()} label="Tạm dừng"><Pause size={20} /></BarBtn>
-                : <BarBtn onClick={() => recorder.resume(prefs.keepAwake)} label="Đi tiếp" tone="blue"><Play size={20} /></BarBtn>}
-              <button onClick={() => beginCapture(null)}
-                className="flex-1 h-14 rounded-2xl bg-[#0A84FF] text-white text-[16px] font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition">
-                <Camera size={21} /> Chụp chỉ tiêu
-              </button>
-              <BarBtn onClick={() => beginCapture(null, true)} label="Ảnh có sẵn"><ImagePlus size={20} /></BarBtn>
-              <BarBtn onClick={() => void finish()} label="Kết thúc" tone="red" disabled={busy}><Square size={18} fill="currentColor" /></BarBtn>
+                ? <BarBtn onClick={() => void recorder.pause()} label="Tạm dừng" grow><Pause size={20} /></BarBtn>
+                : <BarBtn onClick={() => recorder.resume(prefs.keepAwake)} label="Đi tiếp" tone="blue" grow><Play size={20} /></BarBtn>}
+              <BarBtn onClick={() => beginCapture(null)} label="Chụp chỉ tiêu" tone="primary" grow><Camera size={21} /></BarBtn>
+              <BarBtn onClick={toggleVoice} label={audio.active ? fmtClock(audio.elapsedMs / 1000) : 'Ghi âm'} tone={audio.active ? 'rec' : undefined} grow><Mic size={20} /></BarBtn>
+              <BarBtn onClick={() => beginCapture(null, true)} label="Ảnh có sẵn" grow><ImagePlus size={20} /></BarBtn>
+              <BarBtn onClick={() => void finish()} label="Kết thúc" tone="red" disabled={busy} grow><Square size={18} fill="currentColor" /></BarBtn>
             </>
           )}
         </div>
@@ -1014,6 +1293,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       {/* ── Panels ── */}
       {panel === 'settings' && (
         <SurveySettingsPanel prefs={prefs} onChange={setPref} zoom={zoom} onZoom={setMapZoom} onFitArea={fitArea}
+          compassStatus={compass.status} onRequestCompass={() => void compass.request()}
+          onEditArea={() => openAreaFinder(zone)} areaSaved={!!savedArea}
           area={areaStatus} boundaryName={boundary ? `${boundary.name}${share ? ' (cụm — chỉ lấy phần gần tâm KCN này)' : ''}` : null} onClose={() => setPanel('none')}
           onReloadArea={() => {
             const b = mapRef.current?.getBounds();
@@ -1026,6 +1307,16 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {panel === 'zone' && (
         <Sheet title="Chọn KCN đang khảo sát" onClose={() => setPanel('none')}>
+          <div className="flex gap-2 mb-2">
+            <button onClick={() => openAreaFinder(null)} className="flex-1 h-10 rounded-xl bg-[#0A84FF] text-white text-[13px] font-semibold inline-flex items-center justify-center gap-1.5">
+              <Plus size={16} /> Thêm KCN / vùng mới
+            </button>
+            {zone && (
+              <button onClick={() => openAreaFinder(zone)} className="flex-1 min-w-0 h-10 px-2 rounded-xl bg-white text-[13px] font-medium text-[#1D1D1F] inline-flex items-center justify-center gap-1.5">
+                <PenLine size={15} className="shrink-0" /> <span className="truncate">{savedArea ? 'Khoanh lại vùng' : 'Khoanh vùng KCN này'}</span>
+              </button>
+            )}
+          </div>
           <input value={zoneQuery} onChange={e => setZoneQuery(e.target.value)} placeholder="Tìm KCN…"
             className="w-full h-10 px-3 rounded-xl bg-[#F2F2F7] text-[15px] outline-none mb-2 placeholder:text-[#8E8E93]" />
           <div className="rounded-xl bg-white divide-y divide-black/5 overflow-hidden">
@@ -1095,10 +1386,17 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
                           </span>
                           {Number.isFinite(dist) && <span className="text-[12px] text-[#8E8E93] shrink-0">{fmtDistance(dist)}</span>}
                         </button>
+                        {p && allPieces.length > 0 && (
+                          <button onClick={() => navToCompany(c)}
+                            className="shrink-0 h-8 px-2.5 rounded-full bg-[#E6F4EA] text-[11.5px] font-semibold text-[#137333] inline-flex items-center gap-1">
+                            <Navigation size={12} /> Dẫn đường
+                          </button>
+                        )}
                         {p && (
                           <a href={`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`} target="_blank" rel="noopener noreferrer"
-                            className="shrink-0 h-8 px-2.5 rounded-full bg-[#F2F2F7] text-[11.5px] font-medium text-[#0A84FF] inline-flex items-center gap-1">
-                            <Navigation size={12} /> Chỉ đường
+                            aria-label="Chỉ đường bằng Google Maps" title="Chỉ đường bằng Google Maps"
+                            className="shrink-0 w-8 h-8 rounded-full bg-[#F2F2F7] text-[#0A84FF] inline-flex items-center justify-center">
+                            <ExternalLink size={13} />
                           </a>
                         )}
                       </div>
@@ -1129,9 +1427,17 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
         </Sheet>
       )}
 
+      {panel === 'area' && (
+        <SurveyAreaFinder zones={allZones} target={areaTarget}
+          existing={areaTarget && areaTarget.id === zone?.id && boundary ? boundary.rings : null}
+          fix={fix ? { lat: fix.lat, lng: fix.lng } : null}
+          viewCenter={mapRef.current ? { lat: mapRef.current.getCenter().lat, lng: mapRef.current.getCenter().lng } : null}
+          onCancel={() => setPanel('none')} onSaved={r => void onAreaSaved(r)} />
+      )}
+
       {panel === 'history' && (
         <SurveyHistoryPanel
-          zones={marketZones} defaultZoneId={zoneId ?? null} initialTab={historyInit.tab} photoFilter={historyInit.filter}
+          zones={allZones} defaultZoneId={zoneId ?? null} initialTab={historyInit.tab} photoFilter={historyInit.filter}
           activeTripId={recorder.trip?.id ?? null}
           onShowTrip={showTripOnMap} onShowPhoto={showPhoto}
           onChanged={() => setHistoryTick(t => t + 1)} onClose={() => setPanel('none')} say={say}
@@ -1148,6 +1454,18 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           }} />
       )}
 
+      {voiceSheet && (
+        <SurveyVoiceSheet note={voiceSheet} say={say} onClose={() => setVoiceSheet(null)}
+          onShowOnMap={voiceSheet.lat != null && voiceSheet.lng != null ? () => {
+            const n = voiceSheet;
+            setVoiceSheet(null);
+            setFollow(false);
+            mapRef.current?.setView([n.lat!, n.lng!], Math.max(mapRef.current.getZoom(), 18));
+          } : null}
+          onSaved={n => { setVoiceNotes(list => list.map(x => (x.id === n.id ? n : x))); setVoiceSheet(n); }}
+          onDeleted={id => { setVoiceNotes(list => list.filter(x => x.id !== id)); setVoiceSheet(null); }} />
+      )}
+
       {draft && (
         <SurveyPhotoSheet file={draft.file} position={draftPosition} suggestions={draftSuggestions} allCompanies={allCompanies}
           preset={draft.preset} zoneName={zone?.name ?? null} lookup={lookup}
@@ -1160,7 +1478,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
             <Stat label="Quãng đường" value={fmtDistance(summary.trip.distance_m)} />
             <Stat label="Thời gian" value={summary.trip.ended_at ? fmtDuration((new Date(summary.trip.ended_at).getTime() - new Date(summary.trip.started_at).getTime()) / 1000) : '—'} />
             <Stat label="Phủ đường trong vùng" value={summary.trip.road_coverage != null ? `${summary.trip.road_coverage.toLocaleString('vi-VN')}%` : '—'} />
-            <Stat label="Ảnh chỉ tiêu" value={String(photos.filter(p => p.trip_id === summary.trip.id).length)} />
+            <Stat label="Ảnh chỉ tiêu · Ghi âm" value={`${photos.filter(p => p.trip_id === summary.trip.id).length} · ${voiceNotes.filter(n => n.trip_id === summary.trip.id).length}`} />
           </div>
           {summary.unsynced > 0 && (
             <div className="mt-2 rounded-xl bg-[#FFF4E5] text-[#8A4B00] text-[12.5px] px-3 py-2">
@@ -1217,13 +1535,20 @@ function MapBtn({ onClick, label, active, children }: { onClick: () => void; lab
   );
 }
 
-function BarBtn({ onClick, label, tone, disabled, children }: { onClick: () => void; label: string; tone?: 'red' | 'blue'; disabled?: boolean; children: ReactNode }) {
-  const cls = tone === 'red' ? 'text-[#D70015]' : tone === 'blue' ? 'text-[#0A84FF]' : 'text-[#1D1D1F]';
+function BarBtn({ onClick, label, tone, disabled, grow, narrow, children }: {
+  onClick: () => void; label: string; tone?: 'red' | 'blue' | 'primary' | 'rec'; disabled?: boolean;
+  /** chia đều bề ngang (thanh 5 nút khi đang đi) */ grow?: boolean;
+  /** hẹp hơn để nút Bắt đầu đủ chỗ */ narrow?: boolean;
+  children: ReactNode;
+}) {
+  const cls = tone === 'primary' ? 'bg-[#0A84FF] text-white'
+    : tone === 'rec' ? 'bg-[#FF3B30] text-white'
+    : tone === 'red' ? 'bg-[#F2F2F7] text-[#D70015]' : tone === 'blue' ? 'bg-[#F2F2F7] text-[#0A84FF]' : 'bg-[#F2F2F7] text-[#1D1D1F]';
   return (
     <button onClick={onClick} disabled={disabled} aria-label={label}
-      className={`w-[60px] h-14 rounded-2xl bg-[#F2F2F7] flex flex-col items-center justify-center gap-0.5 active:scale-95 transition disabled:opacity-40 ${cls}`}>
+      className={`${grow ? 'flex-1 min-w-0' : narrow ? 'w-[54px] shrink-0' : 'w-[60px] shrink-0'} h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 active:scale-95 transition disabled:opacity-40 ${cls}`}>
       {children}
-      <span className="text-[10px] font-medium leading-none">{label}</span>
+      <span className="text-[10px] font-medium leading-none whitespace-nowrap tabular-nums">{label}</span>
     </button>
   );
 }
@@ -1258,10 +1583,10 @@ function QuickPhotoView({ photo, onClose, onOpenHistory }: { photo: SurveyPhoto;
     <div className="fixed inset-0 z-[1350] bg-black/90 flex flex-col pt-[env(safe-area-inset-top)]" onClick={onClose}>
       <div className="flex items-center justify-between h-12 px-2 shrink-0">
         <button onClick={onClose} className="h-10 px-3 text-[16px] text-white inline-flex items-center gap-1"><X size={18} /> Đóng</button>
-        <button onClick={e => { e.stopPropagation(); onOpenHistory(); }} className="h-10 px-3 text-[14px] text-white/85">Sửa / xoá</button>
+        <button onClick={e => { e.stopPropagation(); onOpenHistory(); }} className="h-10 px-3 text-[14px] text-white/85">Sửa / ghi chú / xoá</button>
       </div>
       <div className="flex-1 min-h-0 flex items-center justify-center" onClick={e => e.stopPropagation()}>
-        <img src={photo.url} alt={photo.company_name} className="max-w-full max-h-full object-contain" />
+        <MarkedImage src={photo.url} alt={photo.company_name} marks={photo.annotations} className="w-full h-full" />
       </div>
       <div className="shrink-0 bg-[#1C1C1E] text-white px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]" onClick={e => e.stopPropagation()}>
         <div className="text-[15.5px] font-semibold">{photo.company_name || 'Chưa rõ công ty'}</div>
@@ -1273,4 +1598,15 @@ function QuickPhotoView({ photo, onClose, onOpenHistory }: { photo: SurveyPhoto;
       </div>
     </div>
   );
+}
+
+/** KCN vừa thêm nhanh → đủ trường MarketZone để dùng ngay (App nạp lại danh sách thật sau). */
+function quickZone(z: AreaSaved['zone']): MarketZone {
+  const now = new Date().toISOString();
+  return {
+    id: z.id, name: z.name, full_name: null, location: z.location, operator: null, area: null, established_year: null, occupancy_pct: null,
+    total_companies: null, fdi_companies: null, total_workers: null, industries: [], countries: [], characteristics: null, strengths: null,
+    weaknesses: null, labor_availability: 'Trung bình', lgv_clients: 0, lgv_workers: 0, potential: 3, notes: null, updated_at: now, created_at: now,
+    lat: z.lat, lng: z.lng,
+  } as MarketZone;
 }
