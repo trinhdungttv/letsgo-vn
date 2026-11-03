@@ -16,6 +16,24 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-03-kcn-photo-compress',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Ảnh chỉ tiêu nén gọn hơn (~300 KB thay vì ~600 KB), chữ trên bảng tuyển vẫn đọc rõ',
+    ],
+  },
+  {
+    id: '2026-11-03-kcn-scan-overture',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Tải thông tin KCN dùng Overture Maps (miễn phí, không cần khoá): nhiều công ty, có SĐT / Facebook',
+      'Nhận ra trang "… Tuyển dụng" của nhà máy (đang tuyển người) và nhà cung ứng lao động quanh KCN',
+      'Kết quả quét có nút gọi điện, mở Facebook, mở Google Maps; thêm vào Đối thủ kèm SĐT, Facebook',
+    ],
+  },
+  {
     id: '2026-11-03-kcn-survey-heading-scan',
     date: '2026-11-03',
     title: 'Khảo sát KCN',

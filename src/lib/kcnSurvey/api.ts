@@ -260,16 +260,21 @@ export async function listPhotos(opts: { zoneId?: string | null; tripId?: string
 
 export type PhotoMeta = Omit<SurveyPhoto, 'id' | 'storage_path' | 'url' | 'thumb_url' | 'width' | 'height' | 'size_bytes' | 'created_at'>;
 
+/** Ảnh lớn nén xong vẫn nặng hơn mức này (ảnh nhiều chi tiết / máy chỉ nén được JPEG) → nén lại mạnh hơn. */
+const PHOTO_TARGET_BYTES = 380_000;
+
 /**
- * Nén ảnh ngay trên điện thoại (cạnh dài 1600px — vẫn đọc rõ chữ trên bảng tuyển dụng, ~200–400 KB) + ảnh nhỏ 360px
- * cho lưới xem nhanh, tải cả hai lên bucket rồi ghi 1 dòng. `id` do app sinh → bấm lưu lại sau khi mất mạng không tạo trùng.
+ * Nén ảnh ngay trên điện thoại (cạnh dài 1400px, ~250–350 KB — chữ trên bảng tuyển dụng vẫn đọc rõ; trước 03/11 là
+ * 1600px ~600 KB) + ảnh nhỏ 320px cho lưới xem nhanh, tải cả hai lên bucket rồi ghi 1 dòng.
+ * `id` do app sinh → bấm lưu lại sau khi mất mạng không tạo trùng.
  */
 export async function uploadPhoto(id: string, file: Blob, meta: PhotoMeta): Promise<SurveyPhoto> {
   const asFile = file instanceof File ? file : new File([file], 'photo.jpg', { type: file.type || 'image/jpeg' });
-  const [big, thumb] = await Promise.all([
-    resizeImage(asFile, { max: 1600, quality: 0.82 }),
-    resizeImage(asFile, { max: 360, quality: 0.75 }),
+  const [first, thumb] = await Promise.all([
+    resizeImage(asFile, { max: 1400, quality: 0.72 }),
+    resizeImage(asFile, { max: 320, quality: 0.7 }),
   ]);
+  const big = first.size > PHOTO_TARGET_BYTES ? await resizeImage(asFile, { max: 1400, quality: 0.6 }) : first;
   const day = meta.taken_at.slice(0, 10);
   const base = `${meta.zone_id ?? 'khac'}/${day}/${id}`;
   const path = `${base}.${big.ext}`;

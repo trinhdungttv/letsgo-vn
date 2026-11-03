@@ -1,8 +1,9 @@
-// Tải thông tin KCN trước khi khảo sát: quét công ty trong KCN + nhà cung ứng lao động quanh KCN (bộ từ khoá tự lên,
-// sửa được), đối chiếu với khách hàng / Pipeline / Thị trường / Đối thủ, rồi thêm những nơi MỚI vào Thị trường (công ty)
-// hoặc Đối thủ (nhà cung ứng). Kết quả nhớ trong máy 30 ngày và hiện trên bản đồ khảo sát (đi ngang là báo tên).
+// Tải thông tin KCN trước khi khảo sát: quét công ty trong KCN + nhà cung ứng lao động quanh KCN — nguồn chính Overture
+// Maps (miễn phí, không khoá), thêm OpenStreetMap; Google Maps khi đã cài khoá. Đối chiếu với khách hàng / Pipeline /
+// Thị trường / Đối thủ, rồi thêm những nơi MỚI vào Thị trường (công ty) hoặc Đối thủ (nhà cung ứng). Kết quả nhớ trong
+// máy 30 ngày và hiện trên bản đồ khảo sát (đi ngang là báo tên).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Check, ExternalLink, Loader2, MapPin, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
+import { Building2, ExternalLink, Facebook, Loader2, MapPin, Phone, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
 import { logActivity } from '../../../lib/audit';
@@ -16,6 +17,7 @@ import {
   fromGoogle, googleEnabled, googleSearch, matchScan, mergeScan, photonSuppliers, readScanCache, scanArea, scanKeywords, scanOsm,
   writeScanCache, type CompetitorLite, type ScanMatch, type ScanPlace, type ScanSource,
 } from '../../../lib/kcnSurvey/marketScan';
+import { scanOverture } from '../../../lib/kcnSurvey/overtureScan';
 
 interface Props {
   zone: MarketZone;
@@ -41,6 +43,8 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
   const [newKw, setNewKw] = useState('');
   const [google, setGoogle] = useState<boolean | null>(null);
   const [useGoogle, setUseGoogle] = useState(true);
+  const [useOverture, setUseOverture] = useState(true);
+  const [useOsm, setUseOsm] = useState(true);
   const [places, setPlaces] = useState<ScanPlace[]>(cached?.places ?? []);
   const [lastAt, setLastAt] = useState<number | null>(cached?.at ?? null);
   const [running, setRunning] = useState(false);
@@ -77,10 +81,19 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
     const sKw = kwSupplier.filter(k => k.on).map(k => k.text);
     const cKw = kwCompany.filter(k => k.on).map(k => k.text);
     const withGoogle = !!google && useGoogle;
-    const tasks: { label: string; google?: boolean; fn: () => Promise<ScanPlace[]> }[] = [
-      { label: 'OpenStreetMap — nhà máy, văn phòng trong KCN', fn: () => scanOsm(area, signal) },
-      ...sKw.slice(0, 8).map(kw => ({ label: `Bản đồ mở: “${kw}”`, fn: () => photonSuppliers(kw, area, signal) })),
-    ];
+    const tasks: { label: string; google?: boolean; fn: () => Promise<ScanPlace[]> }[] = [];
+    if (useOverture) {
+      tasks.push({
+        label: 'Overture Maps — doanh nghiệp quanh KCN',
+        fn: async () => (await scanOverture(area, signal, (d, t) => setProgress(p => (p ? { ...p, label: `Overture Maps — ô bản đồ ${d}/${t}` } : p)))).places,
+      });
+    }
+    if (useOsm) {
+      tasks.push(
+        { label: 'OpenStreetMap — nhà máy, văn phòng trong KCN', fn: () => scanOsm(area, signal) },
+        ...sKw.slice(0, useOverture ? 4 : 8).map(kw => ({ label: `Bản đồ mở: “${kw}”`, fn: () => photonSuppliers(kw, area, signal) })),
+      );
+    }
     if (withGoogle) {
       tasks.push(
         ...cKw.map(kw => ({ label: `Google Maps: “${kw}”`, google: true, fn: async () => fromGoogle(await googleSearch(kw, { rect: area.company }, token, 3, signal), 'company', kw, area) })),
@@ -115,7 +128,7 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
     if (!signal.aborted) {
       setPlaces(merged);
       setErrors(errs);
-      const sources: ScanSource[] = withGoogle && !googleDown ? ['osm', 'google'] : ['osm'];
+      const sources: ScanSource[] = [...(useOverture ? ['overture' as const] : []), ...(useOsm ? ['osm' as const] : []), ...(withGoogle && !googleDown ? ['google' as const] : [])];
       const at = Date.now();
       writeScanCache(zone.id, { at, places: merged, sources });
       setLastAt(at);
@@ -150,11 +163,11 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
       for (const p of list) {
         const row = await pruneMissing('market_leads', {
           company_name: p.name, region: zone.name, industry: null, workers_needed: 0,
-          source: p.sources.includes('google') ? 'Quét Google Maps' : 'Quét bản đồ (OSM)', status: 'Chưa LH',
+          source: p.sources.includes('google') ? 'Quét Google Maps' : p.sources.includes('overture') ? 'Quét bản đồ (Overture)' : 'Quét bản đồ (OSM)', status: 'Chưa LH',
           suppliers: [{ name: "Let's Go VN", qty: 0, is_us: true }],
           map_link: p.mapsUrl || `https://www.google.com/maps?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`, lat: p.lat, lng: p.lng, geocoded_at: new Date().toISOString(),
-          website_url: p.website || null,
-        }, ['geocoded_at', 'website_url']);
+          website_url: p.website || null, facebook_url: p.facebook || null,
+        }, ['geocoded_at', 'website_url', 'facebook_url']);
         const { data, error } = await supabase.from('market_leads').insert(row).select('id').single();
         if (error) throw error;
         ok += 1;
@@ -184,9 +197,10 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
         const row = await pruneMissing('competitors', {
           company_name: p.name, zone_name: zone.name, trend: 'stable', active_zones: [zone.name],
           map_link: p.mapsUrl || `https://www.google.com/maps?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`,
-          website_url: p.website || null,
+          website_url: p.website || null, facebook_url: p.facebook || null,
+          contacts: p.phone ? [{ name: 'SĐT trên bản đồ', phone: p.phone }] : null,
           notes: [`Tìm thấy khi quét thông tin KCN ${zone.name} (${new Date().toLocaleDateString('vi-VN')})`, p.address && `Địa chỉ: ${p.address}`, p.phone && `ĐT: ${p.phone}`].filter(Boolean).join('\n'),
-        }, ['active_zones', 'map_link', 'website_url']);
+        }, ['active_zones', 'map_link', 'website_url', 'facebook_url', 'contacts']);
         const { data, error } = await supabase.from('competitors').insert(row).select('id').single();
         if (error) throw error;
         ok += 1;
@@ -242,17 +256,21 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
 
       <div className="flex-1 overflow-y-auto px-4 pt-3 pb-[calc(110px+env(safe-area-inset-bottom))] space-y-3">
         {/* Nguồn */}
-        <div className="rounded-xl bg-white px-3 py-2.5 space-y-2">
-          <div className="flex items-center gap-2 text-[13px]">
-            <Check size={15} className="text-[#34C759] shrink-0" />
-            <span className="flex-1 min-w-0"><b>OpenStreetMap</b> — miễn phí: nhà máy / văn phòng có tên trong KCN, văn phòng việc làm và tên có chữ “cung ứng, nhân lực, việc làm, tuyển dụng…” trong bán kính 6 km</span>
-          </div>
+        <div className="rounded-xl bg-white px-3 py-2.5 space-y-2.5">
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" checked={useOverture} onChange={e => setUseOverture(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#0A84FF]" />
+            <span className="flex-1 min-w-0"><b>Overture Maps</b> — miễn phí, không cần khoá: bộ địa điểm mở của Meta, Microsoft…, nhiều doanh nghiệp lấy từ trang Facebook kèm SĐT, Facebook, website. Nguồn chính.</span>
+          </label>
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" checked={useOsm} onChange={e => setUseOsm(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#0A84FF]" />
+            <span className="flex-1 min-w-0"><b>OpenStreetMap</b> — miễn phí: nhà máy / văn phòng có tên trong KCN, văn phòng việc làm quanh KCN (thưa ở Việt Nam).</span>
+          </label>
           <label className="flex items-start gap-2 text-[13px]">
             <input type="checkbox" checked={useGoogle && !!google} disabled={!google} onChange={e => setUseGoogle(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#0A84FF]" />
             <span className="flex-1 min-w-0">
-              <b>Google Maps</b> — đầy đủ hơn nhiều (tìm theo từng từ khoá, mỗi từ khoá tới 60 nơi).{' '}
+              <b>Google Maps</b> — tìm theo từng từ khoá.{' '}
               {google === null && <span className="text-[#8E8E93]">Đang kiểm tra…</span>}
-              {google === false && <span className="text-[#B25000]">Chưa bật: cần khoá Google Places API (GOOGLE_MAPS_API_KEY) cài trên Vercel.</span>}
+              {google === false && <span className="text-[#8E8E93]">Chưa bật (cần khoá Google Places API trên Vercel) — cài sau, app tự dùng thêm.</span>}
               {google && <span className="text-[#8E8E93]">Mỗi lần quét khoảng {kwCompany.filter(k => k.on).length * 3 + kwSupplier.filter(k => k.on).length * 2} lượt gọi Google.</span>}
             </span>
           </label>
@@ -290,7 +308,7 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
           )}
         </div>
 
-        <button onClick={() => void run()} disabled={running}
+        <button onClick={() => void run()} disabled={running || (!useOverture && !useOsm && !(google && useGoogle))}
           className="w-full h-12 rounded-2xl bg-[#0A84FF] text-white text-[15px] font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
           {running ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={17} />}
           {running ? 'Đang quét…' : places.length ? 'Quét lại thông tin mới' : 'Bắt đầu quét'}
@@ -340,14 +358,27 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
                     <button onClick={() => onFocus(p)} className="flex-1 min-w-0 text-left">
                       <span className="block text-[14px] text-[#1D1D1F] leading-snug">{p.name}</span>
                       <span className="block text-[11.5px] text-[#8E8E93] truncate">{[p.category, p.address].filter(Boolean).join(' · ')}</span>
+                      {p.phone && <span className="block text-[12px] text-[#137333] tabular-nums">{p.phone}</span>}
                       <span className="flex items-center gap-1.5 flex-wrap mt-1 text-[11px]">
                         {matchChip(m)}
-                        {p.sources.map(s => <span key={s} className="px-1.5 py-0.5 rounded-md bg-[#F2F2F7] text-[#3A3A3C]">{s === 'google' ? 'Google' : 'OSM'}</span>)}
+                        {p.hiring && <span className="px-1.5 py-0.5 rounded-md bg-[#E8F1FF] text-[#0A4DB5] font-medium">Đang tuyển người</span>}
+                        {p.confidence != null && p.confidence < 0.35 && <span className="px-1.5 py-0.5 rounded-md bg-[#F2F2F7] text-[#8E8E93]">ít tin cậy</span>}
+                        {p.sources.map(s => <span key={s} className="px-1.5 py-0.5 rounded-md bg-[#F2F2F7] text-[#3A3A3C]">{s === 'google' ? 'Google' : s === 'overture' ? 'Overture' : 'OSM'}</span>)}
                         <span className="text-[#8E8E93]">{fmtDistance(d)} từ tâm KCN</span>
                       </span>
                     </button>
-                    <a href={p.mapsUrl} target="_blank" rel="noopener noreferrer" aria-label="Mở trên Google Maps" title="Mở trên Google Maps"
-                      className="w-8 h-8 rounded-full bg-[#F2F2F7] text-[#0A84FF] flex items-center justify-center shrink-0"><ExternalLink size={13} /></a>
+                    <span className="flex flex-col gap-1 shrink-0">
+                      <a href={p.mapsUrl} target="_blank" rel="noopener noreferrer" aria-label="Mở trên Google Maps" title="Mở trên Google Maps"
+                        className="w-8 h-8 rounded-full bg-[#F2F2F7] text-[#0A84FF] flex items-center justify-center"><ExternalLink size={13} /></a>
+                      {p.phone && (
+                        <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} aria-label={`Gọi ${p.phone}`} title={p.phone}
+                          className="w-8 h-8 rounded-full bg-[#E8F7EE] text-[#137333] flex items-center justify-center"><Phone size={13} /></a>
+                      )}
+                      {p.facebook && (
+                        <a href={p.facebook} target="_blank" rel="noopener noreferrer" aria-label="Mở Facebook" title="Trang Facebook"
+                          className="w-8 h-8 rounded-full bg-[#E8F1FF] text-[#1877F2] flex items-center justify-center"><Facebook size={13} /></a>
+                      )}
+                    </span>
                   </div>
                 );
               })}
@@ -355,7 +386,8 @@ export default function SurveyScanPanel({ zone, rings, center, companies, onClos
             </div>
             <div className="text-[11px] text-[#8E8E93] leading-snug">
               Bấm tên để xem chỗ đó trên bản đồ. Công ty quét được hiện trên bản đồ khảo sát (chấm xám có tên) — đi ngang là app báo.
-              Dữ liệu Google chỉ nhớ trong máy 30 ngày; bấm “Thêm” thì lưu tên + vị trí + link Google Maps vào hệ thống.
+              Kết quả nhớ trong máy 30 ngày; bấm “Thêm” thì lưu tên + vị trí + link bản đồ (+ Facebook / website, SĐT nhà cung ứng) vào hệ thống.
+              Dữ liệu: © Overture Maps Foundation (Meta, Microsoft…), © người đóng góp OpenStreetMap.
             </div>
           </>
         )}

@@ -1,8 +1,10 @@
 // "Tải thông tin KCN" trước khi khảo sát: quét công ty trong KCN + nhà cung ứng lao động quanh KCN để định hình thị
 // trường. Nguồn:
-//   - OpenStreetMap (miễn phí, chạy ngay): nhà máy / văn phòng có tên trong vùng KCN, văn phòng việc làm và các tên có
-//     chữ "cung ứng / nhân lực / việc làm / tuyển dụng…" quanh KCN (Overpass) + tìm theo từ khoá (Photon).
-//   - Google Maps (đầy đủ hơn nhiều, cần khoá Google Places API cài trên máy chủ): tìm theo bộ từ khoá tự lên.
+//   - Overture Maps (miễn phí, không cần khoá — nguồn chính): bộ địa điểm mở của Meta / Microsoft / Amazon…, nhiều
+//     doanh nghiệp Việt Nam (lấy từ trang Facebook / Bing) kèm SĐT, Facebook, website — xem overtureScan.ts.
+//   - OpenStreetMap (miễn phí): nhà máy / văn phòng có tên trong vùng KCN, văn phòng việc làm và các tên có chữ
+//     "cung ứng / nhân lực / việc làm / tuyển dụng…" quanh KCN (Overpass) + tìm theo từ khoá (Photon). Thưa ở VN.
+//   - Google Maps (cần khoá Google Places API cài trên máy chủ — chưa cài): tìm theo bộ từ khoá tự lên.
 // Kết quả gộp trùng, đối chiếu với khách hàng / Pipeline / Thị trường / Đối thủ đã có. Phần đọc / gộp là hàm thuần.
 import type { LatLng } from '../geo';
 import type { Bounds } from './track';
@@ -12,7 +14,7 @@ import { isZoneLikeName, type SurveyCompany } from './companies';
 import { overpassPost } from './areaSearch';
 
 export type ScanKind = 'company' | 'supplier';
-export type ScanSource = 'google' | 'osm';
+export type ScanSource = 'google' | 'osm' | 'overture';
 
 export interface ScanPlace {
   key: string;
@@ -27,6 +29,12 @@ export interface ScanPlace {
   mapsUrl: string;
   phone: string;
   website: string;
+  /** Trang Facebook (Overture lấy từ Meta) */
+  facebook?: string;
+  /** Trang "… Tuyển dụng" của chính nhà máy → nhà máy đang tuyển người */
+  hiring?: boolean;
+  /** Độ tin cậy 0..1 của Overture (thấp = có thể đã đóng / sai chỗ) */
+  confidence?: number;
   /** Từ khoá đã tìm ra mục này */
   keywords: string[];
 }
@@ -53,6 +61,9 @@ export function scanKeywords(zoneName: string): { company: string[]; supplier: s
 /** Tên có dáng nhà cung ứng lao động / dịch vụ việc làm (bỏ dấu). */
 const SUPPLIER_RE = /cung ung|nhan luc|viec lam|tuyen dung|lao dong|nhan su|manpower|outsourc|human resource|recruit|staffing|cho thue lai|headhunt/;
 export const looksLikeSupplier = (name: string) => SUPPLIER_RE.test(foldVn(name));
+/** Chỉ có chữ "tuyển dụng" kèm tên công ty ("Hyosung Tuyển Dụng") = trang tuyển người của nhà máy, không phải nhà cung ứng. */
+const SUPPLIER_STRONG_RE = /cung ung|nhan luc|viec lam|lao dong|nhan su|manpower|outsourc|human resource|staffing|cho thue lai|headhunt|giai phap nhan/;
+export const looksLikeHiringPage = (name: string) => /tuyen dung|tuyen cong nhan|tuyen lao dong/.test(foldVn(name)) && !SUPPLIER_STRONG_RE.test(foldVn(name).replace(/tuyen lao dong/g, ''));
 
 // ── Vùng quét ────────────────────────────────────────────────────────────────
 export interface ScanArea {
@@ -249,13 +260,16 @@ export function fromGoogle(list: readonly GPlace[], kind: ScanKind, keyword: str
 }
 
 // ── Gộp trùng + đối chiếu ────────────────────────────────────────────────────
+/** Bỏ chữ "tuyển dụng" khỏi tên trang tuyển người của nhà máy ("Hyosung Tuyển Dụng" → "Hyosung") để gộp với nhà máy. */
+export const stripHiring = (name: string) => name.replace(/[-–|·:]*\s*(tuyển dụng|tuyen dung|tuyển công nhân|tuyển lao động)\s*[-–|·:]*/gi, ' ').replace(/\s+/g, ' ').trim() || name;
+
 /** Gộp nơi trùng (cùng mã, hoặc tên lõi giống hệt / rất giống trong vòng 400 m). Giữ thông tin đầy đủ nhất. */
 export function mergeScan(lists: readonly (readonly ScanPlace[])[]): ScanPlace[] {
   const out: ScanPlace[] = [];
   const keyOf = new Map<ScanPlace, ReturnType<typeof companyKey>>();
   for (const list of lists) {
     for (const p of list) {
-      const k = companyKey(p.name);
+      const k = companyKey(stripHiring(p.name));
       const hit = out.find(o => o.key === p.key || ((() => { const m = compareKeys(k, keyOf.get(o)!); return !!m && m.level !== 'maybe'; })() && distM(o, p) < 400));
       if (!hit) { const copy = { ...p, sources: [...p.sources], keywords: [...p.keywords] }; out.push(copy); keyOf.set(copy, k); continue; }
       for (const s of p.sources) if (!hit.sources.includes(s)) hit.sources.push(s);
@@ -264,7 +278,12 @@ export function mergeScan(lists: readonly (readonly ScanPlace[])[]): ScanPlace[]
       if (!hit.address && p.address) hit.address = p.address;
       if (!hit.phone && p.phone) hit.phone = p.phone;
       if (!hit.website && p.website) hit.website = p.website;
+      if (!hit.facebook && p.facebook) hit.facebook = p.facebook;
+      if (p.hiring) hit.hiring = true;
+      if (p.confidence != null) hit.confidence = Math.max(hit.confidence ?? 0, p.confidence);
       if (p.kind === 'supplier') hit.kind = 'supplier';
+      // Gộp trang "… Tuyển dụng" vào nhà máy: giữ tên nhà máy
+      if (hit.hiring && looksLikeHiringPage(hit.name) && !looksLikeHiringPage(p.name)) hit.name = p.name;
     }
   }
   return out;
