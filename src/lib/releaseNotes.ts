@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-03-kcn-files-r2',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Ảnh / ghi âm khảo sát lưu được trên Cloudflare R2 khi quản trị cài đặt; lỗi thì tự lưu Supabase',
+    ],
+  },
+  {
     id: '2026-11-03-kcn-photo-compress',
     date: '2026-11-03',
     title: 'Khảo sát KCN',

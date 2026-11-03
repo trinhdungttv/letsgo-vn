@@ -4,6 +4,7 @@ import { resizeImage } from '../imageResize';
 import type { Bounds, TrackPoint, TrackSegment } from './track';
 import type { PassedCompany } from './companies';
 import { sanitizeMarks, type PhotoMark } from './markup';
+import { r2PutFiles, r2Status, R2_PATH_PREFIX } from '../r2Upload';
 
 export const SURVEY_MIGRATION_HINT = 'Chưa chạy migration 190 (Khảo sát KCN) trên Supabase — chạy file 20261102100000_190_kcn_survey_trips.sql rồi thử lại';
 export const PHOTO_BUCKET = 'kcn-survey';
@@ -258,6 +259,21 @@ export async function listPhotos(opts: { zoneId?: string | null; tripId?: string
   return ((data ?? []) as unknown as SurveyPhoto[]).map(normPhoto);
 }
 
+/**
+ * Lưu file lên Cloudflare R2 nếu máy chủ đã cài (docs/HUONG_DAN_CLOUDFLARE_R2.md). Trả null khi chưa cài hoặc lỗi →
+ * người gọi lưu Supabase như cũ (không bao giờ mất ảnh vì R2). storage_path ghi "r2:<khoá>" để biết file nằm bên R2.
+ */
+async function putOnR2(files: { key: string; blob: Blob; contentType?: string }[]): Promise<{ storagePath: string; urls: string[] } | null> {
+  if (!(await r2Status()).enabled) return null;
+  try {
+    const urls = await r2PutFiles(files.map(f => ({ key: f.key, blob: f.blob, contentType: f.contentType || f.blob.type || 'application/octet-stream' })));
+    return { storagePath: `${R2_PATH_PREFIX}${files[0].key}`, urls };
+  } catch (e) {
+    console.warn('Cloudflare R2 lỗi — lưu Supabase thay:', (e as Error).message);
+    return null;
+  }
+}
+
 export type PhotoMeta = Omit<SurveyPhoto, 'id' | 'storage_path' | 'url' | 'thumb_url' | 'width' | 'height' | 'size_bytes' | 'created_at'>;
 
 /** Ảnh lớn nén xong vẫn nặng hơn mức này (ảnh nhiều chi tiết / máy chỉ nén được JPEG) → nén lại mạnh hơn. */
@@ -279,19 +295,24 @@ export async function uploadPhoto(id: string, file: Blob, meta: PhotoMeta): Prom
   const base = `${meta.zone_id ?? 'khac'}/${day}/${id}`;
   const path = `${base}.${big.ext}`;
   const thumbPath = `${base}_thumb.${thumb.ext}`;
-  const bucket = supabase.storage.from(PHOTO_BUCKET);
-  // upsert:false — anon chỉ có quyền tải lên, không có quyền ghi đè. Lần thử lại gặp "đã tồn tại" thì coi như xong.
-  const put = async (p: string, blob: Blob) => {
-    const { error } = await bucket.upload(p, blob, { upsert: false, contentType: blob.type, cacheControl: '31536000' });
-    if (error && !/exists|duplicate/i.test(error.message)) throw new Error(surveyErrorText(error));
-  };
-  await put(path, big.blob);
-  await put(thumbPath, thumb.blob);
+  // Đã cài Cloudflare R2 → lưu bên đó (rẻ, không tính tiền băng thông); chưa cài / lỗi → Supabase như cũ
+  let stored = await putOnR2([{ key: `${PHOTO_BUCKET}/${path}`, blob: big.blob }, { key: `${PHOTO_BUCKET}/${thumbPath}`, blob: thumb.blob }]);
+  if (!stored) {
+    const bucket = supabase.storage.from(PHOTO_BUCKET);
+    // upsert:false — anon chỉ có quyền tải lên, không có quyền ghi đè. Lần thử lại gặp "đã tồn tại" thì coi như xong.
+    const put = async (p: string, blob: Blob) => {
+      const { error } = await bucket.upload(p, blob, { upsert: false, contentType: blob.type, cacheControl: '31536000' });
+      if (error && !/exists|duplicate/i.test(error.message)) throw new Error(surveyErrorText(error));
+    };
+    await put(path, big.blob);
+    await put(thumbPath, thumb.blob);
+    stored = { storagePath: path, urls: [bucket.getPublicUrl(path).data.publicUrl, bucket.getPublicUrl(thumbPath).data.publicUrl] };
+  }
   const row = {
     id, ...meta,
-    storage_path: path,
-    url: bucket.getPublicUrl(path).data.publicUrl,
-    thumb_url: bucket.getPublicUrl(thumbPath).data.publicUrl,
+    storage_path: stored.storagePath,
+    url: stored.urls[0],
+    thumb_url: stored.urls[1],
     width: big.width, height: big.height, size_bytes: big.size,
   };
   const { annotations, ...rowBase } = row;
@@ -381,10 +402,15 @@ export type VoiceMeta = Omit<SurveyVoiceNote, 'id' | 'storage_path' | 'url' | 's
 export async function uploadVoiceNote(id: string, blob: Blob, ext: string, meta: VoiceMeta): Promise<SurveyVoiceNote> {
   const day = meta.recorded_at.slice(0, 10);
   const path = `voice/${meta.zone_id ?? 'khac'}/${day}/${id}.${ext}`;
-  const bucket = supabase.storage.from(PHOTO_BUCKET);
-  const { error: upErr } = await bucket.upload(path, blob, { upsert: false, contentType: meta.mime_type || blob.type || 'audio/webm', cacheControl: '31536000' });
-  if (upErr && !/exists|duplicate/i.test(upErr.message)) throw new Error(surveyErrorText(upErr));
-  const row = { id, ...meta, storage_path: path, url: bucket.getPublicUrl(path).data.publicUrl, size_bytes: blob.size };
+  const type = meta.mime_type || blob.type || 'audio/webm';
+  let stored = await putOnR2([{ key: path, blob, contentType: type }]);
+  if (!stored) {
+    const bucket = supabase.storage.from(PHOTO_BUCKET);
+    const { error: upErr } = await bucket.upload(path, blob, { upsert: false, contentType: type, cacheControl: '31536000' });
+    if (upErr && !/exists|duplicate/i.test(upErr.message)) throw new Error(surveyErrorText(upErr));
+    stored = { storagePath: path, urls: [bucket.getPublicUrl(path).data.publicUrl] };
+  }
+  const row = { id, ...meta, storage_path: stored.storagePath, url: stored.urls[0], size_bytes: blob.size };
   const { data, error } = await supabase.from('kcn_survey_voice_notes').upsert(row, { onConflict: 'id' }).select(VOICE_COLS).single();
   if (error) throw new Error(voiceErrorText(error));
   return normVoice(data as SurveyVoiceNote);
