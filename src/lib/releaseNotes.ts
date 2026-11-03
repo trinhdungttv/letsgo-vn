@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-image-links-r2',
+    date: '2026-11-04',
+    title: 'Lưu trữ ảnh',
+    features: [
+      'Link ảnh dán từ Facebook / website tự tải về lưu Cloudflare khi bấm Lưu, link không còn hỏng',
+      'Áp dụng cho ảnh bìa, ảnh tuyển dụng, ảnh KCN, đối thủ, chi nhánh, đại diện liên hệ',
+      'Admin → Ảnh & lưu trữ: chuyển một lần ảnh đang dùng link ngoài về Cloudflare, hoàn tác từng ảnh',
+    ],
+  },
+  {
     id: '2026-11-03-kcn-files-r2',
     date: '2026-11-03',
     title: 'Khảo sát KCN',

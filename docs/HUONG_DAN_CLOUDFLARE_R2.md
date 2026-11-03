@@ -125,3 +125,14 @@ App chạy ở địa chỉ khác (VD bản xem trước `letsgo-vn-git-….verc
 **chép** sang R2 → lưu bảng đối chiếu link cũ ↔ mới → **đổi link** trong hệ thống → kiểm tra ảnh hiện đủ → (tuỳ chọn,
 có hỏi trước) xoá bản Supabase. Nên giữ bản Supabase một thời gian vì link đã gửi ra ngoài (PDF / Excel / Zalo) và
 "cỗ máy thời gian" vẫn trỏ về link cũ.
+
+## Link ảnh dán từ ngoài tự về kho Cloudflare (từ 04/11/2026)
+
+Sau khi R2 đã bật (kiểm tra `/api/r2-upload` ra `"enabled":true`), mỗi khi **Lưu** một dòng dữ liệu có cột ảnh
+(`image_url`, `cover_image_url`, `recruit_image_urls`, `avatar_url`, `manager_avatar_url`) mà link là link ngoài
+(Facebook, website…), app tự nhờ máy chủ tải ảnh về kho R2 (`mirror/…`) rồi lưu link của kho. Ảnh lỗi / nguồn chặn / link
+hết hạn → giữ nguyên link gốc, việc lưu vẫn bình thường.
+
+- **Chuyển ảnh đang có:** Admin → tab **Ảnh & lưu trữ** → **Quét link ngoài** → **Chuyển … ảnh về Cloudflare**.
+  Không xoá gì; link gốc nằm trong Nhật ký hoạt động và có nút **Hoàn tác** từng ảnh.
+- Giới hạn: chỉ https, ảnh jpg / png / webp / gif, tối đa 8 MB, link Facebook hết hạn thì không tải được.

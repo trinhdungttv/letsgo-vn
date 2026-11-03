@@ -8,6 +8,7 @@ import { logActivity } from '../lib/audit';
 import { ROLE_LABELS, ROLE_COLORS } from '../lib/constants';
 import { getAppLogoUrl, setAppLogoUrl } from '../lib/appSettings';
 import { RECRUIT_ENABLED } from '../lib/featureFlags';
+import ImageLinksPanel from '../components/admin/ImageLinksPanel';
 
 interface AdminPageProps {
   toast: (msg: string) => void;
@@ -19,7 +20,7 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-type Tab = 'requests' | 'accounts' | 'matrix' | 'branding';
+type Tab = 'requests' | 'accounts' | 'matrix' | 'branding' | 'storage';
 
 const ACTION_LABELS: Record<PermissionAction, string> = {
   view: 'Xem', edit: 'Sửa/Nhập', delete: 'Xóa', export: 'Export',
@@ -296,6 +297,7 @@ export default function AdminPage({ toast }: AdminPageProps) {
             { key: 'accounts', label: 'Quản lý tài khoản' },
             { key: 'matrix', label: 'Ma trận phân quyền' },
             { key: 'branding', label: 'Logo App' },
+            { key: 'storage', label: 'Ảnh & lưu trữ' },
           ] as { key: Tab; label: string }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition ${tab === t.key ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
@@ -470,6 +472,8 @@ export default function AdminPage({ toast }: AdminPageProps) {
             </div>
           </div>
         )}
+
+        {tab === 'storage' && <ImageLinksPanel />}
 
         {/* TAB 4: App logo (hiển thị ở Sidebar + trang Đăng nhập) */}
         {tab === 'branding' && (
