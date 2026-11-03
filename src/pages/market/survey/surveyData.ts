@@ -99,8 +99,10 @@ export function useSurveyData(marketLeads: readonly MarketLead[]) {
 export interface SurveyPrefs {
   /** Mức zoom khi bám theo vị trí */
   followZoom: number;
-  /** Tự zoom theo tốc độ: chạy nhanh nhìn xa, đi chậm nhìn gần */
-  autoZoom: boolean;
+  /** Tự zoom kiểu dẫn đường: chạy nhanh nhìn xa, đi chậm nhìn gần, sắp tới chỗ rẽ thì canh vừa chỗ rẽ */
+  smartZoom: boolean;
+  /** Hướng bản đồ khi bám theo vị trí: xoay theo hướng đi (giống Google Maps) hay hướng Bắc luôn ở trên */
+  mapOrientation: 'heading' | 'north';
   /** Bán kính nhận diện công ty đang đi ngang (m) */
   radiusM: number;
   showOldTracks: boolean;
@@ -125,6 +127,8 @@ export interface SurveyPrefs {
   navSound: NavSound;
   /** Dẫn đường ưu tiên đoạn có nhà máy hai bên (đường trống để sau) */
   navPreferFactories: boolean;
+  /** Ghi âm khảo sát: lọc tạp âm (gió, tiếng xe), làm rõ giọng nói */
+  voiceEnhance: boolean;
   /** Màu đường cần đi (chưa đi) */
   roadTodo: RoadTodoColor;
   /** Màu đường đã đi */
@@ -153,9 +157,9 @@ export type RoadTodoColor = keyof typeof ROAD_TODO_COLORS;
 export type RoadDoneColor = keyof typeof ROAD_DONE_COLORS;
 
 export const DEFAULT_SURVEY_PREFS: SurveyPrefs = {
-  followZoom: 17, autoZoom: false, radiusM: 150, showOldTracks: true, showRoads: true, includeService: false,
+  followZoom: 17, smartZoom: true, mapOrientation: 'heading', radiusM: 150, showOldTracks: true, showRoads: true, includeService: false,
   areaRadiusM: 2000, clipToZone: true, labels: true, satellite: false, keepAwake: true, vibrate: true, showPhotos: true, maxAccuracy: 35,
-  compass: true, navSound: 'voice', navPreferFactories: true, roadTodo: 'orange', roadDone: 'green',
+  compass: true, navSound: 'voice', navPreferFactories: true, roadTodo: 'orange', roadDone: 'green', voiceEnhance: true,
 };
 
 const PREFS_KEY = 'lgvn_kcn_survey_prefs_v1';
@@ -163,12 +167,16 @@ const PREFS_KEY = 'lgvn_kcn_survey_prefs_v1';
 /** Đọc cài đặt đã lưu: thêm giá trị mặc định cho mục mới, đổi kiểu cũ (navVoice bật/tắt → navSound), bỏ giá trị lạ. */
 export function parseSurveyPrefs(raw: unknown): SurveyPrefs {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const p = { ...DEFAULT_SURVEY_PREFS, ...o } as SurveyPrefs & { navVoice?: unknown };
+  const p = { ...DEFAULT_SURVEY_PREFS, ...o } as SurveyPrefs & { navVoice?: unknown; autoZoom?: unknown };
   if (!('navSound' in o) && typeof o.navVoice === 'boolean') p.navSound = o.navVoice ? 'voice' : 'off';
   if (!['off', 'beep', 'voice'].includes(p.navSound)) p.navSound = DEFAULT_SURVEY_PREFS.navSound;
   if (!(p.roadTodo in ROAD_TODO_COLORS)) p.roadTodo = DEFAULT_SURVEY_PREFS.roadTodo;
   if (!(p.roadDone in ROAD_DONE_COLORS)) p.roadDone = DEFAULT_SURVEY_PREFS.roadDone;
+  if (p.mapOrientation !== 'heading' && p.mapOrientation !== 'north') p.mapOrientation = DEFAULT_SURVEY_PREFS.mapOrientation;
+  if (typeof p.smartZoom !== 'boolean') p.smartZoom = DEFAULT_SURVEY_PREFS.smartZoom;
+  // "Tự zoom theo tốc độ" cũ (mặc định tắt) → thay bằng tự zoom kiểu dẫn đường (mặc định bật)
   delete p.navVoice;
+  delete p.autoZoom;
   return p;
 }
 
@@ -180,15 +188,6 @@ export function loadSurveyPrefs(): SurveyPrefs {
 }
 export function saveSurveyPrefs(p: SurveyPrefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* chế độ riêng tư */ }
-}
-
-/** Zoom theo tốc độ (m/s): > 11 (≈ 40 km/h) nhìn xa, < 3 (đi bộ / dừng xem cổng) nhìn gần. */
-export function zoomForSpeed(speed: number | null, base: number): number {
-  if (speed == null) return base;
-  if (speed > 11) return Math.max(14, base - 2);
-  if (speed > 5) return Math.max(15, base - 1);
-  if (speed < 1.5) return Math.min(19, base + 1);
-  return base;
 }
 
 /** Bỏ dấu + chữ thường để tìm tên công ty. */

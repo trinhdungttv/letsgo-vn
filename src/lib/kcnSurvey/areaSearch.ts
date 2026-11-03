@@ -160,7 +160,7 @@ export async function photonSearch(q: string, bias: LatLng | null, signal?: Abor
  * Gửi 1 truy vấn nhỏ lên Overpass: 2 máy chủ cùng lúc, cứ 5 giây chưa xong thì thêm 1 máy nữa, lấy kết quả về trước
  * (máy chủ công cộng hay xếp hàng hàng chục giây theo đợt). Hết máy chủ mà vẫn lỗi → báo lỗi tiếng Việt.
  */
-function overpassPost(query: string, signal?: AbortSignal): Promise<unknown> {
+export function overpassPost(query: string, signal?: AbortSignal): Promise<unknown> {
   const body = new URLSearchParams({ data: query }).toString();
   return new Promise((resolve, reject) => {
     const ctrls: AbortController[] = [];

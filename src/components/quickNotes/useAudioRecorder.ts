@@ -48,8 +48,43 @@ function micError(e: unknown): string {
   return `Không bật được micro: ${(e as Error)?.message ?? String(e)}`;
 }
 
+export interface RecorderOptions {
+  /**
+   * Lọc tạp âm cho ghi âm ngoài trời (khảo sát chạy xe): bật thêm tách giọng nếu máy có, cắt tiếng ù gió / máy xe
+   * (< ~130 Hz), cắt rít cao (> 7,5 kHz), nén cho giọng đều to nhỏ. Ghi cuộc họp (Ghi chú nhanh) không bật.
+   */
+  enhance?: boolean;
+}
+
+/** Âm thanh micro → lọc → luồng mới để ghi. Lỗi gì cũng trả null (ghi luồng gốc như cũ). */
+function enhanceStream(ctx: AudioContext, raw: MediaStream): { stream: MediaStream; tap: AudioNode } | null {
+  try {
+    const src = ctx.createMediaStreamSource(raw);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 130; hp.Q.value = 0.7;
+    const hp2 = ctx.createBiquadFilter();
+    hp2.type = 'highpass'; hp2.frequency.value = 90; hp2.Q.value = 0.5;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 7500; lp.Q.value = 0.7;
+    // Giọng nói rõ hơn: nhấn nhẹ dải 2–4 kHz (độ rõ phụ âm)
+    const presence = ctx.createBiquadFilter();
+    presence.type = 'peaking'; presence.frequency.value = 3000; presence.Q.value = 1; presence.gain.value = 3;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -30; comp.knee.value = 18; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.25;
+    const makeup = ctx.createGain();
+    makeup.gain.value = 1.6;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(hp2).connect(hp).connect(lp).connect(presence).connect(comp).connect(makeup).connect(dest);
+    return { stream: dest.stream, tap: makeup };
+  } catch {
+    return null;
+  }
+}
+
 /** onDone nhận file khi bấm Dừng (hoặc micro bị rút / hết 3 giờ). */
-export function useAudioRecorder(onDone: (audio: RecordedAudio) => void): AudioRecorder {
+export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options: RecorderOptions = {}): AudioRecorder {
+  const enhanceRef = useRef(!!options.enhance);
+  enhanceRef.current = !!options.enhance;
   const [phase, setPhase] = useState<RecorderPhase>('idle');
   const [noteId, setNoteId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -106,10 +141,16 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void): AudioR
     setPhase('starting');
     setNoteId(forNote);
     let stream: MediaStream;
+    const enhance = enhanceRef.current;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      const supportedC = navigator.mediaDevices.getSupportedConstraints?.() as Record<string, boolean> | undefined;
+      const audio: MediaTrackConstraints & Record<string, unknown> = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      if (enhance) {
+        audio.channelCount = 1;
+        // Tách giọng nói của máy (iPhone / Chrome bản mới có) — lọc gió, tiếng xe tốt hơn bộ lọc thường
+        if (supportedC?.voiceIsolation) audio.voiceIsolation = true;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
     } catch (e) {
       setError(micError(e));
       setPhase('idle');
@@ -117,11 +158,25 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void): AudioR
       return false;
     }
     const { mime, ext } = pickRecorderMime(t => MediaRecorder.isTypeSupported(t));
+    // Lọc tạp âm: micro → bộ lọc → luồng mới để ghi (lỗi thì ghi luồng gốc)
+    let recStream = stream;
+    let enhanced: { ctx: AudioContext; tap: AudioNode } | null = null;
+    if (enhance) {
+      try {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        void ctx.resume();
+        const out = enhanceStream(ctx, stream);
+        if (out) { recStream = out.stream; enhanced = { ctx, tap: out.tap }; }
+        else void ctx.close().catch(() => {});
+      } catch { /* máy không có Web Audio — ghi luồng gốc */ }
+    }
     let rec: MediaRecorder;
     try {
-      rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: BITRATE });
+      rec = new MediaRecorder(recStream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: BITRATE });
     } catch (e) {
       stream.getTracks().forEach(t => t.stop());
+      void enhanced?.ctx.close().catch(() => {});
       setError(`Không khởi động được ghi âm: ${(e as Error).message}`);
       setPhase('idle');
       setNoteId(null);
@@ -161,16 +216,25 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void): AudioR
     // Rút micro / đổi thiết bị giữa chừng → lưu phần đã ghi
     stream.getAudioTracks().forEach(t => { t.onended = () => stop(); });
 
-    // Vạch âm lượng
+    // Vạch âm lượng (đã lọc thì đo sau bộ lọc — đúng cái đang được ghi)
     try {
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new Ctx();
-      const node = ctx.createAnalyser();
-      node.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(node);
-      ctxRef.current = ctx;
-      analyser.current = node;
-      buf.current = new Uint8Array(node.fftSize);
+      if (enhanced) {
+        ctxRef.current = enhanced.ctx;
+        const node = enhanced.ctx.createAnalyser();
+        node.fftSize = 512;
+        enhanced.tap.connect(node);
+        analyser.current = node;
+        buf.current = new Uint8Array(node.fftSize);
+      } else {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        const node = ctx.createAnalyser();
+        node.fftSize = 512;
+        ctx.createMediaStreamSource(stream).connect(node);
+        ctxRef.current = ctx;
+        analyser.current = node;
+        buf.current = new Uint8Array(node.fftSize);
+      }
     } catch {
       // không có vạch âm lượng cũng không sao
     }

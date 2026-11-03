@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, Pause, PenLine, Play, Plus, Settings, Square, X, AlertTriangle, MapPin,
+  Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, Pause, PenLine, Play, Plus, RefreshCw, Settings, Square, X, AlertTriangle, MapPin,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -34,7 +34,8 @@ import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type Ar
 import { ringsBounds, ringsCenter } from '../../../lib/kcnSurvey/areaSearch';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
 import { buildRoadGraph } from '../../../lib/kcnSurvey/navigate';
-import { bearing, displayHeading, smoothAngle } from '../../../lib/kcnSurvey/heading';
+import { angleDiff, bearing, displayHeading, smoothAngle } from '../../../lib/kcnSurvey/heading';
+import { aheadPoint, northOf, rotatedSize, smartZoom, unwrapBearing, visiblePadding } from '../../../lib/kcnSurvey/mapView';
 import {
   countTripsBetween, listPhotos, listSurveyAreas, listTrips, listVoiceNotes, loadTracks, markupColumnMissing, MARKUP_MIGRATION_HINT, titleColumnMissing, TITLE_MIGRATION_HINT,
   updateTrip, uploadPhoto, uploadVoiceNote,
@@ -42,7 +43,7 @@ import {
 } from '../../../lib/kcnSurvey/api';
 import { useAudioRecorder, type RecordedAudio } from '../../../components/quickNotes/useAudioRecorder';
 import { useSurveyRecorder, pendingActiveTrip, type SummaryResult } from './useSurveyRecorder';
-import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, zoomForSpeed, fold, NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type SurveyPrefs } from './surveyData';
+import { useSurveyData, loadSurveyPrefs, saveSurveyPrefs, fold, NAV_SOUND_LABEL, ROAD_DONE_COLORS, ROAD_TODO_COLORS, type SurveyPrefs } from './surveyData';
 import SurveyCompanyCard, { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
 import SurveyPhotoSheet, { type PhotoFormValue, type PhotoPosition } from './SurveyPhotoSheet';
 import SurveySettingsPanel, { type AreaStatus } from './SurveySettingsPanel';
@@ -52,6 +53,8 @@ import SurveyVoiceSheet from './SurveyVoiceSheet';
 import { fmtClock } from './surveyFormat';
 import SurveyNavBanner from './SurveyNavBanner';
 import SurveyAreaFinder, { type AreaSaved } from './SurveyAreaFinder';
+import SurveyScanPanel from './SurveyScanPanel';
+import { readScanCache, type ScanPlace } from '../../../lib/kcnSurvey/marketScan';
 import { useDeviceHeading } from './useDeviceHeading';
 import { useSurveyNavigation } from './useSurveyNavigation';
 
@@ -66,7 +69,7 @@ interface Props {
   startWith?: 'area';
 }
 
-type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby' | 'todo' | 'area';
+type Panel = 'none' | 'settings' | 'history' | 'zone' | 'nearby' | 'todo' | 'area' | 'scan';
 
 type UploadJob = {
   id: string;
@@ -229,7 +232,15 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   }, [zoneId, areaBounds, historyTick]);
 
   // ── Công ty: hệ thống + OSM ───────────────────────────────────────────────
-  const allCompanies = useMemo(() => mergeOsmPlaces(data.companies, area?.places ?? []), [data.companies, area]);
+  // Công ty quét được ở "Tải thông tin KCN" (nhớ trong máy 30 ngày) → hiện như nhà máy trên bản đồ, đi ngang là báo tên
+  const [scanPlaces, setScanPlaces] = useState<ScanPlace[]>([]);
+  const [scanHint, setScanHint] = useState(true);
+  const scanZoneId = zone?.id ?? null;
+  useEffect(() => { setScanPlaces(scanZoneId ? readScanCache(scanZoneId)?.places ?? [] : []); }, [scanZoneId]);
+  const allCompanies = useMemo(() => mergeOsmPlaces(data.companies, [
+    ...(area?.places ?? []),
+    ...scanPlaces.filter(p => p.kind === 'company').map(p => ({ id: `scan-${p.key}`, name: p.name, point: { lat: p.lat, lng: p.lng } })),
+  ]), [data.companies, area, scanPlaces]);
   const branchName = useCallback((id: string | null | undefined) => {
     if (!id) return null;
     const b = branches.find(x => x.id === id);
@@ -334,6 +345,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   // ── Hướng đi + la bàn ─────────────────────────────────────────────────────
   const compass = useDeviceHeading(prefs.compass);
+  const readCompassRef = useRef(compass.read);
+  readCompassRef.current = compass.read;
   /** Hướng + tốc độ đang chạy: GPS báo sẵn, không có thì tính từ 2 điểm cách nhau ≥ 8 m */
   const [motion, setMotion] = useState<{ course: number | null; speed: number | null }>({ course: null, speed: null });
   const motionRef = useRef(motion);
@@ -346,9 +359,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const dt = prev ? (fix.at - prev.at) / 1000 : 0;
     const derivedSpeed = prev && dt > 0 && dt < 20 ? d / dt : null;
     const speed = fix.speed ?? derivedSpeed;
-    if (fix.heading != null && (fix.speed ?? 0) > 1) setMotion({ course: fix.heading, speed });
-    else if (prev && d >= 8 && dt < 20) setMotion({ course: bearing(prev, fix), speed });
-    else if (dt >= 20) setMotion(m => ({ course: m.course, speed: 0 }));
+    const cur = motionRef.current;
+    let next: typeof cur | null = null;
+    if (fix.heading != null && (fix.speed ?? 0) > 1) next = { course: fix.heading, speed };
+    else if (prev && d >= 8 && dt < 20) next = { course: bearing(prev, fix), speed };
+    else if (dt >= 20) next = { course: cur.course, speed: 0 };
+    else if (fix.speed != null && fix.speed !== cur.speed) next = { course: cur.course, speed: fix.speed }; // dừng đèn đỏ → tốc độ về 0 ngay
+    // Ghi ref ngay để hiệu ứng bám bản đồ (chạy sau trong cùng lượt) thấy hướng mới
+    if (next) { motionRef.current = next; setMotion(next); }
     if (!prev || d >= 8 || dt >= 20) prevPosRef.current = { lat: fix.lat, lng: fix.lng, at: fix.at };
   }, [fix]);
   const movingCourse = (motion.speed ?? 0) >= 2 ? motion.course : null;
@@ -393,6 +411,21 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   }, [zoneCompanies, passedCount, passedBefore, prefs.showOldTracks, fix?.lat, fix?.lng, anchor]);
 
   // ── Bản đồ ────────────────────────────────────────────────────────────────
+  // Khung bản đồ VUÔNG cạnh = đường chéo màn hình, đặt giữa màn hình → xoay theo hướng đi bằng CSS mà vẫn phủ kín
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [viewBox, setViewBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  const viewBoxRef = useRef(viewBox);
+  viewBoxRef.current = viewBox;
+  const mapSide = rotatedSize(viewBox.w, viewBox.h);
+  /** Góc xoay bản đồ đang hiển thị (độ, liên tục — không nhảy 359 → 0); 0 / bội 360 = Bắc ở trên */
+  const [rot, setRot] = useState(0);
+  const rotRef = useRef(rot);
+  rotRef.current = rot;
+  const [rotAnim, setRotAnim] = useState(true);
+  const lastCourseRef = useRef<number | null>(null);
+  const zoomChangedAt = useRef(0);
+  const navDistRef = useRef<number | null>(null);
+  navDistRef.current = nav.route && nav.next && nav.next.kind !== 'arrive' ? nav.distToNext : null;
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<{
@@ -403,6 +436,9 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const [follow, setFollow] = useState(true);
   const followRef = useRef(follow);
   followRef.current = follow;
+  const headingUp = follow && prefs.mapOrientation === 'heading';
+  const headingUpRef = useRef(headingUp);
+  headingUpRef.current = headingUp;
   const [zoom, setZoom] = useState(prefs.followZoom);
   const [viewTick, setViewTick] = useState(0);
 
@@ -443,6 +479,44 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Đo màn hình (xoay ngang / dọc điện thoại, thanh địa chỉ ẩn / hiện) → khung bản đồ đổi cỡ → Leaflet đo lại + bám lại
+  useEffect(() => {
+    const el = viewRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.height) setViewBox(v => (Math.abs(v.w - r.width) < 1 && Math.abs(v.h - r.height) < 1 ? v : { w: r.width, h: r.height }));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.invalidateSize({ pan: false });
+    followNowRef.current(true);
+  }, [mapSide, viewBox.w, viewBox.h]);
+
+  // Đang xoay theo hướng đi mà chạm vào bản đồ → về hướng Bắc ngay (kéo / bấm trên bản đồ xoay sẽ lệch) + thôi bám
+  useEffect(() => {
+    const el = viewRef.current;
+    if (!el) return;
+    const onDown = (e: PointerEvent) => {
+      if (!headingUpRef.current || !mapDivRef.current?.contains(e.target as Node)) return;
+      const north = northOf(rotRef.current);
+      const md = mapDivRef.current;
+      md.style.transition = 'none';
+      md.style.transform = `rotate(${-north}deg)`;
+      md.style.setProperty('--kcs-bearing', `${north}deg`);
+      setRotAnim(false);
+      setRot(north);
+      setFollow(false);
+      window.setTimeout(() => setRotAnim(true), 80);
+    };
+    el.addEventListener('pointerdown', onDown, { capture: true });
+    return () => el.removeEventListener('pointerdown', onDown, { capture: true });
+  }, []);
+
   // Nền đường phố / vệ tinh
   useEffect(() => {
     const map = mapRef.current, ly = layersRef.current;
@@ -451,48 +525,89 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     else { ly.sat.remove(); ly.satLabels.remove(); ly.street.addTo(map); }
   }, [prefs.satellite]);
 
-  // Bám theo vị trí (+ tự zoom theo tốc độ)
+  // Bám theo vị trí kiểu Google Maps: xoay bản đồ theo hướng đi (mũi tên luôn hướng lên), mũi tên ở phần dưới màn hình,
+  // tự zoom theo tốc độ / chỗ rẽ sắp tới. Đứng yên giữ hướng cũ; chưa chạy lần nào thì theo la bàn (nếu có).
   const firstFixRef = useRef(true);
-  useEffect(() => {
+  const followNowRef = useRef<(instant?: boolean) => void>(() => {});
+  followNowRef.current = (instant = false) => {
     const map = mapRef.current;
     if (!map || !fix) return;
+    const m = motionRef.current;
+    if (m.course != null && (m.speed ?? 0) >= 1.5) lastCourseRef.current = m.course;
+    const up = headingUpRef.current;
+    const target = up ? lastCourseRef.current ?? (prefs.compass ? readCompassRef.current() : null) : null;
+    if (up && target != null) setRot(r => (Math.abs(angleDiff(r, target)) < 4 ? r : unwrapBearing(r, target)));
+    else if (!up) setRot(r => northOf(r));
+    if (!followRef.current) return;
+    let z = map.getZoom();
+    if (prefs.smartZoom) {
+      const want = smartZoom({ speed: m.speed, navDist: navDistRef.current, lat: fix.lat, viewH: viewBoxRef.current.h, base: prefs.followZoom });
+      if (want !== z && (instant || Date.now() - zoomChangedAt.current > 4000)) { z = want; zoomChangedAt.current = Date.now(); }
+    }
+    // Mũi tên ở khoảng 65% chiều cao màn hình (trên hàng nút dưới), phía trước rộng hơn phía sau
+    const vh = viewBoxRef.current.h;
+    const k = up && target != null ? Math.max(0, Math.min(vh * 0.15, vh / 2 - 140)) : 0;
+    const center = k ? map.unproject(L.point(aheadPoint(map.project([fix.lat, fix.lng], z), target!, k)), z) : L.latLng(fix.lat, fix.lng);
+    if (instant) map.setView(center, z, { animate: false });
+    else if (z !== map.getZoom()) map.setView(center, z, { animate: true });
+    else map.panTo(center, { animate: true, duration: 0.8, easeLinearity: 1 });
+  };
+  useEffect(() => {
+    if (!mapRef.current || !fix) return;
     if (firstFixRef.current) {
       firstFixRef.current = false;
-      if (followRef.current) map.setView([fix.lat, fix.lng], prefs.followZoom, { animate: false });
+      if (followRef.current) { mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom, { animate: false }); followNowRef.current(true); }
       return;
     }
-    if (!followRef.current) return;
-    const target = prefs.autoZoom ? zoomForSpeed(fix.speed, prefs.followZoom) : map.getZoom();
-    if (target !== map.getZoom()) map.setView([fix.lat, fix.lng], target, { animate: true });
-    else map.panTo([fix.lat, fix.lng], { animate: true, duration: 0.5 });
+    followNowRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);
+  // Bật / tắt xoay theo hướng đi → canh lại ngay
+  useEffect(() => { followNowRef.current(); }, [headingUp]);
 
   const setMapZoom = useCallback((z: number) => {
     const map = mapRef.current;
     if (!map) return;
     const nz = Math.max(12, Math.min(19, Math.round(z)));
     setPref({ followZoom: nz });
-    if (followRef.current && fix) map.setView([fix.lat, fix.lng], nz);
+    // Bấm +/− thì tôn trọng mức vừa chọn ít nhất 8 giây trước khi tự zoom lại
+    zoomChangedAt.current = Date.now() + 4000;
+    if (followRef.current && fix) { map.setZoom(nz); window.setTimeout(() => followNowRef.current(), 300); }
     else map.setZoom(nz);
   }, [fix, setPref]);
 
+  /** Nút ◎: chưa bám → bám theo vị trí; đang bám → đổi xoay theo hướng đi ↔ Bắc ở trên (giống Google Maps). */
   const recenter = () => {
     if (prefs.compass && compass.status === 'need-permission') void compass.request();
-    setFollow(true);
     setPinnedKey(null);
-    if (fix && mapRef.current) mapRef.current.setView([fix.lat, fix.lng], prefs.followZoom);
-    else if (!fix) say(recorder.gpsError ?? 'Đang chờ tín hiệu GPS…');
+    if (!fix) { setFollow(true); say(recorder.gpsError ?? 'Đang chờ tín hiệu GPS…'); return; }
+    if (follow) {
+      const next = prefs.mapOrientation === 'heading' ? 'north' : 'heading';
+      setPref({ mapOrientation: next });
+      say(next === 'heading' ? 'Bản đồ xoay theo hướng đi' : 'Hướng Bắc luôn ở trên');
+      return;
+    }
+    setFollow(true);
+    followRef.current = true;
+    followNowRef.current(true);
   };
+
+  /** Canh 1 vùng vừa phần màn hình đang thấy (khung bản đồ to hơn màn hình, trên / dưới có thanh nút). */
+  const fitVisible = useCallback((b: L.LatLngBoundsExpression, pad = 24) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const sz = map.getSize();
+    map.fitBounds(b, { ...visiblePadding({ x: sz.x, y: sz.y }, viewBoxRef.current, { top: 70 + pad, bottom: 150 + pad, side: pad }), maxZoom: 18 });
+  }, []);
 
   const fitArea = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
     setFollow(false);
-    if (boundary) map.fitBounds(L.polygon(boundary.rings).getBounds(), { padding: [24, 24] });
-    else if (areaBounds) map.fitBounds([[areaBounds.minLat, areaBounds.minLng], [areaBounds.maxLat, areaBounds.maxLng]], { padding: [20, 20] });
+    if (boundary) fitVisible(L.polygon(boundary.rings).getBounds());
+    else if (areaBounds) fitVisible([[areaBounds.minLat, areaBounds.minLng], [areaBounds.maxLat, areaBounds.maxLng]], 20);
     else if (anchor) map.setView([anchor.lat, anchor.lng], 15);
-  }, [boundary, areaBounds, anchor]);
+  }, [boundary, areaBounds, anchor, fitVisible]);
 
   // Vị trí hiện tại: chấm xanh + vòng sai số. Hướng (quạt la bàn / mũi tên chạy) xoay bằng biến CSS ở vòng rAF bên dưới
   useEffect(() => {
@@ -638,7 +753,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       const m = L.circleMarker([p.lat, p.lng], {
         radius: meta.rich ? 7 : 5, color: passed ? '#111' : '#fff', weight: passed ? 2.5 : 2, fillColor: meta.color, fillOpacity: c.status === 'osm' ? 0.7 : 0.95, renderer: ly.renderer,
       });
-      if (showLabels && i < 150) m.bindTooltip(escapeMapHtml(c.name), { permanent: true, direction: 'right', offset: [8, 0], className: 'kcs-label' });
+      if (showLabels && i < 150) m.bindTooltip(`<span class="kcs-up">${escapeMapHtml(c.name)}</span>`, { permanent: true, direction: 'right', offset: [8, 0], className: 'kcs-label' });
       m.on('click', () => { setPinnedKey(c.key); setExpanded(true); });
       m.addTo(ly.companies);
     });
@@ -692,7 +807,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     L.polyline(lines, { color: '#fff', weight: 10, opacity: 0.9, renderer: ly.renderer, interactive: false }).addTo(ly.highlight);
     const pl = L.polyline(lines, { color: '#F59E0B', weight: 6, opacity: 1, renderer: ly.renderer, interactive: false }).addTo(ly.highlight);
     setFollow(false);
-    map.fitBounds(pl.getBounds(), { padding: [40, 40] });
+    fitVisible(pl.getBounds(), 40);
     setHighlightTrip(trip);
     setPanel('none');
   };
@@ -832,7 +947,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     };
     runUpload({ kind: 'voice', id: rec.noteId, label: `Ghi âm ${fmtClock(rec.durationSec)}`, state: 'uploading', blob: rec.blob, ext: rec.ext, meta });
   };
-  const audio = useAudioRecorder(onVoiceDone);
+  const audio = useAudioRecorder(onVoiceDone, { enhance: prefs.voiceEnhance });
   const toggleVoice = () => {
     if (audio.active) { audio.stop(); return; }
     const pos = fixPosition();
@@ -1003,7 +1118,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     setAreaOverride(null);
     if (zoneId !== r.zone.id) await changeZone(r.zone.id, r.zone);
     const map = mapRef.current;
-    if (map && r.rings.length) { setFollow(false); map.fitBounds(L.polygon(r.rings).getBounds(), { padding: [30, 30] }); }
+    if (map && r.rings.length) { setFollow(false); fitVisible(L.polygon(r.rings).getBounds(), 30); }
     say(r.areaError
       ? `${r.createdZone ? `Đã thêm ${r.zone.name}. ` : ''}Vùng chỉ dùng trong lần này: ${r.areaError}`
       : `${r.createdZone ? `Đã thêm ${r.zone.name} vào Thị trường → Khu vực. ` : ''}Đã lưu vùng — đang tải đường trong vùng…`);
@@ -1073,7 +1188,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
   return createPortal(
     <div className="fixed inset-0 z-[1200] bg-[#E5E3DF] select-none" style={{ touchAction: 'manipulation' }}>
-      <div ref={mapDivRef} className="absolute inset-0" />
+      <div ref={viewRef} className="absolute inset-0 overflow-hidden">
+        <div ref={mapDivRef} className="absolute kcs-rot"
+          style={{
+            width: mapSide, height: mapSide, left: (viewBox.w - mapSide) / 2, top: (viewBox.h - mapSide) / 2,
+            transform: `rotate(${-rot}deg)`, transition: rotAnim ? 'transform 0.8s ease-out' : 'none',
+            ['--kcs-bearing' as string]: `${rot}deg`,
+          } as React.CSSProperties} />
+      </div>
 
       {/* ── Thanh trên ── */}
       <div className="absolute inset-x-0 top-0 z-[1100] pointer-events-none pt-[env(safe-area-inset-top)]">
@@ -1126,6 +1248,16 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
               </div>
             </div>
           )}
+          {zone && !hasTrip && !pending && scanHint && !readScanCache(zone.id) && panel === 'none' && (
+            <div className="pointer-events-auto rounded-2xl bg-white/95 backdrop-blur shadow-lg px-3.5 py-2.5 flex items-center gap-2">
+              <RefreshCw size={16} className="text-[#137333] shrink-0" />
+              <div className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug">
+                Trước khi đi: tải thông tin <b>{zone.name}</b> — công ty trong KCN và nhà cung ứng lao động quanh đây
+              </div>
+              <button onClick={() => setPanel('scan')} className="h-8 px-3 rounded-full bg-[#137333] text-white text-[12.5px] font-semibold shrink-0">Tải</button>
+              <button onClick={() => setScanHint(false)} className="w-7 h-7 rounded-full text-[#8E8E93] flex items-center justify-center shrink-0" aria-label="Để sau"><X size={15} /></button>
+            </div>
+          )}
           {highlightTrip && (
             <div className="pointer-events-auto rounded-xl bg-[#FFF8E6] shadow px-3 py-2 flex items-center gap-2 text-[12.5px] text-[#7A4B00]">
               <span className="w-3 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
@@ -1152,9 +1284,19 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {/* ── Nút bên phải: neo sát thanh dưới (gần ngón cái, không bị thẻ công ty phía trên che) ── */}
       <div className="absolute right-3 bottom-[calc(96px+env(safe-area-inset-bottom))] z-[1050] flex flex-col gap-2">
-        <MapBtn onClick={() => setPref({ satellite: !prefs.satellite })} label="Nền vệ tinh" active={prefs.satellite}><Layers size={19} /></MapBtn>
+        {headingUp
+          ? (
+            <MapBtn onClick={() => { setPref({ mapOrientation: 'north' }); say('Hướng Bắc luôn ở trên'); }} label="Đang xoay theo hướng đi — bấm để Bắc lên trên">
+              <svg viewBox="0 0 24 24" width="26" height="26" style={{ transform: `rotate(${-rot}deg)`, transition: rotAnim ? 'transform 0.8s ease-out' : 'none' }} aria-hidden>
+                <path d="M12 2.5 L16 12 H8 Z" fill="#FF3B30" /><path d="M12 21.5 L8 12 H16 Z" fill="#8E8E93" />
+              </svg>
+            </MapBtn>
+          )
+          : <MapBtn onClick={() => setPref({ satellite: !prefs.satellite })} label="Nền vệ tinh" active={prefs.satellite}><Layers size={19} /></MapBtn>}
         <MapBtn onClick={fitArea} label="Xem cả KCN"><Maximize size={19} /></MapBtn>
-        <MapBtn onClick={recenter} label="Bám theo vị trí" active={follow}><LocateFixed size={20} /></MapBtn>
+        <MapBtn onClick={recenter} label={!follow ? 'Bám theo vị trí' : headingUp ? 'Đang xoay theo hướng đi — bấm để Bắc lên trên' : 'Bấm để bản đồ xoay theo hướng đi'} active={follow}>
+          {headingUp ? <Navigation size={19} fill="currentColor" /> : <LocateFixed size={20} />}
+        </MapBtn>
         <MapBtn onClick={() => setMapZoom(zoom + 1)} label="Phóng to"><Plus size={22} /></MapBtn>
         <MapBtn onClick={() => setMapZoom(zoom - 1)} label="Thu nhỏ"><Minus size={22} /></MapBtn>
       </div>
@@ -1307,6 +1449,11 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {panel === 'zone' && (
         <Sheet title="Chọn KCN đang khảo sát" onClose={() => setPanel('none')}>
+          {zone && (
+            <button onClick={() => setPanel('scan')} className="w-full h-10 mb-2 rounded-xl bg-[#137333] text-white text-[13px] font-semibold inline-flex items-center justify-center gap-1.5">
+              <RefreshCw size={15} /> Tải thông tin {zone.name}: công ty + nhà cung ứng lao động
+            </button>
+          )}
           <div className="flex gap-2 mb-2">
             <button onClick={() => openAreaFinder(null)} className="flex-1 h-10 rounded-xl bg-[#0A84FF] text-white text-[13px] font-semibold inline-flex items-center justify-center gap-1.5">
               <Plus size={16} /> Thêm KCN / vùng mới
@@ -1425,6 +1572,20 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
             <button onClick={() => startWithZone(null)} className="w-full px-3 py-3 text-left text-[14px] text-[#3A3A3C]">Không gắn KCN</button>
           </div>
         </Sheet>
+      )}
+
+      {panel === 'scan' && zone && (
+        <SurveyScanPanel zone={zone} rings={boundary?.rings ?? null} center={anchor ?? { lat: zone.lat ?? 0, lng: zone.lng ?? 0 }}
+          companies={allCompanies} say={say} onClose={() => setPanel('none')}
+          onResults={list => setScanPlaces(list)}
+          onFocus={p => {
+            setPanel('none');
+            setFollow(false);
+            mapRef.current?.setView([p.lat, p.lng], Math.max(mapRef.current.getZoom(), 17));
+            const hit = allCompanies.find(c => c.key === `o:scan-${p.key}`) ?? allCompanies.find(c => c.points.some(q => distM(q, p) < 60) && c.name === p.name);
+            if (hit) { setPinnedKey(hit.key); setExpanded(true); }
+            else say(p.kind === 'supplier' ? `Nhà cung ứng: ${p.name}${p.address ? ` — ${p.address}` : ''}` : p.name);
+          }} />
       )}
 
       {panel === 'area' && (

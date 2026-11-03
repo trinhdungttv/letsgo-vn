@@ -301,6 +301,17 @@ body {
 .kcs-pos[data-mode='course'] .kcs-pos-dot {
   display: none;
 }
+/* Bản đồ khảo sát xoay theo hướng đi (khung .kcs-rot quay −góc) → xoay ngược nhãn tên, ảnh, micro cho đứng thẳng */
+.kcs-up {
+  display: inline-block;
+}
+.kcs-rot .kcs-up,
+.kcs-rot .kcs-photo img,
+.kcs-rot .kcs-photo span,
+.kcs-rot .kcs-voice span {
+  transform: rotate(var(--kcs-bearing, 0deg));
+  transition: transform 0.8s ease-out;
+}
 .kcs-voice span {
   display: flex;
   align-items: center;

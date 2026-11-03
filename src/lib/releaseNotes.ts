@@ -16,6 +16,19 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-03-kcn-survey-heading-scan',
+    date: '2026-11-03',
+    title: 'Khảo sát KCN',
+    features: [
+      'Bản đồ khảo sát xoay theo hướng đi như Google Maps, mũi tên luôn hướng lên, nằm dưới để nhìn xa',
+      'Tự zoom khi chạy: nhanh nhìn xa, chậm nhìn gần, sắp tới chỗ rẽ thì canh vừa chỗ rẽ',
+      'Xoay ngang / dọc điện thoại không còn mất dấu mũi tên; nút ◎ đổi "xoay theo hướng" ↔ "Bắc ở trên"',
+      'Ghi âm khảo sát lọc tạp âm: tách giọng của máy, cắt tiếng gió / máy xe, giọng đều và rõ hơn',
+      'Tải thông tin KCN trước khi đi: quét công ty trong KCN + nhà cung ứng lao động quanh KCN',
+      'Đối chiếu kết quả quét với khách hàng / Pipeline / Đối thủ, thêm nhanh chỗ mới vào Thị trường',
+    ],
+  },
+  {
     id: '2026-11-03-kcn-survey-areas-sound',
     date: '2026-11-03',
     title: 'Khảo sát KCN',

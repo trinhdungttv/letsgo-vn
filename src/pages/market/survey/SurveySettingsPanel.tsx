@@ -87,7 +87,7 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
         <button onClick={onClose} className="w-8 h-8 rounded-full bg-[#E5E5EA] flex items-center justify-center text-[#3A3A3C]" aria-label="Đóng"><X size={16} /></button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-[calc(16px+env(safe-area-inset-bottom))] space-y-4">
-        <Section title="Thu phóng bản đồ">
+        <Section title="Bản đồ khi di chuyển">
           <div className="py-3 space-y-3">
             <div className="flex items-center gap-2">
               <button onClick={() => onZoom(z - 1)} className="w-11 h-11 rounded-xl bg-[#F2F2F7] flex items-center justify-center text-[#1D1D1F] active:bg-[#E5E5EA]" aria-label="Thu nhỏ"><Minus size={20} /></button>
@@ -107,8 +107,23 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
             </div>
             <div className="text-[11.5px] text-[#8E8E93] leading-snug">Mức đang chọn ({z}) cũng là mức zoom khi bấm nút ◎ bám theo vị trí.</div>
           </div>
-          <Switch on={prefs.autoZoom} onChange={v => onChange({ autoZoom: v })} label="Tự zoom theo tốc độ"
-            hint="Chạy nhanh thì nhìn xa hơn, đi chậm / dừng xem cổng thì phóng gần — chỉ khi đang bám theo vị trí" />
+          <div className="py-3 space-y-1.5">
+            <div className="text-[13px] text-[#1D1D1F]">Hướng bản đồ khi bám theo vị trí</div>
+            <div className="grid grid-cols-2 p-0.5 rounded-lg bg-[#E5E5EA]">
+              {([['heading', 'Xoay theo hướng đi'], ['north', 'Bắc luôn ở trên']] as const).map(([v, label]) => (
+                <button key={v} onClick={() => onChange({ mapOrientation: v })}
+                  className={`h-8 rounded-md text-[12.5px] font-medium transition ${prefs.mapOrientation === v ? 'bg-white shadow-sm text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>{label}</button>
+              ))}
+            </div>
+            <div className="text-[11.5px] text-[#8E8E93] leading-snug">
+              {prefs.mapOrientation === 'heading'
+                ? 'Giống Google Maps: hướng đang đi luôn ở phía trên, mũi tên nằm phần dưới màn hình để nhìn xa phía trước. Chạm vào bản đồ để xem tự do; bấm ◎ để bám lại.'
+                : 'Hướng Bắc cố định ở trên, mũi tên xoay theo hướng đi.'}
+              {' '}Nút ◎ khi đang bám cũng đổi qua lại 2 kiểu này.
+            </div>
+          </div>
+          <Switch on={prefs.smartZoom} onChange={v => onChange({ smartZoom: v })} label="Tự zoom khi di chuyển"
+            hint="Chạy nhanh nhìn xa, đi chậm / dừng xem cổng thì phóng gần; đang dẫn đường thì canh vừa chỗ rẽ sắp tới" />
         </Section>
 
         <Section title="Hướng & dẫn đường">
@@ -206,6 +221,8 @@ export default function SurveySettingsPanel({ prefs, onChange, zoom, onZoom, onF
         <Section title="Khác">
           <Switch on={prefs.satellite} onChange={v => onChange({ satellite: v })} label="Nền vệ tinh" hint="Nhìn mái nhà xưởng, cổng, bãi xe" />
           <Switch on={prefs.showPhotos} onChange={v => onChange({ showPhotos: v })} label="Ảnh chỉ tiêu + ghi âm trên bản đồ" />
+          <Switch on={prefs.voiceEnhance} onChange={v => onChange({ voiceEnhance: v })} label="Lọc tạp âm khi ghi âm"
+            hint="Bật tách giọng của máy (nếu có), cắt tiếng ù gió / máy xe và tiếng rít, làm giọng đều và rõ hơn. Áp dụng từ lần ghi sau" />
           <Switch on={prefs.keepAwake} onChange={v => onChange({ keepAwake: v })} label="Giữ màn hình luôn sáng khi đang ghi"
             hint="Tắt màn hình / chuyển app thì trình duyệt ngừng nhận GPS → vết bị đứt" />
           <div className="py-3 space-y-1.5">
