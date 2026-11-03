@@ -30,6 +30,21 @@ function env() {
 
 export default async function handler(req: Request): Promise<Response> {
   const e = env();
+  // Kiểm tra từ máy chủ: gửi thử 1 file nhỏ lên R2 đúng cách điện thoại sẽ gửi, trả mã + lý do Cloudflare báo (không có khoá nào)
+  if (req.method === 'GET' && new URL(req.url).searchParams.get('probe') === '1') {
+    if (!e.ok) return json({ ok: false, step: 'config', missing: e.missing }, 200);
+    const host = `${e.accountId}.r2.cloudflarestorage.com`;
+    const key = 'kcn-survey/_probe.txt';
+    const uploadUrl = await presignUrl({ method: 'PUT', host, path: `/${e.bucket}/${key}`, accessKeyId: e.accessKeyId, secretAccessKey: e.secretAccessKey, region: 'auto', expires: 600, now: new Date() });
+    try {
+      const put = await fetch(uploadUrl, { method: 'PUT', body: 'probe', headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=31536000, immutable' } });
+      const body = (await put.text()).slice(0, 600);
+      const view = await fetch(`${e.publicUrl}/${key}`).then(r => r.status).catch(() => 0);
+      return json({ ok: put.ok, putStatus: put.status, putBody: body, publicViewStatus: view, host, bucket: e.bucket, keyIdLength: e.accessKeyId.length, secretLength: e.secretAccessKey.length, accountIdLength: e.accountId.length }, 200);
+    } catch (err) {
+      return json({ ok: false, step: 'network', error: String((err as Error)?.message ?? err) }, 200);
+    }
+  }
   if (req.method === 'GET') return json({ enabled: e.ok, publicUrl: e.ok ? e.publicUrl : null, ...(e.ok ? {} : { missing: e.missing }) }, 200);
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const denied = await requireSession(req);
