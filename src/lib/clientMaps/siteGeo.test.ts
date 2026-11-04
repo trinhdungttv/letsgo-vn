@@ -189,6 +189,13 @@ describe('sanitizeGeo', () => {
     expect(g.zones[1].color).toBe('#1D7BF2');
     expect(g.zones[0]).toMatchObject({ label: 'B5', note: 'Gia vị', color: '#8B5CF6' });
   });
+  it('giữ cờ khoá hướng; thiếu hoặc sai kiểu thì coi như chưa khoá', () => {
+    const base = { center: { lat: 11.2, lng: 106.6 }, zones: [] };
+    expect(sanitizeGeo({ ...base, locked: true })!.locked).toBe(true);
+    expect(sanitizeGeo({ ...base, locked: false })!.locked).toBeUndefined();
+    expect(sanitizeGeo({ ...base, locked: 'yes' })!.locked).toBeUndefined();
+    expect(sanitizeGeo(base)!.locked).toBeUndefined();
+  });
   it('thiếu tâm bản đồ → null', () => {
     expect(sanitizeGeo(null)).toBeNull();
     expect(sanitizeGeo({ zones: [] })).toBeNull();

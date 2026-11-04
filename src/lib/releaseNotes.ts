@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-site-map-lock-expand',
+    date: '2026-11-04',
+    title: 'Khách hàng → Mặt bằng',
+    features: [
+      'Bản đồ vệ tinh: nút Khoá hướng — giữ nguyên hướng, ẩn thanh xoay, không xoay nhầm',
+      'Bản đồ vệ tinh: nút mở rộng toàn màn hình để xem; gợi ý thao tác tự ẩn khi xem, có nút tắt',
+    ],
+  },
+  {
     id: '2026-11-04-site-satellite-map',
     date: '2026-11-04',
     title: 'Khách hàng → Mặt bằng',

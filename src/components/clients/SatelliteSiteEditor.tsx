@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import {
-  Check, Compass, Eye, EyeOff, MapPin, Minus, MousePointer2, Pencil, Pentagon, Plus, RotateCcw, RotateCw, Ruler, Scan, Square, Tag, Undo2, X,
+  Check, Compass, Eye, EyeOff, Lock, MapPin, Maximize2, Minimize2, Minus, MousePointer2, Pencil, Pentagon, Plus, RotateCcw, RotateCw, Ruler, Scan,
+  Square, Tag, Undo2, X,
 } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { ClientSiteMap } from '../../lib/clientMaps/siteMaps';
@@ -58,8 +59,14 @@ export default function SatelliteSiteEditor({ map, onChange }: {
   const [showNotes, setShowNotes] = useState(() => readStored(NOTES_KEY) !== '0');
   const [canUndo, setCanUndo] = useState(false);
   const [focusZone, setFocusZone] = useState<string | null>(null);
+  /** Khoá hướng: ẩn thanh xoay + chặn xoay nhầm (lưu theo bản đồ). */
+  const [locked, setLockedState] = useState(!!initial.locked);
+  /** Mở rộng kín màn hình (xem / vẽ cho thoải mái, nhất là trên điện thoại). */
+  const [expanded, setExpanded] = useState(false);
+  const [hintHidden, setHintHidden] = useState(false);
 
   const origin = initial.origin;
+  const lockedRef = useRef(locked);
   const camRef = useRef(cam);
   const zonesRef = useRef(zones);
   const polyRef = useRef(poly);
@@ -84,7 +91,9 @@ export default function SatelliteSiteEditor({ map, onChange }: {
   const emit = useCallback(() => {
     if (emitTimer.current) { clearTimeout(emitTimer.current); emitTimer.current = null; }
     const c = camRef.current;
-    onChangeRef.current({ v: 1, center: c.center, zoom: c.zoom, bearing: c.bearing, ...(origin ? { origin } : {}), zones: zonesRef.current });
+    onChangeRef.current({
+      v: 1, center: c.center, zoom: c.zoom, bearing: c.bearing, ...(origin ? { origin } : {}), ...(lockedRef.current ? { locked: true } : {}), zones: zonesRef.current,
+    });
   }, [origin]);
   const emitSoon = useCallback(() => {
     if (emitTimer.current) clearTimeout(emitTimer.current);
@@ -122,12 +131,21 @@ export default function SatelliteSiteEditor({ map, onChange }: {
     }
   }, [applyZones]);
 
+  const setLocked = (v: boolean) => {
+    lockedRef.current = v;
+    setLockedState(v);
+    if (v) setAlignFirst(null);
+    emit();
+  };
+
   const setPoly = (p: GeoPt[]) => { polyRef.current = p; setPolyState(p); };
   const setTool = (t: Tool) => {
     setToolState(t);
     setPoly([]); setRectDraft(null); setAlignFirst(null); setHover(null);
     if (t !== 'select') setSelected(null);
   };
+  // Gợi ý đã tắt thì hiện lại khi đổi công cụ / vào – ra chế độ vẽ
+  useEffect(() => { setHintHidden(false); }, [editing, tool]);
 
   // ── Kích thước khung ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -217,7 +235,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
     if (pointers.current.size > 2) return;
     if (e.button === 1 || (e.button === 0 && spaceDown.current)) { drag.current = { kind: 'pan', last: p }; e.preventDefault(); return; }
     if (e.button !== 0) return;
-    if (e.shiftKey) { drag.current = { kind: 'rotate', last: p }; return; }
+    if (e.shiftKey && !locked) { drag.current = { kind: 'rotate', last: p }; return; }
 
     const el = e.target instanceof Element ? e.target : null;
     const vertex = el?.closest('[data-vertex]')?.getAttribute('data-vertex');
@@ -376,6 +394,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
         if (polyRef.current.length) { e.stopPropagation(); setPoly([]); setHover(null); }
         else if (tool === 'align') { e.stopPropagation(); setTool('select'); }
         else if (selected) { e.stopPropagation(); setSelected(null); }
+        else if (expanded) { e.stopPropagation(); setExpanded(false); }
         return;
       }
       if (!editing) return;
@@ -397,7 +416,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
     window.addEventListener('blur', onBlur);
     return () => { window.removeEventListener('keydown', onKeyDown, true); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, tool, selected, commit, undo]);
+  }, [editing, tool, selected, expanded, commit, undo]);
 
   // Ô tên khối mới tạo: focus + chọn sẵn chữ → gõ luôn tên thật
   useEffect(() => {
@@ -441,7 +460,10 @@ export default function SatelliteSiteEditor({ map, onChange }: {
 
   const hint = (() => {
     if (tool === 'align') return alignFirst ? 'Bấm điểm thứ 2 trên CÙNG cạnh đó — bản đồ tự xoay cho cạnh nằm ngang' : 'Bấm 1 điểm ở đầu một cạnh nhà (mép mái, tường…) rồi điểm thứ 2 ở đầu kia';
-    if (!editing) return mobile ? 'Kéo để di chuyển · chụm 2 ngón để phóng to · kéo thanh bên dưới để xoay cho thẳng nhà xưởng' : 'Kéo để di chuyển · cuộn chuột để phóng to · kéo thanh bên dưới để xoay cho thẳng nhà xưởng';
+    if (!editing) {
+      const rotate = locked ? '' : ' · kéo thanh bên dưới để xoay cho thẳng nhà xưởng';
+      return (mobile ? 'Kéo để di chuyển · chụm 2 ngón để phóng to' : 'Kéo để di chuyển · cuộn chuột để phóng to') + rotate;
+    }
     if (tool === 'poly') return poly.length ? 'Bấm thêm góc · bấm lại điểm đầu / nháy đúp / Enter để khép · Backspace lùi 1 góc · Esc huỷ' : 'Bấm lần lượt các góc của 1 khối nhà (kéo để di chuyển bản đồ)';
     if (tool === 'rect') return mobile ? 'Kéo 1 khung chữ nhật quanh khối nhà · dùng 2 ngón để di chuyển / phóng bản đồ' : 'Kéo 1 khung chữ nhật quanh khối nhà (xoay bản đồ cho thẳng trước) · giữ Space để kéo bản đồ';
     if (tool === 'label') return 'Bấm vào bản đồ để đặt chữ rời (Cổng, Nhà ăn, Bãi xe…)';
@@ -454,6 +476,8 @@ export default function SatelliteSiteEditor({ map, onChange }: {
       {icon}<span className={mobile ? 'hidden' : ''}>{label}</span>
     </button>
   );
+  // Gợi ý chỉ hiện khi đang vẽ / chọn cạnh / chưa có khối nào — xem bình thường thì ẩn cho thoáng
+  const showHint = !hintHidden && (editing || tool === 'align' || zones.length === 0);
   const iconBtn = 'w-8 h-8 inline-flex items-center justify-center text-[#333] hover:bg-black/[0.05] disabled:opacity-30';
   const cursor = (editing && tool !== 'select') || tool === 'align' ? 'crosshair' : 'grab';
 
@@ -461,7 +485,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
   const setBearing = (b: number) => setCamera(bearingAround(view, { x: size.w / 2, y: size.h / 2 }, b));
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div className={expanded ? 'fixed inset-0 z-[320] bg-white flex flex-col' : 'flex-1 min-h-0 flex flex-col'}>
       {/* Hàng công cụ */}
       <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-3 md:px-5 py-1.5 border-b border-[#E8E7E2] bg-[#F7F8FC]">
         {editing ? (
@@ -610,23 +634,38 @@ export default function SatelliteSiteEditor({ map, onChange }: {
           </div>
 
           {/* Gợi ý thao tác */}
-          <div className="absolute left-2 top-2 right-14 pointer-events-none">
-            <span className="inline-block max-w-full rounded-lg bg-black/60 text-white text-[11.5px] leading-snug px-2.5 py-1.5 backdrop-blur-sm">{hint}</span>
-          </div>
+          {showHint && (
+            <div className="absolute left-2 top-2 right-14 pointer-events-none">
+              <span className="inline-flex items-start gap-2 max-w-full rounded-lg bg-black/60 text-white text-[11.5px] leading-snug pl-2.5 pr-1.5 py-1.5 backdrop-blur-sm">
+                <span>{hint}</span>
+                <button onClick={() => setHintHidden(true)} aria-label="Ẩn gợi ý" title="Ẩn gợi ý"
+                  className="pointer-events-auto shrink-0 w-5 h-5 -my-0.5 inline-flex items-center justify-center rounded text-white/80 hover:bg-white/20"><X size={12} /></button>
+              </span>
+            </div>
+          )}
 
           {/* Phóng / thu, la bàn, vừa khối, về ghim */}
           <div className="absolute right-2 top-2 flex flex-col rounded-lg bg-white/95 shadow-md overflow-hidden divide-y divide-[#ECECEF]">
+            <button onClick={() => setExpanded(v => !v)} title={expanded ? 'Thu về (Esc)' : 'Mở rộng toàn màn hình'} className={iconBtn}>
+              {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
             <button onClick={() => zoomBy(1)} disabled={cam.zoom >= MAX_ZOOM} title="Phóng to" className={iconBtn}><Plus size={15} /></button>
             <button onClick={() => zoomBy(-1)} disabled={cam.zoom <= MIN_ZOOM} title="Thu nhỏ" className={iconBtn}><Minus size={15} /></button>
-            <button onClick={() => setBearing(0)} title={`Hướng Bắc lên trên (đang xoay ${cam.bearing}°)`} className={iconBtn}>
-              <Compass size={16} style={{ transform: `rotate(${cam.bearing}deg)` }} className="text-[#DC2626]" />
-            </button>
+            {locked ? (
+              <button onClick={() => setLocked(false)} title={`Đang khoá hướng (${cam.bearing}°) — bấm để mở khoá và xoay lại`} className={iconBtn}>
+                <Lock size={15} className="text-[#D97706]" />
+              </button>
+            ) : (
+              <button onClick={() => setBearing(0)} title={`Hướng Bắc lên trên (đang xoay ${cam.bearing}°)`} className={iconBtn}>
+                <Compass size={16} style={{ transform: `rotate(${cam.bearing}deg)` }} className="text-[#DC2626]" />
+              </button>
+            )}
             <button onClick={fitAll} disabled={!zones.length} title="Vừa tất cả các khối" className={iconBtn}><Scan size={15} /></button>
             {origin && <button onClick={() => setCamera({ center: origin })} title="Về ghim nhà máy" className={iconBtn}><MapPin size={15} className="text-[#DC2626]" /></button>}
           </div>
 
-          {/* Xoay hướng cho thẳng */}
-          <div className="absolute left-2 right-2 bottom-8 md:right-auto md:w-[430px] rounded-xl bg-white/95 shadow-lg px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          {/* Xoay hướng cho thẳng — ẩn khi đã khoá hướng */}
+          {!locked && <div className="absolute left-2 right-2 bottom-8 md:right-auto md:w-[430px] rounded-xl bg-white/95 shadow-lg px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <button onClick={() => setBearing(cam.bearing - 1)} title="Xoay trái 1°" className="w-7 h-7 rounded-md hover:bg-black/[0.06] inline-flex items-center justify-center text-[#333]"><RotateCcw size={14} /></button>
             <input type="range" min={-180} max={180} step={0.5} value={cam.bearing} onChange={e => setBearing(Number(e.target.value))}
               aria-label="Xoay bản đồ" className="flex-1 min-w-[120px] accent-[#1D4ED8]" />
@@ -643,8 +682,12 @@ export default function SatelliteSiteEditor({ map, onChange }: {
                 </button>
               )}
               {cam.bearing !== 0 && <button onClick={() => setBearing(0)} className="inline-flex items-center h-7 px-2 rounded-md text-[11.5px] text-[#555] hover:bg-black/[0.05]">Về hướng Bắc</button>}
+              <button onClick={() => setLocked(true)} title="Giữ nguyên hướng này, ẩn thanh xoay, không xoay nhầm nữa"
+                className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11.5px] font-semibold bg-[#1D4ED8] text-white hover:bg-[#1E40AF]">
+                <Lock size={12} /> Khoá hướng
+              </button>
             </div>
-          </div>
+          </div>}
 
           {/* Thước tỉ lệ + nguồn ảnh */}
           <div className="absolute left-2 bottom-2 pointer-events-none flex items-end gap-2 text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">
@@ -658,7 +701,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
         </div>
 
         {/* Bảng chú thích */}
-        <aside className="shrink-0 md:w-72 max-h-[42vh] md:max-h-none overflow-y-auto border-t md:border-t-0 md:border-l border-[#E8E7E2] bg-white">
+        <aside className={`shrink-0 md:w-72 max-h-[42vh] md:max-h-none overflow-y-auto border-t md:border-t-0 md:border-l border-[#E8E7E2] bg-white ${expanded && mobile && !editing ? 'hidden' : ''}`}>
           <div className="sticky top-0 z-10 bg-white px-4 pt-3 pb-2 border-b border-[#F0F0F2]">
             <div className="text-[12px] font-semibold text-[#111]">Chú thích <span className="text-[#999] font-normal">({zones.length})</span></div>
             {editing && <div className="text-[11px] text-[#999] mt-0.5">Tên khu = chữ to trên khối · Ghi chú = xưởng làm gì (Gia vị, H. Nhân, Kho…)</div>}
@@ -678,7 +721,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
                       onStyle={patch => updateZone(z.id, patch, true)}
                       onDelete={() => { commit(zonesRef.current.filter(x => x.id !== z.id)); setSelected(null); }}
                       onClose={() => setSelected(null)}
-                      extra={z.pts.length >= 3 ? (
+                      extra={z.pts.length >= 3 && !locked ? (
                         <button onClick={() => alignToZone(z.id)} title="Xoay bản đồ cho cạnh dài nhất của khối nằm ngang"
                           className="h-7 px-2 rounded-md text-[11.5px] bg-white border border-[#E0E0E5] text-[#555] hover:bg-[#F5F5F7]">Căn thẳng</button>
                       ) : null} />

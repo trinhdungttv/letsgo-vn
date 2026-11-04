@@ -31,6 +31,8 @@ export interface SiteGeo {
   bearing: number;
   /** vị trí nhà máy đã ghim lúc tạo (ghim đỏ) */
   origin?: GeoPt;
+  /** đã khoá hướng: ẩn thanh xoay, không xoay nhầm nữa (mở khoá bằng nút ổ khoá) */
+  locked?: boolean;
   zones: GeoZone[];
 }
 
@@ -267,6 +269,7 @@ export function sanitizeGeo(raw: unknown): SiteGeo | null {
   const geo: SiteGeo = { v: 1, center, zoom: clampZoom(num(o.zoom) ?? DEFAULT_ZOOM), bearing: normBearing(num(o.bearing) ?? 0), zones };
   const origin = readPt(o.origin);
   if (origin) geo.origin = origin;
+  if (o.locked === true) geo.locked = true;
   return geo;
 }
 
