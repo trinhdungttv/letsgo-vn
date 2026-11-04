@@ -39,6 +39,7 @@ import { ContactBriefSheet } from './components/ContactBriefSheet';
 import { TodayQueue } from './components/TodayQueue';
 import { SaleNetworkPanel } from './components/SaleNetworkPanel';
 import { useSpace } from './space';
+import { workTasksOfContact } from '../../lib/cskh/workTasks';
 
 /** Số tuần trên cột tuần của ô "Tương tác 30 ngày". */
 const SPARK_WEEKS = 8;
@@ -622,6 +623,10 @@ export default function CskhDashboard() {
           contact={briefContact}
           item={brief.item}
           recent={interactions.filter(i => i.contactId === briefContact.id)}
+          workTasks={workTasksOfContact(data?.workTasks ?? [], briefContact.id)}
+          companyName={id => (id ? clients.find(c => c.id === id)?.name ?? null : null)}
+          userName={id => (id ? userName.get(id) ?? null : null)}
+          onOpenWorkspace={() => { setBrief(null); openWorkspace(); }}
           groupLabel={groupDisplayOf(briefContact, groupById, tierLabel).label}
           ownerName={briefContact.ownerId ? userName.get(briefContact.ownerId) ?? null : null}
           busyId={busyId}

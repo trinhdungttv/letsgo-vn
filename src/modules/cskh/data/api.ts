@@ -22,6 +22,7 @@ import {
 import { planGeo } from '../../../lib/cskh/mapPoints';
 import { mapReferralRows, type PipelineReferralRow, type SaleReferral } from '../../../lib/cskh/saleReferrals';
 import { sliceSpace, SPACE_INFO, type CskhSpace } from '../../../lib/cskh/space';
+import { CSKH_WORK_TASK_SELECT, mapWorkTaskRow, workTasksForContacts, type CskhWorkTask, type WorkTaskRow } from '../../../lib/cskh/workTasks';
 import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
 import { isEmptyPlan, type OccasionFields, type OccasionWritePlan } from '../../../lib/cskh/occasions';
 import type { AppUser, Branch, Client, Contact } from '../../../lib/types';
@@ -136,6 +137,11 @@ export interface CskhData {
   zones: CatalogItem[];
   /** Chỉ tệp Sale: danh mục ngành (Thị trường → Ngành nghề) để chọn "Ngành quen". */
   industries: CatalogItem[];
+  /**
+   * Việc Workspace (chưa xoá) có gắn người của tệp này (work_tasks.contact_ids, migration 200) — hiện ở
+   * Nhật ký, thẻ tóm tắt, hồ sơ người liên hệ. Chỉ đọc; không tính vào lần liên hệ / điểm chăm sóc.
+   */
+  workTasks: CskhWorkTask[];
 }
 
 /** 1 mục danh mục dùng chung (KCN / ngành): mã + tên hiện tại. */
@@ -164,7 +170,7 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
  */
 export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Partial<Record<CskhSpace, CskhData>>> {
   const sale = spaces.includes('sale');
-  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes] = await Promise.all([
+  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes, workRes] = await Promise.all([
     selectContacts(q => q.order('name'), 'all') as Promise<ContactRow[]>,
     fetchAll<CskhLogRow>((from, to) => supabase.from('cskh_logs').select('*')
       .order('log_date', { ascending: false }).order('created_at', { ascending: false }).order('id').range(from, to)),
@@ -178,6 +184,9 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
     sale ? supabase.from('competitors').select('id, company_name, zone_name').order('company_name') : Promise.resolve({ data: [], error: null }),
     sale ? supabase.from('market_zones').select('id, name').order('name') : Promise.resolve({ data: [], error: null }),
     sale ? supabase.from('industries').select('id, name').order('name') : Promise.resolve({ data: [], error: null }),
+    // Việc Workspace có gắn người liên hệ (DB chưa chạy 200 → lỗi thiếu cột → coi như chưa có việc nào)
+    supabase.from('work_tasks').select(CSKH_WORK_TASK_SELECT).neq('contact_ids', '{}').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(2000),
   ]);
 
   // Bảng có sẵn trước CSKH mà lỗi → báo; bảng mới chưa có (chưa chạy migration) → bỏ qua
@@ -231,6 +240,7 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
     .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name);
   const zones = catalogOf(zoneRes);
   const industries = catalogOf(industryRes);
+  const workTasks = workRes.error ? [] : ((workRes.data ?? []) as WorkTaskRow[]).map(mapWorkTaskRow);
 
   const out: Partial<Record<CskhSpace, CskhData>> = {};
   for (const space of spaces) {
@@ -250,6 +260,7 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
       competitors: isSale ? competitors : [],
       zones: isSale ? zones : [],
       industries: isSale ? industries : [],
+      workTasks: workTasksForContacts(workTasks, ids),
     };
   }
   return out;

@@ -1,5 +1,6 @@
 // Tóm tắt trước khi liên hệ (port PRM ContactBriefSheet): Điều cần nhớ, việc đang mở
-// (ô tròn tích xong ngay tại chỗ), 2 lần trao đổi gần nhất (bấm "Xem thêm" để đọc đủ), nút Gọi / Zalo / SMS + Đã liên hệ.
+// (ô tròn tích xong ngay tại chỗ), việc Workspace có gắn người này, 2 lần trao đổi gần nhất (bấm "Xem thêm"
+// để đọc đủ), nút Gọi / Zalo / SMS + Đã liên hệ.
 import { useState } from 'react';
 import { Check, Contact2 } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
@@ -7,6 +8,8 @@ import { formatDateVN } from '../../../lib/cskh/dates';
 import { hasRememberNotes } from '../../../lib/cskh/remember';
 import type { TodayQueueItem } from '../../../lib/cskh/todayQueue';
 import type { CskhContact, CskhInteraction } from '../../../lib/cskh/types';
+import type { CskhWorkTask } from '../../../lib/cskh/workTasks';
+import { ContactWorkTasks } from './ContactWorkTasks';
 import { INTERACTION_LABEL } from '../../../lib/cskh/types';
 import { CHANNEL_META } from '../ui';
 import { ContactAvatar } from './ContactAvatar';
@@ -40,8 +43,13 @@ function RecentEntry({ i }: { i: CskhInteraction }) {
   );
 }
 
-export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName, onLaunch, onMarkContacted, onDoneFollowUp, onOpenProfile, busyId, onClose }: {
+export function ContactBriefSheet({ contact, item, recent, workTasks = [], companyName = () => null, userName = () => null, onOpenWorkspace, groupLabel, ownerName, onLaunch, onMarkContacted, onDoneFollowUp, onOpenProfile, busyId, onClose }: {
   contact: CskhContact;
+  /** Việc Workspace có gắn người này (đã xếp: đang mở trước) — chỉ xem. */
+  workTasks?: readonly CskhWorkTask[];
+  companyName?: (clientId: string | null) => string | null;
+  userName?: (userId: string | null) => string | null;
+  onOpenWorkspace?: () => void;
   /** Lý do đang nằm trong hàng đợi; null khi mở từ khối khác. */
   item: TodayQueueItem | null;
   /** Nhật ký của riêng người này (chưa lưu trữ), mới nhất trước. */
@@ -128,6 +136,8 @@ export function ContactBriefSheet({ contact, item, recent, groupLabel, ownerName
           </div>
         </div>
       )}
+
+      <ContactWorkTasks tasks={workTasks} companyName={companyName} ownerName={userName} onOpenWorkspace={onOpenWorkspace} />
 
       {lastTwo.length > 0 && (
         <div className="mt-3">

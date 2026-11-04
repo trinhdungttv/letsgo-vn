@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-cskh-work-tasks',
+    date: '2026-11-04',
+    title: 'CSKH',
+    features: [
+      'Nhật ký CSKH hiện cả việc Workspace có gắn người liên hệ (lọc riêng: loại "Việc Workspace")',
+      'Hồ sơ & thẻ tóm tắt người liên hệ: khối "Việc Workspace" ngay đầu, có kết quả việc đã xong',
+      'Ô lọc người ở Nhật ký: người trùng tên hiện kèm tên công ty (VD Mr Tuấn · Coherent Vietnam)',
+    ],
+  },
+  {
     id: '2026-11-04-work-task-links',
     date: '2026-11-04',
     title: 'Workspace',

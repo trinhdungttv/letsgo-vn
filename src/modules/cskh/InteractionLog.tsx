@@ -10,9 +10,11 @@
 // Đợt "Ghi cho nhóm" (cùng dấu đợt created_at) gom thành 1 dòng "Tặng hoa 20/10 · 12 người";
 // bút chì → Sửa đợt (đổi ngày / nội dung cả loạt, bỏ / thêm người, xoá cả đợt) — chỉ người
 // tạo đợt hoặc admin.
+// Việc Workspace có GẮN người liên hệ (work_tasks.contact_ids) xen vào dòng thời gian (ngày tạo,
+// đã xong thì ngày xong) — chỉ xem, xử lý ở Workspace; lọc riêng bằng loại "Việc Workspace".
 // ============================================================================
 import { useCallback, useMemo, useState } from 'react';
-import { Check, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
+import { Check, ClipboardList, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
@@ -27,6 +29,8 @@ import { matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import type { CskhInteraction, InteractionType } from '../../lib/cskh/types';
 import { CHANNEL_LABEL, GIFT_DIRECTION_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
+import { isWorkTaskDone, workTaskLogDate, workTaskTitleWithoutCompany, WORK_TASK_STATUS_LABEL, type CskhWorkTask } from '../../lib/cskh/workTasks';
+import { taskTypeLabel } from '../../lib/workTaskTypes';
 import { applyBatchEdit, archiveBatch, archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
 import { useCskh } from './context';
 import {
@@ -38,6 +42,11 @@ import { LogInteractionModal } from './components/LogInteractionModal';
 import { CompanyTag, MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
 
 const PAGE = 50;
+
+/** Dòng trên dòng thời gian: nhật ký (lẻ / đợt nhóm) hoặc việc Workspace có gắn người. */
+type TimelineEntry = LogEntry | { kind: 'work'; task: CskhWorkTask; date: string };
+/** Loại "Việc Workspace" trong ô lọc loại (không phải hình thức tương tác). */
+const WORK_TYPE = 'work';
 
 /** Màu ô icon theo hình thức tương tác (kiểu ứng dụng iOS). */
 const TYPE_TILE: Readonly<Record<InteractionType, keyof typeof ICON_TILE>> = {
@@ -54,7 +63,7 @@ export default function CskhInteractionLog() {
   const [openOnly, setOpenOnly] = useState(false);
   const [branch, setBranch] = useState('all');
   const [recorder, setRecorder] = useState('all');
-  const [type, setType] = useState<'all' | InteractionType>('all');
+  const [type, setType] = useState<'all' | InteractionType | typeof WORK_TYPE>('all');
   const [limit, setLimit] = useState(PAGE);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<CskhInteraction | null>(null);
@@ -63,6 +72,8 @@ export default function CskhInteractionLog() {
   const contactById = useMemo(() => new Map((data?.contacts ?? []).map(c => [c.id, c])), [data]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
   const logs = useMemo(() => (data?.interactions ?? []).filter(i => !i.isArchived), [data]);
+  const works = useMemo(() => data?.workTasks ?? [], [data]);
+  const userName = useMemo(() => new Map((data?.users ?? []).map(u => [u.id, u.full_name])), [data]);
 
   /** Tên người + công ty hiển thị (dòng cũ chưa gắn người thì dùng chữ đã lưu). */
   const whoOf = (i: CskhInteraction) => {
@@ -76,6 +87,10 @@ export default function CskhInteractionLog() {
     const clientId = i.clientId ?? (i.contactId ? contactById.get(i.contactId)?.clientIds[0] : undefined);
     return branchOf(clientId ? clientById.get(clientId) ?? null : null, branches)?.id ?? null;
   }, [contactById, clientById, branches]);
+  const workBranchId = useCallback((t: CskhWorkTask): string | null => {
+    const clientId = t.clientId ?? contactById.get(t.contactIds[0])?.clientIds[0];
+    return branchOf(clientId ? clientById.get(clientId) ?? null : null, branches)?.id ?? null;
+  }, [contactById, clientById, branches]);
 
   const options = useMemo(() => {
     const people = new Map<string, string>();
@@ -87,15 +102,30 @@ export default function CskhInteractionLog() {
       const b = branchIdOf(i);
       if (b) bIds.add(b);
     }
+    // Người chỉ có việc Workspace (chưa có dòng nhật ký nào) vẫn phải chọn được ở ô lọc
+    for (const t of works) {
+      for (const id of t.contactIds) { const c = contactById.get(id); if (c) people.set(id, c.fullName); }
+      if (t.userId) recorders.set(t.userId, userName.get(t.userId) || 'Không rõ');
+      const b = workBranchId(t);
+      if (b) bIds.add(b);
+    }
+    // Trùng tên (VD 2 "Mr Tuấn" ở Coherent và HEMPEL) → thêm tên công ty để chọn đúng người
+    const nameCount = new Map<string, number>();
+    for (const n of people.values()) nameCount.set(n, (nameCount.get(n) ?? 0) + 1);
+    for (const [id, n] of people) {
+      const org = contactById.get(id)?.organization;
+      if ((nameCount.get(n) ?? 0) > 1 && org) people.set(id, `${n} · ${org}`);
+    }
     return {
       people: [...people].sort((a, b) => compareVnName(a[1], b[1])),
       recorders: [...recorders].sort((a, b) => a[1].localeCompare(b[1], 'vi')),
       branches: branches.filter(b => bIds.has(b.id)),
     };
-  }, [logs, contactById, branchIdOf, branches]);
+  }, [logs, works, contactById, branchIdOf, workBranchId, branches, userName]);
 
   const q = normalizeSearch(search);
   const filtered = logs.filter(i => {
+    if (type === WORK_TYPE) return false;
     if (person !== 'all' && i.contactId !== person) return false;
     if (openOnly && !((i.followUpAction.trim() && !i.followUpDone) || i.extraTasks.some(t => !t.done))) return false;
     if (recorder !== 'all' && i.createdBy !== recorder) return false;
@@ -107,7 +137,21 @@ export default function CskhInteractionLog() {
     }
     return true;
   });
+  const filteredWorks = works.filter(t => {
+    if (type !== 'all' && type !== WORK_TYPE) return false;
+    if (person !== 'all' && !t.contactIds.includes(person)) return false;
+    if (openOnly && isWorkTaskDone(t)) return false;
+    if (recorder !== 'all' && t.userId !== recorder) return false;
+    if (branch !== 'all' && workBranchId(t) !== branch) return false;
+    if (q) {
+      const names = t.contactIds.map(id => contactById.get(id)?.fullName ?? '');
+      const company = t.clientId ? clientById.get(t.clientId)?.name ?? '' : '';
+      if (!matchesQuery(normalizeSearch([...names, company, t.title, t.notes ?? '', t.userId ? userName.get(t.userId) ?? '' : ''].join(' ')), search)) return false;
+    }
+    return true;
+  });
   const openCount = logs.reduce((n, i) => n + (i.followUpAction.trim() && !i.followUpDone ? 1 : 0) + i.extraTasks.filter(t => !t.done).length, 0);
+  const openWorkCount = works.filter(t => !isWorkTaskDone(t)).length;
   const filtersOn = person !== 'all' || openOnly || recorder !== 'all' || type !== 'all' || branch !== 'all' || !!q;
 
   const toggleDone = async (i: CskhInteraction) => {
@@ -143,12 +187,16 @@ export default function CskhInteractionLog() {
   };
 
   if (!data) return loading ? <Spinner /> : <p className="py-16 text-center text-[13px] text-[#86868B]">Chưa tải được dữ liệu CSKH.</p>;
-  // Đợt ghi nhóm gom thành 1 dòng; phân trang theo dòng hiển thị
-  const entries = groupBatches(filtered);
+  // Đợt ghi nhóm gom thành 1 dòng; việc Workspace xen theo ngày (cùng ngày thì sau nhật ký);
+  // phân trang theo dòng hiển thị
+  const dateOf = (e: TimelineEntry) => (e.kind === 'work' ? e.date : e.kind === 'batch' ? e.batch.occurredAt : e.item.occurredAt);
+  const entries: TimelineEntry[] = [
+    ...groupBatches(filtered),
+    ...filteredWorks.map((task): TimelineEntry => ({ kind: 'work', task, date: workTaskLogDate(task) })),
+  ].sort((a, b) => dateOf(b).localeCompare(dateOf(a)));
   const shown = entries.slice(0, limit);
-  const dateOf = (e: LogEntry) => (e.kind === 'batch' ? e.batch.occurredAt : e.item.occurredAt);
   // Gom theo ngày (dữ liệu đã xếp mới nhất trước) → tiêu đề "Hôm nay / Hôm qua / dd/mm/yyyy"
-  const days: { date: string; items: LogEntry[] }[] = [];
+  const days: { date: string; items: TimelineEntry[] }[] = [];
   for (const e of shown) {
     const last = days[days.length - 1];
     if (last && last.date === dateOf(e)) last.items.push(e);
@@ -163,7 +211,7 @@ export default function CskhInteractionLog() {
       <PageTitle
         eyebrow="Lịch sử liên hệ"
         title={space === 'sale' ? 'Nhật ký Sale' : 'Nhật ký CSKH'}
-        subtitle={<>{logs.length} lần tương tác · {openCount} việc đã hứa đang mở</>}
+        subtitle={<>{logs.length} lần tương tác · {openCount} việc đã hứa đang mở{works.length > 0 && <> · {works.length} việc Workspace ({openWorkCount} đang mở)</>}</>}
         actions={(
           <>
             <button type="button" onClick={() => openGroupLog()} className={PILL_TINTED}>
@@ -188,6 +236,7 @@ export default function CskhInteractionLog() {
         <PillSelect value={type} active={type !== 'all'} label="Lọc theo loại" onChange={v => setType(v as typeof type)}>
           <option value="all">Mọi loại</option>
           {INTERACTION_TYPES.map(t => <option key={t} value={t}>{INTERACTION_LABEL[t]}</option>)}
+          <option value={WORK_TYPE}>Việc Workspace</option>
         </PillSelect>
         {options.branches.length > 0 && (
           <PillSelect value={branch} active={branch !== 'all'} label="Lọc theo chi nhánh" onChange={setBranch}>
@@ -206,12 +255,12 @@ export default function CskhInteractionLog() {
           <button type="button" onClick={() => { setSearch(''); setPerson('all'); setOpenOnly(false); setRecorder('all'); setType('all'); setBranch('all'); }}
             className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 px-1 min-h-[36px] md:min-h-0">Xoá lọc</button>
         )}
-        <span className="text-[12px] text-[#86868B] ml-auto tabular-nums">{filtered.length} dòng</span>
+        <span className="text-[12px] text-[#86868B] ml-auto tabular-nums">{filtered.length + filteredWorks.length} dòng</span>
       </div>
 
       {shown.length === 0 && (
         <div className={PANEL}>
-          <Quiet icon={<NotebookText size={18} />}>{logs.length ? 'Không có dòng nào khớp bộ lọc.' : 'Chưa có nhật ký nào — bấm "Ghi tương tác".'}</Quiet>
+          <Quiet icon={<NotebookText size={18} />}>{logs.length || works.length ? 'Không có dòng nào khớp bộ lọc.' : 'Chưa có nhật ký nào — bấm "Ghi tương tác".'}</Quiet>
         </div>
       )}
 
@@ -219,10 +268,57 @@ export default function CskhInteractionLog() {
         <section key={day.date} aria-label={formatDateVN(day.date)}>
           <h2 className="px-1 mb-2 flex items-baseline gap-2">
             <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#1D1D1F]">{dayHeading(day.date, today)}</span>
-            <span className="text-[12px] text-[#86868B]">{formatDateVN(day.date)} · {day.items.reduce((n, e) => n + (e.kind === 'batch' ? e.batch.items.length : 1), 0)} lần</span>
+            <span className="text-[12px] text-[#86868B]">{formatDateVN(day.date)} · {day.items.reduce((n, e) => n + (e.kind === 'batch' ? e.batch.items.length : 1), 0)} dòng</span>
           </h2>
           <div className={`${PANEL} px-4 md:px-5 py-1`}>
             {day.items.map((entry, idx) => {
+              if (entry.kind === 'work') {
+                const t = entry.task;
+                const company = t.clientId ? clientById.get(t.clientId)?.name ?? '' : '';
+                const people = t.contactIds.flatMap(id => { const c = contactById.get(id); return c ? [c] : []; });
+                const done = isWorkTaskDone(t);
+                const late = !done && t.due ? diffDays(t.due, today) : null;
+                const owner = t.userId ? userName.get(t.userId) : undefined;
+                return (
+                  <Row key={`work_${t.id}`} first={idx === 0} inset={48} align="start">
+                    <span className={`w-9 h-9 shrink-0 rounded-[10px] ${ICON_TILE.indigo} text-white flex items-center justify-center shadow-[0_1px_2px_rgba(0,0,0,0.12)]`}>
+                      <ClipboardList size={17} strokeWidth={2.1} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                        {people.map((c, k) => (
+                          <button key={c.id} type="button" onClick={() => openProfile(c.id)} className="text-[15px] font-semibold text-[#1D1D1F] hover:text-[#0066CC] transition-colors">
+                            {c.fullName}{k < people.length - 1 ? ',' : ''}
+                          </button>
+                        ))}
+                        <CompanyTag name={company} />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mt-0.5 text-[12px] text-[#86868B]">
+                        <span className="font-medium text-[#3A3A3C]">Việc Workspace</span>
+                        <span>· {taskTypeLabel(t.taskType)}</span>
+                        {owner && <span>· phụ trách {owner}</span>}
+                      </div>
+                      <div className={`mt-2 rounded-[12px] px-3 py-2 ${done ? 'bg-[#F5F5F7]' : late !== null && late > 0 ? 'bg-[#FF3B30]/[0.07]' : 'bg-[#5856D6]/[0.08]'}`}>
+                        <span className={`text-[13.5px] leading-snug ${done ? 'text-[#6E6E73]' : 'text-[#1D1D1F] font-medium'}`}>{workTaskTitleWithoutCompany(t.title, company)}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span className={`px-2 rounded-full text-[11px] font-medium ${done ? TINT.green : t.status === 'in_progress' ? TINT.blue : TINT.gray}`}>{WORK_TASK_STATUS_LABEL[t.status] ?? t.status}</span>
+                          {late !== null && late > 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.red}`}>Trễ hạn {late} ngày</span>}
+                          {late === 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.orange}`}>Hạn hôm nay</span>}
+                          {t.due && !done && (late === null || late < 0) && <span className="text-[11.5px] text-[#86868B]">hạn {formatDateVN(t.due)}</span>}
+                          {done && t.completedAt && <span className="text-[11.5px] text-[#86868B]">xong {formatDateVN(workTaskLogDate(t))}</span>}
+                          <span className="text-[11.5px] text-[#86868B]">· xử lý ở Workspace</span>
+                        </span>
+                      </div>
+                      {t.notes && (
+                        <div className="mt-1.5">
+                          <span className="text-[11.5px] font-medium text-[#86868B]">{done ? 'Kết quả' : 'Ghi chú'}</span>
+                          <LogContent text={t.notes} />
+                        </div>
+                      )}
+                    </div>
+                  </Row>
+                );
+              }
               if (entry.kind === 'batch') {
                 const b = entry.batch;
                 const BIcon = INTERACTION_ICON[b.type];
