@@ -39,7 +39,8 @@ import { ContactBriefSheet } from './components/ContactBriefSheet';
 import { TodayQueue } from './components/TodayQueue';
 import { SaleNetworkPanel } from './components/SaleNetworkPanel';
 import { useSpace } from './space';
-import { workTasksOfContact } from '../../lib/cskh/workTasks';
+import { openWorkAgenda, workTasksOfContact, workTaskTitleWithoutCompany } from '../../lib/cskh/workTasks';
+import { taskTypeLabel } from '../../lib/workTaskTypes';
 
 /** Số tuần trên cột tuần của ô "Tương tác 30 ngày". */
 const SPARK_WEEKS = 8;
@@ -55,9 +56,9 @@ const panelCls = PANEL;
 const linkCls = LINK;
 const caption = CAPTION;
 
-type AgendaKey = 'promises' | 'events' | 'recent';
+type AgendaKey = 'promises' | 'work' | 'events' | 'recent';
 /** Đơn vị trong dòng "N … khác bị ẩn do bộ lọc". */
-const AGENDA_UNIT: Record<AgendaKey, string> = { promises: 'việc đã hứa', events: 'sự kiện', recent: 'tương tác' };
+const AGENDA_UNIT: Record<AgendaKey, string> = { promises: 'việc đã hứa', work: 'việc Workspace', events: 'sự kiện', recent: 'tương tác' };
 type HealthKey = 'groups' | 'invest';
 
 export default function CskhDashboard() {
@@ -86,6 +87,19 @@ export default function CskhDashboard() {
   const scope = useCareScope(contacts, clients, space);
   const { scoped, filters } = scope;
   const { data: dates } = useCompanyDates();
+
+  // Việc Workspace CÒN MỞ có gắn người trong phạm vi đang xem (work_tasks.contact_ids, migration 200) — tab "Workspace"
+  // của thẻ Sắp tới. Việc là bản sao của "việc đã hứa" (followup_task_id / extra_task_ids) đã hiện ở tab kia nên bỏ ra.
+  // Không tính vào hàng đợi / nhịp chăm sóc / điểm — xem lib/cskh/workTasks.openWorkAgenda.
+  const workTasks = useMemo(() => data?.workTasks ?? [], [data]);
+  const mirroredTaskIds = useMemo(
+    () => new Set((data?.interactions ?? []).flatMap(i => [i.followUpTaskId, ...i.extraTaskIds]).filter((x): x is string => !!x)),
+    [data],
+  );
+  const workRows = useMemo(
+    () => openWorkAgenda(workTasks, new Set(scoped.map(c => c.id)), today, mirroredTaskIds),
+    [workTasks, scoped, today, mirroredTaskIds],
+  );
 
   // ── Số liệu ───────────────────────────────────────────────────────────────
   const stats = useMemo(
@@ -184,8 +198,9 @@ export default function CskhDashboard() {
       // So trong cùng LIST_LIMIT dòng đầu: dòng nào bỏ lọc mới thấy
       recent: all.recent.slice(0, LIST_LIMIT)
         .filter(e => (e.kind === 'batch' ? e.batch.items.every(i => outside(i.contactId)) : outside(e.item.contactId))).length,
+      work: Math.max(0, openWorkAgenda(workTasks, new Set(base.map(c => c.id)), today, mirroredTaskIds).length - workRows.length),
     } satisfies Record<AgendaKey, number>;
-  }, [isFiltered, base, scoped, interactions, occasions, today]);
+  }, [isFiltered, base, scoped, interactions, occasions, today, workTasks, mirroredTaskIds, workRows]);
 
   // Ngày của công ty đang hợp tác (thành lập, ngày lễ công ty, lễ quốc gia người đứng đầu) trong 30 ngày —
   // theo bộ lọc chi nhánh / người quản lý KH; chỉ trang khách (migration 185)
@@ -241,9 +256,11 @@ export default function CskhDashboard() {
     ...companyUpcoming.map(item => ({ kind: 'company' as const, key: item.key, daysUntil: item.daysUntil, nextIso: item.nextIso, item })),
   ].sort((a, b) => a.daysUntil - b.daysUntil);
   const eventsThisWeek = eventRows.filter(u => u.daysUntil <= 7).length;
+  const workDue = workRows.filter(r => r.late !== null && r.late >= 0).length;
   const summary = [
     queueTotal > 0 ? `${queueTotal} người cần liên hệ` : 'không ai cần liên hệ',
     view.dueFollowUps > 0 && `${view.dueFollowUps} việc đã hứa đến hạn`,
+    workDue > 0 && `${workDue} việc Workspace đến hạn`,
     eventsThisWeek > 0 && `${eventsThisWeek} sự kiện trong tuần`,
   ].filter(Boolean).join(' · ');
   const nextEvent = eventRows[0];
@@ -251,7 +268,7 @@ export default function CskhDashboard() {
   const careTotal = view.status.overdue + view.status.due_soon + view.status.ok;
   const briefContact = brief ? contactById.get(brief.contactId) ?? null : null;
   const agenda: AgendaKey = agendaTab
-    ?? (view.followUps.length > 0 ? 'promises' : eventRows.length > 0 ? 'events' : 'recent');
+    ?? (view.followUps.length > 0 ? 'promises' : workRows.length > 0 ? 'work' : eventRows.length > 0 ? 'events' : 'recent');
   const healthColor = view.scored ? scoreColor(view.avgScore) : '#C7C7CC';
 
   if (!data) {
@@ -426,8 +443,8 @@ export default function CskhDashboard() {
               {/* ── Sắp tới ── */}
               <Panel title="Sắp tới"
                 action={(
-                  <button type="button" onClick={() => goTab(agenda === 'events' ? 'events' : 'log')} className={linkCls}>
-                    {agenda === 'events' ? 'Sự kiện & Quà' : 'Nhật ký'} <ChevronRight size={14} />
+                  <button type="button" onClick={() => (agenda === 'work' ? openWorkspace() : goTab(agenda === 'events' ? 'events' : 'log'))} className={linkCls}>
+                    {agenda === 'work' ? 'Mở Workspace' : agenda === 'events' ? 'Sự kiện & Quà' : 'Nhật ký'} <ChevronRight size={14} />
                   </button>
                 )}
                 footer={hiddenByScope && hiddenByScope[agenda] > 0 && (
@@ -438,8 +455,9 @@ export default function CskhDashboard() {
                     <span className="shrink-0 font-medium text-[#0071E3]">Xoá lọc</span>
                   </button>
                 )}>
-                <Segmented label="Sắp tới" value={agenda} onChange={setAgendaTab} options={[
+                <Segmented label="Sắp tới" value={agenda} onChange={setAgendaTab} keepLabels options={[
                   { key: 'promises', label: 'Việc đã hứa', badge: view.followUps.length },
+                  { key: 'work', label: 'Workspace', badge: workRows.length },
                   { key: 'events', label: 'Sự kiện', badge: eventRows.length },
                   { key: 'recent', label: 'Gần đây' },
                 ]} />
@@ -472,6 +490,43 @@ export default function CskhDashboard() {
                         </Row>
                       );
                     }))}
+
+                  {agenda === 'work' && (workRows.length === 0
+                    ? <Quiet>{isFiltered && hiddenByScope && hiddenByScope.work > 0 ? 'Không có việc Workspace nào đang mở trong phạm vi lọc.' : 'Không có việc Workspace nào đang mở với người trong danh sách.'}</Quiet>
+                    : (
+                      <>
+                        {workRows.slice(0, LIST_LIMIT).map((r, idx) => {
+                          const t = r.task;
+                          const person = contactById.get(r.people[0]);
+                          const company = (t.clientId ? clients.find(c => c.id === t.clientId)?.name : null) ?? person?.organization ?? '';
+                          const names = r.people.map(id => contactById.get(id)?.fullName).filter(Boolean).join(', ');
+                          return (
+                            <Row key={t.id} first={idx === 0} inset={52} onClick={() => setBrief({ contactId: r.people[0], item: null })} title="Mở thẻ tóm tắt của người này">
+                              <ContactAvatar name={person?.fullName ?? ''} url={person?.avatarUrl} tier={person?.tier ?? 'unclassified'} size={40} />
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[14px] text-[#1D1D1F] leading-snug line-clamp-2">{workTaskTitleWithoutCompany(t.title, company)}</span>
+                                <span className="block mt-0.5"><CompanyTag name={company} /></span>
+                                <span className={`block ${caption} truncate`}>
+                                  {names} · {taskTypeLabel(t.taskType)}
+                                  {r.late !== null && t.due && (
+                                    r.late > 0 ? <span className="font-medium" style={{ color: RED }}> · trễ {r.late} ngày</span>
+                                      : r.late === 0 ? <span className="font-medium" style={{ color: ORANGE }}> · hạn hôm nay</span>
+                                        : ` · hạn ${formatDateVN(t.due)}`
+                                  )}
+                                </span>
+                              </span>
+                            </Row>
+                          );
+                        })}
+                        {workRows.length > LIST_LIMIT && (
+                          <button type="button" onClick={() => goTab('log')}
+                            className="w-full flex items-center gap-2 pt-2 pb-1 min-h-[40px] md:min-h-[32px] text-left text-[13px] hover:opacity-70 transition">
+                            <span className="flex-1 font-medium text-[#0071E3]">Còn {workRows.length - LIST_LIMIT} việc khác</span>
+                            <span className="inline-flex items-center text-[#86868B]">Nhật ký <ChevronRight size={14} /></span>
+                          </button>
+                        )}
+                      </>
+                    ))}
 
                   {agenda === 'events' && (eventRows.length === 0 ? <Quiet>Không có sự kiện nào trong 30 ngày tới.</Quiet>
                     : eventRows.slice(0, LIST_LIMIT).map((r, idx) => r.kind === 'company' ? (

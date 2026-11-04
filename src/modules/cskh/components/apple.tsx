@@ -63,12 +63,14 @@ export function Panel({ id, title, icon, count, meta, action, footer, children, 
 }
 
 /** Điều khiển phân đoạn kiểu iOS. `fit` = co theo nội dung (không kéo hết bề ngang). */
-export function Segmented<T extends string>({ label, value, options, onChange, fit = false }: {
+export function Segmented<T extends string>({ label, value, options, onChange, fit = false, keepLabels = false }: {
   label: string;
   value: T;
   options: ReadonlyArray<{ key: T; label: ReactNode; badge?: number; icon?: ReactNode }>;
   onChange: (v: T) => void;
   fit?: boolean;
+  /** Nhiều tab trong khung hẹp: không cắt chữ thành "Việc…" — tab giữ đủ chữ, thiếu chỗ thì vuốt ngang (vẫn chia đều khi rộng). */
+  keepLabels?: boolean;
 }) {
   return (
     <div role="tablist" aria-label={label}
@@ -77,7 +79,7 @@ export function Segmented<T extends string>({ label, value, options, onChange, f
         const active = o.key === value;
         return (
           <button key={o.key} type="button" role="tab" aria-selected={active} onClick={() => onChange(o.key)}
-            className={`${fit ? 'shrink-0' : 'flex-1 min-w-0'} inline-flex items-center justify-center gap-1.5 h-9 md:h-7 px-3 rounded-[7px] text-[13px] whitespace-nowrap transition ${active
+            className={`${fit ? 'shrink-0' : keepLabels ? 'flex-1 min-w-max' : 'flex-1 min-w-0'} inline-flex items-center justify-center gap-1.5 h-9 md:h-7 px-3 rounded-[7px] text-[13px] whitespace-nowrap transition ${active
               ? 'bg-white text-[#1D1D1F] font-semibold shadow-[0_3px_8px_rgba(0,0,0,0.12),0_1px_1px_rgba(0,0,0,0.04)]'
               : 'text-[#3C3C43]/80 font-medium hover:text-[#1D1D1F]'}`}>
             {o.icon}

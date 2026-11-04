@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-cskh-overview-work',
+    date: '2026-11-04',
+    title: 'CSKH',
+    features: [
+      'Tổng quan CSKH → Sắp tới: tab "Workspace" liệt kê việc còn mở có gắn người liên hệ',
+      'Việc Workspace đến hạn / trễ hạn được nhắc ở dòng "Hôm nay" đầu trang Tổng quan',
+      'Việc "Ngưng HĐ" không còn tính là đang mở ở Nhật ký và thẻ người liên hệ',
+    ],
+  },
+  {
     id: '2026-11-04-cskh-work-tasks',
     date: '2026-11-04',
     title: 'CSKH',

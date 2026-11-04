@@ -7,6 +7,7 @@
 // điểm chăm sóc — tạo việc chưa chắc là đã liên hệ.
 // ============================================================================
 import { todayVN } from './dates';
+import { diffDays } from './lunar';
 
 export interface CskhWorkTask {
   id: string;
@@ -59,6 +60,12 @@ export function mapWorkTaskRow(r: WorkTaskRow): CskhWorkTask {
 
 export const isWorkTaskDone = (t: Pick<CskhWorkTask, 'status'>): boolean => t.status === 'done';
 
+/**
+ * Việc còn phải làm: chưa xong VÀ chưa bị ngưng. 'ngung_hd' (Tái ký → Ngưng HĐ) là việc đã khép lại — không còn
+ * ai phải xử lý nên không đếm là "đang mở", không nhắc ở Tổng quan.
+ */
+export const isWorkTaskOpen = (t: Pick<CskhWorkTask, 'status'>): boolean => t.status !== 'done' && t.status !== 'ngung_hd';
+
 export const WORK_TASK_STATUS_LABEL: Readonly<Record<string, string>> = {
   pending: 'Cần làm', in_progress: 'Đang làm', done: 'Hoàn thành', ngung_hd: 'Ngưng HĐ',
 };
@@ -80,8 +87,8 @@ export function workTasksForContacts(tasks: readonly CskhWorkTask[], contactIds:
 /** Việc của 1 người: đang mở trước (hạn gần nhất trước), rồi việc đã xong (xong gần nhất trước). */
 export function workTasksOfContact(tasks: readonly CskhWorkTask[], contactId: string): CskhWorkTask[] {
   const mine = tasks.filter(t => t.contactIds.includes(contactId));
-  const open = mine.filter(t => !isWorkTaskDone(t)).sort((a, b) => (a.due ?? '9999').localeCompare(b.due ?? '9999'));
-  const done = mine.filter(isWorkTaskDone).sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt));
+  const open = mine.filter(isWorkTaskOpen).sort((a, b) => (a.due ?? '9999').localeCompare(b.due ?? '9999'));
+  const done = mine.filter(t => !isWorkTaskOpen(t)).sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt));
   return [...open, ...done];
 }
 
@@ -91,4 +98,41 @@ export function workTaskTitleWithoutCompany(title: string, companyName: string |
   if (!name) return title;
   const prefix = `${name} — `;
   return title.toLowerCase().startsWith(prefix.toLowerCase()) && title.length > prefix.length ? title.slice(prefix.length) : title;
+}
+
+export interface WorkAgendaRow {
+  task: CskhWorkTask;
+  /** Trễ bao nhiêu ngày so với hạn: > 0 trễ · 0 hạn hôm nay · < 0 còn N ngày · null không đặt hạn. */
+  late: number | null;
+  /** Người gắn trong việc thuộc phạm vi đang xem, theo thứ tự gắn (người đầu = người hiện avatar / mở thẻ tóm tắt). */
+  people: string[];
+}
+
+/**
+ * Việc Workspace CÒN MỞ liên quan tới người trong phạm vi — cho thẻ "Sắp tới → Workspace" ở Tổng quan CSKH.
+ *  • Chỉ việc còn làm (isWorkTaskOpen) — việc xong / ngưng nằm ở Nhật ký và hồ sơ người liên hệ.
+ *  • Bỏ việc là bản sao của "việc đã hứa" (`excludeIds` = followup_task_id / extra_task_ids của nhật ký) để không
+ *    hiện 2 lần ở 2 tab; hiện chưa có việc kiểu này mang contact_ids, nhưng đừng để lệch khi sau này có.
+ *  • Xếp: trễ nhất trước → hạn hôm nay → sắp tới → việc không hạn (mới tạo trước).
+ * KHÔNG tính vào hàng đợi "Hôm nay cần liên hệ", nhịp chăm sóc hay điểm quan hệ — tạo việc chưa chắc là đã liên hệ.
+ */
+export function openWorkAgenda(
+  tasks: readonly CskhWorkTask[],
+  contactIds: ReadonlySet<string>,
+  today: string,
+  excludeIds: ReadonlySet<string> = new Set(),
+): WorkAgendaRow[] {
+  const rows: WorkAgendaRow[] = [];
+  for (const task of tasks) {
+    if (!isWorkTaskOpen(task) || excludeIds.has(task.id)) continue;
+    const people = task.contactIds.filter(id => contactIds.has(id));
+    if (!people.length) continue;
+    rows.push({ task, late: task.due ? diffDays(task.due, today) : null, people });
+  }
+  return rows.sort((a, b) => {
+    if (a.late !== null && b.late !== null) return b.late - a.late || a.task.createdAt.localeCompare(b.task.createdAt);
+    if (a.late !== null) return -1;
+    if (b.late !== null) return 1;
+    return b.task.createdAt.localeCompare(a.task.createdAt);
+  });
 }

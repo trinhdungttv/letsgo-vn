@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  mapWorkTaskRow, workTaskLogDate, workTasksForContacts, workTasksOfContact, workTaskTitleWithoutCompany,
+  isWorkTaskOpen, mapWorkTaskRow, openWorkAgenda, workTaskLogDate, workTasksForContacts, workTasksOfContact, workTaskTitleWithoutCompany,
   type CskhWorkTask, type WorkTaskRow,
 } from './workTasks';
 
@@ -60,5 +60,57 @@ describe('workTaskTitleWithoutCompany', () => {
     expect(workTaskTitleWithoutCompany('HĐ Bổ sung', 'Coherent Vietnam')).toBe('HĐ Bổ sung');
     expect(workTaskTitleWithoutCompany('Coherent Vietnam — X', null)).toBe('Coherent Vietnam — X');
     expect(workTaskTitleWithoutCompany('Coherent Vietnam — ', 'Coherent Vietnam')).toBe('Coherent Vietnam — ');
+  });
+});
+
+describe('isWorkTaskOpen', () => {
+  it('đang làm / cần làm là mở; xong và Ngưng HĐ là đã khép', () => {
+    expect(isWorkTaskOpen({ status: 'pending' })).toBe(true);
+    expect(isWorkTaskOpen({ status: 'in_progress' })).toBe(true);
+    expect(isWorkTaskOpen({ status: 'done' })).toBe(false);
+    expect(isWorkTaskOpen({ status: 'ngung_hd' })).toBe(false);
+  });
+  it('việc của 1 người: Ngưng HĐ xếp cùng nhóm đã khép, không đứng đầu danh sách đang mở', () => {
+    const list = [
+      task({ id: 'n', status: 'ngung_hd', due_date: '2026-11-01', created_at: '2026-10-01T00:00:00Z' }),
+      task({ id: 'o', status: 'pending', due_date: '2026-11-30' }),
+    ];
+    expect(workTasksOfContact(list, 'k1')[0].id).toBe('o');
+  });
+});
+
+describe('openWorkAgenda — việc Workspace còn mở ở Tổng quan CSKH', () => {
+  const today = '2026-11-04';
+  const ids = new Set(['k1', 'k2']);
+  const list = [
+    task({ id: 'late', due_date: '2026-11-01', contact_ids: ['k1'] }),
+    task({ id: 'today', due_date: '2026-11-04', contact_ids: ['k2'] }),
+    task({ id: 'soon', due_date: '2026-11-09', contact_ids: ['k1', 'k2', 'zz'] }),
+    task({ id: 'nodue-old', due_date: null, contact_ids: ['k1'], created_at: '2026-10-01T00:00:00Z' }),
+    task({ id: 'nodue-new', due_date: null, contact_ids: ['k1'], created_at: '2026-11-03T00:00:00Z' }),
+    task({ id: 'done', status: 'done', contact_ids: ['k1'] }),
+    task({ id: 'stop', status: 'ngung_hd', contact_ids: ['k1'] }),
+    task({ id: 'other', due_date: '2026-11-02', contact_ids: ['zz'] }),
+  ];
+  const run = (excl?: ReadonlySet<string>) => openWorkAgenda(list, ids, today, excl);
+
+  it('chỉ việc còn mở của người trong phạm vi; xếp trễ → hôm nay → sắp tới → không hạn (mới tạo trước)', () => {
+    expect(run().map(r => r.task.id)).toEqual(['late', 'today', 'soon', 'nodue-new', 'nodue-old']);
+  });
+  it('tính số ngày trễ: trễ > 0, hôm nay = 0, còn lại < 0, không hạn = null', () => {
+    const by = new Map(run().map(r => [r.task.id, r.late]));
+    expect(by.get('late')).toBe(3);
+    expect(by.get('today')).toBe(0);
+    expect(by.get('soon')).toBe(-5);
+    expect(by.get('nodue-old')).toBeNull();
+  });
+  it('chỉ liệt kê người thuộc phạm vi (bỏ người ngoài lọc)', () => {
+    expect(run().find(r => r.task.id === 'soon')?.people).toEqual(['k1', 'k2']);
+  });
+  it('bỏ việc là bản sao của việc đã hứa', () => {
+    expect(run(new Set(['late', 'soon'])).map(r => r.task.id)).toEqual(['today', 'nodue-new', 'nodue-old']);
+  });
+  it('phạm vi rỗng → không có việc nào', () => {
+    expect(openWorkAgenda(list, new Set(), today)).toEqual([]);
   });
 });

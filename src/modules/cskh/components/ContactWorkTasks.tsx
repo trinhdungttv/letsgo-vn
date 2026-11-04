@@ -2,7 +2,7 @@
 // hồ sơ người liên hệ. Chỉ xem: hoàn thành / sửa ở Workspace (bấm Xong ở đó cần ghi kết quả).
 import { useState } from 'react';
 import { formatDateVN } from '../../../lib/cskh/dates';
-import { isWorkTaskDone, workTaskLogDate, workTaskTitleWithoutCompany, WORK_TASK_STATUS_LABEL, type CskhWorkTask } from '../../../lib/cskh/workTasks';
+import { isWorkTaskDone, isWorkTaskOpen, workTaskLogDate, workTaskTitleWithoutCompany, WORK_TASK_STATUS_LABEL, type CskhWorkTask } from '../../../lib/cskh/workTasks';
 import { taskTypeLabel } from '../../../lib/workTaskTypes';
 import { TaskCheck } from './apple';
 
@@ -18,7 +18,7 @@ export function ContactWorkTasks({ tasks, companyName, ownerName, onOpenWorkspac
 }) {
   const [all, setAll] = useState(false);
   if (!tasks.length) return null;
-  const open = tasks.filter(t => !isWorkTaskDone(t)).length;
+  const open = tasks.filter(isWorkTaskOpen).length;
   const shown = all ? tasks : tasks.slice(0, SHOW);
   return (
     <div className={className}>

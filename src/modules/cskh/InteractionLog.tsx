@@ -29,7 +29,7 @@ import { matchesQuery, normalizeSearch } from '../../lib/cskh/search';
 import type { CskhInteraction, InteractionType } from '../../lib/cskh/types';
 import { CHANNEL_LABEL, GIFT_DIRECTION_LABEL, INTERACTION_LABEL, INTERACTION_TYPES } from '../../lib/cskh/types';
 import { compareVnName } from '../../lib/vnName';
-import { isWorkTaskDone, workTaskLogDate, workTaskTitleWithoutCompany, WORK_TASK_STATUS_LABEL, type CskhWorkTask } from '../../lib/cskh/workTasks';
+import { isWorkTaskDone, isWorkTaskOpen, workTaskLogDate, workTaskTitleWithoutCompany, WORK_TASK_STATUS_LABEL, type CskhWorkTask } from '../../lib/cskh/workTasks';
 import { taskTypeLabel } from '../../lib/workTaskTypes';
 import { applyBatchEdit, archiveBatch, archiveInteraction, setFollowUpDone, updateInteraction } from './data/api';
 import { useCskh } from './context';
@@ -140,7 +140,7 @@ export default function CskhInteractionLog() {
   const filteredWorks = works.filter(t => {
     if (type !== 'all' && type !== WORK_TYPE) return false;
     if (person !== 'all' && !t.contactIds.includes(person)) return false;
-    if (openOnly && isWorkTaskDone(t)) return false;
+    if (openOnly && !isWorkTaskOpen(t)) return false;
     if (recorder !== 'all' && t.userId !== recorder) return false;
     if (branch !== 'all' && workBranchId(t) !== branch) return false;
     if (q) {
@@ -151,7 +151,7 @@ export default function CskhInteractionLog() {
     return true;
   });
   const openCount = logs.reduce((n, i) => n + (i.followUpAction.trim() && !i.followUpDone ? 1 : 0) + i.extraTasks.filter(t => !t.done).length, 0);
-  const openWorkCount = works.filter(t => !isWorkTaskDone(t)).length;
+  const openWorkCount = works.filter(isWorkTaskOpen).length;
   const filtersOn = person !== 'all' || openOnly || recorder !== 'all' || type !== 'all' || branch !== 'all' || !!q;
 
   const toggleDone = async (i: CskhInteraction) => {
