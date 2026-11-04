@@ -20,6 +20,7 @@ describe('ký link tải lên Cloudflare R2 (AWS Signature V4)', () => {
     expect(validR2Key('kcn-survey/d747b3b4/2026-11-03/1b2c.webp')).toBe(true);
     expect(validR2Key('voice/khac/2026-11-03/x.webm')).toBe(true);
     expect(validR2Key('client-site/5f0c2a1e-1111-4222-8333-944445555666/mf3k2abcde.webp')).toBe(true);
+    expect(validR2Key('legal/2026-11/mf3k2abcde.webp')).toBe(true);
     expect(validR2Key('kcn-survey/../secret')).toBe(false);
     expect(validR2Key('avatars/x.png')).toBe(false);
     expect(validR2Key('kcn-survey/a b.jpg')).toBe(false);

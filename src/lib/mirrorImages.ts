@@ -11,7 +11,7 @@ import { getStoredSessionToken } from './sessionToken';
 import { r2Status } from './r2Upload';
 
 /** Cột chứa link ảnh (chuỗi) hoặc danh sách link ảnh (mảng chuỗi). */
-export const IMAGE_COLUMNS = ['image_url', 'cover_image_url', 'recruit_image_urls', 'avatar_url', 'manager_avatar_url'] as const;
+export const IMAGE_COLUMNS = ['image_url', 'cover_image_url', 'recruit_image_urls', 'avatar_url', 'manager_avatar_url', 'logo_url'] as const;
 
 /** Mỗi ảnh chờ tối đa bấy nhiêu giây (máy chủ tự giới hạn 15 giây). */
 const PER_IMAGE_MS = 25_000;

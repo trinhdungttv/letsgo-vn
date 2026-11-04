@@ -33,7 +33,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
 };
 
 // 'Tuyển dụng' ẩn khi module tắt (featureFlags.ts) — dòng quyền trong DB vẫn giữ nguyên
-const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', ...(RECRUIT_ENABLED ? ['Tuyển dụng'] : []), 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
+const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', ...(RECRUIT_ENABLED ? ['Tuyển dụng'] : []), 'Pháp lý', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
 
 const LEVEL_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'view', view: 'none', none: 'full' };
 

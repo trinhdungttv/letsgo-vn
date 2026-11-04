@@ -126,6 +126,9 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+/** Tên module Pháp lý trong ma trận phân quyền (migration 201). */
+export const LEGAL_MODULE = 'Pháp lý';
+
 // Maps each app `Page` to the module name shown in the editable "Ma trận phân quyền" (role_permissions table)
 export const PAGE_MODULE: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -150,15 +153,29 @@ export const PAGE_MODULE: Record<string, string> = {
   recruit: 'Tuyển dụng',
   // Văn phòng Orient — một quyền chung cho cả module (migration 164 cấp cho admin)
   ...Object.fromEntries(OFFICE_PAGES.map(p => [p, OFFICE_PERMISSION_MODULE])),
+  // Pháp lý (Workspace → nút "Pháp lý") — migration 201: admin/bdh sửa, ketoan/kinhdoanh xem
+  legal: LEGAL_MODULE,
 };
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', 'recruit', ...crm, ...OFFICE_PAGES],
-  ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace', 'recruit'],
-  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', 'recruit', ...crm],
-  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'recruit', ...crm],
+  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', 'recruit', 'legal', ...crm, ...OFFICE_PAGES],
+  ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace', 'recruit', 'legal'],
+  kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', 'recruit', 'legal', ...crm],
+  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'recruit', 'legal', ...crm],
 };
+
+/**
+ * Mức quyền trong trang Pháp lý: 'full' = thêm / sửa / xoá, 'view' = chỉ xem. Admin luôn 'full'.
+ * Chưa có dòng quyền 'Pháp lý' (chưa chạy migration 201) → bdh sửa, vai trò khác xem.
+ */
+export function legalLevel(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
+  if (role === 'admin') return 'full';
+  const perm = rolePermissions?.find(p => p.role === role && p.module === LEGAL_MODULE);
+  if (perm) return perm.level;
+  if (rolePermissions?.length && rolePermissions.some(p => p.module === LEGAL_MODULE)) return 'none';
+  return role === 'bdh' ? 'full' : (FALLBACK_RULES[role] || []).includes('legal') ? 'view' : 'none';
+}
 
 /**
  * Quyền xem tệp Sale / CTV (Mạng lưới Sale, migration 178) bên trong trang CSKH — không còn là trang riêng
@@ -181,6 +198,8 @@ export function canAccess(role: string, page: string, rolePermissions?: RolePerm
   if (page === 'recruit' && !RECRUIT_ENABLED) return false;
   // Tuyển dụng: chưa có dòng quyền nào (chưa chạy migration 180) → vẫn cho admin vào để thấy hướng dẫn cài đặt
   if (page === 'recruit' && role === 'admin' && !rolePermissions?.some(p => p.module === PAGE_MODULE.recruit)) return true;
+  // Pháp lý: chưa chạy migration 201 (chưa có dòng quyền nào) → theo quyền mặc định, admin vẫn vào để thấy hướng dẫn
+  if (page === 'legal') return legalLevel(role, rolePermissions) !== 'none';
   if (rolePermissions && rolePermissions.length) {
     const module = PAGE_MODULE[page];
     if (!module) return false;

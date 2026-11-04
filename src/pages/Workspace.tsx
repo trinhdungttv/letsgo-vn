@@ -6,15 +6,14 @@
 // Mỗi dữ liệu chỉ hiển thị ở MỘT nơi — feed là nguồn việc duy nhất, rail là radar theo dõi.
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  FileText, Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
+  Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
   Settings, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet, Building2, Users,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
 import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
-import { QuoteModal } from '../components/workspace/QuoteModal';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
@@ -22,7 +21,7 @@ import { BranchVisitSettings } from '../components/workspace/BranchVisitSettings
 import { Switch } from '../components/workspace/Switch';
 import { BranchAvatar } from '../components/branches/BranchAvatar';
 import { CARD, POPOVER, BTN_PRIMARY, BTN_SECONDARY, BTN_TINTED, BTN_ICON, FIELD, INPUT, TINT, ICON_TILE, DOT } from '../components/workspace/wsTheme';
-import { useAuth } from '../lib/auth';
+import { useAuth, canAccess } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { useBranchData } from '../hooks/useBranchData';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -118,7 +117,7 @@ function ThresholdPopover({ label, value, onChange, hint, onClose }: {
 }
 
 export default function Workspace({ clients, pipeline, products, onNavigate, onClientUpdate, toast }: WorkspaceProps) {
-  const { user } = useAuth();
+  const { user, rolePermissions } = useAuth();
   const { branches } = useBranchData();
 
   // Việc tạo tự động (tái ký HĐ) gắn luôn chi nhánh để khỏi phải vào sửa tay từng việc.
@@ -139,7 +138,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [mobileTab, setMobileTab] = useState<'viec' | 'theodoi'>('viec');
 
   // ---- Modals thao tác nhanh ----
-  const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [showCostPlan, setShowCostPlan] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
@@ -473,7 +471,8 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   ];
   const quickActions: { label: string; icon: React.ReactNode; tile: keyof typeof ICON_TILE; onClick: () => void; primary?: boolean }[] = [
     { label: 'Tính bảng lương', icon: <Calculator size={16} />, tile: 'blue', onClick: () => setShowPayrollCalc(true), primary: true },
-    { label: 'Tạo báo giá', icon: <FileText size={16} />, tile: 'orange', onClick: () => setShowQuoteModal(true) },
+    // "Tạo báo giá" đã thay bằng Pháp lý (04/11/2026) — QuoteModal vẫn giữ file, chỉ bỏ nút
+    ...(canAccess(user.role, 'legal', rolePermissions) ? [{ label: 'Pháp lý', icon: <Scale size={16} />, tile: 'indigo' as const, onClick: () => onNavigate('legal') }] : []),
     { label: 'Phương án giá', icon: <PieChart size={16} />, tile: 'purple', onClick: () => setShowCostPlan(true) },
     { label: 'Giao việc', icon: <Send size={15} />, tile: 'green', onClick: () => setShowGiaoViec(true) },
     { label: 'Ghi nhận LĐ', icon: <Users size={16} />, tile: 'teal', onClick: () => setShowBulkLabor(true) },
@@ -793,7 +792,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
       )}
 
       {/* ==== Modals thao tác nhanh ==== */}
-      {showQuoteModal && <QuoteModal clients={clients} toast={toast} onClose={() => setShowQuoteModal(false)} />}
       {showCostPlan && <CostPlanModal clients={clients} pipeline={pipeline} branches={branches} toast={toast} onClose={() => setShowCostPlan(false)} />}
       {showGiaoViec && (
         <GiaoViecModal

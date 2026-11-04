@@ -44,6 +44,8 @@ import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme
 
 // Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
 const OfficeRental = lazy(() => import('./modules/office-rental'));
+// Pháp lý (Workspace → nút "Pháp lý"): bundle riêng, chỉ tải khi mở
+const Legal = lazy(() => import('./pages/Legal'));
 // Form ứng tuyển công khai (#/apply/<mã>) — người ngoài mở, không cần đăng nhập
 const PublicApply = lazy(() => import('./pages/PublicApply'));
 
@@ -53,7 +55,7 @@ const LEGACY_SALE_PAGE = 'crm-sales';
 /** Tuyển dụng đang tắt (featureFlags.ts): link cũ #/recruit/… và form ứng tuyển #/apply/… quay về Dashboard. */
 const readApplyLink = (hash: string) => (RECRUIT_ENABLED ? parseApplyHash(hash) : null);
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', ...(RECRUIT_ENABLED ? ['recruit' as Page] : []), ...OFFICE_PAGES];
+const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'legal', ...(RECRUIT_ENABLED ? ['recruit' as Page] : []), ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -454,6 +456,11 @@ function AppInner() {
         {isOfficePage(page) && user && canAccess(user.role, page, rolePermissions) && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" /></div>}>
             <OfficeRental page={page} toast={toast} />
+          </Suspense>
+        )}
+        {page === 'legal' && user && canAccess(user.role, page, rolePermissions) && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-5 h-5 border-2 border-black/[0.08] border-t-[#0071E3] rounded-full animate-spin" /></div>}>
+            <Legal toast={toast} onBack={() => navigate('workspace')} />
           </Suspense>
         )}
         {page === 'workspace' && (

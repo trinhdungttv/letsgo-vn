@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-legal-hub',
+    date: '2026-11-04',
+    title: 'Pháp lý',
+    features: [
+      'Workspace: nút "Tạo báo giá" đổi thành "Pháp lý" — mở rộng / toàn màn hình',
+      'Pháp nhân: hồ sơ từng công ty + dòng thời gian thay đổi lần 1, 2, 3… kèm file Drive',
+      'Thư viện ngành: Topic → chủ đề con, xem PDF / Excel / PowerPoint Google Drive ngay trong app',
+      'Tự soạn tài liệu học: sơ đồ tư duy theo mẫu, bài học khối màu, thẻ ghi nhớ lật thẻ ôn tập',
+      'Nhắc giấy phép sắp hết hạn, tìm kiếm không dấu (⌘K), Thùng rác khôi phục được',
+    ],
+  },
+  {
     id: '2026-11-04-cskh-overview-work',
     date: '2026-11-04',
     title: 'CSKH',
