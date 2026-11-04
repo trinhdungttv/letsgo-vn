@@ -131,6 +131,21 @@ const GROUP_META: Record<GroupKey, { label: string; head: string; badge: string 
 
 function todayStr() { return new Date().toISOString().split('T')[0] }
 
+// Ngày (YYYY-MM-DD) theo giờ máy của 1 mốc ISO — bấm Xong lúc 6h sáng VN vẫn ra đúng ngày,
+// không lùi 1 ngày như khi cắt chuỗi UTC.
+function localDay(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Dời 1 mốc ISO sang ngày khác (YYYY-MM-DD, giờ máy), giữ nguyên giờ phút giây.
+function moveToDay(iso: string, day: string): string {
+  const d = new Date(iso)
+  const [y, m, dd] = day.split('-').map(Number)
+  d.setFullYear(y, m - 1, dd)
+  return d.toISOString()
+}
+
 function endOfWeekStr() {
   const d = new Date()
   const monOffset = (d.getDay() + 6) % 7 // 0 = thứ 2
@@ -584,6 +599,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   const [reportItem, setReportItem] = useState<WorkTask | null>(null)
   const [reportText, setReportText] = useState('')
   const [newContractEnd, setNewContractEnd] = useState('')
+  const [newContractStart, setNewContractStart] = useState('')
 
   async function markWsDone(t: WorkspaceTask) {
     setWsTasks(prev => prev.filter(x => x.id !== t.id))
@@ -594,6 +610,8 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   function startWorkDone(t: WorkTask) {
     setReportItem(t)
     setReportText('')
+    // Ngày bắt đầu HĐ mới để trống (không đoán) — chỉ ghi khi người dùng tự nhập.
+    setNewContractStart('')
     if (t.task_type === 'Tái ký HĐ') {
       const client = t.client_id ? clients.find(c => c.id === t.client_id) : null
       setNewContractEnd(client?.contract_end || '')
@@ -604,6 +622,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     const t = reportItem
     if (!t) return
     if (t.task_type === 'Tái ký HĐ' && !newContractEnd) { alert('Vui lòng nhập hạn hợp đồng mới'); return }
+    if (t.task_type === 'Tái ký HĐ' && newContractStart && newContractStart > newContractEnd) { alert('Ngày bắt đầu HĐ phải trước hạn hợp đồng'); return }
     const patch: Partial<WorkTask> = {
       status: 'done', completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       ...(reportText.trim() ? { notes: reportText.trim() } : {}),
@@ -613,9 +632,18 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     setReportItem(null)
     await supabase.from('work_tasks').update(patch).eq('id', t.id)
     if (t.task_type === 'Tái ký HĐ' && newContractEnd && t.client_id) {
-      await supabase.from('clients').update({ contract_end: newContractEnd }).eq('id', t.client_id)
+      const cPatch = { contract_end: newContractEnd, ...(newContractStart ? { contract_start: newContractStart } : {}) }
+      await supabase.from('clients').update(cPatch).eq('id', t.client_id)
       const client = clients.find(c => c.id === t.client_id)
-      if (client) onClientUpdate({ ...client, contract_end: newContractEnd })
+      if (client) {
+        onClientUpdate({ ...client, ...cPatch })
+        await logActivity({
+          user, action: 'update', table: 'clients', recordId: client.id,
+          description: `Tái ký HĐ "${client.name}" — cập nhật ngày hợp đồng khi hoàn thành việc`,
+          oldData: { contract_end: client.contract_end, ...(newContractStart ? { contract_start: client.contract_start } : {}) },
+          newData: cPatch,
+        })
+      }
     }
   }
 
@@ -884,28 +912,188 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
   // `place` = Chi nhánh của việc; việc tạo trước migration 137 chưa gắn chi nhánh thì
   // rơi về KCN cũ đã nhập, để lịch sử của các việc đó không bị trống chỗ này.
-  interface DoneItem { id: string; key: string; title: string; category: string; doneAt: string | null; notes: string | null; assignee: string | null; place: string | null }
+  // `source` + bản gốc (work/ws/pipeline) để nút Sửa / Mở lại biết ghi vào bảng nào.
+  interface DoneItem {
+    id: string; key: string; title: string; category: string; doneAt: string | null; notes: string | null; assignee: string | null; place: string | null
+    source: 'work' | 'ws' | 'pipeline'; work?: WorkTask; ws?: WorkspaceTask; pipeline?: CRMPipelineTask
+  }
   const doneHistory = useMemo((): DoneItem[] => [
-    ...doneWork.map(t => {
+    ...doneWork.map((t): DoneItem => {
       const b = t.branch_id ? branches.find(x => x.id === t.branch_id) : null
       return {
         id: t.id, key: `w_${t.id}`, title: t.title,
         category: workCategory(t.task_type),
         doneAt: t.completed_at ?? null, notes: t.notes ?? null, assignee: null,
         place: b ? branchLabel(b) : t.kcn ?? null,
+        source: 'work', work: t,
       }
     }),
-    ...doneWs.map(t => ({
+    ...doneWs.map((t): DoneItem => ({
       id: t.id, key: `s_${t.id}`, title: t.title,
       category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ',
       doneAt: t.created_at ?? null, notes: null, assignee: t.assignee ?? null, place: null,
+      source: 'ws', ws: t,
     })),
-    ...donePipeline.map(t => ({
+    ...donePipeline.map((t): DoneItem => ({
       id: t.id, key: `pl_${t.id}`, title: `${t.company_name} — ${t.title}`,
       category: 'Khách mới',
       doneAt: t.updated_at ?? null, notes: t.result_note ?? null, assignee: null, place: null,
+      source: 'pipeline', pipeline: t,
     })),
   ].sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')), [doneWork, doneWs, donePipeline, branches])
+
+  // ---- Sửa 1 mục đã hoàn thành (nhập nhầm kết quả / ngày / hạn HĐ lúc bấm Xong) ----
+  // Tái ký HĐ: ngày HĐ KHÔNG lưu trên việc mà ghi thẳng vào clients.contract_start/contract_end
+  // (cùng chỗ submitReport ghi lúc hoàn thành) → sửa ở đây là sửa luôn hồ sơ Khách hàng, không lệch 2 nơi.
+  const [histEdit, setHistEdit] = useState<DoneItem | null>(null)
+  const [heTitle, setHeTitle] = useState('')
+  const [heNotes, setHeNotes] = useState('')
+  const [heDate, setHeDate] = useState('')
+  const [heAssignee, setHeAssignee] = useState('')
+  const [heStart, setHeStart] = useState('')
+  const [heEnd, setHeEnd] = useState('')
+  const [heSaving, setHeSaving] = useState(false)
+  const heClient = histEdit?.work?.task_type === 'Tái ký HĐ' && histEdit.work.client_id
+    ? clients.find(c => c.id === histEdit.work!.client_id) ?? null
+    : null
+
+  function openHistEdit(t: DoneItem) {
+    setHistEdit(t)
+    setHeSaving(false)
+    setHeTitle(t.work?.title ?? t.ws?.title ?? t.pipeline?.title ?? t.title)
+    setHeNotes(t.work?.notes ?? t.pipeline?.result_note ?? '')
+    setHeAssignee(t.ws?.assignee ?? '')
+    setHeDate(t.work?.completed_at ? localDay(t.work.completed_at) : '')
+    const c = t.work?.task_type === 'Tái ký HĐ' && t.work.client_id ? clients.find(x => x.id === t.work!.client_id) : null
+    setHeStart(c?.contract_start ?? '')
+    setHeEnd(c?.contract_end ?? '')
+  }
+
+  async function saveHistEdit() {
+    const t = histEdit
+    if (!t || heSaving || !heTitle.trim()) return
+    setHeSaving(true)
+    const now = new Date().toISOString()
+    try {
+      if (t.work) {
+        const w = t.work
+        if (heClient && !heEnd) { toast('Vui lòng nhập hạn hợp đồng mới'); return }
+        if (heClient && heStart && heEnd && heStart > heEnd) { toast('Ngày bắt đầu HĐ phải trước ngày hết hạn'); return }
+        const patch: Partial<WorkTask> = { title: heTitle.trim(), notes: heNotes.trim() || null, updated_at: now }
+        // Đổi ngày thì giữ nguyên giờ đã bấm Xong, chỉ dời ngày (theo giờ máy).
+        if (heDate && w.completed_at && heDate !== localDay(w.completed_at)) patch.completed_at = moveToDay(w.completed_at, heDate)
+        const { error } = await supabase.from('work_tasks').update(patch).eq('id', w.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDoneWork(prev => prev.map(x => x.id === w.id ? { ...x, ...patch } : x))
+        await logActivity({
+          user, action: 'update', table: 'work_tasks', recordId: w.id,
+          description: `Sửa việc đã hoàn thành "${w.title}"`,
+          oldData: { title: w.title, notes: w.notes, completed_at: w.completed_at },
+          newData: { title: patch.title, notes: patch.notes, completed_at: patch.completed_at ?? w.completed_at },
+        })
+        if (heClient) {
+          const cPatch = { contract_start: heStart || null, contract_end: heEnd || null }
+          if (cPatch.contract_start !== (heClient.contract_start || null) || cPatch.contract_end !== (heClient.contract_end || null)) {
+            const { error: cErr } = await supabase.from('clients').update({ ...cPatch, updated_at: now }).eq('id', heClient.id)
+            if (cErr) { toast('Đã lưu việc, nhưng lỗi cập nhật ngày HĐ: ' + cErr.message); return }
+            onClientUpdate({ ...heClient, ...cPatch })
+            await logActivity({
+              user, action: 'update', table: 'clients', recordId: heClient.id,
+              description: `Sửa ngày hợp đồng "${heClient.name}" từ việc Tái ký HĐ đã hoàn thành`,
+              oldData: { contract_start: heClient.contract_start, contract_end: heClient.contract_end },
+              newData: cPatch,
+            })
+          }
+        }
+      } else if (t.ws) {
+        const s = t.ws
+        const patch = { title: heTitle.trim(), assignee: heAssignee.trim() || null }
+        const { error } = await supabase.from('workspace_tasks').update(patch).eq('id', s.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDoneWs(prev => prev.map(x => x.id === s.id ? { ...x, ...patch } : x))
+        await logActivity({
+          user, action: 'update', table: 'workspace_tasks', recordId: s.id,
+          description: `Sửa việc chung đã hoàn thành "${s.title}"`,
+          oldData: { title: s.title, assignee: s.assignee }, newData: patch,
+        })
+      } else if (t.pipeline) {
+        const p = t.pipeline
+        if (!heNotes.trim()) { toast('Vui lòng nhập kết quả'); return }
+        const patch = { title: heTitle.trim(), result_note: heNotes.trim() }
+        const { error } = await supabase.from('crm_pipeline_tasks').update(patch).eq('id', p.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDonePipeline(prev => prev.map(x => x.id === p.id ? { ...x, ...patch } : x))
+        await logActivity({
+          user, action: 'update', table: 'crm_pipeline_tasks', recordId: p.id,
+          description: `Sửa việc BD đã hoàn thành "${p.company_name} — ${p.title}"`,
+          oldData: { title: p.title, result_note: p.result_note }, newData: patch,
+        })
+      }
+      setHistEdit(null)
+      toast('Đã lưu thay đổi')
+    } finally {
+      setHeSaving(false)
+    }
+  }
+
+  // Mở lại: đưa việc về danh sách đang làm. Không xoá gì — kết quả đã ghi vẫn giữ;
+  // ngày HĐ trên hồ sơ Khách hàng cũng giữ nguyên (muốn trả lại thì sửa trước khi mở lại).
+  async function reopenHistItem() {
+    const t = histEdit
+    if (!t || heSaving) return
+    const extra = t.work?.task_type === 'Tái ký HĐ' ? '\nNgày hợp đồng trên hồ sơ Khách hàng giữ nguyên.' : ''
+    if (!confirm(`Mở lại việc "${t.title}"? Việc sẽ quay về danh sách đang làm.${extra}`)) return
+    setHeSaving(true)
+    const now = new Date().toISOString()
+    try {
+      if (t.work) {
+        const w = t.work
+        const patch: Partial<WorkTask> = {
+          status: 'pending', completed_at: null, updated_at: now,
+          // "Hoàn tất" mà còn giữ thì feed tự ẩn sau 1 ngày → lùi về bước ngay trước đó.
+          ...(w.doc_status === 'hoan_tat' ? { doc_status: 'cho_kh_ky' } : {}),
+        }
+        const { error } = await supabase.from('work_tasks').update(patch).eq('id', w.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDoneWork(prev => prev.filter(x => x.id !== w.id))
+        setMyTasks(prev => [...prev, { ...w, ...patch } as WorkTask].sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? '')))
+        await logActivity({
+          user, action: 'update', table: 'work_tasks', recordId: w.id,
+          description: `Mở lại việc đã hoàn thành "${w.title}"`,
+          oldData: { status: w.status, completed_at: w.completed_at, doc_status: w.doc_status ?? null },
+          newData: { status: patch.status, completed_at: null, doc_status: patch.doc_status ?? w.doc_status ?? null },
+        })
+      } else if (t.ws) {
+        const s = t.ws
+        const status = s.type === 'task' ? 'todo' : 'not_started'
+        const { error } = await supabase.from('workspace_tasks').update({ status }).eq('id', s.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDoneWs(prev => prev.filter(x => x.id !== s.id))
+        setWsTasks(prev => [...prev, { ...s, status }])
+        await logActivity({
+          user, action: 'update', table: 'workspace_tasks', recordId: s.id,
+          description: `Mở lại việc chung đã hoàn thành "${s.title}"`,
+          oldData: { status: s.status }, newData: { status },
+        })
+      } else if (t.pipeline) {
+        const p = t.pipeline
+        const patch = { status: 'pending' as PipelineTaskStatus, updated_at: now }
+        const { error } = await supabase.from('crm_pipeline_tasks').update(patch).eq('id', p.id)
+        if (error) { toast('Lỗi: ' + error.message); return }
+        setDonePipeline(prev => prev.filter(x => x.id !== p.id))
+        setPipelineTasks(prev => [...prev, { ...p, ...patch }])
+        await logActivity({
+          user, action: 'update', table: 'crm_pipeline_tasks', recordId: p.id,
+          description: `Mở lại việc BD đã hoàn thành "${p.company_name} — ${p.title}"`,
+          oldData: { status: p.status }, newData: { status: patch.status },
+        })
+      }
+      setHistEdit(null)
+      toast('Đã mở lại việc')
+    } finally {
+      setHeSaving(false)
+    }
+  }
 
   const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
   const filteredHistory = doneHistory.filter(t =>
@@ -1575,20 +1763,20 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
           {historyOpen && (
             <div className="border-t border-black/[0.06]">
               <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
-                <div className={`flex items-center gap-1.5 px-2.5 h-8 w-48 ${FIELD}`}>
+                <div className={`flex items-center gap-1.5 px-2.5 h-8 w-full md:w-48 ${FIELD}`}>
                   <Search size={13} className="text-[#86868B] shrink-0" />
                   <input
                     value={histSearch} onChange={e => setHistSearch(e.target.value)} placeholder="Tìm theo tên…"
                     className="flex-1 min-w-0 text-[13px] text-[#1D1D1F] bg-transparent focus:outline-none placeholder:text-[#86868B]"
                   />
                 </div>
-                <div className="flex gap-1.5 flex-wrap">
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar max-w-full md:flex-wrap">
                   {HIST_CATS.map(c => {
                     const key = c === 'Tất cả' ? 'all' : c
                     const count = c === 'Tất cả' ? doneHistory.length : doneHistory.filter(t => t.category === c).length
                     return (
                       <button key={c} onClick={() => setHistCat(key)}
-                        className={`text-[12px] font-medium h-7 px-3 rounded-full transition ${histCat === key ? FILTER_ON : FILTER_OFF}`}>
+                        className={`text-[12px] font-medium h-7 px-3 rounded-full transition shrink-0 whitespace-nowrap ${histCat === key ? FILTER_ON : FILTER_OFF}`}>
                         {c}{count > 0 ? <span className="opacity-60"> {count}</span> : null}
                       </button>
                     )
@@ -1598,28 +1786,114 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               <div className="max-h-80 overflow-y-auto px-4 pb-4 flex flex-col gap-2">
                 {filteredHistory.length === 0 ? (
                   <div className="text-[13px] text-[#86868B] py-6 text-center">Không có kết quả</div>
-                ) : filteredHistory.map(t => (
+                ) : filteredHistory.map(t => {
+                  // Tái ký HĐ: ngày HĐ đọc thẳng từ hồ sơ Khách hàng (nguồn duy nhất) để thấy ngay chỗ nhập nhầm.
+                  const rc = t.work?.task_type === 'Tái ký HĐ' && t.work.client_id ? clients.find(c => c.id === t.work!.client_id) : null
+                  return (
                   <div key={t.key} className="px-3.5 py-2.5 rounded-[12px] bg-[#F5F5F7]">
                     <div className="flex items-center gap-2 min-w-0">
                       <CheckCircle2 size={15} className="text-[#34C759] shrink-0" />
                       <span className="text-[13.5px] font-medium text-[#1D1D1F] truncate">{t.title}</span>
                       <span className={`ml-auto shrink-0 text-[11px] font-medium leading-[18px] px-2 rounded-full ${CATEGORY_TAG[t.category as Category] ?? CATEGORY_TAG['Khác']}`}>{t.category}</span>
+                      <button
+                        onClick={() => openHistEdit(t)}
+                        className="shrink-0 w-8 h-8 md:w-7 md:h-7 -my-1 inline-flex items-center justify-center rounded-full text-[#86868B] hover:bg-[#0071E3]/10 hover:text-[#0066CC] transition"
+                        title="Sửa mục đã hoàn thành" aria-label="Sửa"
+                      ><Pencil size={13} /></button>
                     </div>
                     <div className="text-[12px] text-[#86868B] mt-0.5 pl-[23px] tabular-nums">
-                      {t.doneAt ? formatDate(t.doneAt.split('T')[0]) : ''}
+                      {t.doneAt ? formatDate(localDay(t.doneAt)) : ''}
                       {t.place ? ` · ${t.place}` : ''}{t.assignee ? ` · ${t.assignee}` : ''}
                     </div>
+                    {rc && (rc.contract_start || rc.contract_end) && (
+                      <div className="text-[12px] text-[#6E6E73] mt-0.5 pl-[23px] tabular-nums">
+                        HĐ hiện tại: {rc.contract_start ? formatDate(rc.contract_start) : '—'} → {rc.contract_end ? formatDate(rc.contract_end) : '—'}
+                      </div>
+                    )}
                     {t.notes && (
                       <div className="mt-1.5 ml-[23px] text-[12.5px] text-[#1D1D1F] bg-white rounded-[10px] px-2.5 py-1.5">
                         <span className="text-[#1E7B34] font-medium">Kết quả: </span>{t.notes}
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
         </section>
+      )}
+
+      {/* Modal sửa mục trong Lịch sử hoàn thành */}
+      {histEdit && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-[2px] flex items-center justify-center z-50 p-3 md:p-4" onClick={() => !heSaving && setHistEdit(null)}>
+          <div className="bg-white rounded-[20px] shadow-[0_24px_64px_-12px_rgba(0,0,0,0.35)] max-w-md w-full overflow-hidden max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2 px-5 py-4 border-b border-black/[0.06]">
+              <div className="min-w-0">
+                <h2 className="text-[16px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">Sửa việc đã hoàn thành</h2>
+                <p className="text-[11.5px] text-[#86868B] mt-0.5 truncate">{histEdit.title}</p>
+              </div>
+              <button onClick={() => setHistEdit(null)} className="w-8 h-8 -mr-1.5 shrink-0 inline-flex items-center justify-center rounded-full bg-black/[0.05] text-[#6E6E73] hover:bg-black/[0.08]" title="Đóng" aria-label="Đóng"><X size={15} /></button>
+            </div>
+            <div className="p-5 space-y-3 overflow-y-auto">
+              <div>
+                <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">{histEdit.pipeline ? 'Tên việc BD' : 'Tên công việc'}</label>
+                <input value={heTitle} onChange={e => setHeTitle(e.target.value)}
+                  className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                {histEdit.pipeline && <p className="text-[11px] text-[#86868B] mt-1">Công ty: {histEdit.pipeline.company_name}</p>}
+              </div>
+              {histEdit.work && (
+                <div>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Ngày hoàn thành</label>
+                  <input type="date" value={heDate} onChange={e => setHeDate(e.target.value)} max={localDay(new Date().toISOString())}
+                    className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                  <p className="text-[11px] text-[#86868B] mt-1">Lịch sử chỉ hiện 30 ngày gần nhất — lùi ngày quá 30 ngày thì việc sẽ rời khỏi danh sách này.</p>
+                </div>
+              )}
+              {heClient && (
+                <div className="rounded-[12px] bg-[#0071E3]/[0.06] p-3 space-y-2">
+                  <div className="text-[12px] font-semibold text-[#0066CC]">Hợp đồng mới — {heClient.name}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11.5px] font-medium text-[#6E6E73] mb-1 block">Ngày bắt đầu</label>
+                      <input type="date" value={heStart} onChange={e => setHeStart(e.target.value)}
+                        className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 bg-white focus:outline-none focus:border-[#0071E3]" />
+                    </div>
+                    <div>
+                      <label className="text-[11.5px] font-medium text-[#6E6E73] mb-1 block">Hạn hợp đồng <span className="text-red-500">*</span></label>
+                      <input type="date" value={heEnd} onChange={e => setHeEnd(e.target.value)}
+                        className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 bg-white focus:outline-none focus:border-[#0071E3]" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-[#6E6E73]">Lưu là cập nhật luôn ngày hợp đồng trên hồ sơ Khách hàng (cùng một dữ liệu).</p>
+                </div>
+              )}
+              {(histEdit.work || histEdit.pipeline) && (
+                <div>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Kết quả{histEdit.pipeline && <span className="text-red-500"> *</span>}</label>
+                  <textarea rows={3} value={heNotes} onChange={e => setHeNotes(e.target.value)} placeholder="Nội dung đã hoàn thành..."
+                    className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 focus:outline-none focus:border-[#0071E3] resize-none" />
+                </div>
+              )}
+              {histEdit.ws && (
+                <div>
+                  <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Người phụ trách</label>
+                  <input value={heAssignee} onChange={e => setHeAssignee(e.target.value)}
+                    className="w-full text-[14px] md:text-[13px] border border-black/[0.12] rounded-[10px] px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                </div>
+              )}
+            </div>
+            <div className="px-5 pb-5 pt-1 flex flex-col-reverse sm:flex-row gap-2">
+              <button onClick={reopenHistItem} disabled={heSaving}
+                className="sm:mr-auto px-3 py-2 text-[12.5px] font-medium text-[#B25000] bg-[#FF9500]/10 hover:bg-[#FF9500]/[0.16] disabled:opacity-40 rounded-full transition">Mở lại việc</button>
+              <div className="flex gap-2">
+                <button onClick={() => setHistEdit(null)} className="flex-1 sm:flex-none px-4 py-2 text-[12.5px] font-medium text-[#1D1D1F] bg-black/[0.05] hover:bg-black/[0.08] rounded-full transition">Huỷ</button>
+                <button onClick={saveHistEdit} disabled={heSaving || !heTitle.trim() || (!!histEdit.pipeline && !heNotes.trim()) || (!!heClient && !heEnd)}
+                  className="flex-1 sm:flex-none px-4 py-2 text-[12.5px] font-medium text-white bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-40 rounded-full transition">{heSaving ? 'Đang lưu...' : 'Lưu'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal báo cáo hoàn thành (work task) */}
@@ -1632,10 +1906,17 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             </div>
             <div className="p-5 space-y-3">
               {reportItem.task_type === 'Tái ký HĐ' && (
-                <div>
-                  <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Hạn hợp đồng mới <span className="text-red-500">*</span></label>
-                  <input type="date" value={newContractEnd} onChange={e => setNewContractEnd(e.target.value)}
-                    className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Ngày bắt đầu HĐ mới</label>
+                    <input type="date" value={newContractStart} onChange={e => setNewContractStart(e.target.value)}
+                      className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-700 mb-1 block">Hạn hợp đồng mới <span className="text-red-500">*</span></label>
+                    <input type="date" value={newContractEnd} onChange={e => setNewContractEnd(e.target.value)}
+                      className="w-full text-[12.5px] border border-black/[0.08] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0071E3]" />
+                  </div>
                 </div>
               )}
               <div>

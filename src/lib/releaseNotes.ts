@@ -16,6 +16,17 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-edit-done-history',
+    date: '2026-11-04',
+    title: 'Workspace',
+    features: [
+      'Lịch sử hoàn thành: nút Sửa ở từng việc — sửa tên, kết quả, ngày hoàn thành',
+      'Tái ký HĐ: sửa ngày bắt đầu / hạn hợp đồng mới, hồ sơ Khách hàng cập nhật theo',
+      'Nút "Mở lại việc" đưa việc đã hoàn thành về danh sách đang làm',
+      'Hoàn thành Tái ký HĐ: nhập thêm được ngày bắt đầu hợp đồng mới',
+    ],
+  },
+  {
     id: '2026-11-04-move-contact-to-pipeline-company',
     date: '2026-11-04',
     title: 'Người liên hệ',
