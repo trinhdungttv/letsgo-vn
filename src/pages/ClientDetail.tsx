@@ -38,6 +38,9 @@ import { CLIENT_STAR_LABEL, clientStarOf, saveClientStar, starGlyphs, type Clien
 
 // Khối "Sức khỏe CSKH" (module CSKH) — tải riêng khi mở tab Hồ sơ chăm sóc
 const ClientCareBlock = lazy(() => import('../modules/cskh/ClientCareBlock'));
+// Sơ đồ tổ chức + Mặt bằng nhà xưởng — tải riêng khi mở tab (migration 199)
+const ClientOrgChart = lazy(() => import('../components/clients/ClientOrgChart'));
+const ClientSiteMaps = lazy(() => import('../components/clients/ClientSiteMaps'));
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
 
@@ -106,8 +109,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const { managers, add: addManager } = useManagers();
   const [newManagerForm, setNewManagerForm] = useState<{ name: string; phone: string; email: string } | null>(null);
   const [savingNewManager, setSavingNewManager] = useState(false);
-  const CD_TAB_KEYS = ['overview', 'profile'] as const;
-  const [activeTab, setActiveTab] = useHashTab<'overview' | 'profile'>('client-detail', CD_TAB_KEYS, 'overview', 2);
+  const CD_TAB_KEYS = ['overview', 'profile', 'org', 'site'] as const;
+  const [activeTab, setActiveTab] = useHashTab<typeof CD_TAB_KEYS[number]>('client-detail', CD_TAB_KEYS, 'overview', 2);
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -673,22 +676,29 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
       {showExportMd && <ExportMdModal client={client} onClose={() => setShowExportMd(false)} toast={toast} />}
 
       {/* Tab bar */}
-      <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-2 md:px-6">
-        {(['overview', 'profile'] as const).map(tab => (
+      <div className="flex border-b border-[#E8E7E2] bg-white shrink-0 px-2 md:px-6 overflow-x-auto">
+        {CD_TAB_KEYS.map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2.5 text-[12.5px] font-medium border-b-2 transition -mb-px ${
+            className={`shrink-0 whitespace-nowrap px-3 md:px-4 py-2.5 text-[12.5px] font-medium border-b-2 transition -mb-px ${
               activeTab === tab
                 ? 'border-[#1D4ED8] text-[#1D4ED8]'
                 : 'border-transparent text-[#888] hover:text-[#555]'
             }`}
           >
-            {tab === 'overview' ? '📊 Tổng quan' : '🗂️ Hồ sơ chăm sóc'}
+            {{ overview: '📊 Tổng quan', profile: '🗂️ Hồ sơ chăm sóc', org: '🧩 Sơ đồ tổ chức', site: '🏭 Mặt bằng' }[tab]}
           </button>
         ))}
       </div>
 
+      {activeTab === 'org' || activeTab === 'site' ? (
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[12px] text-[#999]">Đang tải...</div>}>
+          {activeTab === 'org'
+            ? <ClientOrgChart key={client.id} client={client} contacts={primaryContacts} />
+            : <ClientSiteMaps key={client.id} client={client} />}
+        </Suspense>
+      ) : (
       <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         {activeTab === 'profile' && (
           <Suspense fallback={null}>
@@ -1445,6 +1455,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           </div>
         )}
       </div>
+      )}
     </>
   );
 }

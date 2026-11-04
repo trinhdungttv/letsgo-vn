@@ -1,4 +1,5 @@
-// Vercel Serverless Function (Edge) — cap link tai file thang len Cloudflare R2 cho anh / ghi am Khao sat KCN.
+// Vercel Serverless Function (Edge) — cap link tai file thang len Cloudflare R2 cho anh / ghi am Khao sat KCN
+// va anh mat bang nha xuong cua khach hang (thu muc client-site/).
 // Khoa bi mat chi nam o day (bien moi truong Vercel); dien thoai nhan link da ky, han 10 phut, PUT dung 1 file.
 //
 // GET                                   -> { enabled, publicUrl }   (da cai du 5 bien R2_* chua)

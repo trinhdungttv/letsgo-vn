@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-client-org-site-maps',
+    date: '2026-11-04',
+    title: 'Khách hàng',
+    features: [
+      'Hồ sơ khách: tab "Sơ đồ tổ chức" — vẽ các cấp nhân sự bên khách kiểu sơ đồ tư duy',
+      'Sơ đồ tổ chức: nút "Người liên hệ" chèn nhanh người của công ty vào sơ đồ',
+      'Hồ sơ khách: tab "Mặt bằng" — tải ảnh sơ đồ nhà xưởng, đặt nhãn từng khu (B3, B5…)',
+      'Mặt bằng: khoanh vùng, đổi màu / cỡ chữ, bảng chú thích ghi khu đó làm gì',
+      'Mặt bằng: thêm ảnh bằng kéo thả hoặc dán ảnh chụp màn hình, nhiều ảnh mỗi khách',
+    ],
+  },
+  {
     id: '2026-11-04-clients-avatars',
     date: '2026-11-04',
     title: 'Khách hàng',
