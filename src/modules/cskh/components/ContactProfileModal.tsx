@@ -73,6 +73,7 @@ import { SchoolInput } from './SchoolInput';
 import { Sheet, SHEET_FOOTER } from './Sheet';
 import { TagInput } from './TagInput';
 import { useSpace } from '../space';
+import { LinkedWorkTasks } from '../../../components/workspace/LinkedWorkTasks';
 
 const CONTEXT_LABEL: Readonly<Record<CskhContext, string>> = { work: 'Công việc', both: 'Cả hai', personal: 'Cá nhân' };
 
@@ -906,6 +907,17 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         </Field>
         <Field label="Ghi chú chi tiết" full><RichTextEditor value={richNotes} onChange={setRichNotes} /></Field>
       </Section>}
+
+      {/* ── Công việc đã trao đổi: việc Workspace có gắn người này (work_tasks.contact_ids) — đọc thẳng
+          bảng việc, gồm cả việc đã xong / đã xoá, để mở ra là thấy các thủ tục đã qua lại với người này ── */}
+      {!isNew && !isSale && contactId && (
+        <Section title="Công việc đã trao đổi" note='Gắn người này vào việc ở Workspace → Thêm việc mới → ô "Người liên hệ".'>
+          <div className="md:col-span-2">
+            <LinkedWorkTasks contactId={contactId} title="Việc trong Workspace"
+              emptyHint="Chưa có việc nào gắn người này — ở Workspace, mở form thêm việc (hoặc mở 1 việc đã có) rồi chọn người này ở ô “Người liên hệ”." />
+          </div>
+        </Section>
+      )}
 
       {/* ── Học vấn ── */}
       <Section title="Học vấn" note="Gõ tên trường có gợi ý từ người khác đã nhập; khác dấu / hoa vẫn nhận là 1 trường.">

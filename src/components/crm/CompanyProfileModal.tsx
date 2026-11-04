@@ -31,6 +31,8 @@ import { useCompanyMedia, CoverBanner, CoverEditDialog, CompanyLocationCard, Cov
 import { readZoneSites, withZoneSite, ZONE_SITES_MIGRATION_HINT, type ZoneRef, type ZoneSite } from '../../lib/pipelineZones';
 import { parseLatLngFromLink, isValidVnLatLng } from '../../lib/geo';
 import type { LatLngLite } from '../MiniMap';
+import { taskTypeLabel } from '../../lib/workTaskTypes';
+import { pipelineTaskClientId } from '../../lib/workTaskLinks';
 
 export const STAGES = [
   { id: 'tiem-nang',  label: 'Tiềm năng',    headerBg: 'bg-blue-50',    headerText: 'text-blue-700',    border: 'border-blue-200'   },
@@ -204,6 +206,10 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   const [gifts, setGifts] = useState<CRMGift[]>([]);
   const [pipelineTasks, setPipelineTasks] = useState<CRMPipelineTask[]>([]);
   const [workTasks, setWorkTasks] = useState<WorkTask[]>([]);
+  // Việc Workspace của công ty CHƯA hợp tác nằm ở hồ sơ KH tiềm năng cùng tên (lib/workTaskLinks) — id hồ sơ đó.
+  const [prospectClientId, setProspectClientId] = useState<string | null>(null);
+  // Tên người phụ trách + người liên hệ của từng việc Workspace (tra riêng, lỗi thì chỉ thiếu tên).
+  const [taskPeople, setTaskPeople] = useState<{ users: Record<string, string>; contacts: Record<string, string> }>({ users: {}, contacts: {} });
   const [activeSection, setActiveSection] = useState<Section>('info');
   // Biến thể 'panel' (trang Khách hàng) không dùng tab lồng tab — thay bằng
   // các thẻ gập/mở + thanh "Đi tới", nhớ trạng thái theo trình duyệt.
@@ -277,15 +283,34 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     if (!tr.error) setPipelineTasks(tr.data as CRMPipelineTask[]);
     if (!ar.error) setAppendices(ar.data as PipelineAppendix[]);
 
-    if (entry.client_id) {
+    // Việc Workspace (work_tasks): khách đã hợp tác → theo client_id của thẻ; chưa hợp tác → theo hồ sơ
+    // KH tiềm năng cùng tên (tạo khi gắn việc / người liên hệ cho công ty Pipeline). Chưa có thì không có việc.
+    const taskClientId = await pipelineTaskClientId({ company_name: entry.company_name, client_id: entry.client_id }).catch(() => null);
+    setProspectClientId(entry.client_id ? null : taskClientId);
+    if (taskClientId) {
       const { data, error } = await supabase
         .from('work_tasks')
         .select('*')
-        .eq('client_id', entry.client_id)
+        .eq('client_id', taskClientId)
         .is('deleted_at', null)
         .order('due_date', { ascending: false });
-      if (!error) setWorkTasks(data as WorkTask[]);
+      if (!error) {
+        const list = data as WorkTask[];
+        setWorkTasks(list);
+        const uIds = [...new Set(list.map(t => t.user_id).filter(Boolean))];
+        const cIds = [...new Set(list.flatMap(t => t.contact_ids ?? []))];
+        const [us, cs] = await Promise.all([
+          uIds.length ? supabase.from('app_users').select('id, full_name').in('id', uIds) : Promise.resolve({ data: null }),
+          cIds.length ? supabase.from('contacts').select('id, name').in('id', cIds) : Promise.resolve({ data: null }),
+        ]);
+        setTaskPeople({
+          users: Object.fromEntries(((us.data ?? []) as { id: string; full_name: string }[]).map(u => [u.id, u.full_name])),
+          contacts: Object.fromEntries(((cs.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name])),
+        });
+      }
+    } else setWorkTasks([]);
 
+    if (entry.client_id) {
       const { data: cli } = await supabase
         .from('clients')
         .select('branch_id')
@@ -293,7 +318,7 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
         .maybeSingle();
       setClientBranchId(cli?.branch_id ?? null);
     }
-  }, [entry.id, entry.client_id]);
+  }, [entry.id, entry.client_id, entry.company_name]);
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
@@ -373,9 +398,15 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     const old = entry.company_name;
     if (!name || name === old) return;
     const { data: leads } = await supabase.from('market_leads').select('id').eq('crm_id', entry.id);
+    // Công ty chưa hợp tác: hồ sơ KH tiềm năng cùng tên đang giữ việc Workspace / người liên hệ đã gắn
+    // (khớp theo TÊN) → đổi tên theo, kẻo "Bắt đầu hợp tác" sau này không tìm thấy và tạo hồ sơ mới.
+    const prospect = !entry.client_id
+      ? (await findClientsByName(old)).find(c => !c.archived_at && c.client_type === 'prospect') ?? null
+      : null;
     const places = ['• Hồ sơ CRM Pipeline'];
     if (leads?.length) places.push(`• ${leads.length} dự án ở Thị trường → Công ty/Dự án`);
     if (entry.client_id) places.push('• Hồ sơ Khách hàng');
+    if (prospect) places.push('• Hồ sơ KH tiềm năng (giữ công việc & người liên hệ đã gắn)');
     if (places.length > 1 && !confirm(`Đổi tên "${old}" → "${name}"?\n\nTên mới sẽ được cập nhật đồng bộ ở:\n${places.join('\n')}`)) return;
     if (!await patchEntry({ company_name: name }, `Đổi tên công ty "${old}" thành "${name}"`)) return;
     if (leads?.length) {
@@ -385,6 +416,15 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     if (entry.client_id) {
       const { error } = await supabase.from('clients').update({ name }).eq('id', entry.client_id);
       if (error) toast('Đã đổi tên ở Pipeline nhưng chưa đồng bộ được hồ sơ Khách hàng: ' + error.message);
+    }
+    if (prospect) {
+      const { error } = await supabase.from('clients').update({ name }).eq('id', prospect.id);
+      if (error) { toast('Đã đổi tên ở Pipeline nhưng chưa đồng bộ được hồ sơ KH tiềm năng: ' + error.message); return; }
+      await logActivity({
+        user, action: 'update', table: 'clients', recordId: prospect.id,
+        description: `Đổi tên hồ sơ KH tiềm năng "${old}" thành "${name}" theo thẻ BD Pipeline`,
+        oldData: { name: prospect.name }, newData: { name },
+      });
     }
     toast(`Đã đổi tên thành "${name}"`);
   };
@@ -787,11 +827,15 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     try {
       const name = entry.company_name.trim();
       const matches = await findClientsByName(name);
-      const match = matches.find(c => !c.archived_at) ?? matches[0] ?? null;
+      // Ưu tiên đúng hồ sơ KH tiềm năng đang giữ việc Workspace / người liên hệ đã gắn → nâng chính nó lên, việc đi theo.
+      const match = matches.find(c => c.id === prospectClientId) ?? matches.find(c => !c.archived_at) ?? matches[0] ?? null;
       const other = match ? await otherPipelineEntryOf(match.id, entry.id) : null;
       let msg = match
         ? `Đã có hồ sơ Khách hàng "${match.name}"${match.archived_at ? ' (đang lưu trữ)' : ''}.\n\n` +
-          'Gắn công ty này vào hồ sơ đó — KHÔNG tạo Khách hàng trùng. Ô nào bên Khách hàng còn trống sẽ được điền từ CRM.'
+          'Gắn công ty này vào hồ sơ đó — KHÔNG tạo Khách hàng trùng. Ô nào bên Khách hàng còn trống sẽ được điền từ CRM.' +
+          (match.id === prospectClientId && workTasks.length
+            ? `\n\n${workTasks.length} công việc ở Workspace đã gắn công ty này đi theo luôn (cùng hồ sơ).`
+            : '')
         : `Chuyển "${name}" sang Khách hàng đang hợp tác?\n\n` +
           'Tạo hồ sơ Khách hàng mới, mang theo: lịch sử chăm sóc, ghi chú nội bộ, quà tặng, việc cần làm, sở thích, phụ lục, người liên hệ, KCN & nhà cung ứng, ảnh bìa, vị trí bản đồ.';
       if (other) {
@@ -985,18 +1029,30 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
           </button>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700 shrink-0">
-                <ClipboardList size={9} /> WS
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700 shrink-0" title={`Việc Workspace · ${t.task_type ?? ''}`}>
+                <ClipboardList size={9} /> {taskTypeLabel(t.task_type)}
               </span>
               <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
                 {t.title}
               </div>
             </div>
-            <div className={`flex items-center gap-1 mt-1 text-[11px] ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+            <div className={`flex items-center gap-1 mt-1 text-[11px] flex-wrap ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
               <CalendarDays size={10} />
               {isOverdue ? 'Quá hạn: ' : 'Hạn: '}{formatDate(t.due_date)}
               {t.kcn ? ` · ${t.kcn}` : ''}
+              {t.completed_at && <span className="text-emerald-600"> · Xong {formatDate(t.completed_at.slice(0, 10))}</span>}
+              {taskPeople.users[t.user_id] && <span> · Phụ trách: {taskPeople.users[t.user_id]}</span>}
             </div>
+            {(t.contact_ids ?? []).length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap mt-1 text-[11px] text-gray-500">
+                Người liên hệ:
+                {(t.contact_ids ?? []).map(id => (
+                  <span key={id} className="px-1.5 py-px rounded-full bg-blue-50 text-blue-700 font-medium">
+                    {taskPeople.contacts[id] ?? contacts.find(c => c.id === id)?.name ?? 'Người liên hệ'}
+                  </span>
+                ))}
+              </div>
+            )}
             {t.status === 'done' && t.notes && (
               <div className="text-[11.5px] text-gray-600 bg-[#F9F9F7] border border-[#F0EFEB] rounded-md px-2.5 py-1.5 mt-1.5">
                 <span className="font-medium text-[#555]">Báo cáo: </span>{t.notes}

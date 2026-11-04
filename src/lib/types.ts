@@ -1246,6 +1246,9 @@ export interface WorkTask {
   // Hợp đồng/Phụ lục bị vô hiệu (thanh lý / hết hiệu lực) — migration 155
   voided_at?: string | null
   void_reason?: string | null
+  // Người liên hệ (contacts.id) bên khách liên quan tới việc — chọn nhiều người (migration 200,
+  // đọc / ghi qua lib/workTaskLinks). Chưa chạy 200 thì không có cột này.
+  contact_ids?: string[] | null
 }
 
 export interface CooperationSuspensionRequest {
@@ -1314,7 +1317,7 @@ export const DOC_STATUS_STEPS: { key: DocStatus; label: string; danger?: boolean
   { key: 'hoan_tat',  label: 'Hoàn tất' },
   { key: 'ngung_hd',  label: 'Ngưng HĐ', danger: true },
 ]
-export const TASK_TYPE_OPTIONS = ['Tái ký HĐ', 'Hợp đồng', 'Phụ lục', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Xử lý phát sinh', 'Văn phòng', 'Khác']
+// Loại việc (work_tasks.task_type): danh sách gộp 5 nhóm + cách đọc giá trị cũ ở src/lib/workTaskTypes.ts
 
 // ─── Module: Quan ly Khoan Vay ─────────────────────────────────────
 

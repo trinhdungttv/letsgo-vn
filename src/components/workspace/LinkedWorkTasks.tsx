@@ -7,6 +7,8 @@ import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, TASK_PRIO
 import { formatDate } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import { contractTitle } from '../../lib/contractTitle'
+import { taskTypeLabel } from '../../lib/workTaskTypes'
+import { MIGRATION_200_HINT, isMissingContactIdsColumn } from '../../lib/workTaskLinks'
 
 type Row = WorkTask & {
   clients?: { name: string } | null
@@ -17,6 +19,8 @@ interface Props {
   clientId?: string
   /** Hồ sơ Chi nhánh: lấy việc gắn với chi nhánh này, hiện kèm tên khách của từng việc. */
   branchId?: string
+  /** Hồ sơ người liên hệ (CSKH): lấy việc có gắn người này (work_tasks.contact_ids, migration 200). */
+  contactId?: string
   refreshKey?: number
   /** Chỉ lấy các loại việc này (vd. Hợp đồng / Phụ lục). Bỏ trống = lấy tất cả. */
   taskTypes?: string[]
@@ -33,8 +37,11 @@ const PAGE_SIZE = 8
  * này đọc THẲNG bảng đó thay vì giữ một bản sao riêng — sửa/hoàn thành/xoá ở Workspace là
  * hồ sơ Khách hàng và Chi nhánh thấy ngay, không cần đồng bộ.
  */
-export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, title = 'Công việc & trao đổi', emptyHint, onCounts }: Props) {
+export function LinkedWorkTasks({ clientId, branchId, contactId, refreshKey, taskTypes, title = 'Công việc & trao đổi', emptyHint, onCounts }: Props) {
   const [rows, setRows] = useState<Row[]>([])
+  // Tên người liên hệ gắn với từng việc (contact_ids) — tra riêng như tên người phụ trách.
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const [loadError, setLoadError] = useState('')
   // Tên người phụ trách tra riêng thay vì join: bảng app_users nhỏ, và nếu tra tên có
   // trục trặc thì cùng lắm mất tên — danh sách việc vẫn hiện đủ.
   const [userNames, setUserNames] = useState<Record<string, string>>({})
@@ -48,28 +55,37 @@ export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, tit
   const notify = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3500) }
 
   useEffect(() => {
-    if (!clientId && !branchId) { setRows([]); setLoading(false); return }
+    if (!clientId && !branchId && !contactId) { setRows([]); setLoading(false); return }
     let cancelled = false
     setLoading(true)
+    setLoadError('')
     ;(async () => {
       // Lấy cả việc đã xoá mềm: đây là lịch sử — đã từng làm gì với khách thì vẫn phải tra lại được.
       const base = supabase.from('work_tasks').select('*, clients(name)')
-      const scoped = clientId ? base.eq('client_id', clientId) : base.eq('branch_id', branchId!)
-      const { data } = await (taskTypes?.length ? scoped.in('task_type', taskTypes) : scoped)
+      const scoped = clientId ? base.eq('client_id', clientId)
+        : branchId ? base.eq('branch_id', branchId)
+        : base.contains('contact_ids', [contactId!])
+      const { data, error } = await (taskTypes?.length ? scoped.in('task_type', taskTypes) : scoped)
         .order('due_date', { ascending: false })
       if (cancelled) return
+      if (error && isMissingContactIdsColumn(error)) setLoadError(MIGRATION_200_HINT)
       setRows((data || []) as Row[])
       setLoading(false)
 
-      const ids = [...new Set(((data || []) as Row[]).map(t => t.user_id).filter(Boolean))]
-      if (!ids.length) return
-      const { data: us } = await supabase.from('app_users').select('id, full_name').in('id', ids)
-      if (cancelled || !us) return
-      setUserNames(Object.fromEntries((us as { id: string; full_name: string }[]).map(u => [u.id, u.full_name])))
+      const list = (data || []) as Row[]
+      const ids = [...new Set(list.map(t => t.user_id).filter(Boolean))]
+      const cIds = [...new Set(list.flatMap(t => t.contact_ids ?? []))]
+      const [us, cs] = await Promise.all([
+        ids.length ? supabase.from('app_users').select('id, full_name').in('id', ids) : Promise.resolve({ data: null }),
+        cIds.length ? supabase.from('contacts').select('id, name').in('id', cIds) : Promise.resolve({ data: null }),
+      ])
+      if (cancelled) return
+      if (us.data) setUserNames(Object.fromEntries((us.data as { id: string; full_name: string }[]).map(u => [u.id, u.full_name])))
+      if (cs.data) setContactNames(Object.fromEntries((cs.data as { id: string; name: string }[]).map(c => [c.id, c.name])))
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, branchId, refreshKey, taskTypes?.join('|')])
+  }, [clientId, branchId, contactId, refreshKey, taskTypes?.join('|')])
 
   const open = rows.filter(r => !r.deleted_at && !r.voided_at && r.status !== 'done').length
   useEffect(() => {
@@ -130,11 +146,12 @@ export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, tit
       </div>
 
       {msg && <div className="text-[11px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border-b border-emerald-200">{msg}</div>}
+      {loadError && <div className="text-[11px] px-2.5 py-1.5 bg-amber-50 text-amber-800 border-b border-amber-200">{loadError}</div>}
       {loading ? (
         <div className="text-[11px] text-[#bbb] py-4 text-center">Đang tải…</div>
       ) : rows.length === 0 ? (
         <div className="text-[11px] text-[#bbb] py-5 text-center">
-          {emptyHint ?? <>Chưa có việc nào — tạo ở Workspace &gt; Việc của tôi, chọn {clientId ? 'khách hàng này' : 'chi nhánh này'} là việc sẽ hiện ở đây.</>}
+          {emptyHint ?? <>Chưa có việc nào — tạo ở Workspace &gt; Việc của tôi, chọn {clientId ? 'khách hàng này' : branchId ? 'chi nhánh này' : 'người liên hệ này'} là việc sẽ hiện ở đây.</>}
         </div>
       ) : (
         <div className="flex flex-col divide-y divide-[#F0EFEB]">
@@ -165,7 +182,7 @@ export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, tit
                     <span className="text-[9.5px] px-1.5 py-px rounded-full border bg-red-50 text-red-600 border-red-200" title={t.void_reason || ''}>Vô hiệu</span>
                   )}
                   {t.task_type && (
-                    <span className="text-[9.5px] px-1.5 py-px rounded-full border bg-blue-50 text-blue-700 border-blue-200">{t.task_type}</span>
+                    <span className="text-[9.5px] px-1.5 py-px rounded-full border bg-blue-50 text-blue-700 border-blue-200" title={t.task_type}>{taskTypeLabel(t.task_type)}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap text-[10px] text-[#999] mt-0.5">
@@ -173,7 +190,12 @@ export function LinkedWorkTasks({ clientId, branchId, refreshKey, taskTypes, tit
                   {t.completed_at && <span className="text-emerald-600">Xong: {formatDate(t.completed_at.slice(0, 10))}</span>}
                   <span>Phụ trách: {userNames[t.user_id] || '—'}</span>
                   {t.voided_at && <span className="text-red-500">Vô hiệu từ {formatDate(t.voided_at.slice(0, 10))}{t.void_reason ? ` — ${t.void_reason}` : ''}</span>}
-                  {branchId && t.clients?.name && <span className="text-[#666]">KH: {t.clients.name}</span>}
+                  {!clientId && t.clients?.name && <span className="text-[#666]">KH: {t.clients.name}</span>}
+                  {(t.contact_ids ?? []).filter(id => id !== contactId).length > 0 && (
+                    <span className="text-[#1D4ED8]">
+                      {contactId ? 'Cùng trao đổi' : 'Liên hệ'}: {(t.contact_ids ?? []).filter(id => id !== contactId).map(id => contactNames[id] ?? 'Người liên hệ').join(', ')}
+                    </span>
+                  )}
                 </div>
                 {openId !== t.id && t.notes && <div className="text-[11px] text-[#666] mt-1 line-clamp-1 break-words cursor-pointer" onClick={() => setOpenId(t.id)}>{t.notes}</div>}
                 {openId === t.id && (

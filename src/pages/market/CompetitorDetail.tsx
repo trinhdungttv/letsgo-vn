@@ -38,6 +38,7 @@ import MapLinkHint from '../../components/MapLinkHint';
 import { LinkHealthDot, linkHealthCls, linkHealthTitle } from '../../components/LinkHealthDot';
 import { useLinkHealth } from '../../lib/linkCheck';
 import { deriveSupplyFromCompanies, type DerivedSupplyRow } from './supplierLink';
+import { companyZoneNames } from './companyZones';
 
 interface Props {
   competitor: Competitor;
@@ -237,7 +238,11 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
   const [logNote, setLogNote] = useState('');
   const [logSource, setLogSource] = useState('');
   const [clientForm, setClientForm] = useState({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', service_type: 'leasing' as 'leasing' | 'recruitment' });
-  const [kcnFromProfile, setKcnFromProfile] = useState(false);
+  // Các KCN của công ty đang chọn theo hồ sơ đã setup (Khách hàng / thẻ Pipeline). 1 KCN → tự điền;
+  // nhiều KCN → bắt chọn đúng KCN đối thủ đang phục vụ (không tự lấy KCN đầu tiên); 0 → chọn tay, lưu ngược lại hồ sơ.
+  const [profileZones, setProfileZones] = useState<string[]>([]);
+  const [kcnOther, setKcnOther] = useState(false);
+  const [pipelineZoneIds, setPipelineZoneIds] = useState<Map<string, string[]>>(new Map());
 
   // Sửa tại chỗ 1 dòng "KH đang phục vụ" — gồm cả NGÀY chốt số LĐ, để nhập được số liệu
   // của kỳ trước mà không làm nó trông như vừa khảo sát hôm nay.
@@ -310,20 +315,15 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     return [...names].sort((a, b) => a.localeCompare(b, 'vi')).map(n => ({ value: n, label: n }));
   }, [clients, marketLeads]);
 
-  // KCN đã setup sẵn ở hồ sơ Khách hàng/Dự án ứng với tên công ty — dùng để tự nhảy về
-  // đúng KCN khi chọn tên; nếu công ty đó chưa có KCN nào thì cho gõ tay và đồng bộ ngược lại.
-  const zoneForCompany = (name: string): string | null => {
-    const cl = clients.find(c => c.name === name);
-    if (cl?.industrial_zones?.length) return cl.industrial_zones[0];
-    const ld = marketLeads.find(l => l.company_name === name);
-    if (ld?.region) return ld.region;
-    return null;
-  };
+  // TẤT CẢ KCN đã setup ở hồ sơ Khách hàng / Dự án (kể cả các KCN chọn ở thẻ BD Pipeline) ứng với tên công ty.
+  const zonesOfCompany = (name: string): string[] =>
+    companyZoneNames(name, { clients, leads: marketLeads, pipelineZoneIds, zones: marketZones });
 
   const handlePickClientName = (name: string) => {
-    const zone = zoneForCompany(name);
-    setClientForm(f => ({ ...f, client_name: name, kcn: zone || '' }));
-    setKcnFromProfile(!!zone);
+    const zones = zonesOfCompany(name);
+    setClientForm(f => ({ ...f, client_name: name, kcn: zones.length === 1 ? zones[0] : '' }));
+    setProfileZones(zones);
+    setKcnOther(false);
   };
 
   const handleCreateLeadFromName = async (name: string) => {
@@ -355,7 +355,17 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
   };
 
   const saveDerivedRow = async (r: DerivedSupplyRow) => {
-    const { error } = await insertCompetitorClient(competitor.id, { client_name: r.client_name, kcn: r.zones[0] ?? null, worker_count: r.worker_count ?? 0 });
+    const zones = zonesOfCompany(r.client_name);
+    const all = zones.length ? zones : r.zones;
+    // Công ty nhiều KCN: không đoán — đưa lên form thêm để chọn đúng KCN đối thủ đang phục vụ
+    if (all.length > 1) {
+      setClientForm(f => ({ ...f, client_name: r.client_name, kcn: '', worker_count: r.worker_count ? String(r.worker_count) : '' }));
+      setProfileZones(all);
+      setKcnOther(false);
+      toast(`"${r.client_name}" có ${all.length} KCN — chọn KCN ở form bên dưới rồi bấm Thêm`);
+      return;
+    }
+    const { error } = await insertCompetitorClient(competitor.id, { client_name: r.client_name, kcn: all[0] ?? null, worker_count: r.worker_count ?? 0 });
     if (error) { toast('Lỗi: ' + error.message); return; }
     toast(`Đã lưu "${r.client_name}" vào danh sách`);
     await load();
@@ -370,6 +380,9 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     setLgClients(clientsData ?? []);
     setCompClients(ccData ?? []);
     setLogs(logsData ?? []);
+    // KCN chọn nhiều ở thẻ BD Pipeline (migration 186) — thiếu cột / lỗi thì chỉ dùng KCN chính như cũ
+    const { data: pipeData } = await supabase.from('crm_pipeline').select('id, zone_ids').not('zone_ids', 'is', null);
+    setPipelineZoneIds(new Map((pipeData ?? []).map((r: { id: string; zone_ids: string[] | null }) => [r.id, r.zone_ids ?? []])));
   };
 
   useEffect(() => { load(); }, [competitor.id]);
@@ -425,6 +438,10 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     const name = clientForm.client_name.trim();
     const kcn = clientForm.kcn.trim();
     if (!name) return;
+    if (!kcn && profileZones.length > 1) {
+      toast(`"${name}" có ${profileZones.length} KCN — chọn KCN mà đối thủ đang phục vụ`);
+      return;
+    }
     const { error } = await insertCompetitorClient(competitor.id, {
       client_name: name,
       kcn: kcn || null,
@@ -438,7 +455,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
 
     // Công ty chưa có KCN nào ở hồ sơ Khách hàng/Dự án — KCN gõ tay ở đây được đồng bộ
     // ngược lại hồ sơ đó, để lần sau chọn tên sẽ tự nhảy về đúng KCN.
-    if (kcn && !kcnFromProfile) {
+    if (kcn && profileZones.length === 0) {
       const cl = clients.find(c => c.name === name);
       const ld = marketLeads.find(l => l.company_name === name);
       if (cl && !cl.industrial_zones?.length) {
@@ -450,7 +467,8 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
     }
 
     setClientForm({ client_name: '', kcn: '', worker_count: '', sale_name: '', sale_phone: '', sale_fee: '', service_type: 'leasing' });
-    setKcnFromProfile(false);
+    setProfileZones([]);
+    setKcnOther(false);
     await load();
   };
 
@@ -832,7 +850,13 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                           <option value="leasing">Cho thuê</option><option value="recruitment">Giới thiệu</option>
                         </select>
                       </td>
-                      <td className="px-2 py-1.5"><input value={editClientForm.kcn} onChange={e => setEditClientForm(f => ({ ...f, kcn: e.target.value }))} className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" /></td>
+                      <td className="px-2 py-1.5">
+                        <input value={editClientForm.kcn} onChange={e => setEditClientForm(f => ({ ...f, kcn: e.target.value }))} list={`cc-kcn-${c.id}`} placeholder="KCN…" className="w-32 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" />
+                        {/* Gợi ý: KCN của công ty này theo hồ sơ trước, rồi tới cả danh mục */}
+                        <datalist id={`cc-kcn-${c.id}`}>
+                          {[...new Set([...zonesOfCompany(editClientForm.client_name), ...kcnPickOptions.map(o => o.value)])].map(z => <option key={z} value={z} />)}
+                        </datalist>
+                      </td>
                       <td className="px-2 py-1.5">
                         <input type="number" min={0} value={editClientForm.worker_count} onChange={e => setEditClientForm(f => ({ ...f, worker_count: e.target.value }))} className="w-16 text-[12px] px-2 py-1 rounded border border-gray-300 outline-none focus:border-blue-500" />
                         {/* Ngày chốt số LĐ — sửa được để nhập số liệu của kỳ trước cho đúng mốc. */}
@@ -900,18 +924,40 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
                   allowAdd onAdd={handleCreateLeadFromName} />
                 <span className="text-[10.5px] text-[#999]">Không thấy trong danh sách? Gõ tên mới → sẽ tự thêm vào "Công ty/Dự án đang tìm hiểu"</span>
               </div>
-              <div className="flex flex-col gap-1">
-                {kcnFromProfile ? (
+              <div className={`flex flex-col gap-1 ${profileZones.length > 1 && !kcnOther ? 'col-span-2' : ''}`}>
+                {profileZones.length > 0 && !kcnOther ? (
                   <>
-                    <input value={clientForm.kcn} readOnly
-                      className="text-[12.5px] px-2.5 py-1.5 border rounded-lg outline-none bg-[#F5F4EF] border-[#E8E7E2] text-[#666]" />
-                    <span className="text-[10px] text-emerald-600">✓ Tự động theo hồ sơ đã setup</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {profileZones.map(z => {
+                        const on = clientForm.kcn === z;
+                        return (
+                          <button key={z} type="button" onClick={() => setClientForm(f => ({ ...f, kcn: on && profileZones.length > 1 ? '' : z }))}
+                            className={`inline-flex items-center gap-1 text-[12px] px-2.5 py-1.5 rounded-lg border transition ${on ? 'border-[#1D4ED8] bg-[#1D4ED8]/[0.07] text-[#1D4ED8] font-medium' : 'border-[#E8E7E2] text-[#555] hover:bg-[#F5F4EF]'}`}>
+                            <MapPin size={11} /> {z}
+                          </button>
+                        );
+                      })}
+                      <button type="button" onClick={() => { setKcnOther(true); setClientForm(f => ({ ...f, kcn: '' })); }}
+                        className="text-[11.5px] px-2 py-1.5 rounded-lg text-[#888] hover:text-[#1D4ED8] hover:bg-[#F5F4EF]">KCN khác…</button>
+                    </div>
+                    {profileZones.length > 1 ? (
+                      <span className={`text-[10px] ${clientForm.kcn ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {clientForm.kcn ? `✓ Đối thủ phục vụ nhà máy ở ${clientForm.kcn}` : `Công ty có ${profileZones.length} KCN theo hồ sơ — chọn KCN mà đối thủ đang phục vụ`}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-600">✓ Theo hồ sơ đã setup</span>
+                    )}
                   </>
                 ) : (
                   <>
                     <SearchSelect value={clientForm.kcn} onChange={v => setClientForm(f => ({ ...f, kcn: v }))}
                       options={kcnPickOptions} placeholder="Chọn KCN…" allowAdd onAdd={() => {}} />
-                    <span className="text-[10px] text-[#999]">Công ty chưa gán KCN — chọn sẽ tự lưu ngược lại hồ sơ</span>
+                    {profileZones.length > 0 ? (
+                      <button type="button" onClick={() => { setKcnOther(false); setClientForm(f => ({ ...f, kcn: profileZones.length === 1 ? profileZones[0] : '' })); }}
+                        className="self-start text-[10px] text-[#1D4ED8] hover:underline">← Về KCN theo hồ sơ ({profileZones.join(', ')})</button>
+                    ) : (
+                      <span className="text-[10px] text-[#999]">Công ty chưa gán KCN — chọn sẽ tự lưu ngược lại hồ sơ</span>
+                    )}
                   </>
                 )}
               </div>
@@ -924,7 +970,7 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
               <input type="number" min={0} value={clientForm.sale_fee} onChange={e => setClientForm(f => ({ ...f, sale_fee: e.target.value }))} placeholder="Phí sale/tháng (₫)"
                 className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]" />
               <select value={clientForm.service_type} onChange={e => setClientForm(f => ({ ...f, service_type: e.target.value as 'leasing' | 'recruitment' }))} aria-label="Hình thức đối thủ cung cấp"
-                className="text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8]">
+                className={`text-[12.5px] px-2.5 py-1.5 border border-[#E8E7E2] rounded-lg outline-none focus:border-[#1D4ED8] ${profileZones.length > 1 && !kcnOther ? 'col-span-2' : ''}`}>
                 <option value="leasing">Cho thuê lao động</option><option value="recruitment">Giới thiệu lao động</option>
               </select>
               <button onClick={handleAddClient} className="col-span-2 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1D4ED8] text-white hover:bg-[#1E40AF] transition whitespace-nowrap">

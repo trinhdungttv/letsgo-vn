@@ -16,6 +16,29 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-work-task-links',
+    date: '2026-11-04',
+    title: 'Workspace',
+    features: [
+      'Thêm công việc: ô Khách hàng chọn được cả công ty đang ở BD Pipeline (chưa ký HĐ)',
+      'Gắn nhiều người liên hệ bên khách vào 1 việc; mở việc đã có cũng gắn thêm được',
+      'Loại việc gộp còn 5: Hợp đồng (HĐ mới / Tái ký / Phụ lục), Báo giá, Gặp khách, Phát sinh, Nội bộ',
+      'Hồ sơ công ty Pipeline hiện các việc đã gắn, kèm người liên hệ và người phụ trách',
+      'Hồ sơ người liên hệ (CSKH): khối "Công việc đã trao đổi", gồm cả việc đã xong',
+      'Bắt đầu hợp tác: các việc đã gắn công ty Pipeline tự theo sang hồ sơ Khách hàng',
+    ],
+  },
+  {
+    id: '2026-11-04-competitor-multi-kcn',
+    date: '2026-11-04',
+    title: 'Đối thủ',
+    features: [
+      'KH đang phục vụ: công ty có nhiều KCN thì chọn đúng KCN đối thủ phục vụ, không tự lấy KCN đầu',
+      'KH đang phục vụ: đọc đủ các KCN chọn ở thẻ BD Pipeline, có nút "KCN khác…" để đổi',
+      'Thêm NCC ở Công ty/Dự án nhiều KCN: để trống KCN bên hồ sơ đối thủ thay vì ghi nhầm',
+    ],
+  },
+  {
     id: '2026-11-04-client-org-site-maps',
     date: '2026-11-04',
     title: 'Khách hàng',

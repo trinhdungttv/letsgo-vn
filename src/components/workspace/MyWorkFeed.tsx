@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logActivity } from '../../lib/audit'
 import type { Client, WorkTask, TaskStatus, WorkTaskComment, CRMPipelineTask, PipelineTaskStatus, CRMPipelineEntry, CRMProduct, Contact, Branch, WorkspaceTaskComment, WsTaskStatus } from '../../lib/types'
-import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, DOC_STATUS_STEPS, TASK_TYPE_OPTIONS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
+import { TASK_STATUS_LABELS, TASK_STATUS_COLORS, TASK_PRIORITY_LABELS, DOC_STATUS_STEPS, WS_TASK_STATUS_LABELS, WS_TASK_STATUS_COLORS, type DocStatus, type TaskPriority } from '../../lib/types'
 import { formatDate } from '../../lib/format'
 import { usePersistedState } from '../../hooks/usePersistedState'
 import { CompanyProfileModal, STAGES } from '../crm/CompanyProfileModal'
@@ -26,6 +26,11 @@ import { selectContacts } from '../../lib/contactOps'
 import DuplicateCompanyNotice from '../common/DuplicateCompanyNotice'
 import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates'
 import { CARD, POPOVER, BTN_PRIMARY, BTN_SECONDARY, FILTER_ON, FILTER_OFF, FIELD, TINT, ICON_TILE } from './wsTheme'
+import { TASK_GROUPS, CONTRACT_KINDS, taskGroupOf, taskTypeLabel, storedTypeOfGroup, normalizeTaskTypeChoice, type TaskGroup } from '../../lib/workTaskTypes'
+import { parseCompanyKey, taskPipelineChoices, toPipelineLite, insertWorkTaskWithContacts } from '../../lib/workTaskLinks'
+import { ensureClientForPipelineCompany } from '../../lib/pipelineCompanyLink'
+import { findClientsByName } from '../../lib/pipelineHelpers'
+import { CompanyOptions, TaskContactPicker, WorkTaskLinksRow, useCompanyClientId } from './WorkTaskLinkFields'
 
 // ---- Việc chung (bảng workspace_tasks) ----
 export interface WorkspaceTask {
@@ -67,17 +72,18 @@ const WS_TASK_TINT: Record<WsTaskStatus, string> = { todo: TINT.gray, in_progres
 // 'Khách mới' = việc BD tìm hiểu/theo đuổi công ty CHƯA ký (nguồn: crm_pipeline_tasks,
 // gộp đọc từ CRM Pipeline — xem phần "Việc BD (CRM Pipeline)" bên dưới). Khác với 'Hợp đồng'
 // (Tái ký HĐ) vốn chỉ áp dụng cho khách ĐANG hợp tác.
-type Category = 'Khách mới' | 'Hợp đồng' | 'Báo giá' | 'Thăm quan / KH' | 'Xử lý phát sinh' | 'Hồ sơ' | 'Nội bộ' | 'Khác'
-const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
+// Việc cá nhân (work_tasks) chia theo 5 nhóm loại việc đã gộp (lib/workTaskTypes, 04/11/2026):
+// Thăm quan + Hỏi thăm CN → 'Gặp khách'; Văn phòng + Khác (+ việc CSKH/Sale) → 'Nội bộ / Khác'.
+type Category = 'Khách mới' | TaskGroup | 'Hồ sơ'
+const CATEGORY_CHIPS: ('Tất cả' | Category)[] = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Gặp khách', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ / Khác']
 const CATEGORY_TAG: Record<Category, string> = {
   'Khách mới': TINT.pink,
   'Hợp đồng': TINT.blue,
   'Báo giá':  TINT.yellow,
-  'Thăm quan / KH': TINT.teal,
+  'Gặp khách': TINT.teal,
   'Xử lý phát sinh': TINT.orange,
   'Hồ sơ':    TINT.purple,
-  'Nội bộ':   TINT.indigo,
-  'Khác':     TINT.gray,
+  'Nội bộ / Khác': TINT.indigo,
 }
 
 // ---- Nhãn hiển thị trên mỗi dòng việc: bật/tắt ở nút ⚙ đầu khối, nhớ theo trình duyệt ----
@@ -99,15 +105,8 @@ const ROW_FIELDS_DEFAULT: Record<RowFieldKey, boolean> = {
   branch: false, assignee: true, priority: true, comments: true,
 }
 
-// Quy tắc bản cũ (Workspace.tsx gốc getWorkTaskCategory): Thăm quan/Hỏi thăm CN → nhóm riêng, không rơi vào Khác
-function workCategory(taskType: string | null): Category {
-  if (taskType === 'Tái ký HĐ' || taskType === 'Hợp đồng' || taskType === 'Phụ lục') return 'Hợp đồng'
-  if (taskType === 'Báo giá') return 'Báo giá'
-  if (taskType === 'Thăm quan' || taskType === 'Hỏi thăm CN') return 'Thăm quan / KH'
-  if (taskType === 'Xử lý phát sinh') return 'Xử lý phát sinh'
-  if (taskType === 'Văn phòng') return 'Nội bộ'
-  return 'Khác'
-}
+// Nhóm của 1 việc cá nhân — đọc được cả giá trị task_type cũ (Thăm quan, Văn phòng…) lẫn mới.
+const workCategory = (taskType: string | null): Category => taskGroupOf(taskType)
 
 interface FeedItem {
   key: string
@@ -221,6 +220,13 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   }, [])
   const [profileEntry, setProfileEntry] = useState<CRMPipelineEntry | null>(null)
 
+  // Tên công ty của việc gắn hồ sơ KHÔNG có trong `clients` (App chỉ nạp khách đang hợp tác — việc gắn
+  // công ty BD Pipeline nằm ở hồ sơ KH tiềm năng) + tên người liên hệ đã nghỉ (không có trong `contacts`).
+  // Tra riêng, mỗi id 1 lần; tra lỗi thì cùng lắm thiếu tên, việc vẫn hiện đủ.
+  const [companyNames, setCompanyNames] = useState<Record<string, string>>({})
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const askedNames = useRef(new Set<string>())
+
   function openCompanyProfile(crmId: string) {
     const entry = localPipelineEntries.find(e => e.id === crmId)
     if (entry) setProfileEntry(entry)
@@ -307,6 +313,22 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     return () => { cancelled = true }
   }, [user, refreshToken])
 
+  useEffect(() => {
+    const fresh = (prefix: string, ids: (string | null | undefined)[], known: (id: string) => boolean) => {
+      const out = [...new Set(ids)].filter((id): id is string => !!id && !known(id) && !askedNames.current.has(prefix + id))
+      out.forEach(id => askedNames.current.add(prefix + id))
+      return out
+    }
+    const cIds = fresh('c:', myTasks.map(t => t.client_id), id => clients.some(c => c.id === id))
+    const pIds = fresh('p:', myTasks.flatMap(t => t.contact_ids ?? []), id => contacts.some(c => c.id === id))
+    const toMap = (rows: unknown) => Object.fromEntries(((rows ?? []) as { id: string; name: string }[]).map(r => [r.id, r.name]))
+    if (cIds.length) void supabase.from('clients').select('id, name').in('id', cIds)
+      .then(({ data }) => { if (data) setCompanyNames(prev => ({ ...prev, ...toMap(data) })) })
+    if (pIds.length) void supabase.from('contacts').select('id, name').in('id', pIds)
+      .then(({ data }) => { if (data) setContactNames(prev => ({ ...prev, ...toMap(data) })) })
+  }, [myTasks, clients, contacts])
+  const companyNameOf = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? companyNames[id] ?? null : null)
+
   // ---- Ẩn việc gắn KH đã ngưng hợp tác ----
   const suspendedClientIds = useMemo(
     () => new Set(clients.filter(c => c.cooperation_status === 'suspended').map(c => c.id)),
@@ -352,7 +374,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     })),
     ...wsTasks.map((t): FeedItem => ({
       key: `ws_${t.id}`, source: 'ws', id: t.id, title: t.title,
-      due: t.deadline, category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ', ws: t,
+      due: t.deadline, category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ / Khác', ws: t,
     })),
     ...pipelineTasks.map((t): FeedItem => ({
       key: `pl_${t.id}`, source: 'pipeline', id: t.id, title: `${t.company_name} — ${t.title}`,
@@ -489,7 +511,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     setQSaving(true)
     if (qKind === 'work') {
       const { data, error } = await supabase.from('work_tasks').insert({
-        user_id: user.id, client_id: null, title: qTitle.trim(), task_type: 'Văn phòng',
+        user_id: user.id, client_id: null, title: qTitle.trim(), task_type: storedTypeOfGroup('Nội bộ / Khác'),
         due_date: qDue || todayStr(), priority: 'medium', branch_id: null, notes: null, status: 'pending',
       }).select().single()
       if (!error && data) { setMyTasks(prev => [data as WorkTask, ...prev]) }
@@ -526,72 +548,107 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
 
   // ---- Form đầy đủ (quy tắc bản cũ — WorkTasksCard): khách hàng / loại việc / ưu tiên / KCN / ghi chú ----
   const [fullForm, setFullForm] = useState(false)
+  // Công ty của việc: clients.id (khách đang hợp tác) hoặc "pipe:<id>" (công ty BD Pipeline chưa ký HĐ —
+  // lúc Lưu mới dùng lại / tạo hồ sơ KH tiềm năng cùng tên, xem lib/workTaskLinks).
   const [fClientId, setFClientId] = useState('')
   const [fDesc, setFDesc] = useState('')
+  // Người liên hệ bên khách (CSKH) liên quan tới việc — chọn nhiều (migration 200).
+  const [fContactIds, setFContactIds] = useState<string[]>([])
   // Nhớ loại việc lần gần nhất đã chọn (theo trình duyệt) — đỡ phải chọn lại mỗi lần,
-  // vì phần lớn các lượt tạo liên tiếp thường cùng một loại việc.
-  const [lastType, setLastType] = usePersistedState('lgvn_workfeed_last_type', TASK_TYPE_OPTIONS[0])
-  const [fType, setFTypeRaw] = useState(lastType)
+  // vì phần lớn các lượt tạo liên tiếp thường cùng một loại việc. Giá trị cũ đã nhớ
+  // (VD 'Thăm quan') tự đổi sang nhóm mới ('Gặp khách').
+  const [lastType, setLastType] = usePersistedState('lgvn_workfeed_last_type', 'Hợp đồng')
+  const [fType, setFTypeRaw] = useState(() => normalizeTaskTypeChoice(lastType))
   const setFType = (t: string) => { setFTypeRaw(t); setLastType(t) }
   const [fDue, setFDue] = useState(todayStr())
   const [fPriority, setFPriority] = useState<TaskPriority>('medium')
   const [fBranchId, setFBranchId] = useState('')
   const [fNotes, setFNotes] = useState('')
   const [fSaving, setFSaving] = useState(false)
+  const activeClients = useMemo(() => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'), [clients])
+
+  // Công ty BD Pipeline chọn được: chưa ký HĐ, bỏ thẻ Không hợp tác / Ngưng HĐ / trùng tên khách đang hợp tác.
+  const pipelineChoices = useMemo(
+    () => taskPipelineChoices(localPipelineEntries.map(toPipelineLite), activeClients.map(c => c.name)),
+    [localPipelineEntries, activeClients],
+  )
+  const pipelineChoiceById = useMemo(() => new Map(pipelineChoices.map(e => [e.id, e])), [pipelineChoices])
+  const fPipe = useMemo(() => {
+    const k = parseCompanyKey(fClientId)
+    return k?.kind === 'pipeline' ? pipelineChoiceById.get(k.id) ?? null : null
+  }, [fClientId, pipelineChoiceById])
+  // Hồ sơ clients đang giữ người liên hệ / HĐ của công ty đang chọn (thẻ Pipeline: hồ sơ KH tiềm năng cùng tên nếu đã có).
+  const fCompanyClientId = useCompanyClientId(fClientId, pipelineChoiceById)
+  const fCompanyName = fPipe?.company_name ?? clients.find(c => c.id === fClientId)?.name ?? null
+
   // Phụ lục phải thuộc 1 Hợp đồng của khách: nạp danh sách HĐ của khách đang chọn.
   const [fParentId, setFParentId] = useState('')
   const [parentOptions, setParentOptions] = useState<{ id: string; title: string }[]>([])
   useEffect(() => {
     setFParentId('')
-    if (fType !== 'Phụ lục' || !fClientId) { setParentOptions([]); return }
+    if (fType !== 'Phụ lục' || !fCompanyClientId) { setParentOptions([]); return }
     let off = false
-    supabase.from('work_tasks').select('id, title').eq('client_id', fClientId).eq('task_type', 'Hợp đồng').is('deleted_at', null)
+    supabase.from('work_tasks').select('id, title').eq('client_id', fCompanyClientId).eq('task_type', 'Hợp đồng').is('deleted_at', null)
       .order('created_at', { ascending: false })
       .then(({ data }) => { if (!off) { const o = (data || []) as { id: string; title: string }[]; setParentOptions(o); if (o.length === 1) setFParentId(o[0].id) } })
     return () => { off = true }
-  }, [fType, fClientId])
-
-  const activeClients = useMemo(() => clients.filter(c => c.client_type === 'active' && c.cooperation_status !== 'suspended'), [clients])
+  }, [fType, fCompanyClientId])
 
   const branchOfClient = (c: Client | null | undefined) => branchOf(c, branches)
 
   function selectFormClient(id: string) {
     setFClientId(id)
-    const b = branchOfClient(clients.find(cl => cl.id === id))
+    const k = parseCompanyKey(id)
+    const b = k?.kind === 'pipeline'
+      ? branches.find(x => x.id === pipelineChoiceById.get(k.id)?.branch_id) ?? null
+      : branchOfClient(clients.find(cl => cl.id === id))
     if (b) setFBranchId(b.id)
   }
 
   function resetFullForm() {
     // Loại việc CỐ TÌNH không reset — giữ nguyên lựa chọn gần nhất cho lượt tạo tiếp theo.
-    setFClientId(''); setFDesc('')
+    setFClientId(''); setFDesc(''); setFContactIds([])
     setFDue(todayStr()); setFPriority('medium'); setFBranchId(''); setFNotes('')
   }
 
   async function saveFullTask() {
     if (!user || !fDesc.trim() || fSaving) return
     setFSaving(true)
-    const selectedClient = clients.find(c => c.id === fClientId) || null
-    // Quy tắc bản cũ: tiêu đề = "Tên KH — mô tả" nếu có gắn khách hàng
-    const isContract = fType === 'Hợp đồng' || fType === 'Phụ lục'
-    const title = isContract ? contractTitle(selectedClient?.name, fType, fDesc) : selectedClient ? `${selectedClient.name} — ${fDesc.trim()}` : fDesc.trim()
-    const { data, error } = await supabase.from('work_tasks').insert({
-      user_id: user.id,
-      client_id: selectedClient?.id || null,
-      title,
-      task_type: fType,
-      due_date: fDue,
-      priority: fPriority,
-      branch_id: fBranchId || null,
-      notes: fNotes.trim() || null,
-      status: 'pending',
-      parent_task_id: fType === 'Phụ lục' && fParentId ? fParentId : null,
-    }).select().single()
-    setFSaving(false)
-    if (!error && data) {
-      setMyTasks(prev => [data as WorkTask, ...prev])
+    try {
+      // Công ty: khách đang hợp tác → id; thẻ BD Pipeline → dùng lại / tạo hồ sơ KH tiềm năng CÙNG TÊN
+      // (thẻ không bị gắn client_id; "Bắt đầu hợp tác" sau này nâng chính hồ sơ đó → việc đi theo).
+      let company: { id: string; name: string } | null = null
+      if (fPipe) {
+        company = await ensureClientForPipelineCompany(fPipe, user)
+        setCompanyNames(prev => ({ ...prev, [company!.id]: company!.name }))
+      } else {
+        const c = clients.find(x => x.id === fClientId)
+        if (c) company = { id: c.id, name: c.name }
+      }
+      // Quy tắc bản cũ: tiêu đề = "Tên KH — mô tả" nếu có gắn khách hàng
+      const isContract = fType === 'Hợp đồng' || fType === 'Phụ lục'
+      const title = isContract ? contractTitle(company?.name, fType, fDesc) : company ? `${company.name} — ${fDesc.trim()}` : fDesc.trim()
+      const { data, error, warning } = await insertWorkTaskWithContacts<WorkTask>({
+        user_id: user.id,
+        client_id: company?.id || null,
+        title,
+        task_type: fType,
+        due_date: fDue,
+        priority: fPriority,
+        branch_id: fBranchId || null,
+        notes: fNotes.trim() || null,
+        status: 'pending',
+        parent_task_id: fType === 'Phụ lục' && fParentId ? fParentId : null,
+      }, fContactIds)
+      if (error || !data) { toast('Chưa lưu được việc: ' + (error?.message ?? 'lỗi không rõ')); return }
+      setMyTasks(prev => [data, ...prev])
       resetFullForm()
       setFullForm(false)
-      toast('Đã lưu công việc')
+      toast(warning ?? (fPipe ? `Đã lưu công việc — gắn với "${fPipe.company_name}" (BD Pipeline)` : 'Đã lưu công việc'))
+    } catch (e) {
+      toast('Lỗi: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setFSaving(false)
     }
   }
 
@@ -687,7 +744,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
       supabase.from('crm_gifts').select('id', { count: 'exact', head: true }).eq('crm_id', t.crm_id),
       supabase.from('crm_pipeline').select('client_id').eq('id', t.crm_id).single(),
     ])
-    if (!otherTasks && !interactions && !gifts && !entry?.client_id) {
+    // Đã có hồ sơ KH tiềm năng cùng tên = công ty đã được gắn việc Workspace / người liên hệ CSKH
+    // (lib/workTaskLinks, lib/pipelineCompanyLink) → không còn là "công ty ma", giữ nguyên thẻ.
+    const prospect = !otherTasks && !interactions && !gifts && !entry?.client_id
+      ? (await findClientsByName(t.company_name)).find(c => !c.archived_at) ?? null
+      : null
+    if (!otherTasks && !interactions && !gifts && !entry?.client_id && !prospect) {
       await supabase.from('market_leads').delete().eq('crm_id', t.crm_id)
       await supabase.from('crm_pipeline').delete().eq('id', t.crm_id)
       toast(`Đã xoá luôn "${t.company_name}" khỏi CRM Pipeline (chưa có hoạt động nào khác)`)
@@ -930,7 +992,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     }),
     ...doneWs.map((t): DoneItem => ({
       id: t.id, key: `s_${t.id}`, title: t.title,
-      category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ',
+      category: t.type === 'doc' ? 'Hồ sơ' : 'Nội bộ / Khác',
       doneAt: t.created_at ?? null, notes: null, assignee: t.assignee ?? null, place: null,
       source: 'ws', ws: t,
     })),
@@ -1095,7 +1157,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     }
   }
 
-  const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Thăm quan / KH', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ', 'Khác']
+  const HIST_CATS = ['Tất cả', 'Khách mới', 'Hợp đồng', 'Báo giá', 'Gặp khách', 'Xử lý phát sinh', 'Hồ sơ', 'Nội bộ / Khác']
   const filteredHistory = doneHistory.filter(t =>
     (histCat === 'all' || t.category === histCat) &&
     (!histSearch.trim() || t.title.toLowerCase().includes(histSearch.toLowerCase()))
@@ -1146,7 +1208,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               ) : it.title}
             </div>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              {showField('category') && <span className={`${chip} ${CATEGORY_TAG[it.category]}`}>{it.category}</span>}
+              {showField('category') && <span className={`${chip} ${CATEGORY_TAG[it.category]}`}>{it.work ? taskTypeLabel(it.work.task_type) : it.category}</span>}
               {/* Badge trạng thái hồ sơ — chỉ với việc Tái ký HĐ */}
               {showField('status') && it.work?.task_type === 'Tái ký HĐ' && (() => {
                 const key = (it.work!.doc_status as DocStatus | null) ?? 'chua_soan'
@@ -1243,6 +1305,25 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   title="Xoá"
                 ><Trash2 size={13} /></button>
               </div>
+            )}
+
+            {/* --- Liên quan: công ty (khách / BD Pipeline) + người liên hệ — hiện ở hồ sơ công ty & hồ sơ người liên hệ CSKH --- */}
+            {it.work && (
+              <WorkTaskLinksRow
+                task={it.work}
+                companyName={companyNameOf(it.work.client_id)}
+                contacts={contacts}
+                contactNames={contactNames}
+                clients={activeClients}
+                pipeline={pipelineChoices}
+                branchIdOf={id => branchOfClient(clients.find(c => c.id === id))?.id ?? null}
+                user={user}
+                toast={toast}
+                onSaved={(patch, name) => {
+                  if (name && patch.client_id) setCompanyNames(prev => ({ ...prev, [patch.client_id as string]: name }))
+                  setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, ...patch } : x))
+                }}
+              />
             )}
 
             {/* --- Hợp đồng / Phụ lục: bảng + nội dung của khách hàng, xem & sửa ngay tại đây (cùng dữ liệu với hồ sơ KH) --- */}
@@ -1645,19 +1726,50 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                     className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]"
                     value={fClientId} onChange={e => selectFormClient(e.target.value)}
                   >
-                    <option value="">— Không chọn —</option>
-                    {activeClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <CompanyOptions clients={activeClients} pipeline={pipelineChoices} />
                   </select>
+                  {fPipe && (
+                    <div className="text-[11.5px] text-[#86868B] mt-1">
+                      Công ty đang ở <b className="font-medium text-[#8944AB]">BD Pipeline</b> — việc hiện trong hồ sơ công ty; khi “Bắt đầu hợp tác” việc tự theo sang Khách hàng.
+                    </div>
+                  )}
                 </div>
-                <div className="sm:w-32">
+                <div className="sm:w-40">
                   <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Loại việc</label>
                   <select
                     className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2 py-1.5 bg-white text-[#3A3A3C] focus:outline-none focus:border-[#0071E3]"
-                    value={fType} onChange={e => setFType(e.target.value)}
+                    value={taskGroupOf(fType)} onChange={e => setFType(storedTypeOfGroup(e.target.value as TaskGroup))}
                   >
-                    {TASK_TYPE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {TASK_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </div>
+              </div>
+              {/* Nhóm Hợp đồng: chọn loại con — mỗi loại giữ đúng luồng riêng như trước khi gộp */}
+              {taskGroupOf(fType) === 'Hợp đồng' && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[12px] font-medium text-[#6E6E73]">Loại hợp đồng</span>
+                  <div className="inline-flex p-0.5 rounded-full bg-black/[0.05]">
+                    {CONTRACT_KINDS.map(k => (
+                      <button key={k.value} type="button" onClick={() => setFType(k.value)} title={k.hint}
+                        className={`h-7 px-3 rounded-full text-[12.5px] font-medium transition ${fType === k.value ? 'bg-white text-[#1D1D1F] shadow-[0_1px_2px_rgba(0,0,0,0.12)]' : 'text-[#6E6E73] hover:text-[#1D1D1F]'}`}>
+                        {k.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11.5px] text-[#86868B]">{CONTRACT_KINDS.find(k => k.value === fType)?.hint}</span>
+                </div>
+              )}
+              <div>
+                <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">
+                  Người liên hệ <span className="font-normal text-[#AEAEB2]">— ai bên khách giao / trao đổi việc này (chọn nhiều)</span>
+                </label>
+                <TaskContactPicker
+                  contacts={contacts} value={fContactIds} onChange={setFContactIds}
+                  companyClientId={fCompanyClientId}
+                  extraCompanyContactIds={fPipe?.contact_id ? [fPipe.contact_id] : undefined}
+                  companyName={fCompanyName}
+                  nameOf={id => contactNames[id]}
+                />
               </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1">
@@ -1696,7 +1808,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   <label className="text-[12px] font-medium text-[#6E6E73] mb-1 block">Thuộc Hợp đồng</label>
                   <select value={fParentId} onChange={e => setFParentId(e.target.value)}
                     className="w-full text-[13px] border border-black/[0.12] rounded-[10px] px-2.5 py-1.5 bg-white text-[#1D1D1F] focus:outline-none focus:border-[#0071E3]">
-                    <option value="">{!fClientId ? '— Chọn khách hàng trước —' : parentOptions.length ? '— Chọn Hợp đồng —' : '— Khách này chưa có Hợp đồng (tạo việc loại "Hợp đồng" trước) —'}</option>
+                    <option value="">{!fClientId ? '— Chọn khách hàng trước —' : parentOptions.length ? '— Chọn Hợp đồng —' : '— Khách này chưa có Hợp đồng (tạo việc Hợp đồng · HĐ mới trước) —'}</option>
                     {parentOptions.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
                   </select>
                 </div>
@@ -1794,7 +1906,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                     <div className="flex items-center gap-2 min-w-0">
                       <CheckCircle2 size={15} className="text-[#34C759] shrink-0" />
                       <span className="text-[13.5px] font-medium text-[#1D1D1F] truncate">{t.title}</span>
-                      <span className={`ml-auto shrink-0 text-[11px] font-medium leading-[18px] px-2 rounded-full ${CATEGORY_TAG[t.category as Category] ?? CATEGORY_TAG['Khác']}`}>{t.category}</span>
+                      <span className={`ml-auto shrink-0 text-[11px] font-medium leading-[18px] px-2 rounded-full ${CATEGORY_TAG[t.category as Category] ?? CATEGORY_TAG['Nội bộ / Khác']}`}>{t.category}</span>
                       <button
                         onClick={() => openHistEdit(t)}
                         className="shrink-0 w-8 h-8 md:w-7 md:h-7 -my-1 inline-flex items-center justify-center rounded-full text-[#86868B] hover:bg-[#0071E3]/10 hover:text-[#0066CC] transition"

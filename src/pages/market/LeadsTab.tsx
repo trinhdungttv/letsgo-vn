@@ -25,7 +25,8 @@ import { type RegionZone, OFFICIAL_REGION_WAGES, fetchRegionWages, regionZoneLab
   fetchMinWageBatches, type MinWageBatch } from './regionWage';
 import MinWageStaleBanner from '../../components/MinWageStaleBanner';
 import { fmtTr, sameZone } from './shared';
-import type { Client, CompetitorClient } from '../../lib/types';
+import type { Client, CompetitorClient, MarketLead } from '../../lib/types';
+import { companyZoneNames } from './companyZones';
 import MapLinkHint from '../../components/MapLinkHint';
 import { isSuspended, formatSuspensionDate } from '../../utils/suspension';
 import { latestLaborEntry } from '../../lib/format';
@@ -432,6 +433,25 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
     await reloadSupply();
   };
 
+  // KCN ghi kèm sang hồ sơ đối thủ: công ty CHỈ 1 KCN thì ghi KCN đó; nhiều KCN (VD Nhơn Trạch + VSIP 3) thì để
+  // trống — không biết NCC này phục vụ nhà máy nào, chọn ở hồ sơ đối thủ (trước đây tự lấy KCN đầu tiên → sai KCN).
+  const supplyKcnOfLead = async (lead: MarketLead): Promise<{ kcn: string | null; count: number }> => {
+    let ids: string[] = [];
+    if (lead.crm_id) {
+      const { data } = await supabase.from('crm_pipeline').select('zone_ids').eq('id', lead.crm_id).maybeSingle();
+      ids = (data as { zone_ids?: string[] | null } | null)?.zone_ids ?? [];
+    }
+    const zones = companyZoneNames(lead.company_name, {
+      clients: [], leads: [lead], pipelineZoneIds: new Map(lead.crm_id ? [[lead.crm_id, ids]] : []), zones: marketZones,
+    });
+    return { kcn: zones.length === 1 ? zones[0] : null, count: zones.length };
+  };
+  const supplyKcnOfClient = (client: Client) => {
+    const zones = client.industrial_zones ?? [];
+    return { kcn: zones.length === 1 ? zones[0] : null, count: zones.length };
+  };
+  const multiKcnHint = (count: number) => (count > 1 ? ` — công ty có ${count} KCN, vào hồ sơ đối thủ chọn KCN cho dòng này` : '');
+
   const handleAddSupplierToLead = async (leadId: string, name: string, qty: number, wageMin: number | null, wageMax: number | null, wageDetail: Record<string, number>, wageDetailClient: Record<string, number>) => {
     const lead = marketLeads.find(l => l.id === leadId);
     if (!lead) return;
@@ -452,9 +472,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       await syncCompetitorSupplyingFor(name, lead.company_name);
       await syncCompetitorActiveZones(name, [lead.region]);
       const comp = competitors.find(c => sameCompany(c.company_name, name));
-      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, lead.region, qty);
+      const at = comp ? await supplyKcnOfLead(lead) : null;
+      if (comp && at) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, lead.company_name, at.kcn, qty);
       await onRefresh();
-      toast('Đã thêm NCC');
+      toast('Đã thêm NCC' + multiKcnHint(at?.count ?? 0));
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
@@ -482,7 +503,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của công ty/dự án "${lead.company_name}"`,
         oldData: lead, newData: { ...lead, suppliers: newSuppliers },
       });
-      if (!row.is_us) { await pushSupplyQty(row, lead.company_name, lead.region, qty); await syncCompetitorActiveZones(name, [lead.region]); }
+      if (!row.is_us) { await pushSupplyQty(row, lead.company_name, (await supplyKcnOfLead(lead)).kcn, qty); await syncCompetitorActiveZones(name, [lead.region]); }
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }
@@ -631,9 +652,10 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
       await syncCompetitorSupplyingFor(name, client.name);
       await syncCompetitorActiveZones(name, client.industrial_zones ?? []);
       const comp = competitors.find(c => sameCompany(c.company_name, name));
-      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, client.industrial_zones?.[0] ?? null, qty);
+      const at = supplyKcnOfClient(client);
+      if (comp) await pushSupplyQty({ competitorId: comp.id, ccIds: [] }, client.name, at.kcn, qty);
       await onRefresh();
-      toast('Đã thêm NCC');
+      toast('Đã thêm NCC' + (comp ? multiKcnHint(at.count) : ''));
     } catch (e: any) { toast('Lỗi: ' + e.message); }
   };
 
@@ -657,7 +679,7 @@ export default function LeadsTab({ marketLeads, clients, competitors, marketZone
         description: `Sửa NCC "${name}" của khách hàng "${client.name}"`,
         oldData: client, newData: { ...client, market_suppliers: newSuppliers },
       });
-      if (!row.is_us) { await pushSupplyQty(row, client.name, client.industrial_zones?.[0] ?? null, qty); await syncCompetitorActiveZones(name, client.industrial_zones ?? []); }
+      if (!row.is_us) { await pushSupplyQty(row, client.name, supplyKcnOfClient(client).kcn, qty); await syncCompetitorActiveZones(name, client.industrial_zones ?? []); }
       await onRefresh();
       toast('Đã cập nhật NCC');
     } catch (e: any) { toast('Lỗi: ' + e.message); }

@@ -4,6 +4,10 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import type { Client, Branch, WorkTask, TaskPriority } from '../../lib/types'
 import { branchOf } from '../../lib/branchRef'
+import { TASK_GROUPS, storedTypeOfGroup, taskTypeLabel } from '../../lib/workTaskTypes'
+
+// Hợp đồng chia 2 loại con giao được ở đây (HĐ mới / Tái ký); các nhóm khác lưu đúng tên nhóm.
+const GIAO_VIEC_TYPES = TASK_GROUPS.flatMap(g => g === 'Hợp đồng' ? ['Hợp đồng', 'Tái ký HĐ'] : [storedTypeOfGroup(g)])
 
 interface Props {
   clients: Client[]
@@ -77,8 +81,9 @@ export function GiaoViecModal({ clients, branches, toast, onClose, onCreated }: 
               <label className="text-[11.5px] font-semibold text-[#666] mb-1 block">Loại công việc</label>
               <select value={taskType} onChange={e => setTaskType(e.target.value)} className="w-full text-[12.5px] px-2.5 py-2 border border-[#E8E7E2] rounded-lg focus:outline-none focus:border-blue-400">
                 <option value="">-- Chọn loại --</option>
-                {['Tái ký HĐ', 'Báo giá', 'Thăm quan', 'Hỏi thăm CN', 'Văn phòng', 'Khác'].map(t => (
-                  <option key={t} value={t}>{t}</option>
+                {/* Cùng bộ loại việc đã gộp với form "Việc của tôi" (lib/workTaskTypes). Phụ lục cần chọn HĐ cha → tạo ở Workspace. */}
+                {GIAO_VIEC_TYPES.map(t => (
+                  <option key={t} value={t}>{taskTypeLabel(t)}</option>
                 ))}
               </select>
             </div>
