@@ -1,19 +1,22 @@
 // Cửa sổ danh sách (như cửa sổ MFinder): 2 khu riêng Ghi chú / Sơ đồ tư duy, mỗi khu có Tất cả / Lưu trữ / Đã xoá
 // + ô tìm; danh sách bên trái + khung soạn bên phải. Điện thoại: toàn màn, bấm 1 dòng → mở toàn màn, nút ‹ để quay lại.
 // Nút Phóng to trong khung soạn → cửa sổ gần kín màn hình; 1 cỡ chung cho cả 2 khu (đổi khu không bị phóng / thu).
-import { useEffect, useMemo, useState } from 'react';
+// Mục đang khoá chống xoá có ổ khoá trong danh sách; nút 🔑 cạnh tiêu đề = đặt / đổi / quên mã khoá. Khu / nhóm / mục
+// đang chọn báo lên QuickNotesDock (onPlaceChange) để lần sau mở lại đúng chỗ.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertCircle, Circle, Loader2, Mic, Network, Pin, Plus, StickyNote, X } from 'lucide-react';
+import { AlertCircle, Circle, KeyRound, Loader2, Lock, Mic, Network, Pin, Plus, StickyNote, X } from 'lucide-react';
 import { Segmented, SearchField } from '../../modules/cskh/components/apple';
 import { errText, listTrash, restoreNote } from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
 import {
   checklistCount, displayTitle, isMindmap, listOrder, mindmapCount, noteMatches, notePreview, relativeTime,
 } from '../../lib/quickNotes/noteText';
-import type { NoteView, QuickNote } from '../../lib/quickNotes/types';
+import type { WinPlace } from '../../lib/quickNotes/lastPlace';
+import type { NotesTab, NoteView, QuickNote } from '../../lib/quickNotes/types';
 import type { QuickNotesStore } from './useQuickNotes';
 
-export type NotesTab = 'all' | 'archive' | 'trash';
+export type { NotesTab };
 
 export interface EditorExtra {
   onBack?: () => void;
@@ -58,6 +61,7 @@ function NoteRow({ note, selected, recording, attention, onClick }: {
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="truncate text-[15px] md:text-[14px] font-semibold text-[#1D1D1F]">{displayTitle(note)}</span>
           {note.pinned && <Pin size={11} className="shrink-0 text-[#86868B]" fill="currentColor" />}
+          {note.locked_at && <span title="Đang khoá chống xoá" className="shrink-0 text-[#86868B]"><Lock size={11} /></span>}
           {recording && <span className="shrink-0 w-2 h-2 rounded-full bg-[#FF3B30] qn-rec-pulse" title="Đang ghi âm" />}
           {attention && <span title="Có bản ghi âm chưa tải lên" className="shrink-0 text-[#D70015]"><AlertCircle size={12} /></span>}
         </span>
@@ -74,13 +78,15 @@ function NoteRow({ note, selected, recording, attention, onClick }: {
 }
 
 export default function NotesWindow({
-  store, isMobile, initialSelectedId, initialTab, recordingNoteId, attentionNoteIds, canRecord,
-  onClose, onNew, onNewMeeting, onNewMap, renderEditor,
+  store, isMobile, initialSelectedId, initialTab, initialSection, recordingNoteId, attentionNoteIds, canRecord,
+  onClose, onNew, onNewMeeting, onNewMap, onPlaceChange, onPinSettings, renderEditor,
 }: {
   store: QuickNotesStore;
   isMobile: boolean;
   initialSelectedId: string | null;
   initialTab: NotesTab;
+  /** khu mở sẵn khi chưa chọn mục nào (mở lại chỗ cũ) */
+  initialSection?: NoteView;
   recordingNoteId: string | null;
   attentionNoteIds: Set<string>;
   canRecord: boolean;
@@ -88,6 +94,10 @@ export default function NotesWindow({
   onNew: () => string;
   onNewMeeting: () => string;
   onNewMap: () => string;
+  /** khu / nhóm / mục đang chọn đổi → lưu lại để lần sau mở đúng chỗ */
+  onPlaceChange?: (p: WinPlace) => void;
+  /** mở hộp đặt / đổi / quên mã khoá chống xoá */
+  onPinSettings?: () => void;
   renderEditor: (note: QuickNote, variant: 'pane' | 'sheet', extra: EditorExtra) => ReactNode;
 }) {
   const [tab, setTab] = useState<NotesTab>(initialTab);
@@ -98,8 +108,12 @@ export default function NotesWindow({
   const [winExpanded, setWinExpanded] = useState(loadWinExpanded);
   const [section, setSection] = useState<NoteView>(() => {
     const n = initialSelectedId ? store.notes.find(x => x.id === initialSelectedId) : null;
-    return n ? kindOf(n) : 'text';
+    return n ? kindOf(n) : initialSection ?? 'text';
   });
+
+  const placeCb = useRef(onPlaceChange);
+  placeCb.current = onPlaceChange;
+  useEffect(() => { placeCb.current?.({ selectedId, tab, section }); }, [selectedId, tab, section]);
 
   const live = store.notes;
   const inSection = (n: QuickNote) => kindOf(n) === section;
@@ -254,7 +268,13 @@ export default function NotesWindow({
           <>
             <div className="flex items-center justify-between px-4 h-14 shrink-0">
               <h2 className="text-[24px] font-bold text-[#1D1D1F] tracking-tight">Ghi chú nhanh</h2>
-              <button type="button" onClick={onClose} className="h-9 px-2 text-[16px] font-semibold text-[#0071E3]">Xong</button>
+              <span className="flex items-center gap-1">
+                {onPinSettings && (
+                  <button type="button" onClick={onPinSettings} aria-label="Mã khoá chống xoá" title="Mã khoá chống xoá"
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-[#0071E3] active:bg-black/[0.06]"><KeyRound size={19} /></button>
+                )}
+                <button type="button" onClick={onClose} className="h-9 px-2 text-[16px] font-semibold text-[#0071E3]">Xong</button>
+              </span>
             </div>
             {list}
           </>
@@ -271,6 +291,10 @@ export default function NotesWindow({
           <div className="flex items-center gap-2 px-4 h-12 shrink-0">
             <StickyNote size={16} className="text-[#86868B]" />
             <span className="flex-1 text-[14px] font-semibold text-[#1D1D1F]">Ghi chú nhanh</span>
+            {onPinSettings && (
+              <button type="button" onClick={onPinSettings} aria-label="Mã khoá chống xoá" title="Mã khoá chống xoá (đặt / đổi / quên mã)"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#86868B] hover:bg-black/[0.06] hover:text-[#1D1D1F]"><KeyRound size={15} /></button>
+            )}
             <button type="button" onClick={onClose} aria-label="Đóng" title="Đóng (Esc)"
               className="w-7 h-7 rounded-full flex items-center justify-center text-[#86868B] hover:bg-black/[0.06] hover:text-[#1D1D1F]"><X size={16} /></button>
           </div>

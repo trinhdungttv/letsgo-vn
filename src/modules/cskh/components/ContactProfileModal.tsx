@@ -14,11 +14,12 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  BadgeCheck, ChevronDown, ExternalLink, FileText, Minus, PenLine, Plus, RotateCcw, Star, Trash2, UserCheck, UserX, X,
+  ArrowRightLeft, BadgeCheck, ChevronDown, ExternalLink, FileText, Minus, PenLine, Plus, RotateCcw, Star, Trash2, UserCheck, UserX, X,
 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { useProvinces } from '../../../hooks/useProvinces';
-import { CONTACT_CHANNELS, deactivateContact, emptyContactForm, reactivateContact, saveContact } from '../../../lib/contactOps';
+import { CONTACT_CHANNELS, deactivateContact, emptyContactForm, fetchCareerHistory, reactivateContact, saveContact } from '../../../lib/contactOps';
+import type { CareerHistoryRow } from '../../../lib/contactCareer';
 import { buildContactStats, dueLabel } from '../../../lib/cskh/cadence';
 import { contactActionLinks } from '../../../lib/cskh/contactActions';
 import { formatDateVN, todayVN } from '../../../lib/cskh/dates';
@@ -27,7 +28,7 @@ import { emitCskhDataChanged } from '../../../lib/cskh/events';
 import { guessGender } from '../../../lib/cskh/gender';
 import { addressPrecision } from '../../../lib/cskh/mapPoints';
 import { geocodeAddressDetailed, type LatLng } from '../../../lib/cskh/nearby';
-import { draftError, draftFromOccasion, isBlankDraft, planOccasionSave } from '../../../lib/cskh/occasions';
+import { draftFromOccasion, isBlankDraft, occasionRowsError, planOccasionSave } from '../../../lib/cskh/occasions';
 import { provinceOptions } from '../../../lib/cskh/provinces';
 import { regionCandidates } from '../../../lib/cskh/regionInsight';
 import { cleanRememberNotes, FAMILY_MAX, familyAge, familyYearError, REMEMBER_MAX_CHARS, REMEMBER_PLACEHOLDER } from '../../../lib/cskh/remember';
@@ -45,6 +46,8 @@ import AvatarUpload from '../../../components/contacts/AvatarUpload';
 import RoleSelect from '../../../components/contacts/RoleSelect';
 import ContactDeleteDialog from '../../../components/contacts/ContactDeleteDialog';
 import ContactFormModal, { RichTextEditor } from '../../../components/contacts/ContactFormModal';
+import MoveCompanyDialog from '../../../components/contacts/MoveCompanyDialog';
+import CareerTimeline from '../../../components/contacts/CareerTimeline';
 import { mapContactRow } from '../../../lib/cskh/mappers';
 import { expandOpenExtras, saveProfile, setFollowUpDone, type CskhData } from '../data/api';
 import { mapLinkCoords, useMapLink } from '../data/mapLink';
@@ -206,7 +209,10 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const thisYear = Number(today.slice(0, 4));
   const isSale = data.space === 'sale';
   const groupById = useMemo(() => new Map(data.groups.map(g => [g.id, g])), [data.groups]);
-  const clientName = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? null : null);
+  // CSKH chỉ nạp khách đang hợp tác → công ty tiềm năng (VD vừa chuyển sang) lấy tên từ dòng nối của người này
+  const clientName = (id: string | null) => (id
+    ? clients.find(c => c.id === id)?.name ?? raw.contact_clients?.find(l => l.client_id === id)?.clients?.name ?? null
+    : null);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
   const others = useMemo(() => data.contacts.filter(c => c.id !== contactId), [data.contacts, contactId]);
   const nameById = useMemo(() => new Map(data.contacts.map(c => [c.id, c.fullName])), [data.contacts]);
@@ -255,6 +261,11 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   );
   const [occRows, setOccRows] = useState<OccasionRow[]>(() =>
     myOccasions.length ? myOccasions.map(o => toOccasionRow(draftFromOccasion(o), o.relatedPerson)) : [newOccasionRow()]);
+  // Sự kiện đã gắn quà: không chuyển vào ngày sinh hồ sơ (sẽ xoá mềm dòng cũ → quà mất tên dịp)
+  const giftLinkedOccasionIds = useMemo(
+    () => new Set(data.gifts.filter(g => g.contactId === contactId && g.occasionId && !g.isArchived).map(g => g.occasionId as string)),
+    [data.gifts, contactId],
+  );
   const [manualPin, setManualPin] = useState<LatLng | null>(null);
   const [deepOpen, setDeepOpen] = useState(false);
   // ── Mạng lưới Sale (migration 178) ──
@@ -274,6 +285,15 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [fullForm, setFullForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [addingClient, setAddingClient] = useState(false);
+  const [moving, setMoving] = useState(false);
+  // Quá trình công tác (lịch sử gắn / chuyển công ty) — chỉ hồ sơ khách đã có
+  const [career, setCareer] = useState<CareerHistoryRow[]>([]);
+  useEffect(() => {
+    if (isNew || isSale || !contactId) return;
+    let alive = true;
+    void fetchCareerHistory(contactId).then(rows => { if (alive) setCareer(rows); });
+    return () => { alive = false; };
+  }, [isNew, isSale, contactId]);
 
   // ── Địa chỉ nhà hiện tại: ghim = chấm tay > link Maps > tra chữ ──
   const linkDebounced = useDebounced(mapLink, 500);
@@ -385,7 +405,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       return;
     }
     if (!target) { setError('Chọn nhóm'); return; }
-    const occErr = occRows.map(r => draftError(r, thisYear)).find(Boolean);
+    const occErr = occasionRowsError(occRows, thisYear);
     if (occErr) { setError(occErr); return; }
     const famErr = famRows.map(r => familyYearError(r.year, thisYear)).find(Boolean);
     if (famErr) { setError(`Gia đình: ${famErr}`); setDeepOpen(true); return; }
@@ -455,6 +475,14 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     return (
       <ContactFormModal contact={raw} clients={clients as Client[]} toast={toast} onClose={() => setFullForm(false)}
         onSaved={() => { emitCskhDataChanged(); onClose(); }} />
+    );
+  }
+  if (moving) {
+    // Ghi xong là đóng hồ sơ: form đang giữ danh sách công ty cũ, bấm Lưu tiếp sẽ gắn lại công ty cũ
+    return (
+      <MoveCompanyDialog contact={raw} toast={toast} onClose={() => setMoving(false)}
+        hint="Chuyển xong hồ sơ này đóng lại — thay đổi khác chưa bấm Lưu hồ sơ sẽ bỏ qua."
+        onDone={() => { emitCskhDataChanged(); onClose(); }} />
     );
   }
 
@@ -678,7 +706,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
 
       {/* ── Ngày sinh & ngày quan trọng ── */}
       <Section title="Ngày sinh & ngày quan trọng">
-        <OccasionEditor rows={occRows} onChange={setOccRows} today={today} notCared={target?.tier === 'unclassified'} />
+        <OccasionEditor rows={occRows} onChange={setOccRows} today={today} notCared={target?.tier === 'unclassified'}
+          personName={name || current.fullName} lockedIds={giftLinkedOccasionIds} />
       </Section>
 
       {/* ── Địa chỉ & quê quán ── */}
@@ -770,6 +799,15 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
             )}
           </div>
         </Field>
+        {!isNew && (
+          <div className="md:col-span-2 -mt-1">
+            <button type="button" onClick={() => setMoving(true)}
+              title="Khách nghỉ công ty này sang làm công ty khác — giữ lịch sử, hạng CSKH, nhật ký, quà, ngày quan trọng"
+              className="inline-flex items-center gap-1.5 h-9 md:h-8 px-3 rounded-full bg-[#0071E3]/10 text-[13px] font-medium text-[#0066CC] hover:bg-[#0071E3]/[0.16] transition">
+              <ArrowRightLeft size={14} /> Chuyển công ty…
+            </button>
+          </div>
+        )}
         <Field label="Chức vụ"><RoleSelect value={role} onChange={setRole} toast={toast} className={inputCls} /></Field>
         <Field label="Phụ trách từ ngày"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} min-w-[9.5rem]`} /></Field>
         <Field label="Kênh tiếp cận">
@@ -778,6 +816,13 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
             {CONTACT_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </Field>
+        {!isNew && (career.length > 0 || current.clientIds.length > 0) && (
+          <Field label="Quá trình công tác" full hint="Từng làm ở đâu, từ khi nào tới khi nào, chức vụ — ghi tự động khi gắn / chuyển công ty.">
+            <div className="rounded-[12px] bg-white md:bg-white/80 px-3 py-2.5 shadow-[0_0_0_0.5px_rgba(0,0,0,0.08)]">
+              <CareerTimeline contact={raw} history={career} onOpenClient={onOpenClient} />
+            </div>
+          </Field>
+        )}
         <Field label="Ghi chú ngắn" full>
           <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={`${inputCls} resize-y`} />
         </Field>

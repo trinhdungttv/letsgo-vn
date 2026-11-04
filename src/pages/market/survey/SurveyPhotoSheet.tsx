@@ -1,7 +1,7 @@
 // Màn lưu ảnh chỉ tiêu tuyển dụng vừa chụp: gắn công ty (gợi ý công ty quanh chỗ chụp), vị trí tuyển, số lượng, lương.
 // Công ty chưa có trong hệ thống → tuỳ chọn thêm luôn vào Thị trường → Công ty/Dự án, ghim tại chỗ chụp.
 import { useEffect, useMemo, useState } from 'react';
-import { Check, MapPin, PenLine, Search, X } from 'lucide-react';
+import { Check, MapPin, PenLine, Search, Star, X } from 'lucide-react';
 import { useCompanyDuplicates } from '../../../hooks/useCompanyDuplicates';
 import DuplicateCompanyNotice from '../../../components/common/DuplicateCompanyNotice';
 import type { NearbyCompany, SurveyCompany } from '../../../lib/kcnSurvey/companies';
@@ -9,6 +9,7 @@ import { fmtDistance } from '../../../lib/kcnSurvey/track';
 import { StatusDot, statusLabel, type CompanyLookup } from './SurveyCompanyCard';
 import { fold } from './surveyData';
 import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
+import type { StarRef } from '../../../lib/kcnSurvey/stars';
 import { MarkedImage } from './PhotoMarks';
 import PhotoMarkupEditor from './PhotoMarkupEditor';
 
@@ -29,6 +30,9 @@ export interface PhotoFormValue {
   note: string;
   /** Nét vẽ / chữ ghi lên ảnh */
   annotations: PhotoMark[];
+  /** Gắn sao công ty (cần chú trọng) — `starWas` = trạng thái lúc mở màn này, khác nhau thì mới ghi */
+  star: boolean;
+  starWas: boolean;
 }
 
 interface Props {
@@ -39,13 +43,16 @@ interface Props {
   preset: SurveyCompany | null;
   zoneName: string | null;
   lookup: CompanyLookup;
+  /** Công ty đã gắn sao chưa (sao ở mức công ty, dùng chung mọi ảnh của công ty đó) */
+  isStarred: (c: StarRef) => boolean;
+  zoneId: string | null;
   onCancel: () => void;
   onSave: (v: PhotoFormValue) => void;
 }
 
 const input = 'w-full h-11 px-3 rounded-xl bg-[#F2F2F7] text-[15px] text-[#1D1D1F] outline-none focus:ring-2 focus:ring-[#0A84FF]/40 placeholder:text-[#8E8E93]';
 
-export default function SurveyPhotoSheet({ file, position, suggestions, allCompanies, preset, zoneName, lookup, onCancel, onSave }: Props) {
+export default function SurveyPhotoSheet({ file, position, suggestions, allCompanies, preset, zoneName, zoneId, lookup, isStarred, onCancel, onSave }: Props) {
   const [preview, setPreview] = useState<string | null>(null);
   const [company, setCompany] = useState<SurveyCompany | null>(preset);
   const [query, setQuery] = useState('');
@@ -75,6 +82,20 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
   const newName = company?.status === 'osm' ? company.name : freeName;
   const dup = useCompanyDuplicates(newName, { enabled: isNew && addToMarket && newName.trim().length >= 2 });
 
+  // Sao: công ty đang chọn đã gắn sao (từ ảnh trước) thì bật sẵn; đổi công ty → lấy lại theo công ty mới
+  const starRef: StarRef | null = company && company.status !== 'osm'
+    ? { clientId: company.clientId, crmId: company.crmId, leadId: company.leadId, name: company.name, zoneId }
+    : newName.trim() ? { name: newName, zoneId } : null;
+  const refKey = starRef ? `${starRef.clientId ?? ''}|${starRef.crmId ?? ''}|${starRef.leadId ?? ''}|${fold(starRef.name)}` : '';
+  const [starWas, setStarWas] = useState(false);
+  const [star, setStar] = useState(false);
+  useEffect(() => {
+    const on = !!starRef && isStarred(starRef);
+    setStarWas(on);
+    setStar(on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refKey]);
+
   const pickCompany = (c: SurveyCompany) => { setCompany(c); setFreeName(''); setQuery(''); };
   const useFreeName = () => { setCompany(null); setFreeName(query.trim()); setQuery(''); };
 
@@ -87,6 +108,8 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
     wage_text: wage.trim(),
     note: note.trim(),
     annotations: marks,
+    star: !!starRef && star,
+    starWas: !!starRef && starWas,
   });
 
   return (
@@ -192,6 +215,18 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
                   </div>
                 )}
               </div>
+            )}
+            {starRef && (
+              <button onClick={() => setStar(v => !v)}
+                className={`mt-2 w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${star ? 'bg-[#FFF4D6] ring-1 ring-[#F5B400]/60' : 'bg-[#F2F2F7]'}`}>
+                <Star size={20} className={star ? 'text-[#F5A300]' : 'text-[#8E8E93]'} fill={star ? '#F5B400' : 'none'} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[14px] font-medium text-[#1D1D1F]">{star ? 'Đã gắn sao — công ty cần chú trọng' : 'Gắn sao công ty này'}</span>
+                  <span className="block text-[11.5px] text-[#8E8E93] leading-snug">
+                    {star ? 'Hiện ★ ở bản đồ khảo sát, danh sách ảnh và báo cáo PDF' : 'Đánh dấu công ty cần chú trọng (VD tuyển nhiều, lương cao, nên tiếp cận)'}
+                  </span>
+                </span>
+              </button>
             )}
           </section>
 

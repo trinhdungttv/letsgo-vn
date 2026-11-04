@@ -14,6 +14,9 @@
 import { supabase } from './supabase';
 import { logActivity } from './audit';
 import { contactKindOf } from './cskh/space';
+import { todayVN } from './cskh/dates';
+import { birthdayForSave } from './birthday';
+import { moveFallbackNote, type CareerHistoryRow } from './contactCareer';
 import type { ContactKind } from './cskh/types';
 import type { AppUser, Contact, ContactClientLink } from './types';
 
@@ -81,6 +84,7 @@ const withFallbackLinks = (rows: Contact[]): Contact[] => rows.map(c => ({
  * vào màn hình khách. Lọc ở máy (không lọc SQL) để DB chưa chạy 178 vẫn đọc được; đọc theo id
  * (người cụ thể, khu vực nào cũng được) thì truyền 'all'.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder Supabase
 export async function selectContacts(apply: (q: any) => any = q => q, kind: ContactKind | 'all' = 'client'): Promise<Contact[]> {
   const pick = (rows: Contact[]) => (kind === 'all' ? rows : rows.filter(c => contactKindOf(c) === kind));
   if (await hasJunction()) {
@@ -105,7 +109,7 @@ export async function fetchContactsOfClient(
   clientId: string,
   opts: { activeOnly?: boolean } = {}
 ): Promise<Contact[]> {
-  const order = (q: any) => {
+  const order = (q: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any -- builder Supabase
     const withActive = opts.activeOnly ? q.eq('is_active', true) : q.order('is_active', { ascending: false });
     return withActive.order('created_at', { ascending: false });
   };
@@ -351,7 +355,7 @@ const OPTIONAL_COLUMNS = ['map_link', 'avatar_url'] as const;
 const isMissingColumnError = (err: { message?: string; code?: string } | null) =>
   !!err && (err.code === '42703' || /column .* does not exist|could not find the .* column/i.test(err.message || ''));
 
-function withoutOptionalColumns<T extends Record<string, any>>(payload: T): T {
+function withoutOptionalColumns<T extends Record<string, unknown>>(payload: T): T {
   const copy = { ...payload };
   for (const col of OPTIONAL_COLUMNS) delete copy[col];
   return copy;
@@ -389,6 +393,9 @@ export async function saveContact(
   // Liên hệ tự do không thuộc công ty nào thì không có khái niệm "liên hệ chính".
   const primaryIds = form.is_active ? form.primary_client_ids.filter(id => clientIds.includes(id)) : [];
   const today = new Date().toISOString().slice(0, 10);
+  // Ngày sinh nhập dở (chưa đủ ngày + tháng / năm gõ thiếu) → báo lỗi, KHÔNG lưu thành rỗng (mất ngày cũ).
+  // Không rõ năm → năm giữ chỗ 1604 (lib/birthday).
+  const birthday = birthdayForSave(form.birthday, Number(today.slice(0, 4)));
 
   // `client_id` / `is_primary` KHÔNG nằm trong payload: trigger của bảng nối tự
   // ghi 2 cột soi đó. Ghi thẳng ở đây sẽ đá nhau với trigger.
@@ -402,7 +409,7 @@ export async function saveContact(
     is_active: form.is_active,
     notes: form.notes.trim() || null,
     address: form.address.trim() || null,
-    birthday: form.birthday || null,
+    birthday,
     hobbies: form.hobbies.length ? JSON.stringify(form.hobbies) : null,
     channel: form.channel || null,
     social_link: form.social_link.trim() || null,
@@ -515,6 +522,144 @@ export async function unsetPrimaryContact(contact: Contact, clientId: string, ct
     description: `Bỏ cờ liên hệ chính của "${contact.name}" tại "${ctx.clientName(clientId)}"`,
     oldData: contact, newData: { ...contact, unprimary_at: clientId },
   });
+}
+
+// ── Chuyển công ty (nghỉ công ty 1 sang làm công ty 2) ──────────────────────
+/** Lịch sử gắn / gỡ / chuyển công ty của 1 người (kèm cột migration 197 nếu đã chạy). */
+export async function fetchCareerHistory(contactId: string): Promise<CareerHistoryRow[]> {
+  const { data, error } = await supabase.from('contact_client_history').select('*')
+    .eq('contact_id', contactId).order('changed_at', { ascending: false }).limit(200);
+  if (error) return [];
+  return (data || []) as CareerHistoryRow[];
+}
+
+export interface MovedAwayRow extends CareerHistoryRow {
+  contacts: Pick<Contact, 'id' | 'name' | 'avatar_url' | 'is_active'> | null;
+}
+
+/** Mốc "chuyển đi" khỏi 1 công ty (from = công ty này, to ≠ null) — cho hồ sơ công ty cũ. */
+export async function fetchMovesFromClient(clientId: string): Promise<MovedAwayRow[]> {
+  const { data, error } = await supabase.from('contact_client_history')
+    .select('*, contacts(id, name, avatar_url, is_active)')
+    .eq('from_client_id', clientId).not('to_client_id', 'is', null)
+    .order('changed_at', { ascending: false }).limit(200);
+  if (error) return [];
+  return (data || []) as MovedAwayRow[];
+}
+
+/** Công ty mới chưa có trong hệ thống → tạo dạng KH TIỀM NĂNG (không vào danh sách đang hợp tác). */
+export async function createProspectCompany(name: string, user: AppUser | null): Promise<{ id: string; name: string }> {
+  const clean = name.replace(/\s+/g, ' ').trim();
+  if (!clean) throw new Error('Nhập tên công ty mới');
+  const { data, error } = await supabase.from('clients')
+    .insert({ name: clean, client_type: 'prospect', status: 'ok' }).select('id, name').single();
+  if (error) throw error;
+  const created = data as { id: string; name: string };
+  await logActivity({
+    user, action: 'insert', table: 'clients', recordId: created.id,
+    description: `Thêm công ty "${clean}" (KH tiềm năng) khi chuyển người liên hệ sang`,
+    newData: created,
+  });
+  return created;
+}
+
+export interface MoveCompanyInput {
+  /** Công ty rời đi (null = người này chưa gắn công ty nào — chỉ gắn công ty mới). */
+  fromClientId: string | null;
+  toClientId: string;
+  /** "YYYY-MM-DD" — ngày rời công ty cũ / bắt đầu công ty mới. */
+  effectiveOn: string;
+  /** Chức vụ ở công ty mới ('' = giữ chức vụ đang có). */
+  newRole: string;
+  /** Làm liên hệ chính của công ty mới. */
+  makePrimary: boolean;
+  /** Làm ở công ty cũ từ ngày (đã tính sẵn từ quá trình công tác) — chốt vào lịch sử. */
+  fromStartedOn: string | null;
+  note: string;
+}
+
+const isMissingColumn197 = (err: { message?: string; code?: string } | null) =>
+  !!err && (err.code === '42703' || err.code === 'PGRST204'
+    || /(from_role|to_role|from_started_on|effective_on)/i.test(err.message || ''));
+
+/**
+ * Chuyển người liên hệ sang công ty khác. GIỮ NGUYÊN bản ghi người (hạng CSKH, nhật ký, quà,
+ * ngày quan trọng đều theo contact_id); chỉ:
+ *   1. gỡ dòng nối công ty cũ (cờ liên hệ chính ở đó mất theo), gắn công ty mới;
+ *   2. cập nhật chức vụ (nếu đổi), "Phụ trách từ ngày" = ngày chuyển, mở lại nếu đang "Đã nghỉ";
+ *   3. ghi MỘT dòng lịch sử from → to kèm chức vụ cũ / mới, ngày bắt đầu ở công ty cũ, ngày chuyển
+ *      (DB chưa chạy migration 197 → ghi các thông tin đó vào note).
+ * Hồ sơ công ty cũ đọc dòng lịch sử này để hiện "đã chuyển sang công ty X".
+ */
+export async function moveContactCompany(contact: Contact, input: MoveCompanyInput, ctx: SaveContactCtx): Promise<Contact> {
+  if (contactKindOf(contact) === 'sale') throw new Error('Người của Mạng lưới Sale không gắn công ty khách');
+  if (!input.toClientId) throw new Error('Chọn công ty mới');
+  if (input.toClientId === input.fromClientId) throw new Error('Công ty mới trùng công ty đang rời');
+  const before = linksOf(contact);
+  const fromRole = (contact.role || '').trim();
+  const toRole = input.newRole.trim() || fromRole;
+
+  // 1. Dòng nối: nhả cờ liên hệ chính ở công ty mới TRƯỚC (unique index 1 người / công ty), rồi gỡ cũ, gắn mới
+  if (input.makePrimary) await clearPrimaryElsewhere(input.toClientId, contact.id);
+  if (input.fromClientId && before.some(l => l.client_id === input.fromClientId)) {
+    const { error } = await supabase.from('contact_clients')
+      .delete().eq('contact_id', contact.id).eq('client_id', input.fromClientId);
+    if (error) throwWriteError(error);
+  }
+  const { error: linkErr } = await supabase.from('contact_clients').upsert(
+    { contact_id: contact.id, client_id: input.toClientId, is_primary: input.makePrimary },
+    { onConflict: 'contact_id,client_id' },
+  );
+  if (linkErr) throwWriteError(linkErr);
+
+  // 2. Người: chức vụ mới, phụ trách từ ngày chuyển, đang phụ trách
+  const { error: cErr } = await supabase.from('contacts').update({
+    role: toRole || null,
+    start_date: input.effectiveOn,
+    is_active: true,
+    end_date: null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', contact.id);
+  if (cErr) throw cErr;
+
+  // 3. Lịch sử — changed_at theo ngày chuyển (giữa trưa giờ VN) để danh sách cũ cũng xếp đúng mốc
+  const todayIso = todayVN();
+  const base = {
+    contact_id: contact.id,
+    from_client_id: input.fromClientId,
+    to_client_id: input.toClientId,
+    from_client_name: ctx.clientName(input.fromClientId),
+    to_client_name: ctx.clientName(input.toClientId),
+    changed_by: ctx.user?.full_name || null,
+    ...(input.effectiveOn !== todayIso ? { changed_at: `${input.effectiveOn}T12:00:00+07:00` } : {}),
+  };
+  let { error: hErr } = await supabase.from('contact_client_history').insert({
+    ...base,
+    note: input.note.trim() || 'Chuyển công ty',
+    from_role: input.fromClientId ? fromRole || null : null,
+    to_role: toRole || null,
+    from_started_on: input.fromClientId ? input.fromStartedOn : null,
+    effective_on: input.effectiveOn,
+  });
+  if (isMissingColumn197(hErr)) {
+    ({ error: hErr } = await supabase.from('contact_client_history').insert({
+      ...base,
+      note: moveFallbackNote({ fromRole: input.fromClientId ? fromRole : '', fromStartedOn: input.fromClientId ? input.fromStartedOn : null, note: input.note }),
+    }));
+  }
+  if (hErr) throw new Error(`Đã chuyển công ty nhưng chưa ghi được lịch sử: ${hErr.message}`);
+
+  const saved = await refetchContact(contact.id);
+  const fromName = ctx.clientName(input.fromClientId);
+  const toName = ctx.clientName(input.toClientId);
+  await logActivity({
+    user: ctx.user, action: 'update', table: 'contacts', recordId: contact.id,
+    description: fromName
+      ? `Chuyển công ty "${contact.name}": "${fromName}" → "${toName}" (từ ${input.effectiveOn})`
+      : `Gắn "${contact.name}" vào công ty "${toName}" (từ ${input.effectiveOn})`,
+    oldData: contact, newData: saved,
+  });
+  return saved;
 }
 
 // ── Ngưng / mở lại (xoá mềm) ────────────────────────────────────────────────

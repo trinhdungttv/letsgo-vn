@@ -27,8 +27,8 @@ export default function SurveyVoiceSheet({ note, onClose, onSaved, onDeleted, on
     } catch (e) { say((e as Error).message); } finally { setSaving(false); }
   };
   const del = async () => {
-    if (!window.confirm('Xoá bản ghi âm này khỏi danh sách?\n\nBản ghi sẽ ẩn khỏi lịch sử và bản đồ; file âm thanh vẫn được giữ trong kho lưu trữ.')) return;
-    try { await softDeleteVoiceNote(note.id); onDeleted(note.id); say('Đã xoá bản ghi âm'); } catch (e) { say((e as Error).message); }
+    if (!window.confirm('Xoá bản ghi âm này?\n\nBản ghi chuyển vào Lưu trữ (tab Khảo sát KCN → Lưu trữ) 30 ngày — khôi phục được trong thời gian đó, quá 30 ngày mới tự xoá hẳn.')) return;
+    try { await softDeleteVoiceNote(note.id); onDeleted(note.id); say('Đã chuyển bản ghi âm vào Lưu trữ (30 ngày)'); } catch (e) { say((e as Error).message); }
   };
   const ext = note.mime_type.includes('mp4') ? 'm4a' : note.mime_type.includes('ogg') ? 'ogg' : 'webm';
 

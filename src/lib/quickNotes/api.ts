@@ -1,10 +1,12 @@
 // Gọi Ghi chú nhanh — MỌI thao tác dữ liệu đi qua 1 hàm DB quick_notes_rpc(p_token, p_action, p_args) (migration 188):
 // bảng khoá với anon key vì là ghi chú riêng; hàm kiểm phiên đăng nhập và chỉ chạm ghi chú của chính người đó.
 // File ghi âm: bucket riêng tư 'quick-notes'; link tải lên / nghe lại do server cấp (api/quick-notes-audio.ts).
+// Khoá chống xoá bằng mã 4 số (migration 196): khoá / mở khoá / đổi mã cũng đi qua quick_notes_rpc.
 import { supabase } from '../supabase';
 import { getStoredSessionToken } from '../sessionToken';
 import { isMissingFunction } from '../recruit/api';
 import { parseDoc } from './mindmap/parse';
+import { lockFailText, type LockFail, type LockFailReason } from './lock';
 import type { TranscribeEvent } from './transcript';
 import { NOTE_COLORS, NOTE_FONTS, type PendingAudio, type QuickNote, type QuickNoteRecording } from './types';
 
@@ -16,6 +18,19 @@ export class QuickNotesError extends Error {
   constructor(message: string, missingMigration = false) {
     super(message);
     this.missingMigration = missingMigration;
+  }
+}
+
+/** Bị từ chối vì khoá chống xoá: sai mã, tạm khoá vì sai nhiều lần, chưa đặt mã, mục đang khoá… */
+export class LockError extends QuickNotesError {
+  readonly reason: LockFailReason;
+  readonly remaining?: number;
+  readonly seconds?: number;
+  constructor(f: LockFail) {
+    super(lockFailText(f));
+    this.reason = f.reason;
+    this.remaining = f.remaining;
+    this.seconds = f.seconds;
   }
 }
 
@@ -69,6 +84,7 @@ export function toNote(raw: unknown): QuickNote {
     mindmap,
     // Bản thử 01/11 cho đổi qua lại Văn bản ⇄ Sơ đồ trên cùng 1 mục: mục chữ trống mà có sơ đồ thì coi là Sơ đồ
     view_mode: r.view_mode === 'mindmap' || (!String(r.body ?? '').trim() && mindmap) ? 'mindmap' : 'text',
+    locked_at: typeof r.locked_at === 'string' ? r.locked_at : null,
   };
 }
 
@@ -96,10 +112,52 @@ export async function saveNote(n: QuickNote): Promise<QuickNote> {
   return toNote(raw);
 }
 
-export const deleteNote = (id: string) => notesRpc<unknown>('delete', { id });
+/** Xoá mềm (vào Đã xoá). Mục đang khoá: phải kèm mã 4 số đúng, sai thì ném LockError. */
+export async function deleteNote(id: string, pin?: string): Promise<void> {
+  const r = await notesRpc<Record<string, unknown> | null>('delete', pin ? { id, pin } : { id });
+  if (r && r.ok === false) throw new LockError(toLockFail(r));
+}
 export const restoreNote = async (id: string) => toNote(await notesRpc<unknown>('restore', { id }));
 export const renameRecording = async (id: string, title: string) => toNote(await notesRpc<unknown>('recording.rename', { id, title }));
 export const deleteRecording = async (id: string) => toNote(await notesRpc<unknown>('recording.delete', { id }));
+
+// ── Khoá chống xoá (migration 196) ──
+
+const LOCK_MISSING = 'Khoá chống xoá chưa được cài trên cơ sở dữ liệu (cần chạy migration 196).';
+
+function toLockFail(r: Record<string, unknown>): LockFail {
+  return {
+    reason: (['wrong_pin', 'wrong_password', 'locked', 'no_pin', 'note_locked'].includes(String(r.reason)) ? r.reason : 'wrong_pin') as LockFailReason,
+    remaining: typeof r.remaining === 'number' ? r.remaining : undefined,
+    seconds: typeof r.seconds === 'number' ? r.seconds : undefined,
+  };
+}
+
+async function lockRpc(action: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  let raw: Record<string, unknown> | null;
+  try {
+    raw = await notesRpc<Record<string, unknown> | null>(action, args);
+  } catch (e) {
+    // Hàm cũ (chưa chạy 196) không biết thao tác khoá
+    if (e instanceof QuickNotesError && /Thao tác không hợp lệ/.test(e.message)) throw new QuickNotesError(LOCK_MISSING, true);
+    throw e;
+  }
+  const r = raw ?? {};
+  if (r.ok === false) throw new LockError(toLockFail(r));
+  return r;
+}
+
+export async function lockStatus(): Promise<{ hasPin: boolean; waitSeconds: number }> {
+  const r = await lockRpc('lock.status');
+  return { hasPin: !!r.has_pin, waitSeconds: Number(r.wait_seconds) || 0 };
+}
+/** Đặt mã lần đầu (chưa có mã). */
+export const setPin = async (pin: string) => { await lockRpc('pin.set', { pin }); };
+export const changePin = async (pin: string, newPin: string) => { await lockRpc('pin.change', { pin, new_pin: newPin }); };
+/** Quên mã: đặt mã mới bằng mật khẩu đăng nhập. */
+export const resetPin = async (password: string, newPin: string) => { await lockRpc('pin.reset', { password, new_pin: newPin }); };
+export const lockNote = async (id: string) => toNote((await lockRpc('lock', { id })).note);
+export const unlockNote = async (id: string, pin: string) => toNote((await lockRpc('unlock', { id, pin })).note);
 
 // ── File ghi âm ──
 

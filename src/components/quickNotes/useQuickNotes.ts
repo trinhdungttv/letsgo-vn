@@ -1,7 +1,7 @@
 // Kho ghi chú nhanh của người đang đăng nhập: tải từ DB, sửa tại chỗ rồi TỰ LƯU (chờ 0,7 giây sau lần gõ cuối),
 // tải lại khi quay về tab (điện thoại ↔ máy tính dùng chung). Ghi chú mới chỉ lên DB khi đã có chữ / đổi gì đó.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { deleteNote, errText, listNotes, QuickNotesError, saveNote } from '../../lib/quickNotes/api';
+import { deleteNote, errText, listNotes, LockError, QuickNotesError, saveNote } from '../../lib/quickNotes/api';
 import { nextColor, titleOf } from '../../lib/quickNotes/noteText';
 import type { QuickNote, SaveState } from '../../lib/quickNotes/types';
 
@@ -24,7 +24,8 @@ export interface QuickNotesStore {
   update: (id: string, patch: Partial<QuickNote>) => void;
   /** Lưu ngay (không chờ) — dùng trước khi gắn bản ghi âm. */
   flush: (id: string) => Promise<void>;
-  remove: (id: string) => Promise<void>;
+  /** Xoá mềm; mục đang khoá chống xoá phải kèm mã 4 số (sai → LockError). */
+  remove: (id: string, pin?: string) => Promise<void>;
   /** Ghi chú mới mở ra rồi đóng mà chưa gõ gì → bỏ luôn, không tạo dòng rỗng trong DB. */
   discardIfEmpty: (id: string) => void;
   /** Nhận bản mới từ server (sau khi thêm / đổi tên / xoá bản ghi âm, khôi phục…). */
@@ -123,6 +124,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
       recordings: [],
       mindmap: init.mindmap ?? null,
       view_mode: init.view_mode ?? 'text',
+      locked_at: null,
     };
     localOnly.current.add(note.id);
     commit([...notesRef.current, note]);
@@ -149,20 +151,22 @@ export function useQuickNotes(userId: string): QuickNotesStore {
     if (n.body.trim() === '' && n.recordings.length === 0 && !n.mindmap) dropLocal(id);
   }, [dropLocal]);
 
-  const remove = useCallback(async (id: string) => {
+  const remove = useCallback(async (id: string, pin?: string) => {
+    // Chặn cả ở máy: mục đang khoá không bao giờ gọi xoá khi chưa có mã (server cũng chặn lần nữa)
+    if (notesRef.current.find(n => n.id === id)?.locked_at && !pin) throw new LockError({ reason: 'note_locked' });
     if (localOnly.current.has(id) && !inflight.current.has(id)) { dropLocal(id); return; }
-    await deleteNote(id);
+    await deleteNote(id, pin);
     if (alive.current) dropLocal(id);
   }, [dropLocal]);
 
   const replace = useCallback((note: QuickNote) => {
     localOnly.current.delete(note.id);
     const exists = notesRef.current.some(n => n.id === note.id);
-    // Đang có chữ chưa lưu → giữ chữ trên máy, chỉ nhận danh sách ghi âm + mốc thời gian
+    // Đang có chữ chưa lưu → giữ chữ trên máy, chỉ nhận danh sách ghi âm + mốc thời gian + trạng thái khoá
     const busy = ['dirty', 'saving', 'error'].includes(stateRef.current[note.id] ?? '');
     commit(exists
       ? notesRef.current.map(n => (n.id !== note.id ? n
-        : busy ? { ...n, recordings: note.recordings, updated_at: note.updated_at } : note))
+        : busy ? { ...n, recordings: note.recordings, updated_at: note.updated_at, locked_at: note.locked_at } : note))
       : [...notesRef.current, note]);
   }, [commit]);
 
@@ -173,7 +177,8 @@ export function useQuickNotes(userId: string): QuickNotesStore {
       if (!alive.current) return;
       const local = new Map(notesRef.current.map(n => [n.id, n]));
       const busy = (id: string) => localOnly.current.has(id) || ['dirty', 'saving', 'error'].includes(stateRef.current[id] ?? '');
-      const merged = server.map(s => (busy(s.id) && local.has(s.id) ? local.get(s.id)! : s));
+      // Đang sửa dở thì giữ bản trên máy, nhưng trạng thái khoá luôn theo server (khoá / mở ở máy khác)
+      const merged = server.map(s => (busy(s.id) && local.has(s.id) ? { ...local.get(s.id)!, locked_at: s.locked_at } : s));
       const seen = new Set(server.map(s => s.id));
       // Ghi chú mới chưa lên DB (hoặc đang lưu dở) vẫn giữ; ghi chú đã xoá ở máy khác thì bỏ
       for (const n of notesRef.current) if (!seen.has(n.id) && busy(n.id)) merged.push(n);

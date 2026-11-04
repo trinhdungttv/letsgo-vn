@@ -1,8 +1,9 @@
 // Port từ PRM Tony Study (src/lib/prm/occasions.test.mjs) + phần sinh nhật trong hồ sơ của LetsGo.
 import { describe, expect, it } from 'vitest';
 import {
-  blankDraft, buildOccasionAlerts, draftError, draftTitle, fitsProfileBirthday, isEmptyPlan, maxDay,
-  nextOccurrenceInfo, planOccasionSave, profileBirthdayId, pruneSeenKeys, type OccasionDraft,
+  blankDraft, buildOccasionAlerts, draftError, draftFromOccasion, draftTitle, fitsProfileBirthday, isEmptyPlan,
+  isSelfBirthday, maxDay, nextOccurrenceInfo, occasionRowsError, planOccasionSave, profileBirthdayId, pruneSeenKeys,
+  type OccasionDraft,
 } from './occasions';
 import type { CskhOccasion } from './types';
 
@@ -35,11 +36,37 @@ describe('kiểm tra 1 dòng ngày quan trọng', () => {
     expect(draftTitle({ title: ' Kỷ niệm  ngày cưới ', occasionType: 'anniversary' })).toBe('Kỷ niệm ngày cưới');
   });
 
-  it('sinh nhật lưu vào hồ sơ: tên mặc định, dương lịch, có năm', () => {
+  it('sinh nhật lưu vào hồ sơ: của chính người này, dương lịch — năm không bắt buộc (04/11)', () => {
     expect(fitsProfileBirthday(draft({ day: 5, month: 3, year: 1990 }))).toBe(true);
-    expect(fitsProfileBirthday(draft({ day: 5, month: 3, year: null }))).toBe(false);
+    expect(fitsProfileBirthday(draft({ day: 5, month: 3, year: null }))).toBe(true);
     expect(fitsProfileBirthday(draft({ day: 5, month: 3, year: 1990, isLunar: true }))).toBe(false);
     expect(fitsProfileBirthday(draft({ day: 5, month: 3, year: 2019, title: 'Sinh nhật con gái' }))).toBe(false);
+    // Chọn rõ "Người thân" thì dù tên "Sinh nhật" cũng không vào hồ sơ; chọn "Chính người này" thì tên bị bỏ qua
+    expect(fitsProfileBirthday(draft({ day: 5, month: 3, forSelf: false, title: 'Sinh nhật vợ' }))).toBe(false);
+    expect(fitsProfileBirthday(draft({ day: 5, month: 3, forSelf: true, title: 'Sinh nhật con' }))).toBe(true);
+    expect(draftTitle(draft({ forSelf: true, title: 'Sinh nhật con' }))).toBe('Sinh nhật');
+  });
+
+  it('chính người này / người thân: đoán từ dữ liệu cũ + bắt ghi rõ của ai', () => {
+    expect(isSelfBirthday(draftFromOccasion(occ()))).toBe(true);
+    expect(isSelfBirthday(draftFromOccasion(occ({ title: 'SN' })))).toBe(true);
+    expect(isSelfBirthday(draftFromOccasion(occ({ title: 'Sinh nhật con gái' })))).toBe(false);
+    expect(isSelfBirthday(draftFromOccasion(occ({ relatedPerson: 'vợ' })))).toBe(false);
+    expect(isSelfBirthday(draftFromOccasion(occ({ id: profileBirthdayId('c1'), source: 'birthday' })))).toBe(true);
+    expect(isSelfBirthday(draft({ occasionType: 'anniversary' }))).toBe(false);
+    expect(draftError(draft({ day: 1, month: 6, forSelf: false }), 2026)).toMatch(/ghi rõ của ai/);
+    expect(draftError(draft({ day: 1, month: 6, forSelf: false, title: 'Sinh nhật con gái' }), 2026)).toBeNull();
+    // Dòng từ tab Sự kiện có ghi người thân → tên "Sinh nhật" vẫn hợp lệ
+    expect(draftError(draft({ day: 1, month: 6, forSelf: false, relatedPerson: 'con gái' }), 2026)).toBeNull();
+    expect(draftError(draft({ day: 1, month: 6, year: 2027 }), 2026)).toMatch(/năm sinh 2027 chưa tới/);
+  });
+
+  it('không cho thêm dòng MỚI trùng sinh nhật chính người này; dòng cũ không bị chặn', () => {
+    const bd = draftFromOccasion(occ({ id: profileBirthdayId('c1'), source: 'birthday' }));
+    expect(occasionRowsError([bd, draft({ day: 2, month: 2 })], 2026)).toMatch(/Đã có sinh nhật của chính người này/);
+    expect(occasionRowsError([bd, draft({ day: 2, month: 2, forSelf: false, title: 'Sinh nhật vợ' })], 2026)).toBeNull();
+    expect(occasionRowsError([bd, draftFromOccasion(occ({ id: 'o9' }))], 2026)).toBeNull();
+    expect(occasionRowsError([bd, draft({ day: 2, month: 2, isLunar: true })], 2026)).toBeNull(); // âm lịch = ngày riêng
   });
 });
 
@@ -86,6 +113,39 @@ describe('kế hoạch lưu', () => {
     const plan = planOccasionSave([bd], [{ ...blankDraft(), id: bd.id, day: 15, month: 8, year: 1990, isLunar: true }]);
     expect(plan.birthday).toBeNull();
     expect(plan.inserts).toEqual([{ occasionType: 'birthday', title: 'Sinh nhật', day: 15, month: 8, year: 1990, isLunar: true, remindDaysBefore: 3 }]);
+  });
+
+  it('ngày sinh không rõ năm: lưu năm giữ chỗ 1604, đọc lại không đổi gì', () => {
+    const plan = planOccasionSave([], [draft({ day: 15, month: 3 })]);
+    expect(plan.birthday).toBe('1604-03-15');
+    expect(plan.inserts).toEqual([]);
+    const bd = occ({ id: profileBirthdayId('c1'), source: 'birthday', day: 15, month: 3, year: null });
+    expect(isEmptyPlan(planOccasionSave([bd], [draftFromOccasion(bd)]))).toBe(true);
+    expect(planOccasionSave([bd], [{ ...draftFromOccasion(bd), year: 1985 }]).birthday).toBe('1985-03-15');
+    expect(planOccasionSave([bd], [{ ...draftFromOccasion(bd), year: null, day: 16 }]).birthday).toBe('1604-03-16');
+  });
+
+  it('dòng cũ "Sinh nhật" (sự kiện riêng) chỉ vào hồ sơ khi người dùng bấm chuyển', () => {
+    const old = occ({ id: 'o5', year: null, day: 9, month: 9 });
+    expect(isEmptyPlan(planOccasionSave([old], [draftFromOccasion(old)]))).toBe(true);
+    const moved = planOccasionSave([old], [{ ...draftFromOccasion(old), toProfile: true }]);
+    expect(moved.birthday).toBe('1604-09-09');
+    expect(moved.deletes).toEqual(['o5']); // xoá mềm, khôi phục được
+    expect(moved.inserts).toEqual([]);
+  });
+
+  it('đổi dòng người thân sang "chính người này" (âm lịch, giữ riêng) → bỏ tên người thân', () => {
+    const rel = occ({ id: 'o6', relatedPerson: 'mẹ', isLunar: true, year: null });
+    const plan = planOccasionSave([rel], [{ ...draftFromOccasion(rel), forSelf: true }]);
+    expect(plan.birthday).toBeUndefined();
+    expect(plan.updates).toEqual([{ id: 'o6', fields: expect.objectContaining({ relatedPerson: '', title: 'Sinh nhật' }), resetReminded: false }]);
+  });
+
+  it('sinh nhật hồ sơ đổi sang người thân → thành sự kiện riêng, xoá contacts.birthday', () => {
+    const bd = occ({ id: profileBirthdayId('c1'), source: 'birthday' });
+    const plan = planOccasionSave([bd], [{ ...draftFromOccasion(bd), forSelf: false, title: 'Sinh nhật vợ' }]);
+    expect(plan.birthday).toBeNull();
+    expect(plan.inserts.map(i => i.title)).toEqual(['Sinh nhật vợ']);
   });
 
   it('chưa có ngày sinh: dòng "Sinh nhật" mới có năm lấp vào hồ sơ; dòng sinh nhật con là sự kiện riêng', () => {

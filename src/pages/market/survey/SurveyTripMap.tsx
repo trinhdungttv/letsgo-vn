@@ -48,6 +48,8 @@ export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, 
   useEffect(() => {
     const map = mapRef.current, ly = layerRef.current;
     if (!map || !ly) return;
+    // Khung có thể vừa đổi cỡ (phóng bản đồ kín màn hình) → đo lại trước khi canh vùng
+    map.invalidateSize({ pan: false });
     ly.tracks.clearLayers();
     ly.marks.clearLayers();
     const bounds = L.latLngBounds([]);

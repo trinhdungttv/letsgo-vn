@@ -29,9 +29,12 @@ interface Props {
   onChanged: () => void;
   onClose: () => void;
   say: (msg: string) => void;
+  /** Sao công ty (cần chú trọng) của ảnh — dùng chung với bản đồ khảo sát */
+  starOf?: (p: SurveyPhoto) => boolean;
+  onStar?: (p: SurveyPhoto) => void;
 }
 
-export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, photoFilter, activeTripId, onShowTrip, onShowPhoto, onChanged, onClose, say }: Props) {
+export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, photoFilter, activeTripId, onShowTrip, onShowPhoto, onChanged, onClose, say, starOf, onStar }: Props) {
   const [tab, setTab] = useState<'trips' | 'photos'>(initialTab);
   const [zoneFilter, setZoneFilter] = useState<string>(defaultZoneId ?? 'all');
   const [filter, setFilter] = useState<PhotoFilter | null>(photoFilter);
@@ -122,10 +125,10 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
   };
 
   const deleteTrip = async (t: SurveyTrip) => {
-    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến sẽ ẩn khỏi danh sách và bản đồ (không còn tính là đường đã đi). Vết GPS và ảnh chỉ tiêu vẫn được giữ trong cơ sở dữ liệu.`)) return;
+    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến chuyển vào Lưu trữ 30 ngày (tab Khảo sát KCN → Lưu trữ, khôi phục được), không còn tính là đường đã đi. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`)) return;
     try {
       await softDeleteTrip(t.id);
-      say('Đã xoá chuyến');
+      say('Đã chuyển chuyến vào Lưu trữ (30 ngày)');
       await load();
       onChanged();
     } catch (e) { say((e as Error).message); }
@@ -253,7 +256,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
                 <button key={p.id} onClick={() => setViewer(p)} className="relative aspect-square rounded-lg overflow-hidden bg-[#E5E5EA] text-left">
                   <PhotoThumb photo={p} />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
-                    <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
+                    <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{starOf?.(p) ? '★ ' : ''}{p.company_name || 'Chưa rõ công ty'}</div>
                     <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}</div>
                   </div>
                 </button>
@@ -264,6 +267,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
 
       {viewer && (
         <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
+          starred={starOf?.(viewer)} onStar={onStar}
           onShowOnMap={() => { onShowPhoto(viewer); setViewer(null); }}
           onSaved={p => { setPhotos(list => list.map(x => x.id === p.id ? p : x)); setViewer(p); onChanged(); }}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); onChanged(); }} />

@@ -1,13 +1,14 @@
 // Khung soạn 1 ghi chú (kiểu MFinder): tiêu đề = dòng đầu, checklist ☐, cỡ chữ A / A, ghim, kiểu chữ Aa, tìm trong
-// ghi chú, ghi âm, 8 màu, Lưu trữ / Xoá / Đóng, tự lưu ("Đã lưu").
+// ghi chú, ghi âm, 8 màu, Lưu trữ / Khoá chống xoá / Xoá / Đóng, tự lưu ("Đã lưu"). Mục đang khoá: có ổ khoá cạnh tiêu đề,
+// bấm Xoá thì phải nhập mã 4 số (PinDialog).
 // 3 kiểu: 'card' = thẻ nổi cạnh dải (máy tính), 'pane' = khung phải của cửa sổ danh sách, 'sheet' = toàn màn (điện thoại).
 // 2 loại mục, cố định từ lúc tạo: Ghi chú văn bản / Sơ đồ tư duy kiểu XMind (mindmap/MindMapEditor — tải riêng khi mở).
 // Từ ghi chú có thể tạo 1 sơ đồ MỚI (ghi chú giữ nguyên); từ sơ đồ có thể tạo 1 ghi chú MỚI chứa dàn ý.
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import {
-  AlertCircle, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2,
-  Maximize2, Mic, Minimize2, Network, Pause, Pin, Play, RotateCcw, Search, Square, Trash2, X,
+  AlertCircle, Archive, ArchiveRestore, ChevronDown, ChevronLeft, ChevronUp, Flag, List, ListChecks, Loader2, Lock,
+  Maximize2, Mic, Minimize2, Network, Pause, Pin, Play, RotateCcw, Search, Square, Trash2, Unlock, X,
 } from 'lucide-react';
 import { FONT_FAMILY, FONT_LABEL, FONT_SIZES, PALETTE, stepFontSize } from '../../lib/quickNotes/colors';
 import {
@@ -49,6 +50,8 @@ export interface NoteEditorProps {
   onSplitLegacy?: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  /** Khoá / mở khoá chống xoá (mở khoá cần mã 4 số) */
+  onToggleLock?: () => void;
   onRestore?: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
@@ -128,6 +131,7 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   const title = displayTitle(note);
   const archived = !!note.archived_at;
+  const locked = !!note.locked_at;
   const isMap = isMindmap(note);
   const big = variant === 'sheet';
   const recHere = recorder.active && recorder.noteId === note.id;
@@ -338,12 +342,14 @@ export default function NoteEditor(props: NoteEditorProps) {
               <ChevronLeft size={22} /> {isMap ? 'Sơ đồ' : 'Ghi chú'}
             </button>
             <span className="flex-1" />
+            {locked && <span className="inline-flex items-center gap-1 text-[12px] opacity-60"><Lock size={12} /> Đã khoá</span>}
             {saveBadge}
           </div>
           {tools && <div className="flex items-center justify-between gap-1 px-2 h-11 shrink-0 border-b border-black/[0.06]" style={{ background: pal.header }}>{tools}</div>}
         </>
       ) : (
         <div className="flex items-center gap-1 pl-4 pr-2 h-12 shrink-0 border-b border-black/[0.05]" style={{ background: pal.header }}>
+          {locked && <span title="Đang khoá chống xoá" className="shrink-0 mr-1 opacity-60"><Lock size={13} /></span>}
           <div className="flex-1 min-w-0 truncate text-[15px] font-semibold" title={title}>{title}</div>
           {saveBadge}
           <div className="flex items-center gap-0.5 ml-1">{tools || (readOnly && expandBtn)}</div>
@@ -492,7 +498,15 @@ export default function NoteEditor(props: NoteEditorProps) {
               {archived ? <ArchiveRestore size={14} /> : <Archive size={14} className="md:hidden" />}
               <span className={archived ? '' : 'hidden md:inline'}>{archived ? 'Bỏ lưu trữ' : 'Lưu trữ'}</span>
             </button>
-            <button type="button" onClick={props.onDelete} title="Xoá ghi chú" aria-label="Xoá ghi chú"
+            {props.onToggleLock && (
+              <button type="button" onClick={props.onToggleLock} aria-label={locked ? 'Mở khoá chống xoá' : 'Khoá chống xoá'}
+                title={locked ? 'Đang khoá chống xoá — bấm để mở khoá (cần mã 4 số)' : 'Khoá chống xoá: muốn xoá phải nhập mã 4 số'}
+                className={`shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-lg ${locked ? 'bg-black/[0.08]' : 'hover:bg-black/[0.06]'}`}>
+                {locked ? <Lock size={15} /> : <Unlock size={15} className="opacity-70" />}
+              </button>
+            )}
+            <button type="button" onClick={props.onDelete} aria-label={isMap ? 'Xoá sơ đồ tư duy' : 'Xoá ghi chú'}
+              title={locked ? 'Đang khoá chống xoá — cần nhập mã 4 số để xoá' : isMap ? 'Xoá sơ đồ tư duy' : 'Xoá ghi chú'}
               disabled={recHere}
               className="shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-lg hover:bg-[#FF3B30]/10 hover:text-[#D70015] disabled:opacity-30">
               <Trash2 size={15} />
@@ -517,6 +531,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <span className="qn-vertical max-h-full text-[11px] font-bold uppercase tracking-[0.08em] opacity-70">{title}</span>
           </div>
+          {locked && <span title="Đang khoá chống xoá" className="shrink-0 opacity-70"><Lock size={13} /></span>}
         </div>
         {main}
       </div>

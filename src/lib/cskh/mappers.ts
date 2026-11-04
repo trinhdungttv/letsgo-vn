@@ -9,6 +9,7 @@
 //   • contacts.birthday → một sự kiện "Sinh nhật" ảo (sửa ở form người liên hệ)
 // ============================================================================
 import type { ClientGift, Contact, CSKHLog } from '../types';
+import { parseBirthday } from '../birthday';
 import { splitPhones } from './contactActions';
 import { cleanEducation } from './education';
 import { DEFAULT_REMIND_DAYS } from './occasions';
@@ -281,19 +282,21 @@ export function mapSpecialDateRow(row: SpecialDateRow): CskhOccasion | null {
 /** Id của sự kiện "Sinh nhật" ảo dựng từ contacts.birthday. */
 export const birthdayOccasionId = (contactId: string) => `birthday:${contactId}`;
 
-/** contacts.birthday → sự kiện "Sinh nhật" (dương lịch). Không có ngày sinh → null. */
+/**
+ * contacts.birthday → sự kiện "Sinh nhật" (dương lịch) của chính người này. Không có ngày sinh
+ * → null. Không rõ năm (lưu năm giữ chỗ 1604 — lib/birthday) → year = null, không tính tuổi.
+ */
 export function birthdayOccasion(contact: Pick<CskhContact, 'id' | 'birthday' | 'birthdayRemindDays'>): CskhOccasion | null {
-  const b = contact.birthday;
-  if (!b || !/^\d{4}-\d{2}-\d{2}/.test(b)) return null;
-  const year = Number(b.slice(0, 4));
+  const b = parseBirthday(contact.birthday);
+  if (!b) return null;
   return {
     id: birthdayOccasionId(contact.id),
     contactId: contact.id,
     title: 'Sinh nhật',
     occasionType: 'birthday',
-    day: Number(b.slice(8, 10)),
-    month: Number(b.slice(5, 7)),
-    year: year >= 1900 && year <= 2100 ? year : null,
+    day: b.day,
+    month: b.month,
+    year: b.year,
     isLunar: false,
     relatedPerson: '',
     remindDaysBefore: contact.birthdayRemindDays ?? DEFAULT_REMIND_DAYS,

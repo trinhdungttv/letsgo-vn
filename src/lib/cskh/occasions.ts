@@ -3,14 +3,17 @@
 // ----------------------------------------------------------------------------
 // Mỗi người: nhiều dòng (loại · tên · ngày/tháng/năm? · âm lịch · nhắc trước N ngày).
 // Nguồn lưu của LetsGo:
-//   • Sinh nhật của CHÍNH người liên hệ, dương lịch, biết năm → contacts.birthday (dùng chung
-//     với hồ sơ Khách hàng) + contacts.birthday_remind_days (migration 174).
-//   • Mọi dòng khác (âm lịch, không rõ năm, của người thân, kỷ niệm, giỗ…) → contact_special_dates.
+//   • Sinh nhật của CHÍNH người liên hệ, dương lịch (có hoặc không rõ năm — 04/11/2026) →
+//     contacts.birthday (dùng chung với form đầy đủ / hồ sơ Khách hàng) + contacts.birthday_remind_days
+//     (migration 174). Không rõ năm lưu năm giữ chỗ 1604 (lib/birthday).
+//   • Mọi dòng khác (âm lịch, của người thân, kỷ niệm, giỗ…) → contact_special_dates.
+// Dòng loại "Sinh nhật" có lựa chọn rõ: "Của chính người này" / "Người thân" (forSelf).
 // Nhắc khi mở app (popup chúc mừng): lần mở app ĐẦU TIÊN trong 2 ngày trước rồi nhắc LẠI
 // ĐÚNG NGÀY — mỗi mốc chỉ hiện 1 lần (khoá `id:ngàyLầnTới:stage`). "Nhắc trước N ngày" của
 // từng sự kiện vẫn quyết định việc "Chuẩn bị quà" ở Workspace; popup lấy min(N, 2) — N = 0
 // thì chỉ báo đúng ngày. Hàm thuần, có test.
 // ============================================================================
+import { birthdayValue } from '../birthday';
 import { isValidDayMonth } from './dates';
 import { GREETING_POPUP_DAYS } from './companyDates';
 import { diffDays, nextOccurrenceIso } from './lunar';
@@ -37,6 +40,29 @@ export interface OccasionDraft {
   year: number | null;
   isLunar: boolean;
   remindDaysBefore: number;
+  /**
+   * Chỉ với loại "Sinh nhật": true = sinh nhật của CHÍNH người liên hệ, false = của người thân.
+   * undefined = đoán theo tên (looksLikeSelfBirthday).
+   */
+  forSelf?: boolean;
+  /** Dòng sự kiện riêng (cũ) người dùng bấm "Dùng làm ngày sinh trong hồ sơ" → chuyển vào contacts.birthday. */
+  toProfile?: boolean;
+  /** "của con gái"… (cột related_person — chỉ đọc ở form hồ sơ, sửa ở tab Sự kiện & Quà tặng). */
+  relatedPerson?: string;
+}
+
+/** Tên coi là sinh nhật của chính người này (không ghi của ai). */
+const SELF_BIRTHDAY_TITLES = new Set(['', 'sinh nhật', 'sinh nhat', 'sn', 'ngày sinh', 'ngay sinh']);
+
+/** Sự kiện "Sinh nhật" không ghi người thân và tên chỉ là "Sinh nhật" → của chính người liên hệ. */
+export function looksLikeSelfBirthday(o: { occasionType: OccasionType; title: string; relatedPerson?: string }): boolean {
+  return o.occasionType === 'birthday' && !(o.relatedPerson ?? '').trim()
+    && SELF_BIRTHDAY_TITLES.has(o.title.replace(/\s+/g, ' ').trim().toLowerCase());
+}
+
+/** Dòng này là sinh nhật của CHÍNH người liên hệ (theo lựa chọn, chưa chọn thì đoán theo tên). */
+export function isSelfBirthday(d: Pick<OccasionDraft, 'occasionType' | 'title' | 'forSelf' | 'relatedPerson'>): boolean {
+  return d.occasionType === 'birthday' && (d.forSelf ?? looksLikeSelfBirthday(d));
 }
 
 export function draftFromOccasion(o: CskhOccasion): OccasionDraft {
@@ -49,6 +75,8 @@ export function draftFromOccasion(o: CskhOccasion): OccasionDraft {
     year: o.year,
     isLunar: o.isLunar,
     remindDaysBefore: o.remindDaysBefore,
+    ...(o.occasionType === 'birthday' ? { forSelf: o.source === 'birthday' || looksLikeSelfBirthday(o) } : {}),
+    relatedPerson: o.relatedPerson,
   };
 }
 
@@ -61,8 +89,9 @@ export function isBlankDraft(d: Pick<OccasionDraft, 'day' | 'month'>): boolean {
   return d.day === null && d.month === null;
 }
 
-/** Tên lưu vào DB: bỏ trống thì lấy tên loại ("Sinh nhật", "Kỷ niệm"…). */
-export function draftTitle(d: Pick<OccasionDraft, 'title' | 'occasionType'>): string {
+/** Tên lưu vào DB: bỏ trống thì lấy tên loại ("Sinh nhật", "Kỷ niệm"…); sinh nhật chính người này luôn "Sinh nhật". */
+export function draftTitle(d: Pick<OccasionDraft, 'title' | 'occasionType'> & Partial<Pick<OccasionDraft, 'forSelf' | 'relatedPerson'>>): string {
+  if (d.occasionType === 'birthday' && d.forSelf === true) return OCCASION_LABEL.birthday;
   return d.title.replace(/\s+/g, ' ').trim().slice(0, 120) || OCCASION_LABEL[d.occasionType];
 }
 
@@ -85,6 +114,12 @@ export function draftError(d: OccasionDraft, currentYear: number): string | null
   if (d.year !== null && (!Number.isInteger(d.year) || d.year < 1900 || d.year > currentYear + 50)) {
     return `${name}: năm không hợp lệ`;
   }
+  const self = isSelfBirthday(d);
+  if (self && d.year !== null && d.year > currentYear) return `${name}: năm sinh ${d.year} chưa tới`;
+  // Sinh nhật người thân phải ghi rõ của ai — không thì lưu xong trông y như sinh nhật chính người này
+  if (d.occasionType === 'birthday' && !self && !(d.relatedPerson ?? '').trim() && looksLikeSelfBirthday({ ...d, relatedPerson: '' })) {
+    return 'Sinh nhật người thân: ghi rõ của ai (VD: Sinh nhật con gái)';
+  }
   // 29/2 chỉ có ở năm nhuận khi đã biết năm
   if (!d.isLunar && d.year !== null && !isValidDayMonth(d.day, d.month, d.year)) {
     return `${name}: năm ${d.year} không có ngày ${d.day}/${d.month}`;
@@ -97,17 +132,41 @@ export const profileBirthdayId = (contactId: string) => `birthday:${contactId}`;
 export const isProfileBirthdayId = (id: string | undefined): boolean => !!id && id.startsWith('birthday:');
 
 /**
- * Dòng này lưu được vào contacts.birthday không: sinh nhật của chính người liên hệ (tên mặc
- * định "Sinh nhật"), dương lịch, đủ ngày/tháng/năm.
+ * Dòng này lưu được vào contacts.birthday không: sinh nhật của CHÍNH người liên hệ, dương lịch,
+ * đủ ngày/tháng — năm không bắt buộc (không rõ năm lưu năm giữ chỗ, xem lib/birthday).
  */
 export function fitsProfileBirthday(d: OccasionDraft): boolean {
-  return d.occasionType === 'birthday' && !d.isLunar && d.day !== null && d.month !== null && d.year !== null
-    && draftTitle(d) === OCCASION_LABEL.birthday;
+  return isSelfBirthday(d) && !d.isLunar && d.day !== null && d.month !== null;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
+/**
+ * Dòng nào sẽ là ngày sinh trong hồ sơ (contacts.birthday): dòng đang là ngày sinh hồ sơ nếu
+ * vẫn hợp lệ; nếu không, dòng MỚI đầu tiên hợp lệ, hoặc dòng cũ người dùng bấm "Dùng làm ngày
+ * sinh trong hồ sơ" (toProfile). Sự kiện riêng cũ KHÔNG tự chuyển khi người dùng không bấm.
+ */
+export function pickProfileBirthday<T extends OccasionDraft>(drafts: readonly T[]): T | null {
+  const filled = drafts.filter(d => !isBlankDraft(d));
+  return filled.find(d => isProfileBirthdayId(d.id) && fitsProfileBirthday(d))
+    ?? filled.find(d => fitsProfileBirthday(d) && (!d.id || (d.toProfile === true && !isProfileBirthdayId(d.id))))
+    ?? null;
+}
 
-export type OccasionFields = Pick<CskhOccasion, 'occasionType' | 'title' | 'day' | 'month' | 'year' | 'isLunar' | 'remindDaysBefore'>;
+/**
+ * Lỗi của cả danh sách: lỗi từng dòng + dòng MỚI "Sinh nhật của chính người này" (dương lịch)
+ * trùng với ngày sinh hồ sơ đã có ở dòng khác. Dòng cũ không bao giờ bị chặn ở đây.
+ */
+export function occasionRowsError(drafts: readonly OccasionDraft[], currentYear: number): string | null {
+  const own = drafts.map(d => draftError(d, currentYear)).find(Boolean);
+  if (own) return own;
+  const profile = pickProfileBirthday(drafts);
+  const dup = profile && drafts.find(d => d !== profile && !d.id && !isBlankDraft(d) && fitsProfileBirthday(d));
+  return dup ? 'Đã có sinh nhật của chính người này ở dòng khác — dòng mới chọn "Người thân" hoặc bỏ đi' : null;
+}
+
+
+export type OccasionFields = Pick<CskhOccasion, 'occasionType' | 'title' | 'day' | 'month' | 'year' | 'isLunar' | 'remindDaysBefore'>
+  /** Chỉ gửi khi cần đổi: dòng chuyển thành "của chính người này" → '' (bỏ người thân cũ). */
+  & { relatedPerson?: string };
 
 export interface OccasionWritePlan {
   inserts: OccasionFields[];
@@ -121,7 +180,7 @@ export interface OccasionWritePlan {
   birthdayRemindDays?: number;
 }
 
-function fieldsOf(d: OccasionDraft): OccasionFields {
+function fieldsOf(d: OccasionDraft, old?: Pick<CskhOccasion, 'relatedPerson'>): OccasionFields {
   return {
     occasionType: d.occasionType,
     title: draftTitle(d),
@@ -130,21 +189,26 @@ function fieldsOf(d: OccasionDraft): OccasionFields {
     year: d.year,
     isLunar: d.isLunar,
     remindDaysBefore: d.remindDaysBefore,
+    // Đổi sang "của chính người này" → xoá tên người thân cũ (không thì lần sau vẫn đọc ra là người thân)
+    ...(d.forSelf === true && old && old.relatedPerson.trim() !== '' ? { relatedPerson: '' } : {}),
   };
 }
 
-function sameFields(a: OccasionFields, b: OccasionFields): boolean {
+function sameFields(a: OccasionFields, b: OccasionFields & Pick<CskhOccasion, 'relatedPerson'>): boolean {
   return a.occasionType === b.occasionType && a.title === b.title && a.day === b.day && a.month === b.month
-    && a.year === b.year && a.isLunar === b.isLunar && a.remindDaysBefore === b.remindDaysBefore;
+    && a.year === b.year && a.isLunar === b.isLunar && a.remindDaysBefore === b.remindDaysBefore
+    && (a.relatedPerson === undefined || a.relatedPerson === b.relatedPerson);
 }
 
 /**
  * Đối chiếu ngày đang có với form. `existing` = sự kiện CÒN DÙNG của người này (kể cả
  * sinh nhật ảo dựng từ contacts.birthday). Chỉ đụng các cột form quản lý (giữ nguyên người
  * thân, ghi chú, last_reminded_year nếu ngày không đổi).
- *   • Sinh nhật trong hồ sơ: dòng giữ id `birthday:` mà vẫn hợp lệ → contacts.birthday; nếu
- *     chưa có thì dòng MỚI đầu tiên hợp lệ (tên "Sinh nhật", dương lịch, có năm) lấp vào.
- *     Dòng sinh nhật hồ sơ đổi sang âm lịch / bỏ năm / đổi tên → thành sự kiện riêng.
+ *   • Sinh nhật trong hồ sơ (pickProfileBirthday): dòng giữ id `birthday:` mà vẫn là sinh nhật
+ *     chính người này, dương lịch → contacts.birthday (có hoặc không rõ năm); nếu chưa có thì
+ *     dòng MỚI đầu tiên hợp lệ lấp vào, hoặc dòng cũ người dùng bấm "Dùng làm ngày sinh trong
+ *     hồ sơ" (dòng đó xoá mềm khỏi contact_special_dates — khôi phục được).
+ *     Dòng sinh nhật hồ sơ đổi sang âm lịch / người thân → thành sự kiện riêng.
  *   • Còn lại: dòng bị bỏ → xoá mềm, dòng đổi → sửa, dòng mới → thêm.
  */
 export function planOccasionSave(
@@ -156,9 +220,7 @@ export function planOccasionSave(
   const specials = existing.filter(o => o.source === 'special_date');
   const byId = new Map(specials.map(o => [o.id, o]));
 
-  const profileDraft = filled.find(d => isProfileBirthdayId(d.id) && fitsProfileBirthday(d))
-    ?? filled.find(d => !d.id && fitsProfileBirthday(d))
-    ?? null;
+  const profileDraft = pickProfileBirthday(filled);
   const rest = filled.filter(d => d !== profileDraft);
   const kept = new Set(rest.filter(d => d.id && byId.has(d.id)).map(d => d.id as string));
 
@@ -168,8 +230,10 @@ export function planOccasionSave(
     deletes: specials.filter(o => !kept.has(o.id)).map(o => o.id),
   };
 
-  const iso = profileDraft ? `${profileDraft.year}-${pad2(profileDraft.month as number)}-${pad2(profileDraft.day as number)}` : null;
-  const currentIso = profile ? `${profile.year}-${pad2(profile.month)}-${pad2(profile.day)}` : null;
+  const iso = profileDraft
+    ? birthdayValue({ day: profileDraft.day as number, month: profileDraft.month as number, year: profileDraft.year })
+    : null;
+  const currentIso = profile ? birthdayValue(profile) : null;
   if (iso !== currentIso) plan.birthday = iso;
   if (profileDraft && profileDraft.remindDaysBefore !== (profile?.remindDaysBefore ?? DEFAULT_REMIND_DAYS)) {
     plan.birthdayRemindDays = profileDraft.remindDaysBefore;
@@ -177,7 +241,7 @@ export function planOccasionSave(
 
   for (const d of rest) {
     const old = d.id ? byId.get(d.id) : undefined;
-    const fields = fieldsOf(d);
+    const fields = fieldsOf(d, old);
     if (!old) {
       plan.inserts.push(fields);
       continue;

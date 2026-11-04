@@ -7,6 +7,7 @@ import { AlertTriangle, X } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { saveContact, emptyContactForm, contactToForm, findPhoneDuplicates } from '../../lib/contactOps';
 import { contactMissingInfo } from '../../lib/contactCompleteness';
+import BirthdayInput from './BirthdayInput';
 import type { Contact } from '../../lib/types';
 
 const INPUT = 'text-[12.5px] px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg outline-none focus:border-blue-500';
@@ -52,8 +53,8 @@ export function QuickContactForm({ contact, clientId, companyName, roleOptions, 
         { user, clientName: id => (id && id === clientId ? companyName ?? null : null) },
       );
       onSaved(saved);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -72,10 +73,12 @@ export function QuickContactForm({ contact, clientId, companyName, roleOptions, 
         <input value={form.role} onChange={set('role')} list={listId} placeholder="Chức vụ (VD: Nhân sự)" className={INPUT} />
         <input value={form.phone} onChange={set('phone')} inputMode="tel" placeholder="Số điện thoại" className={INPUT} />
         <input value={form.email} onChange={set('email')} type="email" placeholder="Email" className={INPUT} />
-        <label className={`${INPUT} flex items-center gap-2 sm:col-span-2 cursor-text`}>
-          <span className="shrink-0 text-[#999]">Ngày sinh</span>
-          <input type="date" value={form.birthday} onChange={set('birthday')} className="flex-1 min-w-0 bg-transparent outline-none" />
-        </label>
+        <div className="sm:col-span-2 flex items-start gap-2">
+          <span className="shrink-0 text-[12.5px] text-[#999] pt-1.5">Ngày sinh</span>
+          <div className="flex-1 min-w-0">
+            <BirthdayInput compact value={form.birthday} onChange={v => setForm(f => ({ ...f, birthday: v }))} className={INPUT} />
+          </div>
+        </div>
       </div>
       <datalist id={listId}>{roleOptions.map(r => <option key={r} value={r} />)}</datalist>
       <div className="text-[10.5px] text-blue-900/60 leading-snug">

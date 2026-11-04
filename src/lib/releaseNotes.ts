@@ -16,6 +16,45 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-contact-birthday-career',
+    date: '2026-11-04',
+    title: 'Người liên hệ',
+    features: [
+      'Ngày sinh chỉ cần ngày + tháng: không rõ năm vẫn lưu và nhắc sinh nhật, chỉ không tính tuổi',
+      'Hồ sơ CSKH: dòng Sinh nhật chọn "Chính người này" (= ô Ngày sinh form đầy đủ) hay "Người thân"',
+      'Nút "Chuyển công ty": khách nghỉ công ty cũ sang công ty mới (có sẵn hoặc tạo mới)',
+      'Quá trình công tác trong hồ sơ: từng làm ở đâu, từ khi nào tới khi nào, chức vụ cũ',
+      'Hồ sơ công ty cũ ghi "đã chuyển sang X"; hạng CSKH, nhật ký, quà, ngày quan trọng giữ nguyên',
+    ],
+  },
+  {
+    id: '2026-11-04-kcn-survey-stars-archive',
+    date: '2026-11-04',
+    title: 'Khảo sát KCN',
+    features: [
+      'Lưu ảnh chỉ tiêu: gắn ★ sao công ty cần chú trọng — hiện trên bản đồ khảo sát, lưới ảnh và PDF',
+      'Tab Chuyến đi gọn: gom theo ngày, mỗi chuyến 1 dòng; nút "Xem n ảnh" mở tab Ảnh lọc sẵn theo chuyến',
+      'Nhớ tab và bộ lọc đang xem — lần sau mở Khảo sát KCN hiện đúng mục lần trước',
+      'Lọc theo tỉnh / thành để so sánh các KCN; tab Theo KCN có cột tỉnh và số công ty gắn sao',
+      'Xuất PDF từng KCN (chữ thật, kèm ảnh bảng tuyển) để đưa Gemini / ChatGPT phân tích lương, tuyển dụng',
+      'PDF riêng từng chuyến khảo sát: mở chuyến ở tab Chuyến đi → "PDF chuyến này"',
+      'Nút Toàn màn hình cho điện thoại + phóng bản đồ kín màn hình',
+      'Xoá chuyến / ảnh / ghi âm → vào Lưu trữ 30 ngày, khôi phục được; quá 30 ngày mới tự xoá hẳn',
+    ],
+  },
+  {
+    id: '2026-11-04-quick-notes-lock',
+    date: '2026-11-04',
+    title: 'Ghi chú nhanh',
+    features: [
+      'Khoá chống xoá: bấm 🔒 trong ghi chú / sơ đồ quan trọng, muốn xoá hay mở khoá phải nhập mã 4 số',
+      'Mục đang khoá có ổ khoá trên dải thẻ, thẻ xem nhanh và danh sách; khoá giữ nguyên khi đổi máy',
+      'Nút 🔑 trong cửa sổ danh sách: đặt / đổi mã; quên mã thì đặt lại bằng mật khẩu đăng nhập',
+      'Tải lại trang hoặc vào lại: mở đúng ghi chú / sơ đồ, khu, nhóm (Tất cả / Lưu trữ / Đã xoá) lần trước',
+      'Sơ đồ tư duy nhớ Sơ đồ / Dàn ý, tab khung bên phải, chỗ đang xem và chủ đề đang chọn',
+    ],
+  },
+  {
     id: '2026-11-04-kcn-survey-smooth-nav',
     date: '2026-11-04',
     title: 'Khảo sát KCN',

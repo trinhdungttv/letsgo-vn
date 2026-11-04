@@ -233,7 +233,7 @@ export interface CskhContact {
   lat: number | null;
   lng: number | null;
   geoSource: GeoSource;
-  /** Ngày sinh dương lịch "YYYY-MM-DD" (cột contacts.birthday). */
+  /** Ngày sinh dương lịch "YYYY-MM-DD" (cột contacts.birthday); năm 1604 = không rõ năm (lib/birthday). */
   birthday: string | null;
   /** Nhắc sinh nhật trong hồ sơ trước N ngày (migration 174); null = mặc định 3. */
   birthdayRemindDays: number | null;

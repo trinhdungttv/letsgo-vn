@@ -1,7 +1,7 @@
 // Xem 1 ảnh chỉ tiêu (dùng ở Lịch sử khảo sát và tab Khảo sát KCN): ảnh + lớp ghi chú vẽ, thông tin bảng tuyển,
 // chỗ chụp, sửa nội dung / vẽ thêm ghi chú lên ảnh / xoá mềm.
 import { useEffect, useState } from 'react';
-import { ExternalLink, MapPin, PenLine, Pencil, Trash2, X } from 'lucide-react';
+import { ExternalLink, MapPin, PenLine, Pencil, Star, Trash2, X } from 'lucide-react';
 import { softDeletePhoto, updatePhoto, type SurveyPhoto } from '../../../lib/kcnSurvey/api';
 import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
 import { MarkedImage, MarksSvg } from './PhotoMarks';
@@ -26,7 +26,7 @@ export function PhotoThumb({ photo, className = '' }: { photo: SurveyPhoto; clas
   );
 }
 
-export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say }: {
+export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say, starred, onStar }: {
   photo: SurveyPhoto;
   onClose: () => void;
   /** null = không có nút "Xem chỗ chụp" (đã có bản đồ ngay cạnh) */
@@ -34,6 +34,9 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
   onSaved: (p: SurveyPhoto) => void;
   onDeleted: (id: string) => void;
   say: (m: string) => void;
+  /** Công ty của ảnh đã gắn sao (cần chú trọng) — không truyền onStar thì không có nút sao */
+  starred?: boolean;
+  onStar?: (p: SurveyPhoto) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [marking, setMarking] = useState(false);
@@ -66,8 +69,8 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
     } catch (e) { say((e as Error).message); }
   };
   const del = async () => {
-    if (!window.confirm('Xoá ảnh chỉ tiêu này khỏi danh sách?\n\nẢnh sẽ ẩn khỏi lịch sử và bản đồ; file ảnh vẫn được giữ trong kho lưu trữ.')) return;
-    try { await softDeletePhoto(photo.id); onDeleted(photo.id); say('Đã xoá ảnh'); } catch (e) { say((e as Error).message); }
+    if (!window.confirm('Xoá ảnh chỉ tiêu này?\n\nẢnh chuyển vào Lưu trữ (tab Khảo sát KCN → Lưu trữ) 30 ngày — khôi phục được trong thời gian đó, quá 30 ngày mới tự xoá hẳn.')) return;
+    try { await softDeletePhoto(photo.id); onDeleted(photo.id); say('Đã chuyển ảnh vào Lưu trữ (30 ngày)'); } catch (e) { say((e as Error).message); }
   };
   const gmaps = `https://www.google.com/maps?q=${photo.lat},${photo.lng}`;
   const field = 'w-full h-10 px-3 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40';
@@ -82,7 +85,10 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
       <div className="shrink-0 bg-[#1C1C1E] text-white px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] space-y-2 max-h-[48vh] overflow-y-auto">
         {!editing ? (
           <>
-            <div className="text-[16px] font-semibold leading-snug">{photo.company_name || 'Chưa rõ công ty'}</div>
+            <div className="text-[16px] font-semibold leading-snug flex items-start gap-1.5">
+              {starred && <Star size={16} className="mt-0.5 shrink-0 text-[#FFD60A]" fill="#FFD60A" aria-label="Đã gắn sao" />}
+              <span className="min-w-0">{photo.company_name || 'Chưa rõ công ty'}</span>
+            </div>
             <div className="text-[12.5px] text-white/70">
               {fmtDateTime(photo.taken_at)}{photo.zone_name ? ` · ${photo.zone_name}` : ''}{photo.user_name ? ` · ${photo.user_name}` : ''}
             </div>
@@ -103,6 +109,11 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
               <button onClick={() => setMarking(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1">
                 <PenLine size={13} /> {photo.annotations.length ? 'Sửa ghi chú trên ảnh' : 'Ghi chú lên ảnh'}
               </button>
+              {onStar && (photo.company_name.trim() || photo.client_id || photo.crm_id || photo.lead_id) && (
+                <button onClick={() => onStar(photo)} className={`h-9 px-3 rounded-full text-[12.5px] font-medium inline-flex items-center gap-1 ${starred ? 'bg-[#FFD60A] text-[#1D1D1F]' : 'bg-white/15'}`}>
+                  <Star size={13} fill={starred ? 'currentColor' : 'none'} /> {starred ? 'Bỏ sao' : 'Gắn sao công ty'}
+                </button>
+              )}
               <button onClick={() => setEditing(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><Pencil size={13} /> Sửa</button>
               <button onClick={del} className="h-9 px-3 rounded-full bg-[#D70015]/80 text-[12.5px] font-medium inline-flex items-center gap-1"><Trash2 size={13} /> Xoá</button>
             </div>

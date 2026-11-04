@@ -1,7 +1,7 @@
 // Thẻ "Đang đi ngang" — công ty gần nhất trong bán kính khi đang khảo sát.
 // Khách hàng / Pipeline / KH tiềm năng / đã từng từ chối: hiện tổng quan đầy đủ.
 // Công ty mới có ở Thị trường hoặc chỉ có tên trên bản đồ OSM: chỉ hiện tên (bấm để xem thêm / thêm vào hệ thống).
-import { Camera, ChevronDown, ChevronUp, ExternalLink, ImageIcon, Phone, Plus, X } from 'lucide-react';
+import { Camera, ChevronDown, ChevronUp, ExternalLink, ImageIcon, Phone, Plus, Star, X } from 'lucide-react';
 import { latestLaborEntry } from '../../../lib/format';
 import type { LaborHistoryEntry, MarketLead } from '../../../lib/types';
 import { PIPELINE_STAGE_LABEL, STATUS_META, type NearbyCompany, type SurveyCompany } from '../../../lib/kcnSurvey/companies';
@@ -111,9 +111,12 @@ interface Props {
   onShowPhotos: (c: SurveyCompany) => void;
   otherCount: number;
   onShowNearby: () => void;
+  /** Công ty đã gắn sao (cần chú trọng) */
+  starred?: boolean;
+  onStar?: (c: SurveyCompany) => void;
 }
 
-export default function SurveyCompanyCard({ item, lookup, photos, expanded, onToggle, onClose, onOpenProfile, onPhoto, onAddToMarket, onShowPhotos, otherCount, onShowNearby }: Props) {
+export default function SurveyCompanyCard({ item, lookup, photos, expanded, onToggle, onClose, onOpenProfile, onPhoto, onAddToMarket, onShowPhotos, otherCount, onShowNearby, starred, onStar }: Props) {
   const c = item.company;
   const meta = STATUS_META[c.status];
   // Mở sẵn với công ty "đáng chú ý" (cha đặt expanded theo meta.rich mỗi khi đổi công ty)
@@ -135,13 +138,22 @@ export default function SurveyCompanyCard({ item, lookup, photos, expanded, onTo
               <span className="text-[#8E8E93] font-normal shrink-0">· {item.dist < 1 ? 'đang ở đây' : `cách ${fmtDistance(item.dist)}`}</span>
             )}
           </div>
-          <div className="text-[15px] font-semibold text-[#1D1D1F] leading-snug mt-0.5 line-clamp-2">{c.name}</div>
+          <div className="text-[15px] font-semibold text-[#1D1D1F] leading-snug mt-0.5 line-clamp-2">
+            {starred && <Star size={14} className="inline -mt-0.5 mr-1 text-[#F5A300]" fill="#F5B400" aria-label="Đã gắn sao" />}{c.name}
+          </div>
+          {starred && <div className="text-[10.5px] font-semibold text-[#B7791F] mt-0.5">★ Công ty cần chú trọng</div>}
           {c.osmOnly && c.status !== 'osm' && (
             <div className="text-[10.5px] text-[#8E8E93] mt-0.5">Vị trí theo bản đồ OSM{c.osmName && c.osmName !== c.name ? ` (“${c.osmName}”)` : ''} — chưa ghim trong hồ sơ</div>
           )}
           {c.status === 'osm' && <div className="text-[11px] text-[#8E8E93] mt-0.5">Chưa có trong hệ thống</div>}
         </button>
         <div className="flex items-center gap-0.5 shrink-0">
+          {onStar && (
+            <button onClick={() => onStar(c)} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5"
+              aria-label={starred ? 'Bỏ sao' : 'Gắn sao — công ty cần chú trọng'} title={starred ? 'Bỏ sao' : 'Gắn sao — công ty cần chú trọng'}>
+              <Star size={17} className={starred ? 'text-[#F5A300]' : 'text-[#C7C7CC]'} fill={starred ? '#F5B400' : 'none'} />
+            </button>
+          )}
           <button onClick={onToggle} className="w-8 h-8 rounded-full flex items-center justify-center text-[#8E8E93] hover:bg-black/5" aria-label={expanded ? 'Thu gọn' : 'Mở rộng'}>
             {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
           </button>

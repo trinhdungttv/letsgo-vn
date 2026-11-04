@@ -5,19 +5,23 @@
 // ============================================================================
 import { useState, useEffect, useRef, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { X, AlertTriangle, History, MapPin, ExternalLink, Search, Star, Plus } from 'lucide-react';
+import { X, AlertTriangle, History, MapPin, ExternalLink, Search, Star, Plus, ArrowRightLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
-import type { Client, Contact, ContactClientHistory } from '../../lib/types';
+import type { Client, Contact } from '../../lib/types';
 import { parseLatLngFromLink } from '../../lib/geo';
 import { contactKindOf } from '../../lib/cskh/space';
 import RoleSelect from './RoleSelect';
 import AvatarUpload from './AvatarUpload';
 import SpecialDatesEditor, { type SpecialDateDraft } from './SpecialDatesEditor';
+import BirthdayInput from './BirthdayInput';
+import MoveCompanyDialog from './MoveCompanyDialog';
+import CareerTimeline from './CareerTimeline';
+import type { CareerHistoryRow } from '../../lib/contactCareer';
 import { fetchSpecialDates, saveSpecialDates } from '../../lib/contactSpecialDates';
 import {
   CONTACT_CHANNELS, emptyContactForm, contactToForm,
-  saveContact, findPhoneDuplicates, clientIdsOf, linksOf,
+  saveContact, findPhoneDuplicates, clientIdsOf, linksOf, fetchCareerHistory,
   type ContactFormValues,
 } from '../../lib/contactOps';
 
@@ -143,7 +147,8 @@ export default function ContactFormModal({
   const [dupeAck, setDupeAck] = useState(false);
   const [pool, setPool] = useState<Contact[]>([]);
   const [pickedId, setPickedId] = useState('');
-  const [history, setHistory] = useState<ContactClientHistory[]>([]);
+  const [history, setHistory] = useState<CareerHistoryRow[]>([]);
+  const [moving, setMoving] = useState(false);
   const [specialDates, setSpecialDates] = useState<SpecialDateDraft[]>([]);
 
   const clientName = useCallback(
@@ -159,12 +164,12 @@ export default function ContactFormModal({
       .then(({ data }) => setPool(((data || []) as Contact[]).filter(c => contactKindOf(c) === 'client')));
   }, [allowPickExisting, contact]);
 
-  // Lịch sử chuyển công ty của chính người này.
+  // Lịch sử gắn / chuyển công ty của chính người này (dựng "Quá trình công tác").
   useEffect(() => {
     if (!contact) { setHistory([]); return; }
-    supabase.from('contact_client_history').select('*')
-      .eq('contact_id', contact.id).order('changed_at', { ascending: false }).limit(20)
-      .then(({ data }) => setHistory((data || []) as ContactClientHistory[]));
+    let alive = true;
+    void fetchCareerHistory(contact.id).then(rows => { if (alive) setHistory(rows); });
+    return () => { alive = false; };
   }, [contact]);
 
   // Ngày đặc biệt đã lưu của người này (sinh nhật nằm riêng ở trường Ngày sinh).
@@ -224,8 +229,8 @@ export default function ContactFormModal({
         toast(target ? 'Đã cập nhật liên hệ' : 'Đã thêm liên hệ mới');
         onClose();
       }
-    } catch (e: any) {
-      const msg = e?.message || String(e);
+    } catch (e) {
+      const msg = (e as Error)?.message || String(e);
       setSaveError(msg);
       toast('Lỗi: ' + msg);
     } finally {
@@ -399,6 +404,13 @@ export default function ContactFormModal({
                     </select>
                   </div>
                 </div>
+                {contact && contactKindOf(contact) === 'client' && (
+                  <button type="button" onClick={() => setMoving(true)}
+                    title="Khách nghỉ công ty này sang làm công ty khác — giữ lịch sử, hạng CSKH, nhật ký, quà"
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50">
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> Chuyển công ty…
+                  </button>
+                )}
                 {form.client_ids.length > 1 && (
                   <p className="text-[11px] text-gray-500 mt-1">
                     Kiêm nhiệm {form.client_ids.length} công ty — người này sẽ hiện trong Hồ sơ chăm sóc của cả {form.client_ids.length} nơi.
@@ -500,8 +512,8 @@ export default function ContactFormModal({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={label}>Ngày sinh</label>
-                  <input type="date" value={form.birthday} onChange={e => setForm(prev => ({ ...prev, birthday: e.target.value }))} className={field} />
+                  <label className={label}>Ngày sinh <span className="font-normal text-gray-400">(năm không bắt buộc)</span></label>
+                  <BirthdayInput value={form.birthday} onChange={v => setForm(prev => ({ ...prev, birthday: v }))} className={field} />
                 </div>
                 <div>
                   <label className={label}>Facebook / LinkedIn</label>
@@ -536,13 +548,21 @@ export default function ContactFormModal({
             </div>
           </div>
 
-          {/* Lịch sử chuyển công ty */}
-          {contact && history.length > 0 && (
+          {/* Quá trình công tác + nhật ký gắn / gỡ / chuyển công ty */}
+          {contact && (history.length > 0 || linksOf(contact).length > 0) && (
             <div>
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <History className="w-3.5 h-3.5" /> Lịch sử gắn công ty
+                <History className="w-3.5 h-3.5" /> Quá trình công tác
               </h3>
-              <ul className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
+              <CareerTimeline contact={contact} history={history} />
+            </div>
+          )}
+          {contact && history.length > 0 && (
+            <details className="group">
+              <summary className="text-[11.5px] font-medium text-gray-500 cursor-pointer select-none hover:text-gray-700">
+                Nhật ký gắn / gỡ / chuyển công ty ({history.length})
+              </summary>
+              <ul className="mt-2 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-40 overflow-y-auto">
                 {history.map(h => (
                   <li key={h.id} className="px-3 py-2 text-[11.5px] text-gray-700 flex items-start gap-2">
                     <span className="text-gray-400 whitespace-nowrap">
@@ -560,9 +580,20 @@ export default function ContactFormModal({
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </div>
+
+        {moving && contact && (
+          <MoveCompanyDialog contact={contact} onClose={() => setMoving(false)} toast={toast}
+            hint="Chuyển xong form này đóng lại — thay đổi khác chưa bấm Lưu sẽ bỏ qua."
+            onDone={saved => {
+              // Đã ghi xong ngay — đóng form (form đang giữ danh sách công ty cũ, lưu tiếp sẽ ghi lịch sử sai)
+              setMoving(false);
+              onSaved(saved);
+              onClose();
+            }} />
+        )}
 
         <div className="px-6 py-4 border-t border-gray-200 flex gap-2 justify-end sticky bottom-0 bg-white">
           <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Hủy</button>

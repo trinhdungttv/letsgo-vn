@@ -3,8 +3,8 @@
 // Cùng bảng `contacts` và cùng logic (lib/contactOps) với CRM → CSKH →
 // Danh sách liên hệ, chỉ khác là ở đây công ty được gắn sẵn.
 // ============================================================================
-import { useState, useEffect } from 'react';
-import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, MapPin } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, Edit2, UserX, UserCheck, Users, Star, Trash2, MapPin, ArrowRightLeft, ArrowRight } from 'lucide-react';
 import type { Client, Contact } from '../lib/types';
 import { useContacts } from '../hooks/useContacts';
 import { useAuth } from '../lib/auth';
@@ -14,11 +14,13 @@ import SocialBadge, { SOCIAL_META } from './SocialBadge';
 import { socialLinkList } from '../lib/socialLinks';
 import { AvatarCircle } from './contacts/AvatarUpload';
 import ContactDeleteDialog from './contacts/ContactDeleteDialog';
+import MoveCompanyDialog from './contacts/MoveCompanyDialog';
 import {
   setPrimaryContact, unsetPrimaryContact,
   deactivateContact, reactivateContact,
-  isPrimaryAt, linksOf,
+  isPrimaryAt, linksOf, fetchMovesFromClient, type MovedAwayRow,
 } from '../lib/contactOps';
+import { movedAwayFrom, periodLabel } from '../lib/contactCareer';
 
 interface Props {
   clientId: string;
@@ -34,6 +36,17 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState<Contact | null>(null);
+  const [moving, setMoving] = useState<Contact | null>(null);
+  // Người liên hệ cũ đã chuyển sang công ty khác (lịch sử "Chuyển công ty")
+  const [moveRows, setMoveRows] = useState<MovedAwayRow[]>([]);
+  const loadMoves = useCallback(() => { void fetchMovesFromClient(clientId).then(setMoveRows); }, [clientId]);
+  useEffect(() => { loadMoves(); }, [loadMoves]);
+  const movedAway = useMemo(() => {
+    const byId = new Map(moveRows.map(r => [r.contact_id, r.contacts]));
+    return movedAwayFrom(moveRows, clientId, new Set(contacts.map(c => c.id)))
+      .map(m => ({ ...m, person: byId.get(m.contactId) ?? null }))
+      .filter(m => m.person);
+  }, [moveRows, clientId, contacts]);
 
   // Cần danh sách công ty để form cho phép chuyển người này sang công ty khác.
   useEffect(() => {
@@ -56,7 +69,7 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
       else await setPrimaryContact(c, clientId, ctx);
       await reload();
       onChanged?.();
-    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    } catch (e) { toast('Lỗi: ' + (e as Error).message); }
   };
 
   const handleToggleActive = async (c: Contact) => {
@@ -71,7 +84,7 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
       }
       await reload();
       onChanged?.();
-    } catch (e: any) { toast('Lỗi: ' + e.message); }
+    } catch (e) { toast('Lỗi: ' + (e as Error).message); }
   };
 
   const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
@@ -192,6 +205,13 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
                           <Edit2 size={11} /> Sửa
                         </button>
                         <button
+                          onClick={() => setMoving(c)}
+                          title="Nghỉ công ty này sang làm công ty khác — giữ lịch sử, hạng CSKH, nhật ký, quà"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium border border-blue-200 text-blue-700 hover:bg-blue-50 transition whitespace-nowrap"
+                        >
+                          <ArrowRightLeft size={11} /> Chuyển công ty
+                        </button>
+                        <button
                           onClick={() => handleToggleActive(c)}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium border transition ${
                             c.is_active
@@ -218,6 +238,39 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
         </div>
       )}
 
+      {movedAway.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[12px] font-semibold text-[#555] mb-1.5">Người liên hệ cũ — đã chuyển sang công ty khác ({movedAway.length})</div>
+          <ul className="bg-white border border-[#E8E7E2] rounded-[10px] divide-y divide-[#F0EEE9]">
+            {movedAway.map(m => (
+              <li key={m.contactId} className="flex items-center gap-2.5 px-3 py-2 text-[12.5px]">
+                <AvatarCircle url={m.person?.avatar_url} name={m.person?.name || ''} size={24} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[#111]">
+                    <b className="font-medium">{m.person?.name}</b>
+                    {m.role && <span className="text-[#777]"> · {m.role}</span>}
+                    <span className="text-[#999]"> · {periodLabel({ from: m.from, to: m.movedOn, current: false })}</span>
+                  </div>
+                  <div className="text-[11.5px] text-[#777] flex items-center gap-1">
+                    <ArrowRight size={11} /> đã chuyển sang <b className="font-medium text-[#333]">{m.toClientName}</b>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {moving && (
+        <MoveCompanyDialog
+          contact={moving}
+          defaultFromClientId={clientId}
+          onClose={() => setMoving(null)}
+          onDone={() => { setMoving(null); reload(); loadMoves(); onChanged?.(); }}
+          toast={toast}
+        />
+      )}
+
       {showForm && (
         <ContactFormModal
           contact={editing}
@@ -225,7 +278,7 @@ export default function ContactsTab({ clientId, toast, onChanged }: Props) {
           clients={clients}
           allowPickExisting
           onClose={() => setShowForm(false)}
-          onSaved={() => { reload(); onChanged?.(); }}
+          onSaved={() => { reload(); loadMoves(); onChanged?.(); }}
           toast={toast}
         />
       )}

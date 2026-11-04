@@ -972,6 +972,8 @@ function occasionDbFields(f: OccasionFields) {
     is_lunar: f.isLunar,
     remind_days_before: f.remindDaysBefore,
     date: f.isLunar ? null : `${f.year ?? 2000}-${pad2(f.month)}-${pad2(f.day)}`,
+    // Chỉ khi form hồ sơ đổi dòng sang "sinh nhật của chính người này" (bỏ tên người thân cũ)
+    ...(f.relatedPerson !== undefined ? { related_person: f.relatedPerson } : {}),
   };
 }
 

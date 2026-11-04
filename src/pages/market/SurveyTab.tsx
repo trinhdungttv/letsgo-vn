@@ -1,17 +1,31 @@
 // Thị trường → Khảo sát KCN: nơi riêng cho mọi dữ liệu đi khảo sát — các chuyến (vết GPS), ảnh chỉ tiêu tuyển dụng
 // (kèm ghi chú vẽ trên ảnh), ghi âm nhanh, tổng hợp theo KCN; nút bắt đầu khảo sát.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Camera, ChevronDown, ChevronRight, Download, Loader2, MapPin, Mic, Pencil, Play, Plus, RefreshCw, Route, Search, Trash2 } from 'lucide-react';
+//  - Chuyến đi gom theo ngày, mỗi chuyến 1 dòng (ảnh xem ở tab Ảnh chỉ tiêu — nút "Xem n ảnh" lọc sẵn theo chuyến).
+//  - Lọc theo tỉnh / thành để so sánh các KCN; nhớ tab + bộ lọc đang xem trên máy này (lần sau mở lại đúng chỗ đó).
+//  - ★ công ty cần chú trọng (gắn lúc lưu ảnh); xuất PDF chữ thật theo từng KCN để đưa AI phân tích lương / tuyển dụng.
+//  - Xoá → Lưu trữ 30 ngày (khôi phục được), quá hạn tự xoá hẳn (hàm SQL migration 195, giờ máy chủ).
+//  - Nút Toàn màn hình (điện thoại xem rõ hơn) + phóng to bản đồ kín màn hình.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, RotateCcw, Route, Search, Star, Trash2, X,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../lib/auth';
 import type { Branch } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 import {
-  listPhotos, listTrips, listVoiceNotes, loadTracks, softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip,
-  VOICE_MIGRATION_HINT, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote,
+  ARCHIVE_MIGRATION_HINT, listArchived, listPhotos, listStars, listTrips, listVoiceNotes, loadTracks, purgeArchive, restoreArchived, setStar,
+  softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, VOICE_MIGRATION_HINT,
+  type ArchiveKind, type ArchivedPhoto, type ArchivedTrip, type ArchivedVoice, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote,
 } from '../../lib/kcnSurvey/api';
 import { STATUS_META, type SurveyStatus } from '../../lib/kcnSurvey/companies';
 import { fmtDistance, fmtDuration, type TrackSegment } from '../../lib/kcnSurvey/track';
 import { surveyTitle } from '../../lib/kcnSurvey/zones';
+import { ARCHIVE_DAYS, daysLeft, findStar, foldName, groupByDay, photoStarRef, type StarRef, type SurveyStar } from '../../lib/kcnSurvey/stars';
+import { NO_PROVINCE, normalizeSavedProvince, provinceKey, provinceLabel, provinceOptions as buildProvinceOptions } from '../../lib/kcnSurvey/province';
+import { buildZoneReport } from '../../lib/kcnSurvey/zoneReport';
+import { downloadBlob } from '../../lib/costPlan/pdf';
 import KcnSurveyMode from './survey/KcnSurveyMode';
 import SurveyTripMap from './survey/SurveyTripMap';
 import SurveyPhotoViewer, { PhotoThumb } from './survey/SurveyPhotoViewer';
@@ -20,25 +34,50 @@ import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
 import { fold } from './survey/surveyData';
 
-type Sub = 'trips' | 'photos' | 'voice' | 'zones';
+type Sub = 'trips' | 'photos' | 'voice' | 'zones' | 'archive';
 const PERIODS = [{ d: 7, label: '7 ngày' }, { d: 30, label: '30 ngày' }, { d: 90, label: '3 tháng' }, { d: 0, label: 'Tất cả' }];
 
 const card = 'bg-white border border-[#E8E7E2] rounded-[10px]';
 
+// ── Nhớ tab + bộ lọc theo máy (mở lại tab là thấy đúng mục lần trước) ───────
+const PREFS_KEY = 'lgvn_survey_tab_v1';
+interface TabPrefs { sub: Sub; period: number; province: string; zoneId: string; person: string; starOnly: boolean }
+const DEFAULT_PREFS: TabPrefs = { sub: 'trips', period: 30, province: 'all', zoneId: 'all', person: 'all', starOnly: false };
+function readPrefs(): TabPrefs {
+  try {
+    const o = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') as Partial<TabPrefs>;
+    const p = { ...DEFAULT_PREFS, ...o };
+    if (!['trips', 'photos', 'voice', 'zones', 'archive'].includes(p.sub)) p.sub = 'trips';
+    if (!PERIODS.some(x => x.d === p.period)) p.period = 30;
+    p.province = normalizeSavedProvince(p.province); // bản cũ lưu nguyên văn "TP. Đồng Nai"
+    return p;
+  } catch { return { ...DEFAULT_PREFS }; }
+}
+/** Lần tự dọn Lưu trữ gần nhất trên máy này — dọn tối đa mỗi 6 giờ */
+const PURGE_KEY = 'lgvn_survey_purge_at';
+
 export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast }: MarketTabProps) {
+  const { user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trips, setTrips] = useState<SurveyTrip[]>([]);
   const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
   const [voiceNotes, setVoiceNotes] = useState<SurveyVoiceNote[]>([]);
   const [voiceMissing, setVoiceMissing] = useState(false);
+  const [stars, setStars] = useState<SurveyStar[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sub, setSub] = useState<Sub>('trips');
-  const [zoneId, setZoneId] = useState('all');
-  const [period, setPeriod] = useState(30);
-  const [person, setPerson] = useState('all');
+  const [prefs, setPrefsState] = useState<TabPrefs>(readPrefs);
+  const setPrefs = useCallback((p: Partial<TabPrefs>) => setPrefsState(prev => {
+    const next = { ...prev, ...p };
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* chế độ riêng tư */ }
+    return next;
+  }), []);
+  const { sub, period, province, zoneId, person, starOnly } = prefs;
   const [search, setSearch] = useState('');
+  /** Ảnh / ghi âm đang lọc theo 1 chuyến (nút "Xem n ảnh" ở tab Chuyến đi) */
+  const [tripFilter, setTripFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showPassed, setShowPassed] = useState(false);
   const [tracks, setTracks] = useState<Map<string, TrackSegment[]>>(new Map());
   const [viewer, setViewer] = useState<SurveyPhoto | null>(null);
   const [voiceSheet, setVoiceSheet] = useState<SurveyVoiceNote | null>(null);
@@ -46,6 +85,30 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const [surveyOpen, setSurveyOpen] = useState<false | 'survey' | 'area'>(false);
   const [pending, setPending] = useState(() => pendingActiveTrip());
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const [archive, setArchive] = useState<{ trips: ArchivedTrip[]; photos: ArchivedPhoto[]; voice: ArchivedVoice[] } | null>(null);
+  const [archiveMissing, setArchiveMissing] = useState(false);
+  /** Xuất PDF: cả KCN (theo bộ lọc thời gian / người đi) hoặc 1 chuyến */
+  const [pdfFor, setPdfFor] = useState<{ id: string; name: string; trip?: SurveyTrip } | null>(null);
+
+  // ── Toàn màn hình: lớp phủ che thanh menu của app; toast của app nằm dưới → tự hiện thông báo ──
+  const [full, setFull] = useState(false);
+  const [mapBig, setMapBig] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const fullRef = useRef(full);
+  fullRef.current = full || mapBig;
+  const say = useCallback((m: string) => {
+    if (!fullRef.current) { toast(m); return; }
+    setFlash(m);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 3500);
+  }, [toast]);
+  useEffect(() => {
+    if (!full && !mapBig) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (mapBig) setMapBig(false); else setFull(false); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [full, mapBig]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,36 +119,79 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       setPhotos(p);
       try { setVoiceNotes(await listVoiceNotes({ limit: 1000 })); setVoiceMissing(false); }
       catch { setVoiceNotes([]); setVoiceMissing(true); }
+      listStars().then(setStars).catch(() => { /* chưa chạy 195 */ });
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
   }, []);
+  const loadArchive = useCallback(async () => {
+    try { setArchive(await listArchived()); } catch (e) { say((e as Error).message); }
+  }, [say]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     supabase.from('branches').select('*').then(({ data }) => setBranches((data as Branch[]) ?? []));
   }, []);
+  // Mở tab: tự xoá hẳn mục nằm trong Lưu trữ quá 30 ngày (hạn tính bằng giờ máy chủ), rồi đọc Lưu trữ
+  useEffect(() => {
+    (async () => {
+      let last = 0;
+      try { last = Number(localStorage.getItem(PURGE_KEY) || 0); } catch { /* bỏ qua */ }
+      if (Date.now() - last > 6 * 3600_000) {
+        try {
+          const n = await purgeArchive();
+          if (n == null) setArchiveMissing(true);
+          else {
+            try { localStorage.setItem(PURGE_KEY, String(Date.now())); } catch { /* bỏ qua */ }
+            if (n > 0) say(`Đã tự xoá hẳn ${n} mục nằm trong Lưu trữ quá ${ARCHIVE_DAYS} ngày`);
+          }
+        } catch { /* lỗi mạng — lần sau dọn */ }
+      }
+      await loadArchive();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Sao công ty ───────────────────────────────────────────────────────────
+  const starOf = useCallback((p: SurveyPhoto) => !!findStar(stars, photoStarRef(p)), [stars]);
+  const toggleStar = async (c: StarRef & { zoneName?: string }, on: boolean) => {
+    try {
+      const row = await setStar(c, on, { id: user?.id ?? null, name: user?.full_name ?? '' });
+      setStars(list => { const rest = list.filter(x => x !== findStar(list, c)); return row ? [row, ...rest] : rest; });
+      say(on ? `★ Đã gắn sao: ${c.name}` : `Đã bỏ sao: ${c.name}`);
+    } catch (e) { say((e as Error).message); }
+  };
+  const togglePhotoStar = (p: SurveyPhoto) => void toggleStar({ ...photoStarRef(p), zoneName: p.zone_name }, !starOf(p));
 
   // ── Lọc ───────────────────────────────────────────────────────────────────
+  // Tỉnh của KCN: khoá đã gộp các cách ghi ("TP. Đồng Nai" = "Đồng Nai"); '' = KCN chưa ghi tỉnh → nhóm "Chưa rõ tỉnh"
+  const zoneProv = useMemo(() => new Map(marketZones.map(z => [z.id, provinceKey(z.location)])), [marketZones]);
+  const zoneProvLabel = useMemo(() => new Map(marketZones.map(z => [z.id, provinceLabel(z.location)])), [marketZones]);
   const since = period ? Date.now() - period * 86_400_000 : 0;
   const okTime = useCallback((iso: string) => !since || new Date(iso).getTime() >= since, [since]);
-  const okZone = useCallback((z: string | null) => zoneId === 'all' || (zoneId === 'none' ? !z : z === zoneId), [zoneId]);
+  const okProvince = useCallback((z: string | null) => province === 'all' || (!!z && (province === NO_PROVINCE ? !zoneProv.get(z) : zoneProv.get(z) === province)), [province, zoneProv]);
+  const okZone = useCallback((z: string | null) => okProvince(z) && (zoneId === 'all' || (zoneId === 'none' ? !z : z === zoneId)), [zoneId, okProvince]);
   const okPerson = useCallback((n: string) => person === 'all' || n === person, [person]);
   const q = fold(search.trim());
   const fTrips = useMemo(() => trips.filter(t => okTime(t.started_at) && okZone(t.zone_id) && okPerson(t.user_name)
     && (!q || fold([t.title, t.zone_name, t.note, t.user_name, ...t.passed.map(p => p.name)].join(' ')).includes(q))), [trips, okTime, okZone, okPerson, q]);
-  const fPhotos = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name)
+  const fPhotosAll = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name)
     && (!q || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(q))), [photos, okTime, okZone, okPerson, q]);
-  const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name)
-    && (!q || fold([n.company_name, n.note, n.zone_name].join(' ')).includes(q))), [voiceNotes, okTime, okZone, okPerson, q]);
+  const fPhotos = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))), [fPhotosAll, tripFilter, starOnly, starOf]);
+  const starredCount = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && starOf(p)).length, [fPhotosAll, tripFilter, starOf]);
+  const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name) && (!tripFilter || n.trip_id === tripFilter)
+    && (!q || fold([n.company_name, n.note, n.zone_name].join(' ')).includes(q))), [voiceNotes, okTime, okZone, okPerson, q, tripFilter]);
 
   const people = useMemo(() => [...new Set([...trips.map(t => t.user_name), ...photos.map(p => p.user_name), ...voiceNotes.map(n => n.user_name)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')), [trips, photos, voiceNotes]);
-  const zoneOptions = useMemo(() => {
-    const used = new Set([...trips.map(t => t.zone_id), ...photos.map(p => p.zone_id), ...voiceNotes.map(n => n.zone_id)]);
-    return [...marketZones].sort((a, b) => Number(used.has(b.id)) - Number(used.has(a.id)) || a.name.localeCompare(b.name, 'vi'))
-      .map(z => ({ id: z.id, name: z.name, used: used.has(z.id) }));
-  }, [marketZones, trips, photos, voiceNotes]);
+  const usedZones = useMemo(() => new Set([...trips.map(t => t.zone_id), ...photos.map(p => p.zone_id), ...voiceNotes.map(n => n.zone_id)]), [trips, photos, voiceNotes]);
+  // Tỉnh / thành: tỉnh có KCN đã khảo sát lên trước; KCN chưa ghi tỉnh có nhóm riêng (không bị loại âm thầm khi lọc)
+  const provinces = useMemo(() => buildProvinceOptions(marketZones, usedZones), [marketZones, usedZones]);
+  const provinceName = province === 'all' ? '' : province === NO_PROVINCE ? 'KCN chưa ghi tỉnh' : provinces.options.find(o => o.key === province)?.label ?? '';
+  const zoneOptions = useMemo(() => [...marketZones]
+    .filter(z => province === 'all' || (province === NO_PROVINCE ? !zoneProv.get(z.id) : zoneProv.get(z.id) === province))
+    .sort((a, b) => Number(usedZones.has(b.id)) - Number(usedZones.has(a.id)) || a.name.localeCompare(b.name, 'vi'))
+    .map(z => ({ id: z.id, name: z.name, used: usedZones.has(z.id) })), [marketZones, usedZones, province, zoneProv]);
 
   // ── Vết: chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc ──────
   const trackIds = useMemo(() => (sub !== 'trips' ? [] : selected ? [selected] : fTrips.slice(0, 40).map(t => t.id)), [sub, selected, fTrips]);
@@ -93,7 +199,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   useEffect(() => {
     if (!trackIds.length) { setTracks(new Map()); return; }
     let alive = true;
-    loadTracks(trackIds).then(m => { if (alive) setTracks(m); }).catch(e => toast((e as Error).message));
+    loadTracks(trackIds).then(m => { if (alive) setTracks(m); }).catch(e => say((e as Error).message));
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackKey]);
@@ -108,30 +214,38 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     voiceNotes.forEach(n => { if (n.trip_id) vo.set(n.trip_id, (vo.get(n.trip_id) ?? 0) + 1); });
     return { ph, vo };
   }, [photos, voiceNotes]);
+  const tripDays = useMemo(() => groupByDay(fTrips, t => t.started_at), [fTrips]);
 
-  // ── Theo KCN (bỏ qua bộ lọc KCN, giữ thời gian + người đi) ────────────────
+  // ── Theo KCN (bỏ qua bộ lọc KCN, giữ thời gian + người đi + tỉnh) ─────────
   const zoneRows = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; trips: number; km: number; last: string | null; cover: number | null; photos: number; voice: number }>();
+    const m = new Map<string, { id: string; name: string; province: string; trips: number; km: number; last: string | null; cover: number | null; photos: number; voice: number; starCos: Set<string> }>();
     const row = (id: string | null, name: string) => {
       const k = id ?? 'none';
       let r = m.get(k);
-      if (!r) { r = { id: k, name: id ? (marketZones.find(z => z.id === id)?.name ?? name) || 'KCN đã xoá' : 'Không gắn KCN', trips: 0, km: 0, last: null, cover: null, photos: 0, voice: 0 }; m.set(k, r); }
+      if (!r) {
+        r = { id: k, name: id ? (marketZones.find(z => z.id === id)?.name ?? name) || 'KCN đã xoá' : 'Không gắn KCN', province: id ? zoneProvLabel.get(id) ?? '' : '', trips: 0, km: 0, last: null, cover: null, photos: 0, voice: 0, starCos: new Set() };
+        m.set(k, r);
+      }
       return r;
     };
-    trips.filter(t => okTime(t.started_at) && okPerson(t.user_name)).forEach(t => {
+    trips.filter(t => okTime(t.started_at) && okPerson(t.user_name) && okProvince(t.zone_id)).forEach(t => {
       const r = row(t.zone_id, t.zone_name);
       r.trips += 1; r.km += t.distance_m / 1000;
       if (!r.last || t.started_at > r.last) r.last = t.started_at;
       if (t.road_coverage != null) r.cover = Math.max(r.cover ?? 0, t.road_coverage);
     });
     const touch = (r: { last: string | null }, at: string) => { if (!r.last || at > r.last) r.last = at; };
-    photos.filter(p => okTime(p.taken_at) && okPerson(p.user_name)).forEach(p => { const r = row(p.zone_id, p.zone_name); r.photos += 1; touch(r, p.taken_at); });
-    voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name)).forEach(n => { const r = row(n.zone_id, n.zone_name); r.voice += 1; touch(r, n.recorded_at); });
+    photos.filter(p => okTime(p.taken_at) && okPerson(p.user_name) && okProvince(p.zone_id)).forEach(p => {
+      const r = row(p.zone_id, p.zone_name); r.photos += 1; touch(r, p.taken_at);
+      if (starOf(p)) r.starCos.add(foldName(p.company_name));
+    });
+    voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name) && okProvince(n.zone_id)).forEach(n => { const r = row(n.zone_id, n.zone_name); r.voice += 1; touch(r, n.recorded_at); });
     return [...m.values()].sort((a, b) => (b.last ?? '').localeCompare(a.last ?? '') || b.photos - a.photos);
-  }, [trips, photos, voiceNotes, okTime, okPerson, marketZones]);
+  }, [trips, photos, voiceNotes, okTime, okPerson, okProvince, marketZones, zoneProvLabel, starOf]);
 
   const totalM = fTrips.reduce((s, t) => s + t.distance_m, 0);
   const zonesCount = new Set(fTrips.map(t => t.zone_id).filter(Boolean)).size;
+  const archiveCount = archive ? archive.trips.length + archive.photos.length + archive.voice.length : 0;
 
   // ── Thao tác ──────────────────────────────────────────────────────────────
   const saveTitle = async (t: SurveyTrip) => {
@@ -139,63 +253,90 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     const title = renaming.value.trim() || surveyTitle(t.zone_name, new Date(t.started_at));
     try {
       await updateTrip(t.id, { title });
-      if (titleColumnMissing()) { toast(TITLE_MIGRATION_HINT); return; }
+      if (titleColumnMissing()) { say(TITLE_MIGRATION_HINT); return; }
       setTrips(list => list.map(x => (x.id === t.id ? { ...x, title } : x)));
       setRenaming(null);
-    } catch (e) { toast((e as Error).message); }
+    } catch (e) { say((e as Error).message); }
   };
   const deleteTrip = async (t: SurveyTrip) => {
-    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến sẽ ẩn khỏi danh sách và bản đồ (không còn tính là đường đã đi). Vết GPS, ảnh chỉ tiêu và ghi âm vẫn được giữ trong cơ sở dữ liệu.`)) return;
+    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến chuyển vào Lưu trữ ${ARCHIVE_DAYS} ngày (khôi phục được), không còn hiện trên bản đồ / tính là đường đã đi. Quá ${ARCHIVE_DAYS} ngày mới tự xoá hẳn. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`)) return;
     try {
       await softDeleteTrip(t.id);
       setTrips(list => list.filter(x => x.id !== t.id));
       setSelected(null);
-      toast('Đã xoá chuyến');
-    } catch (e) { toast((e as Error).message); }
+      say(`Đã chuyển chuyến vào Lưu trữ (${ARCHIVE_DAYS} ngày)`);
+      void loadArchive();
+    } catch (e) { say((e as Error).message); }
+  };
+  const restore = async (kind: ArchiveKind, id: string) => {
+    try {
+      await restoreArchived(kind, id);
+      say('Đã khôi phục');
+      await Promise.all([load(), loadArchive()]);
+    } catch (e) { say((e as Error).message); }
+  };
+  const purgeOne = async (kind: ArchiveKind, id: string, label: string) => {
+    if (!window.confirm(`XOÁ HẲN “${label}” khỏi hệ thống?\n\nKhông khôi phục lại được trong app nữa${kind === 'trip' ? ' (vết GPS của chuyến xoá theo; ảnh / ghi âm của chuyến vẫn giữ)' : ''}. Bản sao dòng dữ liệu vẫn còn trong Lịch sử dữ liệu.`)) return;
+    try {
+      const n = await purgeArchive({ kind, id });
+      if (n == null) { say(ARCHIVE_MIGRATION_HINT); setArchiveMissing(true); return; }
+      say('Đã xoá hẳn');
+      await loadArchive();
+    } catch (e) { say((e as Error).message); }
   };
   const exportPhotos = () => {
-    const head = ['Ngày chụp', 'KCN', 'Công ty', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
+    const head = ['Ngày chụp', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
     const esc = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.zone_name, p.company_name, p.positions, p.headcount ?? '', p.wage_text, p.note, p.user_name,
+    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, p.headcount ?? '', p.wage_text, p.note, p.user_name,
       p.lat.toFixed(6), p.lng.toFixed(6), p.url, `https://www.google.com/maps?q=${p.lat},${p.lng}`]);
     const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(',')).join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `anh-chi-tieu-khao-sat-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    const d = new Date();
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `anh-chi-tieu-khao-sat-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.csv`);
   };
+  const zoneLabel = (id: string) => (id === 'none' ? 'Không gắn KCN' : marketZones.find(z => z.id === id)?.name ?? zoneRows.find(r => r.id === id)?.name ?? 'KCN');
+  const showTripMedia = (t: SurveyTrip, to: 'photos' | 'voice') => { setTripFilter(t.id); setSelected(null); setPrefs({ sub: to, starOnly: false }); };
+  const goSub = (s: Sub) => { setPrefs({ sub: s }); setSelected(null); if (s === 'trips' || s === 'zones') setTripFilter(null); };
 
   const subTabs: { id: Sub; label: string; count?: number; icon: ReactNode }[] = [
     { id: 'trips', label: 'Chuyến đi', count: fTrips.length, icon: <Route size={13} /> },
     { id: 'photos', label: 'Ảnh chỉ tiêu', count: fPhotos.length, icon: <Camera size={13} /> },
     { id: 'voice', label: 'Ghi âm', count: fVoice.length, icon: <Mic size={13} /> },
     { id: 'zones', label: 'Theo KCN', icon: <MapPin size={13} /> },
+    { id: 'archive', label: 'Lưu trữ', count: archive ? archiveCount : undefined, icon: <Archive size={13} /> },
   ];
+  const tripOfFilter = tripFilter ? trips.find(t => t.id === tripFilter) ?? null : null;
 
-  return (
+  const body = (
     <div className="space-y-3">
       {/* ── Bắt đầu + tổng quan ── */}
       <div className={`${card} p-3 md:p-4 flex flex-col md:flex-row md:items-center gap-3`}>
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold text-[#111]">Khảo sát KCN</div>
-          <div className="text-[12px] text-[#888] leading-snug mt-0.5">
-            Đi 1 vòng KCN: ghi vết GPS, tô đường chưa đi, dẫn đường tới đoạn còn thiếu, chụp bảng chỉ tiêu (vẽ ghi chú lên ảnh), ghi âm nhanh — mọi dữ liệu lưu ở đây. KCN chưa có trên hệ thống: bấm “Thêm KCN / vùng” để tra trên bản đồ và khoanh vùng.
+          <div className="flex items-center gap-2">
+            <div className="flex-1 text-[15px] font-semibold text-[#111]">Khảo sát KCN</div>
+            <button onClick={() => (full ? setFull(false) : setFull(true))} title={full ? 'Thoát toàn màn hình (Esc)' : 'Toàn màn hình — xem rõ hơn trên điện thoại'}
+              className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F9F9F7] shrink-0">
+              {full ? <><Minimize2 size={13} /> Thu nhỏ</> : <><Maximize2 size={13} /> Toàn màn hình</>}
+            </button>
           </div>
+          {!full && (
+            <div className="text-[12px] text-[#888] leading-snug mt-0.5">
+              Đi 1 vòng KCN: ghi vết GPS, tô đường chưa đi, dẫn đường tới đoạn còn thiếu, chụp bảng chỉ tiêu (vẽ ghi chú lên ảnh), ghi âm nhanh — mọi dữ liệu lưu ở đây. KCN chưa có trên hệ thống: bấm “Thêm KCN / vùng” để tra trên bản đồ và khoanh vùng.
+            </div>
+          )}
           {pending && (
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[12px] px-2.5 py-1">
               Chuyến đang dở: <b>{pending.trip.title || pending.trip.zone_name || 'Không gắn KCN'}</b> · {fmtDistance(pending.distance)}
             </div>
           )}
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+        <div className="flex flex-row gap-2 shrink-0">
           <button onClick={() => setSurveyOpen('area')}
-            className="h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7]">
-            <Plus size={16} /> Thêm KCN / vùng
+            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
+            <Plus size={16} /> Thêm KCN<span className="hidden sm:inline"> / vùng</span>
           </button>
           <button onClick={() => setSurveyOpen('survey')}
-            className="h-11 px-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(10,132,255,0.35)] active:scale-95 transition">
-            <Play size={16} fill="currentColor" /> {pending ? 'Mở chuyến đang dở' : 'Bắt đầu khảo sát'}
+            className="flex-1 sm:flex-none h-11 px-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(10,132,255,0.35)] active:scale-95 transition whitespace-nowrap">
+            <Play size={16} fill="currentColor" /> {pending ? 'Mở chuyến dở' : 'Bắt đầu'}<span className="hidden sm:inline">{pending ? '' : ' khảo sát'}</span>
           </button>
         </div>
       </div>
@@ -204,26 +345,32 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
         <Stat label="Chuyến đi" value={String(fTrips.length)} />
         <Stat label="Quãng đường" value={fmtDistance(totalM)} />
         <Stat label="KCN đã đi" value={String(zonesCount)} />
-        <Stat label="Ảnh chỉ tiêu" value={String(fPhotos.length)} />
+        <Stat label="Ảnh chỉ tiêu" value={String(fPhotosAll.length)} />
         <Stat label="Ghi âm" value={voiceMissing ? '—' : String(fVoice.length)} />
       </div>
 
       {/* ── Bộ lọc ── */}
       <div className={`${card} p-2.5 flex flex-wrap items-center gap-2`}>
-        <select value={zoneId} onChange={e => { setZoneId(e.target.value); setSelected(null); }}
-          className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white max-w-full md:w-60">
-          <option value="all">Tất cả KCN</option>
-          <option value="none">Không gắn KCN</option>
+        <select value={province} onChange={e => { setPrefs({ province: e.target.value, zoneId: 'all' }); setSelected(null); }}
+          className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white max-w-full md:w-44" aria-label="Tỉnh / thành phố">
+          <option value="all">Mọi tỉnh / thành</option>
+          {provinces.options.map(p => <option key={p.key} value={p.key}>{p.label} · {p.zones} KCN{p.surveyed ? ` (${p.surveyed} đã khảo sát)` : ''}</option>)}
+          {provinces.unknown > 0 && <option value={NO_PROVINCE}>Chưa ghi tỉnh · {provinces.unknown} KCN{provinces.unknownSurveyed ? ` (${provinces.unknownSurveyed} đã khảo sát)` : ''}</option>}
+        </select>
+        <select value={zoneId} onChange={e => { setPrefs({ zoneId: e.target.value }); setSelected(null); setTripFilter(null); }}
+          className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white max-w-full md:w-60" aria-label="KCN">
+          <option value="all">{province === 'all' ? 'Tất cả KCN' : province === NO_PROVINCE ? 'Mọi KCN chưa ghi tỉnh' : `Mọi KCN ở ${provinceName}`}</option>
+          {province === 'all' && <option value="none">Không gắn KCN</option>}
           {zoneOptions.map(z => <option key={z.id} value={z.id}>{z.name}{z.used ? '' : ' (chưa khảo sát)'}</option>)}
         </select>
         <div className="flex gap-1">
           {PERIODS.map(p => (
-            <button key={p.d} onClick={() => setPeriod(p.d)}
+            <button key={p.d} onClick={() => setPrefs({ period: p.d })}
               className={`h-9 px-2.5 rounded-lg text-[12px] font-medium border transition ${period === p.d ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666]'}`}>{p.label}</button>
           ))}
         </div>
         {people.length > 1 && (
-          <select value={person} onChange={e => setPerson(e.target.value)} className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white">
+          <select value={person} onChange={e => setPrefs({ person: e.target.value })} className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white">
             <option value="all">Mọi người đi</option>
             {people.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
@@ -233,6 +380,12 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm công ty, vị trí tuyển, ghi chú…"
             className="w-full h-9 pl-8 pr-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] outline-none focus:border-[#1D4ED8]" />
         </div>
+        {zoneId !== 'all' && (
+          <button onClick={() => setPdfFor({ id: zoneId, name: zoneLabel(zoneId) })} title="Xuất PDF KCN này để đưa AI phân tích lương & tuyển dụng"
+            className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F9F9F7]">
+            <FileText size={13} /> PDF KCN này
+          </button>
+        )}
         <button onClick={() => void load()} disabled={loading} title="Tải lại"
           className="h-9 w-9 rounded-lg border border-[#E8E7E2] flex items-center justify-center text-[#666] hover:bg-[#F9F9F7] disabled:opacity-40">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -241,7 +394,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
 
       <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
         {subTabs.map(t => (
-          <button key={t.id} onClick={() => { setSub(t.id); setSelected(null); }}
+          <button key={t.id} onClick={() => goSub(t.id)}
             className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${sub === t.id ? 'bg-[#111] border-[#111] text-white' : 'bg-white border-[#E8E7E2] text-[#666]'}`}>
             {t.icon}{t.label}{t.count != null && <span className={sub === t.id ? 'text-white/70' : 'text-[#aaa]'}>{t.count}</span>}
           </button>
@@ -251,176 +404,258 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       {error && <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-[12.5px] px-3 py-2">{error}</div>}
       {voiceMissing && sub === 'voice' && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[12.5px] px-3 py-2">{VOICE_MIGRATION_HINT}</div>}
 
-      {sub === 'zones' ? (
+      {sub === 'archive' ? (
+        <ArchiveView archive={archive} missing={archiveMissing} onRestore={restore} onPurge={purgeOne} onReload={() => void loadArchive()} />
+      ) : sub === 'zones' ? (
         <div className={`${card} overflow-x-auto`}>
           <table className="w-full text-[12.5px]">
             <thead className="text-[11px] text-[#888] bg-[#FAFAF8]">
               <tr>
                 <th className="text-left font-medium px-3 py-2">KCN</th>
+                <th className="text-left font-medium px-2 py-2">Tỉnh / TP</th>
                 <th className="text-right font-medium px-2 py-2">Chuyến</th>
                 <th className="text-right font-medium px-2 py-2">Quãng đường</th>
                 <th className="text-right font-medium px-2 py-2">Phủ đường cao nhất</th>
                 <th className="text-right font-medium px-2 py-2">Ảnh</th>
+                <th className="text-right font-medium px-2 py-2" title="Công ty gắn sao (cần chú trọng)">★</th>
                 <th className="text-right font-medium px-2 py-2">Ghi âm</th>
-                <th className="text-right font-medium px-3 py-2">Lần gần nhất</th>
+                <th className="text-right font-medium px-2 py-2">Lần gần nhất</th>
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0EEE9]">
               {zoneRows.map(r => (
-                <tr key={r.id} onClick={() => { setZoneId(r.id); setSub('trips'); }} className="cursor-pointer hover:bg-[#F9F9F7]">
+                <tr key={r.id} onClick={() => { setPrefs({ zoneId: r.id, sub: 'trips' }); setTripFilter(null); }} className="cursor-pointer hover:bg-[#F9F9F7]">
                   <td className="px-3 py-2 font-medium text-[#111]">{r.name}</td>
+                  <td className="px-2 py-2 text-[#666] whitespace-nowrap">{r.province || '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.trips}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.km ? fmtDistance(r.km * 1000) : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.cover != null ? `${r.cover.toLocaleString('vi-VN')}%` : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.photos || '—'}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-[#B7791F]">{r.starCos.size || '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.voice || '—'}</td>
-                  <td className="px-3 py-2 text-right text-[#666] whitespace-nowrap">{r.last ? new Date(r.last).toLocaleDateString('vi-VN') : '—'}</td>
+                  <td className="px-2 py-2 text-right text-[#666] whitespace-nowrap">{r.last ? new Date(r.last).toLocaleDateString('vi-VN') : '—'}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <button onClick={e => { e.stopPropagation(); setPdfFor({ id: r.id, name: r.name }); }} title="Xuất PDF để đưa AI phân tích lương & tuyển dụng"
+                      className="h-7 px-2 rounded-md border border-[#E8E7E2] bg-white text-[11.5px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F2F2F0]">
+                      <FileText size={12} /> PDF
+                    </button>
+                  </td>
                 </tr>
               ))}
-              {!zoneRows.length && <tr><td colSpan={7} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
+              {!zoneRows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
             </tbody>
           </table>
         </div>
       ) : (
         <div className="flex flex-col md:grid md:grid-cols-[minmax(320px,420px)_1fr] gap-3 md:items-start">
-          <SurveyTripMap
-            className="order-first md:order-none md:col-start-2 md:row-start-1 h-[280px] md:h-[calc(100dvh-330px)] md:min-h-[460px] rounded-[10px] border border-[#E8E7E2] overflow-hidden md:sticky md:top-0"
-            tracks={tracks} selectedId={selected} photos={mapPhotos} voiceNotes={mapVoice}
-            onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
-            fitKey={`${sub}:${zoneId}:${period}:${person}:${selected ?? ''}`} focus={focus} />
+          {/* Bản đồ: bấm ⤢ để phóng kín màn hình */}
+          {/* Cỡ bản đồ đặt ở khung bọc ngoài — KHÔNG đổi className của khung Leaflet (React ghi đè làm mất class Leaflet → trắng) */}
+          <div className={mapBig ? 'fixed inset-0 z-[320] bg-[#E5E3DF]'
+            : `relative order-first md:order-none md:col-start-2 md:row-start-1 md:sticky md:top-0 ${full ? 'h-[42vh]' : 'h-[280px]'} md:h-[calc(100dvh-330px)] md:min-h-[460px] rounded-[10px] border border-[#E8E7E2] overflow-hidden`}>
+            <SurveyTripMap
+              className="absolute inset-0"
+              tracks={tracks} selectedId={selected} photos={mapPhotos} voiceNotes={mapVoice}
+              onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
+              fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${mapBig}`} focus={focus} />
+            <button onClick={() => setMapBig(v => !v)} title={mapBig ? 'Thu nhỏ bản đồ (Esc)' : 'Phóng bản đồ kín màn hình'}
+              className={`absolute z-[1000] h-9 px-3 rounded-full bg-white/95 shadow-md text-[12.5px] font-medium text-[#111] inline-flex items-center gap-1.5 ${mapBig ? 'right-3 top-[calc(12px+env(safe-area-inset-top))]' : 'right-2 top-2'}`}>
+              {mapBig ? <><Minimize2 size={14} /> Thu nhỏ</> : <Maximize2 size={14} />}
+            </button>
+            {mapBig && flash && <FlashMsg text={flash} />}
+          </div>
 
           <div className="md:col-start-1 md:row-start-1 min-w-0">
             {loading && <div className="py-10 flex justify-center text-[#aaa]"><Loader2 size={20} className="animate-spin" /></div>}
 
             {!loading && sub === 'trips' && (
               fTrips.length === 0 ? <Empty icon={<Route size={22} />} text="Chưa có chuyến khảo sát nào trong bộ lọc" /> : (
-                <div className="space-y-2">
-                  {fTrips.map(t => {
-                    const open = selected === t.id;
-                    const dur = t.ended_at ? (new Date(t.ended_at).getTime() - new Date(t.started_at).getTime()) / 1000 : null;
-                    const tPhotos = photos.filter(p => p.trip_id === t.id);
-                    const tVoice = voiceNotes.filter(n => n.trip_id === t.id);
-                    return (
-                      <div key={t.id} className={`${card} overflow-hidden ${open ? 'ring-2 ring-[#F59E0B]/50' : ''}`}>
-                        <button onClick={() => setSelected(open ? null : t.id)} className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-[#FAFAF8]">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13.5px] font-semibold text-[#111] line-clamp-2">{t.title || t.zone_name || 'Không gắn KCN'}</div>
-                            <div className="text-[11.5px] text-[#888] mt-0.5">
-                              {t.title && t.zone_name && !t.title.includes(t.zone_name) ? `${t.zone_name} · ` : ''}{fmtDateTime(t.started_at)}{t.user_name ? ` · ${t.user_name}` : ''}
-                            </div>
-                            <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[11px]">
-                              <Pill>{fmtDistance(t.distance_m)}</Pill>
-                              {dur != null && <Pill>{fmtDuration(dur)}</Pill>}
-                              {t.road_coverage != null && <Pill>Phủ {t.road_coverage.toLocaleString('vi-VN')}%</Pill>}
-                              {t.passed.length > 0 && <Pill>{t.passed.length} công ty</Pill>}
-                              {(byTrip.ph.get(t.id) ?? 0) > 0 && <Pill>📷 {byTrip.ph.get(t.id)}</Pill>}
-                              {(byTrip.vo.get(t.id) ?? 0) > 0 && <Pill>🎙 {byTrip.vo.get(t.id)}</Pill>}
-                              {!t.ended_at && <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-medium">Chưa kết thúc</span>}
-                            </div>
-                          </div>
-                          {open ? <ChevronDown size={16} className="text-[#C7C7CC] mt-1" /> : <ChevronRight size={16} className="text-[#C7C7CC] mt-1" />}
-                        </button>
-                        {open && (
-                          <div className="px-3 pb-3 pt-2.5 border-t border-[#F0EEE9] space-y-3">
-                            <div className="flex gap-1.5 flex-wrap">
-                              <button onClick={() => setRenaming({ id: t.id, value: t.title || surveyTitle(t.zone_name, new Date(t.started_at)) })}
-                                className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] text-[12px] text-[#333] inline-flex items-center gap-1"><Pencil size={12} /> Đổi tên</button>
-                              <button onClick={() => void deleteTrip(t)} className="h-8 px-2.5 rounded-lg border border-red-200 bg-red-50 text-[12px] text-red-600 inline-flex items-center gap-1"><Trash2 size={12} /> Xoá</button>
-                            </div>
-                            {renaming?.id === t.id && (
-                              <div className="flex gap-1.5">
-                                <input value={renaming.value} onChange={e => setRenaming({ id: t.id, value: e.target.value })} autoFocus
-                                  onKeyDown={e => { if (e.key === 'Enter') void saveTitle(t); }}
-                                  className="flex-1 min-w-0 h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[13px] outline-none focus:border-[#1D4ED8]" />
-                                <button onClick={() => void saveTitle(t)} className="h-9 px-3 rounded-lg bg-[#0A84FF] text-white text-[12.5px] font-semibold shrink-0">Lưu</button>
-                                <button onClick={() => setRenaming(null)} className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] shrink-0">Huỷ</button>
-                              </div>
-                            )}
-                            {t.note && <div className="text-[12.5px] text-[#333] whitespace-pre-line">{t.note}</div>}
-                            {t.passed.length > 0 && (
-                              <div className="space-y-1.5">
-                                {groupPassed(t.passed).map(g => (
-                                  <div key={g.status}>
-                                    <div className="text-[11px] font-semibold" style={{ color: STATUS_META[g.status].color }}>{STATUS_META[g.status].label} ({g.items.length})</div>
-                                    <div className="text-[12px] text-[#333] leading-relaxed">{g.items.map(i => i.name).join(' · ')}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {tPhotos.length > 0 && (
-                              <div>
-                                <div className="text-[11px] font-semibold text-[#888] mb-1">Ảnh chỉ tiêu ({tPhotos.length})</div>
-                                <div className="grid grid-cols-4 gap-1">
-                                  {tPhotos.map(p => (
-                                    <button key={p.id} onClick={() => setViewer(p)} className="relative aspect-square rounded-md overflow-hidden bg-[#EEE]"><PhotoThumb photo={p} /></button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {tVoice.length > 0 && (
-                              <div>
-                                <div className="text-[11px] font-semibold text-[#888] mb-1">Ghi âm ({tVoice.length})</div>
-                                <div className="divide-y divide-[#F0EEE9] border border-[#F0EEE9] rounded-lg">
-                                  {tVoice.map(n => <VoiceRow key={n.id} n={n} onOpen={() => setVoiceSheet(n)} />)}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                <div className="space-y-2.5">
+                  {tripDays.map(g => (
+                    <div key={g.key}>
+                      <div className="px-1 pb-1 flex items-baseline gap-2 text-[11.5px]">
+                        <span className="font-semibold text-[#333]">{g.label}</span>
+                        <span className="text-[#999]">{g.items.length} chuyến · {fmtDistance(g.items.reduce((m, t) => m + t.distance_m, 0))}</span>
                       </div>
-                    );
-                  })}
+                      <div className={`${card} divide-y divide-[#F0EEE9] overflow-hidden`}>
+                        {g.items.map(t => {
+                          const open = selected === t.id;
+                          const dur = t.ended_at ? (new Date(t.ended_at).getTime() - new Date(t.started_at).getTime()) / 1000 : null;
+                          const nPh = byTrip.ph.get(t.id) ?? 0, nVo = byTrip.vo.get(t.id) ?? 0;
+                          const name = t.title || t.zone_name || 'Không gắn KCN';
+                          return (
+                            <div key={t.id} className={open ? 'bg-[#FFFBF0]' : ''}>
+                              <button onClick={() => { setSelected(open ? null : t.id); setShowPassed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[#FAFAF8]">
+                                <span className="text-[12.5px] font-semibold text-[#111] tabular-nums w-[38px] shrink-0">
+                                  {new Date(t.started_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                                <span className="flex-1 min-w-0">
+                                  <span className="block text-[13px] font-medium text-[#111] truncate">{name}</span>
+                                  <span className="block text-[11px] text-[#888] truncate">
+                                    {[fmtDistance(t.distance_m), dur != null ? fmtDuration(dur) : null, t.road_coverage != null ? `phủ ${t.road_coverage.toLocaleString('vi-VN')}%` : null,
+                                      t.title && t.zone_name && !t.title.includes(t.zone_name) ? t.zone_name : null, t.user_name || null].filter(Boolean).join(' · ')}
+                                  </span>
+                                </span>
+                                <span className="flex items-center gap-1 text-[11px] text-[#555] shrink-0">
+                                  {!t.ended_at && <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-medium">Dở</span>}
+                                  {nPh > 0 && <span className="px-1.5 py-0.5 rounded-md bg-[#F2F2F0]">📷 {nPh}</span>}
+                                  {nVo > 0 && <span className="px-1.5 py-0.5 rounded-md bg-[#F2F2F0]">🎙 {nVo}</span>}
+                                </span>
+                                {open ? <ChevronDown size={15} className="text-[#C7C7CC] shrink-0" /> : <ChevronRight size={15} className="text-[#C7C7CC] shrink-0" />}
+                              </button>
+                              {open && (
+                                <div className="px-3 pb-3 pt-1 space-y-2">
+                                  <div className="flex gap-1.5 flex-wrap">
+                                    {nPh > 0 && (
+                                      <button onClick={() => showTripMedia(t, 'photos')} className="h-8 px-2.5 rounded-lg bg-[#0A84FF] text-white text-[12px] font-medium inline-flex items-center gap-1">
+                                        <Camera size={12} /> Xem {nPh} ảnh
+                                      </button>
+                                    )}
+                                    {nVo > 0 && (
+                                      <button onClick={() => showTripMedia(t, 'voice')} className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1">
+                                        <Mic size={12} /> Nghe {nVo} ghi âm
+                                      </button>
+                                    )}
+                                    {(nPh > 0 || nVo > 0) && (
+                                      <button onClick={() => setPdfFor({ id: t.zone_id ?? 'none', name: t.zone_name || (t.zone_id ? zoneLabel(t.zone_id) : 'Không gắn KCN'), trip: t })}
+                                        title="PDF riêng chuyến này để đưa AI phân tích"
+                                        className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><FileText size={12} /> PDF chuyến này</button>
+                                    )}
+                                    <button onClick={() => setRenaming({ id: t.id, value: t.title || surveyTitle(t.zone_name, new Date(t.started_at)) })}
+                                      className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><Pencil size={12} /> Đổi tên</button>
+                                    <button onClick={() => void deleteTrip(t)} className="h-8 px-2.5 rounded-lg border border-red-200 bg-red-50 text-[12px] text-red-600 inline-flex items-center gap-1"><Trash2 size={12} /> Xoá</button>
+                                  </div>
+                                  {renaming?.id === t.id && (
+                                    <div className="flex gap-1.5">
+                                      <input value={renaming.value} onChange={e => setRenaming({ id: t.id, value: e.target.value })} autoFocus
+                                        onKeyDown={e => { if (e.key === 'Enter') void saveTitle(t); }}
+                                        className="flex-1 min-w-0 h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[13px] outline-none focus:border-[#1D4ED8]" />
+                                      <button onClick={() => void saveTitle(t)} className="h-9 px-3 rounded-lg bg-[#0A84FF] text-white text-[12.5px] font-semibold shrink-0">Lưu</button>
+                                      <button onClick={() => setRenaming(null)} className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] shrink-0">Huỷ</button>
+                                    </div>
+                                  )}
+                                  {t.note && <div className="text-[12.5px] text-[#333] whitespace-pre-line">{t.note}</div>}
+                                  {t.passed.length > 0 && (
+                                    <div>
+                                      <button onClick={() => setShowPassed(v => !v)} className="w-full text-left text-[12px] flex items-start gap-1">
+                                        {showPassed ? <ChevronDown size={14} className="text-[#0A84FF] shrink-0 mt-px" /> : <ChevronRight size={14} className="text-[#0A84FF] shrink-0 mt-px" />}
+                                        <span className="min-w-0">
+                                          <span className="text-[#0A84FF] font-medium">Đã đi ngang {t.passed.length} công ty</span>
+                                          <span className="text-[#999]"> · {groupPassed(t.passed).map(gr => `${gr.items.length} ${STATUS_META[gr.status].label.toLowerCase()}`).join(', ')}</span>
+                                        </span>
+                                      </button>
+                                      {showPassed && (
+                                        <div className="mt-1 space-y-1.5">
+                                          {groupPassed(t.passed).map(gr => (
+                                            <div key={gr.status}>
+                                              <div className="text-[11px] font-semibold" style={{ color: STATUS_META[gr.status].color }}>{STATUS_META[gr.status].label} ({gr.items.length})</div>
+                                              <div className="text-[12px] text-[#333] leading-relaxed">{gr.items.map(i => i.name).join(' · ')}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )
             )}
 
             {!loading && sub === 'photos' && (
               <div className="space-y-2">
-                {fPhotos.length > 0 && (
-                  <div className="flex justify-end">
-                    <button onClick={exportPhotos} className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F9F9F7]">
-                      <Download size={12} /> Tải danh sách (CSV / Excel)
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button onClick={() => setPrefs({ starOnly: !starOnly })}
+                    className={`h-8 px-2.5 rounded-lg border text-[12px] font-medium inline-flex items-center gap-1 ${starOnly ? 'bg-[#FFF4D6] border-[#F5B400]/60 text-[#8A5A00]' : 'bg-white border-[#E8E7E2] text-[#555]'}`}>
+                    <Star size={12} fill={starOnly ? '#F5B400' : 'none'} className={starOnly ? 'text-[#F5A300]' : ''} /> Công ty gắn sao ({starredCount})
+                  </button>
+                  {tripOfFilter && (
+                    <span className="h-8 pl-2.5 pr-1 rounded-lg bg-[#EEF5FF] border border-blue-200 text-[12px] text-blue-800 inline-flex items-center gap-1 max-w-full">
+                      <Route size={12} className="shrink-0" />
+                      <span className="truncate">Chuyến {fmtDateTime(tripOfFilter.started_at)} · {tripOfFilter.title || tripOfFilter.zone_name}</span>
+                      <button onClick={() => setTripFilter(null)} className="w-6 h-6 rounded-md hover:bg-blue-100 flex items-center justify-center shrink-0" aria-label="Bỏ lọc chuyến"><X size={13} /></button>
+                    </span>
+                  )}
+                  {tripOfFilter && (
+                    <button onClick={() => setPdfFor({ id: tripOfFilter.zone_id ?? 'none', name: tripOfFilter.zone_name || 'Không gắn KCN', trip: tripOfFilter })}
+                      className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F9F9F7]">
+                      <FileText size={12} /> PDF chuyến này
                     </button>
-                  </div>
-                )}
-                {fPhotos.length === 0 ? <Empty icon={<Camera size={22} />} text="Chưa có ảnh chỉ tiêu nào trong bộ lọc" /> : (
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {fPhotos.map(p => (
-                      <button key={p.id} onClick={() => setViewer(p)} className="relative aspect-square rounded-lg overflow-hidden bg-[#EEE] text-left">
-                        <PhotoThumb photo={p} />
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
-                          <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
-                          <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}{p.headcount != null ? ` · SL ${p.headcount}` : ''}</div>
-                        </div>
-                      </button>
-                    ))}
+                  )}
+                  <span className="flex-1" />
+                  {fPhotos.length > 0 && (
+                    <button onClick={exportPhotos} className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F9F9F7]">
+                      <Download size={12} /> CSV / Excel
+                    </button>
+                  )}
+                </div>
+                {fPhotos.length === 0 ? <Empty icon={<Camera size={22} />} text={starOnly ? 'Chưa có ảnh của công ty gắn sao trong bộ lọc' : 'Chưa có ảnh chỉ tiêu nào trong bộ lọc'} /> : (
+                  <div className={`grid gap-1.5 ${full ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                    {fPhotos.map(p => {
+                      const st = starOf(p);
+                      return (
+                        <button key={p.id} onClick={() => setViewer(p)} className={`relative aspect-square rounded-lg overflow-hidden bg-[#EEE] text-left ${st ? 'ring-2 ring-[#F5B400]' : ''}`}>
+                          <PhotoThumb photo={p} />
+                          {st && <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-[#F5B400] text-white flex items-center justify-center shadow" title="Công ty gắn sao"><Star size={11} fill="currentColor" /></span>}
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
+                            <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
+                            <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}{p.headcount != null ? ` · SL ${p.headcount}` : ''}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
             )}
 
             {!loading && sub === 'voice' && (
-              fVoice.length === 0 ? <Empty icon={<Mic size={22} />} text={voiceMissing ? 'Chưa có bảng ghi âm (chạy migration 193)' : 'Chưa có bản ghi âm nào trong bộ lọc'} /> : (
-                <div className={`${card} divide-y divide-[#F0EEE9] overflow-hidden`}>
-                  {fVoice.map(n => <VoiceRow key={n.id} n={n} onOpen={() => setVoiceSheet(n)} showZone />)}
-                </div>
-              )
+              <div className="space-y-2">
+                {tripOfFilter && (
+                  <span className="h-8 pl-2.5 pr-1 rounded-lg bg-[#EEF5FF] border border-blue-200 text-[12px] text-blue-800 inline-flex items-center gap-1 max-w-full">
+                    <Route size={12} className="shrink-0" />
+                    <span className="truncate">Chuyến {fmtDateTime(tripOfFilter.started_at)} · {tripOfFilter.title || tripOfFilter.zone_name}</span>
+                    <button onClick={() => setTripFilter(null)} className="w-6 h-6 rounded-md hover:bg-blue-100 flex items-center justify-center shrink-0" aria-label="Bỏ lọc chuyến"><X size={13} /></button>
+                  </span>
+                )}
+                {fVoice.length === 0 ? <Empty icon={<Mic size={22} />} text={voiceMissing ? 'Chưa có bảng ghi âm (chạy migration 193)' : 'Chưa có bản ghi âm nào trong bộ lọc'} /> : (
+                  <div className={`${card} divide-y divide-[#F0EEE9] overflow-hidden`}>
+                    {fVoice.map(n => <VoiceRow key={n.id} n={n} onOpen={() => setVoiceSheet(n)} showZone />)}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
       )}
 
       {viewer && (
-        <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={toast}
+        <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
+          starred={starOf(viewer)} onStar={togglePhotoStar}
           onShowOnMap={() => { const p = viewer; setViewer(null); setFocus({ lat: p.lat, lng: p.lng, key: Date.now() }); }}
           onSaved={p => { setPhotos(list => list.map(x => (x.id === p.id ? p : x))); setViewer(p); }}
-          onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); }} />
+          onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); void loadArchive(); }} />
       )}
       {voiceSheet && (
-        <SurveyVoiceSheet note={voiceSheet} say={toast} onClose={() => setVoiceSheet(null)}
+        <SurveyVoiceSheet note={voiceSheet} say={say} onClose={() => setVoiceSheet(null)}
           onShowOnMap={() => { const n = voiceSheet; setVoiceSheet(null); if (n.lat != null && n.lng != null) setFocus({ lat: n.lat, lng: n.lng, key: Date.now() }); }}
           onSaved={n => { setVoiceNotes(list => list.map(x => (x.id === n.id ? n : x))); setVoiceSheet(n); }}
-          onDeleted={id => { setVoiceNotes(list => list.filter(x => x.id !== id)); setVoiceSheet(null); }} />
+          onDeleted={id => { setVoiceNotes(list => list.filter(x => x.id !== id)); setVoiceSheet(null); void loadArchive(); }} />
+      )}
+      {pdfFor && (
+        <PdfDialog zone={pdfFor} trip={pdfFor.trip ?? null} province={pdfFor.id !== 'none' ? zoneProvLabel.get(pdfFor.id) || null : null} periodDays={period}
+          trips={pdfFor.trip ? [pdfFor.trip] : trips.filter(t => okTime(t.started_at) && okPerson(t.user_name) && (pdfFor.id === 'none' ? !t.zone_id : t.zone_id === pdfFor.id))}
+          photos={pdfFor.trip ? photos.filter(p => p.trip_id === pdfFor.trip!.id)
+            : photos.filter(p => okTime(p.taken_at) && okPerson(p.user_name) && (pdfFor.id === 'none' ? !p.zone_id : p.zone_id === pdfFor.id))}
+          voice={pdfFor.trip ? voiceNotes.filter(n => n.trip_id === pdfFor.trip!.id)
+            : voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name) && (pdfFor.id === 'none' ? !n.zone_id : n.zone_id === pdfFor.id))}
+          stars={stars} say={say} onClose={() => setPdfFor(null)} />
       )}
       {surveyOpen && (
         <KcnSurveyMode marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory} goTab={goTab}
@@ -429,6 +664,154 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       )}
     </div>
   );
+
+  if (!full) return body;
+  return createPortal(
+    <div className="fixed inset-0 z-[300] bg-[#F5F5F2] overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <div className="p-2.5 md:p-4 max-w-[1600px] mx-auto">{body}</div>
+      {flash && !mapBig && <FlashMsg text={flash} />}
+    </div>,
+    document.body,
+  );
+}
+
+function FlashMsg({ text }: { text: string }) {
+  return (
+    <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(20px+env(safe-area-inset-bottom))] z-[1100] max-w-[90vw] rounded-xl bg-[#1D1D1F]/90 text-white text-[13px] px-4 py-2.5 shadow-lg pointer-events-none text-center">
+      {text}
+    </div>
+  );
+}
+
+// ── Lưu trữ ──────────────────────────────────────────────────────────────────
+function ArchiveView({ archive, missing, onRestore, onPurge, onReload }: {
+  archive: { trips: ArchivedTrip[]; photos: ArchivedPhoto[]; voice: ArchivedVoice[] } | null;
+  missing: boolean;
+  onRestore: (kind: ArchiveKind, id: string) => void;
+  onPurge: (kind: ArchiveKind, id: string, label: string) => void;
+  onReload: () => void;
+}) {
+  if (!archive) return <div className="py-10 flex justify-center text-[#aaa]"><Loader2 size={20} className="animate-spin" /></div>;
+  const rows: { kind: ArchiveKind; id: string; label: string; sub: string; deletedAt: string; thumb: string | null }[] = [
+    ...archive.trips.map(t => ({ kind: 'trip' as const, id: t.id, label: t.title || t.zone_name || 'Chuyến không gắn KCN', sub: `Chuyến đi · ${fmtDateTime(t.started_at)} · ${fmtDistance(t.distance_m)}`, deletedAt: t.deleted_at, thumb: null })),
+    ...archive.photos.map(p => ({ kind: 'photo' as const, id: p.id, label: p.company_name || 'Ảnh chỉ tiêu', sub: `Ảnh chỉ tiêu · ${fmtDateTime(p.taken_at)}${p.zone_name ? ` · ${p.zone_name}` : ''}`, deletedAt: p.deleted_at, thumb: p.thumb_url || p.url })),
+    ...archive.voice.map(n => ({ kind: 'voice' as const, id: n.id, label: n.company_name || 'Ghi âm khảo sát', sub: `Ghi âm ${fmtClock(n.duration_s)} · ${fmtDateTime(n.recorded_at)}${n.zone_name ? ` · ${n.zone_name}` : ''}`, deletedAt: n.deleted_at, thumb: null })),
+  ].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  return (
+    <div className="space-y-2">
+      <div className="rounded-lg bg-[#F7F7F5] border border-[#E8E7E2] text-[12px] text-[#555] px-3 py-2 leading-snug flex items-start gap-2">
+        <Archive size={14} className="shrink-0 mt-0.5 text-[#888]" />
+        <span className="flex-1">
+          Chuyến / ảnh / ghi âm đã xoá nằm ở đây {ARCHIVE_DAYS} ngày — bấm <b>Khôi phục</b> để lấy lại. Quá {ARCHIVE_DAYS} ngày hệ thống <b>tự xoá hẳn</b> (khi có người mở tab này).
+          {missing && <span className="block text-amber-700 mt-1">{ARCHIVE_MIGRATION_HINT}. Tự xoá sau {ARCHIVE_DAYS} ngày chỉ chạy sau khi chạy migration 195.</span>}
+        </span>
+        <button onClick={onReload} className="w-7 h-7 rounded-md hover:bg-black/5 flex items-center justify-center shrink-0" aria-label="Tải lại"><RefreshCw size={13} /></button>
+      </div>
+      {!rows.length ? <Empty icon={<Archive size={22} />} text="Lưu trữ trống" /> : (
+        <div className={`${card} divide-y divide-[#F0EEE9] overflow-hidden`}>
+          {rows.map(r => {
+            const left = daysLeft(r.deletedAt);
+            return (
+              <div key={`${r.kind}:${r.id}`} className="flex items-center gap-2.5 px-3 py-2">
+                <span className="w-10 h-10 rounded-lg bg-[#F2F2F0] overflow-hidden shrink-0 flex items-center justify-center text-[#888]">
+                  {r.thumb ? <img src={r.thumb} alt="" loading="lazy" className="w-full h-full object-cover" /> : r.kind === 'trip' ? <Route size={16} /> : r.kind === 'voice' ? <Mic size={16} /> : <Camera size={16} />}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[13px] font-medium text-[#111] truncate">{r.label}</span>
+                  <span className="block text-[11px] text-[#888] truncate">{r.sub}</span>
+                  <span className={`block text-[11px] ${left <= 3 ? 'text-red-600 font-medium' : 'text-[#999]'}`}>
+                    Xoá {new Date(r.deletedAt).toLocaleDateString('vi-VN')} · {left > 0 ? `còn ${left} ngày rồi tự xoá hẳn` : 'sẽ xoá hẳn ở lần mở tab tới'}
+                  </span>
+                </span>
+                <button onClick={() => onRestore(r.kind, r.id)} className="h-8 px-2.5 rounded-lg bg-[#0A84FF] text-white text-[12px] font-medium inline-flex items-center gap-1 shrink-0">
+                  <RotateCcw size={12} /> Khôi phục
+                </button>
+                <button onClick={() => onPurge(r.kind, r.id, r.label)} title="Xoá hẳn ngay (không khôi phục được)"
+                  className="h-8 w-8 rounded-lg border border-red-200 bg-red-50 text-red-600 inline-flex items-center justify-center shrink-0" aria-label="Xoá hẳn">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Xuất PDF theo KCN ────────────────────────────────────────────────────────
+function PdfDialog({ zone, trip, province, periodDays, trips, photos, voice, stars, say, onClose }: {
+  zone: { id: string; name: string };
+  /** có = PDF của riêng chuyến này */
+  trip: SurveyTrip | null;
+  province: string | null;
+  periodDays: number;
+  trips: SurveyTrip[];
+  photos: SurveyPhoto[];
+  voice: SurveyVoiceNote[];
+  stars: SurveyStar[];
+  say: (m: string) => void;
+  onClose: () => void;
+}) {
+  const [images, setImages] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const run = async () => {
+    setBusy('Đang chuẩn bị…');
+    try {
+      const to = trip ? new Date(trip.ended_at ?? trip.started_at) : new Date();
+      const report = buildZoneReport({
+        zoneName: zone.name, province, from: trip ? new Date(trip.started_at) : periodDays ? new Date(to.getTime() - periodDays * 86_400_000) : null, to, trips, photos, voice, stars,
+        scope: trip ? { label: `chuyến ${fmtDateTime(trip.started_at)}`, periodText: tripPeriod(trip) } : null,
+      });
+      const { zoneReportPdf } = await import('../../lib/kcnSurvey/zonePdf');
+      const blob = await zoneReportPdf(report, { images, onProgress: (d, n) => setBusy(images ? `Đang thêm ảnh ${d}/${n}…` : 'Đang tạo PDF…') });
+      const slug = foldName(zone.name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'kcn';
+      const d0 = trip ? new Date(trip.started_at) : to;
+      const day = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
+      const hm = `${String(d0.getHours()).padStart(2, '0')}${String(d0.getMinutes()).padStart(2, '0')}`;
+      downloadBlob(blob, trip ? `khao-sat-${slug}-chuyen-${day}-${hm}.pdf` : `khao-sat-${slug}-${day}.pdf`);
+      say('Đã tải PDF — đưa file này cho Gemini / ChatGPT để phân tích lương & nhu cầu tuyển dụng');
+      onClose();
+    } catch (e) {
+      say('Không tạo được PDF: ' + (e as Error).message);
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[1260] flex items-end md:items-center justify-center bg-black/30" onClick={busy ? undefined : onClose}>
+      <div onClick={e => e.stopPropagation()} className="w-full md:w-[440px] bg-white rounded-t-2xl md:rounded-2xl shadow-2xl p-4 pb-[calc(16px+env(safe-area-inset-bottom))] space-y-3">
+        <div className="flex items-start gap-2">
+          <FileText size={20} className="text-[#0A84FF] shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[15px] font-semibold text-[#111]">{trip ? `PDF chuyến khảo sát: ${zone.name}` : `Xuất PDF cả KCN: ${zone.name}`}</div>
+            <div className="text-[12px] text-[#888]">
+              {province ? `${province} · ` : ''}{trip ? tripPeriod(trip) : periodDays ? `${periodDays} ngày gần đây` : 'Toàn bộ thời gian'} · {photos.length} ảnh chỉ tiêu · {voice.length} ghi âm{trip ? '' : ` · ${trips.length} chuyến`}
+            </div>
+          </div>
+          <button onClick={onClose} disabled={!!busy} className="w-8 h-8 rounded-full bg-[#F2F2F7] flex items-center justify-center text-[#555] disabled:opacity-40" aria-label="Đóng"><X size={15} /></button>
+        </div>
+        <div className="text-[12.5px] text-[#555] leading-snug">
+          PDF chữ thật (copy / trích được), có đoạn mở đầu giải thích cho AI, bảng tổng hợp theo công ty, chi tiết từng bảng tuyển dụng (vị trí, số lượng, lương, ghi chú),
+          ghi chú ghi âm, công ty đã đi ngang. Công ty gắn sao ghi nhãn [Chú trọng].
+          {trip ? ' Chỉ gồm ảnh / ghi âm của chuyến này — muốn tổng cả KCN thì dùng nút PDF ở tab Theo KCN.' : ' Khoảng thời gian / người đi theo bộ lọc đang chọn; muốn riêng 1 chuyến thì mở chuyến ở tab Chuyến đi.'}
+        </div>
+        <label className="flex items-start gap-2 text-[13px] text-[#111]">
+          <input type="checkbox" checked={images} onChange={e => setImages(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#0A84FF]" />
+          <span>Kèm ảnh bảng tuyển dụng <span className="text-[#888]">(AI đọc được cả chữ trên ảnh; file nặng hơn ~0,2 MB / ảnh)</span></span>
+        </label>
+        <button onClick={() => void run()} disabled={!!busy || (!photos.length && !voice.length && !trips.length)}
+          className="w-full h-11 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-50">
+          {busy ? <><Loader2 size={16} className="animate-spin" /> {busy}</> : <><Download size={16} /> Tải PDF</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** "04/11/2026 08:15 – 09:40" (chuyến chưa kết thúc thì chỉ giờ bắt đầu) */
+function tripPeriod(t: SurveyTrip): string {
+  const end = t.ended_at ? new Date(t.ended_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : null;
+  return `${fmtDateTime(t.started_at)}${end ? ` – ${end}` : ' (chưa kết thúc)'}`;
 }
 
 function VoiceRow({ n, onOpen, showZone }: { n: SurveyVoiceNote; onOpen: () => void; showZone?: boolean }) {
@@ -454,10 +837,6 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-[17px] font-semibold text-[#111] tabular-nums">{value}</div>
     </div>
   );
-}
-
-function Pill({ children }: { children: ReactNode }) {
-  return <span className="px-1.5 py-0.5 rounded-md bg-[#F2F2F0] text-[#444]">{children}</span>;
 }
 
 function Empty({ icon, text }: { icon: ReactNode; text: string }) {

@@ -5,6 +5,7 @@ import type { Bounds, TrackPoint, TrackSegment } from './track';
 import type { PassedCompany } from './companies';
 import { sanitizeMarks, type PhotoMark } from './markup';
 import { r2PutFiles, r2Status, R2_PATH_PREFIX } from '../r2Upload';
+import { ARCHIVE_DAYS, starKey, type StarRef, type SurveyStar } from './stars';
 
 export const SURVEY_MIGRATION_HINT = 'Chưa chạy migration 190 (Khảo sát KCN) trên Supabase — chạy file 20261102100000_190_kcn_survey_trips.sql rồi thử lại';
 export const PHOTO_BUCKET = 'kcn-survey';
@@ -493,4 +494,106 @@ export async function createMarketZoneQuick(z: { name: string; location: string 
     throw new Error(error.message);
   }
   return data as { id: string; name: string; location: string | null; lat: number | null; lng: number | null };
+}
+
+// ── Sao công ty cần chú trọng (migration 195) ────────────────────────────────
+export const STAR_MIGRATION_HINT = 'Chưa chạy migration 195 nên chưa lưu được sao công ty — chạy file 20261104090000_195_kcn_survey_stars_archive.sql rồi gắn lại';
+const STAR_COLS = 'id, company_key, company_name, client_id, crm_id, lead_id, zone_id, zone_name, note, user_id, user_name, created_at';
+
+// Bảng sao có thể chưa có → biết thiếu 1 lần thì thôi đọc (mọi chỗ khác vẫn chạy), gắn sao thì báo chạy 195.
+let starTable: boolean | null = null;
+const isMissingTable = (e: unknown) => /kcn_survey_stars|schema cache|does not exist|PGRST20[45]|42P01/i.test((e as { message?: string; code?: string })?.message ?? '') || (e as { code?: string })?.code === '42P01';
+export const starTableMissing = () => starTable === false;
+
+/** Công ty đang gắn sao. Chưa chạy 195 → [] (không báo lỗi). */
+export async function listStars(): Promise<SurveyStar[]> {
+  if (starTable === false) return [];
+  const { data, error } = await supabase.from('kcn_survey_stars').select(STAR_COLS).is('deleted_at', null).limit(2000);
+  if (error) {
+    if (isMissingTable(error)) { starTable = false; return []; }
+    throw new Error(surveyErrorText(error));
+  }
+  starTable = true;
+  return (data ?? []) as SurveyStar[];
+}
+
+/** Gắn / bỏ sao 1 công ty. Gắn lại công ty đã bỏ sao → dùng lại dòng cũ (cùng company_key). */
+export async function setStar(c: StarRef & { zoneName?: string }, on: boolean, who: { id: string | null; name: string }): Promise<SurveyStar | null> {
+  if (starTable === false) throw new Error(STAR_MIGRATION_HINT);
+  const key = starKey(c);
+  if (!on) {
+    // Bỏ sao theo mọi cách khớp (mã KH / pipeline / Thị trường / tên) — sao có thể gắn từ 1 ảnh khác của cùng công ty
+    const ors = [`company_key.eq.${key}`];
+    if (c.clientId) ors.push(`client_id.eq.${c.clientId}`);
+    if (c.crmId) ors.push(`crm_id.eq.${c.crmId}`);
+    if (c.leadId) ors.push(`lead_id.eq.${c.leadId}`);
+    const { error } = await supabase.from('kcn_survey_stars').update({ deleted_at: new Date().toISOString() }).or(ors.join(',')).is('deleted_at', null);
+    if (error) { if (isMissingTable(error)) { starTable = false; throw new Error(STAR_MIGRATION_HINT); } throw new Error(surveyErrorText(error)); }
+    return null;
+  }
+  const row = {
+    company_key: key, company_name: c.name.trim(), client_id: c.clientId ?? null, crm_id: c.crmId ?? null, lead_id: c.leadId ?? null,
+    zone_id: c.zoneId ?? null, zone_name: c.zoneName ?? '', user_id: who.id, user_name: who.name, deleted_at: null,
+  };
+  const { data, error } = await supabase.from('kcn_survey_stars').upsert(row, { onConflict: 'company_key' }).select(STAR_COLS).single();
+  if (error) { if (isMissingTable(error)) { starTable = false; throw new Error(STAR_MIGRATION_HINT); } throw new Error(surveyErrorText(error)); }
+  starTable = true;
+  return data as SurveyStar;
+}
+
+// ── Lưu trữ: mục đã xoá giữ 30 ngày rồi tự xoá hẳn (migration 195) ──────────
+export type ArchivedTrip = SurveyTrip & { deleted_at: string };
+export type ArchivedPhoto = SurveyPhoto & { deleted_at: string };
+export type ArchivedVoice = SurveyVoiceNote & { deleted_at: string };
+export type ArchiveKind = 'trip' | 'photo' | 'voice';
+
+/** Mục đang nằm trong Lưu trữ (mới xoá trước). */
+export async function listArchived(): Promise<{ trips: ArchivedTrip[]; photos: ArchivedPhoto[]; voice: ArchivedVoice[] }> {
+  const trips = await withTitleFallback(cols => supabase.from('kcn_survey_trips').select(`${cols}, deleted_at`)
+    .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(300));
+  const photos = await withAnnotFallback(cols => supabase.from('kcn_survey_photos').select(`${cols}, deleted_at`)
+    .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(500));
+  const v = await supabase.from('kcn_survey_voice_notes').select(`${VOICE_COLS}, deleted_at`)
+    .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(500);
+  return {
+    trips: ((trips ?? []) as unknown as ArchivedTrip[]).map(t => ({ ...normTrip(t), deleted_at: t.deleted_at })),
+    photos: ((photos ?? []) as unknown as ArchivedPhoto[]).map(p => ({ ...normPhoto(p), deleted_at: p.deleted_at })),
+    // Chưa chạy 193 → không có bảng ghi âm, bỏ qua
+    voice: v.error ? [] : ((v.data ?? []) as unknown as ArchivedVoice[]).map(n => ({ ...normVoice(n), deleted_at: n.deleted_at })),
+  };
+}
+
+const ARCHIVE_TABLE: Record<ArchiveKind, string> = { trip: 'kcn_survey_trips', photo: 'kcn_survey_photos', voice: 'kcn_survey_voice_notes' };
+
+/** Khôi phục 1 mục từ Lưu trữ. */
+export async function restoreArchived(kind: ArchiveKind, id: string) {
+  const { error } = await supabase.from(ARCHIVE_TABLE[kind]).update({ deleted_at: null }).eq('id', id);
+  if (error) throw new Error(surveyErrorText(error));
+}
+
+export const ARCHIVE_MIGRATION_HINT = 'Chưa chạy migration 195 nên chưa xoá hẳn được — mục vẫn nằm trong Lưu trữ (khôi phục được)';
+
+/**
+ * Xoá HẲN khỏi hệ thống: không truyền gì = mọi mục ở Lưu trữ quá 30 ngày (hạn tính bằng giờ máy chủ); truyền kind + id
+ * = 1 mục đang ở Lưu trữ (bấm "Xoá hẳn"). Xoá dòng trong DB qua hàm SQL, rồi xoá file Supabase Storage (cố gắng —
+ * lỗi thì file còn đó, không ảnh hưởng gì). File trên Cloudflare R2 không xoá. Trả số mục đã xoá; null = chưa chạy 195.
+ */
+export async function purgeArchive(one?: { kind: ArchiveKind; id: string }): Promise<number | null> {
+  const { data, error } = await supabase.rpc('kcn_survey_purge_archive', one ? { p_days: ARCHIVE_DAYS, p_kind: one.kind, p_id: one.id } : { p_days: ARCHIVE_DAYS });
+  if (error) {
+    if (/kcn_survey_purge_archive|function|schema cache|PGRST202|42883/i.test(error.message)) return null;
+    throw new Error(surveyErrorText(error));
+  }
+  const rows = (data ?? []) as { item_kind: string; item_id: string; file_path: string | null }[];
+  // File vừa xoá dòng + file lần trước chưa xoá được (mất mạng…) — chỉ file nằm trong danh sách chờ mới xoá được
+  const left = await supabase.from('kcn_survey_purged_files').select('path').limit(200);
+  const paths = [...new Set([...rows.map(r => r.file_path), ...((left.data ?? []) as { path: string }[]).map(r => r.path)].filter((p): p is string => !!p))];
+  if (paths.length) {
+    try {
+      const { data: removed } = await supabase.storage.from(PHOTO_BUCKET).remove(paths);
+      const done = (removed ?? []).map(o => o.name).filter(Boolean);
+      if (done.length) await supabase.from('kcn_survey_purged_files').delete().in('path', done);
+    } catch { /* file còn lại trong Storage, lần sau thử lại — dòng đã xoá, không hiện ở đâu nữa */ }
+  }
+  return new Set(rows.map(r => `${r.item_kind}:${r.item_id}`)).size;
 }

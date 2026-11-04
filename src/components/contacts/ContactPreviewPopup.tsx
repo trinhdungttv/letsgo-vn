@@ -15,6 +15,8 @@ import {
 import { AvatarCircle } from './AvatarUpload';
 import { parseHobbies, linksOf, primaryClientIdsOf } from '../../lib/contactOps';
 import { fetchSpecialDates, type SpecialDate } from '../../lib/contactSpecialDates';
+import { birthdayAge, formatBirthday } from '../../lib/birthday';
+import { todayVN } from '../../lib/cskh/dates';
 import type { Contact } from '../../lib/types';
 
 interface Props {
@@ -25,7 +27,7 @@ interface Props {
   onEdit: () => void;
 }
 
-const Row = ({ icon: Icon, label, children }: { icon: any; label: string; children: React.ReactNode }) => (
+const Row = ({ icon: Icon, label, children }: { icon: React.ComponentType<{ className?: string }>; label: string; children: React.ReactNode }) => (
   <div className="flex items-start gap-2.5 text-[13px]">
     <Icon className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
     <div className="min-w-0 flex-1">
@@ -123,7 +125,15 @@ export default function ContactPreviewPopup({ contact: c, branches, onClose, onE
             </Row>
           )}
 
-          {c.birthday && <Row icon={Cake} label="Ngày sinh">{new Date(c.birthday).toLocaleDateString('vi-VN')}</Row>}
+          {formatBirthday(c.birthday) && (
+            <Row icon={Cake} label="Ngày sinh">
+              {formatBirthday(c.birthday)}
+              {(() => {
+                const age = birthdayAge(c.birthday, todayVN());
+                return <span className="text-gray-400"> · {age !== null ? `${age} tuổi` : 'không rõ năm sinh'}</span>;
+              })()}
+            </Row>
+          )}
 
           {socialLinkList(c.social_link).length > 0 && (
             <Row icon={Share2} label="Mạng xã hội">

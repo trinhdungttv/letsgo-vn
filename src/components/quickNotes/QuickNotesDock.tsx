@@ -10,14 +10,20 @@
 // file lên Storage qua api/quick-notes-audio.ts — chưa lên được thì giữ trong IndexedDB của máy để thử lại.
 // Thẻ soạn: nút Phóng to (gần kín màn hình) + kéo góc dưới trái để đổi cỡ; 1 cỡ chung cho ghi chú và sơ đồ (chuyển qua
 // lại giữa các thẻ không bị phóng / thu), nhớ trong localStorage của máy.
+// Khoá chống xoá (migration 196): 🔒 trong thẻ → mục đó chỉ xoá được khi nhập đúng mã 4 số (PinDialog); ổ khoá hiện
+// trên dải, thẻ xem nhanh, danh sách. Nhớ chỗ đang mở (lib/quickNotes/lastPlace): tải lại trang / vào lại → mở đúng
+// thẻ / cửa sổ / khu / nhóm / mục lần trước; bấm ☰ khi không mở gì → về đúng chỗ cũ trong cửa sổ danh sách.
 // ============================================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { AlertCircle, List, Mic, Network, Plus } from 'lucide-react';
+import { AlertCircle, List, Lock, Mic, Network, Plus } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
-import { deleteRecording, errText, markMindmapCleared, renameRecording, transcribeRecording, uploadRecording } from '../../lib/quickNotes/api';
+import {
+  deleteRecording, errText, lockNote, lockStatus, markMindmapCleared, renameRecording, transcribeRecording, unlockNote, uploadRecording,
+} from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
+import { DEFAULT_PLACE, loadPlace, savePlace, type LastPlace, type OpenPlace, type WinPlace } from '../../lib/quickNotes/lastPlace';
 import {
   baseMime, checklistCount, clockDate, displayTitle, formatDuration, isMindmap, meetingTemplate, mindmapCount, notePreview, railOrder,
   recordingName, relativeTime,
@@ -28,6 +34,7 @@ import type { NoteView, PendingAudio, QuickNote, QuickNoteRecording } from '../.
 import ConfirmDialog, { type ConfirmRequest } from './ConfirmDialog';
 import NoteEditor from './NoteEditor';
 import NotesWindow, { type EditorExtra, type NotesTab } from './NotesWindow';
+import PinDialog, { type PinRequest } from './PinDialog';
 import type { UploadItem } from './RecordingList';
 import type { TranscribeJob } from './TranscriptPanel';
 import { useAudioRecorder, type RecordedAudio } from './useAudioRecorder';
@@ -98,8 +105,12 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   const transcribing = useRef(new Set<string>());
   const [openId, setOpenId] = useState<string | null>(null);
   const [anchorY, setAnchorY] = useState(RAIL_TOP + 40);
-  const [win, setWin] = useState<{ selectedId: string | null; tab: NotesTab } | null>(null);
+  const [win, setWin] = useState<{ selectedId: string | null; tab: NotesTab; section?: WinPlace['section'] } | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [pinReq, setPinReq] = useState<PinRequest | null>(null);
+  /** Chỗ đang mở / lần cuối ở đâu (localStorage) — chỉ bắt đầu ghi sau khi đã mở lại chỗ cũ */
+  const place = useRef<LastPlace>(DEFAULT_PLACE);
+  const restoredFor = useRef<string | null>(null);
   const [hover, setHover] = useState(false);
   const [peekId, setPeekId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -242,10 +253,13 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     else openEditor(id, RAIL_TOP + 40);
   };
 
-  const openWindow = (selectedId: string | null = openId, tab: NotesTab = 'all') => {
-    if (openId) store.discardIfEmpty(openId);
+  /** Không truyền gì + không mở thẻ nào → mở lại đúng chỗ lần trước trong cửa sổ (khu, nhóm, mục đang chọn). */
+  const openWindow = (selectedId?: string | null, tab: NotesTab = 'all') => {
+    const cur = openId;
+    if (cur) store.discardIfEmpty(cur);
     setOpenId(null);
-    setWin({ selectedId, tab });
+    if (selectedId === undefined && !cur) setWin({ ...place.current.win });
+    else setWin({ selectedId: selectedId === undefined ? cur : selectedId, tab });
   };
 
   const toggleArchive = (n: QuickNote) => {
@@ -257,10 +271,21 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
 
   const askDelete = (n: QuickNote) => {
     const recs = n.recordings.length;
-    const doDelete = async () => {
-      await store.remove(n.id);
+    const doDelete = async (pin?: string) => {
+      await store.remove(n.id, pin);
       if (openId === n.id) setOpenId(null);
     };
+    if (n.locked_at) {
+      setPinReq({
+        kind: 'verify',
+        title: isMindmap(n) ? 'Xoá sơ đồ đang khoá?' : 'Xoá ghi chú đang khoá?',
+        message: `“${displayTitle(n)}”${recs ? ` cùng ${recs} bản ghi âm` : ''} đang khoá chống xoá. Nhập mã 4 số để xoá — mục sẽ vào Đã xoá, khôi phục được trong 30 ngày.`,
+        confirmLabel: 'Xoá',
+        danger: true,
+        run: doDelete,
+      });
+      return;
+    }
     if (!n.body.trim() && !recs && !n.mindmap) { void doDelete().catch(e => setNotice(errText(e))); return; }
     setConfirm({
       title: isMindmap(n) ? 'Xoá sơ đồ tư duy này?' : 'Xoá ghi chú này?',
@@ -269,6 +294,44 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       danger: true,
       onConfirm: doDelete,
     });
+  };
+
+  // Khoá: mục mới chưa lên DB thì lưu trước; chưa có mã thì đặt mã (nhập 2 lần) rồi khoá luôn. Mở khoá: cần mã.
+  const toggleLock = async (n: QuickNote) => {
+    const label = isMindmap(n) ? 'sơ đồ' : 'ghi chú';
+    if (n.locked_at) {
+      setPinReq({
+        kind: 'verify',
+        title: 'Mở khoá chống xoá?',
+        message: `Nhập mã 4 số để mở khoá “${displayTitle(n)}”. Mở khoá xong mới xoá được ${label} này.`,
+        confirmLabel: 'Mở khoá',
+        run: async pin => {
+          storeRef.current.replace(await unlockNote(n.id, pin));
+          setNotice(`Đã mở khoá ${label}`);
+        },
+      });
+      return;
+    }
+    const doLock = async () => {
+      storeRef.current.replace(await lockNote(n.id));
+      setNotice(`Đã khoá ${label} — muốn xoá phải nhập mã 4 số`);
+    };
+    try {
+      await store.flush(n.id);
+      if (storeRef.current.isLocal(n.id)) throw new Error('Chưa lưu được mục này lên máy chủ — kiểm tra mạng rồi bấm lại');
+      const st = await lockStatus();
+      if (st.hasPin) await doLock();
+      else {
+        setPinReq({
+          kind: 'set',
+          title: 'Đặt mã khoá 4 số',
+          message: 'Lần đầu khoá: đặt 1 mã 4 số để mở khoá / xoá các mục đã khoá. Mã dùng chung cho mọi ghi chú & sơ đồ của bạn, trên mọi máy; chỉ lưu dạng mã hoá.',
+          run: doLock,
+        });
+      }
+    } catch (e) {
+      setNotice(errText(e));
+    }
   };
 
   const askDeleteRecording = (rec: QuickNoteRecording) => setConfirm({
@@ -343,12 +406,13 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       onChange={patch => store.update(note.id, patch)}
       onArchive={() => toggleArchive(note)}
       onDelete={() => askDelete(note)}
+      onToggleLock={() => void toggleLock(note)}
       onStartRecording={() => startRecording(note.id)}
       onStopRecording={recorder.stop}
       onCancelRecording={askCancelRecording}
       onDismissRecordError={recorder.clearError}
       onRenameRecording={renameRec}
-      onDeleteRecording={askDeleteRecording}
+      onDeleteRecording={rec => (note.locked_at ? setNotice('Mục đang khoá chống xoá — mở khoá (🔒) rồi mới xoá được bản ghi âm') : askDeleteRecording(rec))}
       onRetryUpload={retryUpload}
       onDownloadUpload={downloadUpload}
       onTranscribe={rec => void runTranscribe(note.id, rec.id)}
@@ -369,16 +433,49 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     if (openId && store.phase === 'ready' && !store.notes.some(n => n.id === openId)) setOpenId(null);
   }, [openId, store.notes, store.phase]);
 
+  // Tải xong ghi chú lần đầu → mở lại đúng chỗ lần trước (thẻ / cửa sổ). Điện thoại không có thẻ → mở cửa sổ.
+  useEffect(() => {
+    if (store.phase !== 'ready' || restoredFor.current === userId) return;
+    restoredFor.current = userId;
+    const p = loadPlace(userId);
+    place.current = p;
+    if (win || openId) return; // trong lúc đang tải đã tự mở thẻ / cửa sổ khác → giữ nguyên, không giật về chỗ cũ
+    const o = p.open;
+    if (o?.kind === 'window') setWin({ selectedId: o.selectedId, tab: o.tab, section: o.section });
+    else if (o?.kind === 'card' && store.notes.some(n => n.id === o.id)) {
+      if (isMobile) setWin({ selectedId: o.id, tab: 'all' });
+      else { setOpenId(o.id); setAnchorY(o.anchorY); }
+    }
+  }, [store.phase, store.notes, userId, isMobile, win, openId]);
+
+  const writePlace = (patch: Partial<LastPlace>) => {
+    place.current = { ...place.current, ...patch };
+    savePlace(userId, place.current);
+  };
+  // Thẻ đang mở / đóng hết → ghi lại (cửa sổ tự báo chỗ qua onPlaceChange)
+  useEffect(() => {
+    if (restoredFor.current !== userId) return;
+    const open: OpenPlace | null = win ? { kind: 'window', ...place.current.win } : openId ? { kind: 'card', id: openId, anchorY } : null;
+    place.current = { ...place.current, open };
+    savePlace(userId, place.current);
+  }, [openId, anchorY, win, userId]);
+
   const overlays = (
     <>
       {win && (
-        <NotesWindow store={store} isMobile={isMobile} initialSelectedId={win.selectedId} initialTab={win.tab}
+        <NotesWindow store={store} isMobile={isMobile} initialSelectedId={win.selectedId} initialTab={win.tab} initialSection={win.section}
           recordingNoteId={recordingNoteId} attentionNoteIds={attentionIds} canRecord={!recorder.active && recorder.supported}
           onClose={() => setWin(null)}
+          onPlaceChange={p => { if (restoredFor.current === userId) writePlace({ win: p, open: { kind: 'window', ...p } }); }}
+          onPinSettings={() => setPinReq({ kind: 'manage' })}
           onNew={() => newNote(false)} onNewMeeting={() => newNote(true)} onNewMap={() => newMap()}
           renderEditor={(note, variant, extra) => editorFor(note, variant, { ...extra, autoFocus: !extra.readOnly && !note.body.trim() })} />
       )}
       {confirm && <ConfirmDialog req={confirm} onClose={() => setConfirm(null)} />}
+      {pinReq && (
+        <PinDialog key={pinReq.kind === 'manage' ? 'manage' : pinReq.title} req={pinReq} onClose={() => setPinReq(null)}
+          onDone={msg => { setPinReq(null); if (msg) setNotice(msg); }} />
+      )}
       {notice && (
         <div className="fixed left-4 right-4 md:left-auto md:right-14 bottom-[calc(68px+env(safe-area-inset-bottom))] md:bottom-20 z-[96] text-center bg-[#1D1D1F]/90 backdrop-blur-xl text-white px-4 py-2.5 rounded-[12px] text-[13px] pointer-events-none">
           {notice}
@@ -394,7 +491,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       <>
         {!win && (
           <button type="button" aria-label="Mở ghi chú nhanh"
-            onClick={() => setWin({ selectedId: recordingNoteId, tab: 'all' })}
+            onClick={() => setWin(recordingNoteId ? { selectedId: recordingNoteId, tab: 'all' } : { ...place.current.win })}
             className="fixed right-0 top-[38%] z-[48] w-6 py-1 flex flex-col items-end gap-[3px]">
             {recordingNoteId && <span className="w-2 h-7 rounded-l-full bg-[#FF3B30] qn-rec-pulse" />}
             {failedUploads.length > 0 && <span className="w-2 h-3 rounded-l-full bg-[#D70015]" />}
@@ -508,8 +605,9 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
             const pal = PALETTE[n.color];
             const title = displayTitle(n);
             const map = isMindmap(n);
+            const locked = !!n.locked_at;
             return (
-              <button key={n.id} type="button" aria-label={`${map ? 'Sơ đồ tư duy' : 'Ghi chú'}: ${title}`}
+              <button key={n.id} type="button" aria-label={`${map ? 'Sơ đồ tư duy' : 'Ghi chú'}${locked ? ' (đang khoá)' : ''}: ${title}`}
                 onMouseEnter={() => setPeekId(n.id)}
                 onFocus={() => { enter(); setPeekId(n.id); }}
                 onClick={e => (openId === n.id ? closeEditor() : openEditor(n.id, e.currentTarget.getBoundingClientRect().top))}
@@ -519,9 +617,12 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
                   <Network size={11} className="absolute top-2 left-1/2 -translate-x-1/2 transition-opacity duration-200" style={{ opacity: expanded ? 0.75 : 0 }} />
                 )}
                 <span className="qn-vertical text-[10.5px] font-bold uppercase tracking-[0.06em] transition-opacity duration-200"
-                  style={{ maxHeight: tabH - (map ? 34 : 16), marginTop: map ? 14 : 0, opacity: expanded ? 0.78 : 0 }}>
+                  style={{ maxHeight: tabH - (map ? 34 : 16) - (locked ? 16 : 0), marginTop: map ? 14 : 0, marginBottom: locked ? 14 : 0, opacity: expanded ? 0.78 : 0 }}>
                   {title}
                 </span>
+                {locked && (
+                  <Lock size={10} className="absolute bottom-2 left-1/2 -translate-x-1/2 transition-opacity duration-200" style={{ opacity: expanded ? 0.7 : 0 }} />
+                )}
                 {attentionIds.has(n.id) && <span className="absolute top-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-[#D70015]" />}
               </button>
             );
@@ -559,6 +660,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
                   <div className="flex items-center gap-1.5 min-w-0">
                     {isMindmap(peekNote) && <Network size={13} className="shrink-0 opacity-70" />}
                     <div className="text-[14px] font-semibold truncate">{displayTitle(peekNote)}</div>
+                    {peekNote.locked_at && <Lock size={12} className="shrink-0 opacity-60" aria-label="Đang khoá chống xoá" />}
                   </div>
                   <div className="h-px bg-black/10 my-2 shrink-0" />
                   {peekLines.length ? (
@@ -621,7 +723,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
 
       {openNote && !win && (
         <div className={`fixed z-[49] qn-pop ${resizing ? 'select-none' : ''}`} style={cardStyle}
-          onKeyDown={e => { if (e.key === 'Escape' && !confirm) { e.stopPropagation(); closeEditor(); } }}>
+          onKeyDown={e => { if (e.key === 'Escape' && !confirm && !pinReq) { e.stopPropagation(); closeEditor(); } }}>
           {editorFor(openNote, 'card', {
             onClose: closeEditor,
             onOpenList: () => openWindow(openNote.id, openNote.archived_at ? 'archive' : 'all'),

@@ -8,6 +8,8 @@
 // Chuột: kéo chủ đề để đổi chỗ / đổi cha (thả ra chỗ trống = chủ đề tự do) · kéo nền = di chuyển · Shift+kéo = chọn vùng ·
 // cuộn = di chuyển, ⌘/Ctrl+cuộn hoặc chụm 2 ngón = phóng to · bấm đúp chỗ trống = chủ đề tự do · chuột phải = menu.
 // Toàn bộ thao tác đi qua lib/quickNotes/mindmap/model.ts (thuần, có test); vẽ = layout.ts + MapContent.tsx.
+// Mỗi sơ đồ nhớ trên máy (lib/quickNotes/lastPlace): Sơ đồ / Dàn ý, tab khung bên phải, khung nhìn, chủ đề đang chọn
+// → đóng / tải lại trang rồi mở lại vẫn đúng chỗ cũ.
 // ============================================================================
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
@@ -16,6 +18,7 @@ import {
   Paintbrush, Plus, Redo2, Scan, Smile, Spline, StickyNote, Trash2, Undo2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { FONT_FAMILY, type NotePalette } from '../../../lib/quickNotes/colors';
+import { getMapUi, putMapUi } from '../../../lib/quickNotes/lastPlace';
 import { canvasMeasure, hitTest, layoutMap, navigate, type MapLayout, type Pt, type TopicBox } from '../../../lib/quickNotes/mindmap/layout';
 import * as M from '../../../lib/quickNotes/mindmap/model';
 import { getTheme } from '../../../lib/quickNotes/mindmap/themes';
@@ -106,17 +109,19 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   const theme = useMemo(() => getTheme(doc.theme, palette), [doc.theme, palette]);
   const family = FONT_FAMILY[doc.font ?? 'sans'];
 
-  // ── Trạng thái giao diện ──
-  const [sel, setSel] = useState<string[]>(() => [doc.root.id]);
+  // ── Trạng thái giao diện (mở lại đúng chỗ lần trước nếu có) ──
+  const [saved] = useState(() => getMapUi(noteId));
+  const [sel, setSel] = useState<string[]>(() => (saved?.sel && M.findTopic(doc, saved.sel) ? [saved.sel] : [doc.root.id]));
   const [selRel, setSelRel] = useState<string | null>(null);
   const [selBoundary, setSelBoundary] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [view, setView] = useState<View>(() => viewMemory.get(noteId) ?? { x: 0, y: 0, z: 1 });
+  const [view, setView] = useState<View>(() => viewMemory.get(noteId) ?? saved?.view ?? { x: 0, y: 0, z: 1 });
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [rootW, setRootW] = useState(800);
-  const [panel, setPanel] = useState<PanelTab | null>(null);
-  const [mode, setMode] = useState<'map' | 'outline'>('map');
+  // Điện thoại: khung bên phải che gần hết sơ đồ → không tự mở lại
+  const [panel, setPanel] = useState<PanelTab | null>(() => (readOnly || mobile ? null : saved?.panel ?? null));
+  const [mode, setMode] = useState<'map' | 'outline'>(() => saved?.mode ?? 'map');
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [linkPt, setLinkPt] = useState<Pt | null>(null);
   const [dragUI, setDragUI] = useState<{ ids: string[]; primary: string; cur: Pt; grab: Pt; drop: Drop | null } | null>(null);
@@ -140,9 +145,10 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   const redoStack = useRef<MindMapDoc[]>([]);
   const lastMerge = useRef<{ key: string; t: number } | null>(null);
   const lastDown = useRef<{ key: string; t: number; x: number; y: number } | null>(null);
-  const inited = useRef(viewMemory.has(noteId));
+  const hadView = viewMemory.has(noteId) || !!saved?.view;
+  const inited = useRef(hadView);
   /** Khung nhìn còn đang do app tự canh (chưa kéo / phóng tay) → khung to ra thì canh lại cho vừa */
-  const autoFit = useRef(!viewMemory.has(noteId));
+  const autoFit = useRef(!hadView);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -167,6 +173,20 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   }, [doc, layout, sel, selRel, editing]);
 
   useEffect(() => { viewMemory.set(noteId, view); }, [noteId, view]);
+
+  // Ghi nhớ chỗ đang xem (chờ 0,4 giây sau lần đổi cuối; đóng sơ đồ thì ghi luôn). Khung nhìn chỉ ghi khi đã canh xong.
+  const uiRef = useRef({ mode, panel, view, sel: sel[0] as string | undefined, ready: inited.current });
+  uiRef.current = { mode, panel, view, sel: sel[0], ready: inited.current };
+  const persistUi = useCallback(() => {
+    const u = uiRef.current;
+    putMapUi(noteId, { mode: u.mode, panel: u.panel, sel: u.sel, ...(u.ready ? { view: u.view } : {}) });
+  }, [noteId]);
+  useEffect(() => {
+    if (readOnly) return;
+    const t = setTimeout(persistUi, 400);
+    return () => clearTimeout(t);
+  }, [persistUi, readOnly, mode, panel, view, sel]);
+  useEffect(() => () => { if (!readOnly) persistUi(); }, [persistUi, readOnly]);
 
   useEffect(() => {
     if (!toast) return;

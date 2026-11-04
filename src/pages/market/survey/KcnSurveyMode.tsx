@@ -36,10 +36,11 @@ import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type Ar
 import { ringsBounds, ringsCenter } from '../../../lib/kcnSurvey/areaSearch';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
 import { buildRoadGraph, pointAlong, type NavRoute } from '../../../lib/kcnSurvey/navigate';
+import { findStar, photoStarRef, type StarRef, type SurveyStar } from '../../../lib/kcnSurvey/stars';
 import { angleDiff, bearing, displayHeading } from '../../../lib/kcnSurvey/heading';
 import { fitRotated, rotatedSize, smartZoom } from '../../../lib/kcnSurvey/mapView';
 import {
-  countTripsBetween, listPhotos, listSurveyAreas, listTrips, listVoiceNotes, loadTracks, markupColumnMissing, MARKUP_MIGRATION_HINT, titleColumnMissing, TITLE_MIGRATION_HINT,
+  countTripsBetween, listPhotos, listStars, listSurveyAreas, listTrips, listVoiceNotes, loadTracks, markupColumnMissing, MARKUP_MIGRATION_HINT, setStar, titleColumnMissing, TITLE_MIGRATION_HINT,
   updateTrip, uploadPhoto, uploadVoiceNote,
   type PhotoMeta, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote, type VoiceMeta,
 } from '../../../lib/kcnSurvey/api';
@@ -245,6 +246,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     ...(area?.places ?? []),
     ...scanPlaces.filter(p => p.kind === 'company').map(p => ({ id: `scan-${p.key}`, name: p.name, point: { lat: p.lat, lng: p.lng } })),
   ]), [data.companies, area, scanPlaces]);
+  const [stars, setStars] = useState<SurveyStar[]>([]);
+  useEffect(() => { listStars().then(setStars).catch(() => { /* chưa chạy 195 — không có sao */ }); }, []);
+  /** Khoá các công ty trên bản đồ đang gắn sao (vẽ viền vàng) */
+  const starKeys = useMemo(() => new Set(stars.length ? allCompanies.filter(c => findStar(stars, { clientId: c.clientId, crmId: c.crmId, leadId: c.leadId, name: c.name })).map(c => c.key) : []), [stars, allCompanies]);
   const branchName = useCallback((id: string | null | undefined) => {
     if (!id) return null;
     const b = branches.find(x => x.id === id);
@@ -253,6 +258,21 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const lookup: CompanyLookup = useMemo(() => ({
     clientById: data.clientById, pipelineById: data.pipelineById, leadById: data.leadById, laborHistory, branchName,
   }), [data.clientById, data.pipelineById, data.leadById, laborHistory, branchName]);
+
+  // ── Sao công ty cần chú trọng (migration 195) ─────────────────────────────
+  const isStarred = useCallback((c: StarRef) => !!findStar(stars, c), [stars]);
+  /** Bật / tắt sao 1 công ty (lưu ngay) */
+  const toggleStar = useCallback(async (c: StarRef & { zoneName?: string }, on: boolean) => {
+    try {
+      const row = await setStar(c, on, { id: user?.id ?? null, name: user?.full_name ?? '' });
+      setStars(list => {
+        const rest = list.filter(x => x !== findStar(list, c));
+        return row ? [row, ...rest] : rest;
+      });
+      say(on ? `★ Đã gắn sao: ${c.name}` : `Đã bỏ sao: ${c.name}`);
+    } catch (e) { say((e as Error).message); }
+  }, [user, say]);
+  const companyStarRef = (c: SurveyCompany): StarRef & { zoneName?: string } => ({ clientId: c.clientId, crmId: c.crmId, leadId: c.leadId, name: c.name, zoneId: zone?.id ?? null, zoneName: zone?.name ?? '' });
 
   const photosOf = useCallback((c: SurveyCompany) => photos.filter(p =>
     (c.clientId && p.client_id === c.clientId) || (c.crmId && p.crm_id === c.crmId) || (c.leadId && p.lead_id === c.leadId)
@@ -786,13 +806,15 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       const meta = STATUS_META[c.status];
       const passed = passedRef.current.has(c.key);
       const m = L.circleMarker([p.lat, p.lng], {
-        radius: meta.rich ? 7 : 5, color: passed ? '#111' : '#fff', weight: passed ? 2.5 : 2, fillColor: meta.color, fillOpacity: c.status === 'osm' ? 0.7 : 0.95, renderer: ly.renderer,
+        // Công ty gắn sao: viền vàng dày + chấm to hơn
+        radius: starKeys.has(c.key) ? 8 : meta.rich ? 7 : 5, color: starKeys.has(c.key) ? '#F5B400' : passed ? '#111' : '#fff', weight: starKeys.has(c.key) ? 3.5 : passed ? 2.5 : 2,
+        fillColor: meta.color, fillOpacity: c.status === 'osm' ? 0.7 : 0.95, renderer: ly.renderer,
       });
       if (showLabels && i < 150) m.bindTooltip(`<span class="kcs-up">${escapeMapHtml(c.name)}</span>`, { permanent: true, direction: 'right', offset: [8, 0], className: 'kcs-label' });
       m.on('click', () => { setPinnedKey(c.key); setExpanded(true); });
       m.addTo(ly.companies);
     });
-  }, [allCompanies, viewTick, zoom, prefs.labels, passedKeysVersion]);
+  }, [allCompanies, viewTick, zoom, prefs.labels, passedKeysVersion, starKeys]);
 
   // Ảnh chỉ tiêu
   const openViewerRef = useRef<(p: SurveyPhoto) => void>(() => {});
@@ -961,6 +983,10 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       user_id: user?.id ?? null, user_name: user?.full_name ?? '',
     };
     runUpload({ kind: 'photo', id: crypto.randomUUID(), label: v.companyName || 'Ảnh chỉ tiêu', state: 'uploading', file: draft.file, meta });
+    // Sao ở mức công ty: chỉ ghi khi người dùng đổi so với lúc mở màn lưu
+    if (v.star !== v.starWas && v.companyName) {
+      void toggleStar({ clientId: v.company?.clientId ?? null, crmId: v.company?.crmId ?? null, leadId, name: v.companyName, zoneId: zone?.id ?? null, zoneName: zone?.name ?? '' }, v.star);
+    }
     setDraft(null);
   };
 
@@ -1307,6 +1333,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
         onOpenProfile={openProfile} onPhoto={c => beginCapture(c)} onAddToMarket={addOsmCompany}
         onShowPhotos={c => { setHistoryInit({ tab: 'photos', filter: { label: c.name, match: p => photosOf(c).some(x => x.id === p.id) } }); setPanel('history'); }}
         otherCount={pinned ? 0 : Math.max(0, nearby.length - 1)} onShowNearby={() => setPanel('nearby')}
+        starred={isStarred(companyStarRef(cardItem.company))} onStar={c => void toggleStar(companyStarRef(c), !isStarred(companyStarRef(c)))}
       />
     </div>
   );
@@ -1780,6 +1807,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           activeTripId={recorder.trip?.id ?? null}
           onShowTrip={showTripOnMap} onShowPhoto={showPhoto}
           onChanged={() => setHistoryTick(t => t + 1)} onClose={() => setPanel('none')} say={say}
+          starOf={p => isStarred(photoStarRef(p))} onStar={p => void toggleStar({ ...photoStarRef(p), zoneName: p.zone_name }, !isStarred(photoStarRef(p)))}
         />
       )}
 
@@ -1807,7 +1835,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {draft && (
         <SurveyPhotoSheet file={draft.file} position={draftPosition} suggestions={draftSuggestions} allCompanies={allCompanies}
-          preset={draft.preset} zoneName={zone?.name ?? null} lookup={lookup}
+          preset={draft.preset} zoneName={zone?.name ?? null} zoneId={zone?.id ?? null} lookup={lookup} isStarred={isStarred}
           onCancel={() => setDraft(null)} onSave={v => void savePhoto(v)} />
       )}
 
