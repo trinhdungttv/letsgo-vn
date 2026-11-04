@@ -411,6 +411,7 @@ export default function CskhDashboard() {
                 items={queueItems}
                 contactById={contactById}
                 groupById={groupById}
+                starOf={scope.starOf}
                 loading={loading}
                 busyId={busyId}
                 onLaunch={(c, channel) => markContactLaunched(c.id, channel)}

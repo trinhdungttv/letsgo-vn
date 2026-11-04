@@ -33,6 +33,8 @@ import { isSuspended, suspensionLabel, suspensionMonth, suspensionDate, shortMon
 import { branchOptions, branchLabelOf } from '../lib/branchRef';
 import { KpiTile, SectionCard, SubSection, InfoRow, PencilButton, QuickNav, useSectionState } from '../components/ui/PanelKit';
 import MapLinkHint from '../components/MapLinkHint';
+import { ClientStarPicker } from '../components/clients/ClientStars';
+import { CLIENT_STAR_LABEL, clientStarOf, saveClientStar, starGlyphs, type ClientStar } from '../lib/clientStars';
 
 // Khối "Sức khỏe CSKH" (module CSKH) — tải riêng khi mở tab Hồ sơ chăm sóc
 const ClientCareBlock = lazy(() => import('../modules/cskh/ClientCareBlock'));
@@ -111,6 +113,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [editing, setEditing] = useState(false);
   // Sửa nhanh mốc ngưng hợp tác (cho khách đã ngưng từ trước, chưa có/sai ngày).
   const [suspEdit, setSuspEdit] = useState<string | null>(null);
+  const [starSaving, setStarSaving] = useState(false);
   const [suspSaving, setSuspSaving] = useState(false);
   const [editingProjectType, setEditingProjectType] = useState(false);
   const [tempProjectType, setTempProjectType] = useState<string>('contracted');
@@ -566,6 +569,19 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
 
   const pill = statusPill(client.status);
 
+  const saveStar = async (star: ClientStar | null) => {
+    if (user?.role !== 'admin' || starSaving) return;
+    setStarSaving(true);
+    try {
+      onClientUpdate(await saveClientStar(client, star, user));
+      toast(star ? `Đã xếp ${starGlyphs(star)} ${CLIENT_STAR_LABEL[star]}` : 'Đã bỏ sao');
+    } catch (e) {
+      toast('Lỗi: ' + (e as Error).message);
+    } finally {
+      setStarSaving(false);
+    }
+  };
+
   return (
     <>
       {/* Điện thoại: hàng 1 = nút quay lại (icon) + tên; hàng 2 = loại dịch vụ + nút thao tác */}
@@ -577,6 +593,9 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           <div className="min-w-0">
             <div className="text-[15px] md:text-[14px] font-semibold text-[#111] flex items-center flex-wrap gap-x-2 gap-y-0.5 leading-snug">
               {client.name}
+              {/* Sao ưu tiên — admin bấm để xếp / bỏ; CSKH lọc người liên hệ theo sao này */}
+              <ClientStarPicker value={clientStarOf(client)} readOnly={user?.role !== 'admin'} busy={starSaving}
+                size={16} withLabel onChange={saveStar} />
               {isSuspended(client) && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-medium whitespace-nowrap">
                   {suspensionLabel(client)}

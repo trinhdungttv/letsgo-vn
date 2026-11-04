@@ -3,6 +3,8 @@
 // Gọi / Zalo / SMS + Xong (việc đã hứa) + Đã liên hệ. Điện thoại thì nút xuống hàng dưới (Xong chỉ
 // còn icon, Đã liên hệ dạt phải), vùng chạm ≥ 40px. Chạm vào dòng → tóm tắt nhanh.
 import { CompanyTag } from './apple';
+import { ClientStarBadge } from '../../../components/clients/ClientStars';
+import type { ClientStar } from '../../../lib/clientStars';
 import { Check, CheckCheck } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import type { TodayQueueItem } from '../../../lib/cskh/todayQueue';
@@ -14,10 +16,12 @@ import { useSpace } from '../space';
 const roundBtn = 'inline-flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#F2F2F7] text-[#0071E3] hover:bg-[#E5E5EA] transition';
 const pill = 'inline-flex items-center gap-1 h-10 md:h-8 px-3.5 md:px-3 rounded-full text-[13px] font-semibold transition';
 
-export function TodayQueue({ items, contactById, groupById, loading, onLaunch, onMarkContacted, onDoneFollowUp, onOpenBrief, busyId }: {
+export function TodayQueue({ items, contactById, groupById, starOf, loading, onLaunch, onMarkContacted, onDoneFollowUp, onOpenBrief, busyId }: {
   items: readonly TodayQueueItem[];
   contactById: ReadonlyMap<string, CskhContact>;
   groupById: ReadonlyMap<string, CskhGroup>;
+  /** Sao ưu tiên của công ty người này gắn (useCareScope.starOf) — hiện cạnh tên công ty. */
+  starOf?: (contactId: string) => ClientStar | null;
   loading: boolean;
   onLaunch: (contact: CskhContact, channel: ContactActionChannel) => void;
   onMarkContacted: (contact: CskhContact) => void;
@@ -62,6 +66,7 @@ export function TodayQueue({ items, contactById, groupById, loading, onLaunch, o
                   <span className="flex items-center gap-1.5 min-w-0">
                     <span className="text-[15px] font-semibold text-[#1D1D1F] truncate shrink-0 max-w-[55%]">{contact.fullName}</span>
                     <CompanyTag name={contact.organization} className="min-w-0" />
+                    {starOf && <ClientStarBadge star={starOf(contact.id)} className="shrink-0" />}
                   </span>
                   <span className="flex items-start gap-1 text-[13px] font-medium leading-snug" style={{ color: reason.color }}>
                     <reason.Icon size={13} strokeWidth={2.3} className="shrink-0 mt-[3px]" />

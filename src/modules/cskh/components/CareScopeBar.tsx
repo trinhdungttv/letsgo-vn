@@ -1,8 +1,9 @@
-// Thanh lọc Chi nhánh / Người phụ trách / Người quản lý KH (dùng với useCareScope) —
+// Thanh lọc Chi nhánh / Người phụ trách / Người quản lý KH / Sao công ty (dùng với useCareScope) —
 // ô chọn dạng viên kiểu Apple, tô xanh nhạt khi đang lọc.
 // Bộ lọc nhớ theo TỪNG MÁY → điện thoại có thể đang lọc khác máy tính. Trên điện thoại dải ô chọn
 // cuộn ngang nên "Xoá lọc" / "N / tổng" ở cuối dải bị khuất — tách ra 1 dòng riêng luôn nhìn thấy.
 import { useAuth } from '../../../lib/auth';
+import { CLIENT_STARS, starFilterLabel, type StarFilter } from '../../../lib/clientStars';
 import type { AppUserLite } from '../data/api';
 import { DEFAULT_SCOPE, type CareScope } from '../useCareScope';
 import { PillSelect } from './apple';
@@ -27,6 +28,7 @@ export function CareScopeBar({ scope, users, total, unit }: {
     filters.branch !== DEFAULT_SCOPE.branch && (options.branches.find(b => b.id === filters.branch)?.name ?? 'Chi nhánh khác'),
     filters.owner !== DEFAULT_SCOPE.owner && ownerLabel,
     filters.manager !== DEFAULT_SCOPE.manager && filters.manager,
+    filters.stars !== DEFAULT_SCOPE.stars && starFilterLabel(filters.stars),
   ].filter(Boolean).join(' · ');
   const count = <span className="tabular-nums">{scoped.length} / {total} {unit ?? noun}</span>;
   const clear = (
@@ -59,6 +61,17 @@ export function CareScopeBar({ scope, users, total, unit }: {
             onChange={v => setFilters({ ...filters, manager: v })}>
             <option value="all">Mọi người quản lý KH</option>
             {options.managers.map(m => <option key={m} value={m}>{m}</option>)}
+          </PillSelect>
+        )}
+        {/* Sao ưu tiên của công ty (gán ở trang Khách hàng) — người liên hệ theo sao cao nhất của các công ty họ gắn */}
+        {(options.hasCompanies || filters.stars !== DEFAULT_SCOPE.stars) && (
+          <PillSelect value={filters.stars} active={filters.stars !== DEFAULT_SCOPE.stars} label="Lọc theo sao ưu tiên của công ty"
+            onChange={v => setFilters({ ...filters, stars: v as StarFilter })}>
+            <option value="all">{starFilterLabel('all')}</option>
+            {CLIENT_STARS.map(s => (
+              <option key={s} value={String(s)}>{`${starFilterLabel(String(s) as StarFilter)} (${options.starCounts[s]})`}</option>
+            ))}
+            <option value="none">{`${starFilterLabel('none')} (${options.starCounts.none})`}</option>
           </PillSelect>
         )}
         {isFiltered && <span className="hidden md:inline-flex">{clear}</span>}

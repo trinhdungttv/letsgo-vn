@@ -5,7 +5,9 @@
 //   • Tìm không dấu (khớp cả sở thích, thói quen, tính cách, tên trường, quê) · Phạm vi
 //     Đang chăm sóc / Danh bạ khác / Cả danh bạ / Đã nghỉ — danh bạ chỉ là nguồn để chọn
 //   • Bộ lọc dạng viên: Nhóm, Trạng thái, Giới tính (kèm "Gợi ý Nữ/Nam theo tên"), Đặc điểm
-//     (Golf (5)…), Chi nhánh, Người phụ trách, Loại khách, Công ty, Tỉnh + chip bộ lọc đang bật
+//     (Golf (5)…), Chi nhánh, Người phụ trách, Loại khách, Công ty, Sao công ty, Tỉnh + chip bộ lọc đang bật
+//   • Sao công ty (3 Quan trọng · 2 Bình thường · 1 Dự án nhỏ — gán ở trang Khách hàng): người liên hệ
+//     lấy sao CAO NHẤT trong các công ty họ gắn; lọc + sắp xếp "quan trọng trước" để biết chăm ai trước
 //   • BẢNG sắp xếp được, chip nhóm bấm để đổi nhanh, "Hiện thêm" cho danh bạ lớn
 //   • Chọn nhiều → Ghi tương tác (cho cả nhóm) / Xếp vào nhóm / Giới tính / Bỏ chăm sóc / Đổi
 //     người phụ trách / Gắn thêm công ty / Đánh dấu nghỉ / Xoá vĩnh viễn (admin)
@@ -30,6 +32,8 @@ import { CLASSIFIED_TIERS, GENDER_LABEL, SALE_STAGES } from '../../lib/cskh/type
 import { SALE_STAGE_LABEL } from '../../lib/cskh/space';
 import { MIGRATION_178_HINT } from '../../lib/contactOps';
 import { compareVnName } from '../../lib/vnName';
+import { CLIENT_STARS, contactStarOf, isStarFilter, matchesStarFilter, starFilterLabel, type ClientStar, type StarFilter } from '../../lib/clientStars';
+import { ClientStarBadge } from '../../components/clients/ClientStars';
 import { assignGroups, setGender, setOwner, setSaleStage } from './data/api';
 import { useCskh } from './context';
 import {
@@ -59,10 +63,12 @@ const KIND_LABEL: Readonly<Record<ClientKind, string>> = {
   cooperating: 'Đang hợp tác', suspended: 'Ngưng hợp tác', prospect: 'Tiềm năng', unlinked: 'Chưa gắn công ty',
 };
 
-type SortKey = 'due' | 'name' | 'recent' | 'score';
+type SortKey = 'due' | 'name' | 'recent' | 'score' | 'stars';
 type SortDir = 'asc' | 'desc';
 const SORT_OPTIONS: ReadonlyArray<{ value: `${SortKey}:${SortDir}`; label: string }> = [
   { value: 'due:asc', label: 'Hạn chăm sóc gấp nhất' },
+  { value: 'stars:desc', label: 'Sao công ty: quan trọng trước' },
+  { value: 'stars:asc', label: 'Sao công ty: dự án nhỏ trước' },
   { value: 'due:desc', label: 'Hạn chăm sóc xa nhất' },
   { value: 'score:asc', label: 'Điểm thấp → cao' },
   { value: 'score:desc', label: 'Điểm cao → thấp' },
@@ -71,7 +77,7 @@ const SORT_OPTIONS: ReadonlyArray<{ value: `${SortKey}:${SortDir}`; label: strin
   { value: 'name:asc', label: 'Tên A → Z' },
   { value: 'name:desc', label: 'Tên Z → A' },
 ];
-const DEFAULT_DIR: Readonly<Record<SortKey, SortDir>> = { due: 'asc', name: 'asc', recent: 'desc', score: 'asc' };
+const DEFAULT_DIR: Readonly<Record<SortKey, SortDir>> = { due: 'asc', name: 'asc', recent: 'desc', score: 'asc', stars: 'desc' };
 
 /** Chỉ vẽ bấy nhiêu dòng mỗi lần — danh bạ lớn vẫn mượt trên iPhone. */
 const PAGE = 60;
@@ -95,17 +101,20 @@ interface Filters {
   zone: string;
   /** Chỉ Mạng lưới Sale: ngành quen ('all' | industries.id). */
   industry: string;
+  /** Sao ưu tiên của công ty người này gắn: 'all' | '3' | '2' | '1' | 'none' (chưa xếp sao). */
+  stars: StarFilter;
 }
 const DEFAULT_FILTERS: Filters = {
   scope: 'care', group: 'all', status: 'all', branch: 'all', owner: 'all', kind: 'cooperating', company: 'all', province: 'all',
-  gender: 'all', trait: 'all', stage: 'all', workplace: 'all', zone: 'all', industry: 'all',
+  gender: 'all', trait: 'all', stage: 'all', workplace: 'all', zone: 'all', industry: 'all', stars: 'all',
 };
-/** Sale không có công ty khách / loại khách / chi nhánh — bỏ các bộ lọc đó. */
-const SALE_DEFAULTS: Partial<Filters> = { kind: 'all', company: 'all', branch: 'all' };
+/** Sale không có công ty khách / loại khách / chi nhánh / sao công ty — bỏ các bộ lọc đó. */
+const SALE_DEFAULTS: Partial<Filters> = { kind: 'all', company: 'all', branch: 'all', stars: 'all' };
 type Dim = keyof Filters | 'search';
 
-function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey): number | string | null {
+function sortValue(c: CskhContact, st: ContactStats | undefined, key: SortKey, star: ClientStar | null): number | string | null {
   switch (key) {
+    case 'stars': return star;
     case 'due': return st?.daysUntilDue ?? null;
     case 'score': return st?.score?.total ?? null;
     case 'recent': return c.lastInteractionAt;
@@ -122,7 +131,8 @@ export default function CskhMatrix() {
   const { tierLabel, storageKey, listTitle } = useSpace();
   const [storedFilters, setFilters] = usePersistedState<Filters>(storageKey('cskh_matrix_filters'), isSale ? { ...DEFAULT_FILTERS, ...SALE_DEFAULTS } : DEFAULT_FILTERS);
   // Bộ lọc lưu từ phiên bản cũ có thể thiếu khoá mới → luôn trộn với mặc định
-  const filters: Filters = { ...DEFAULT_FILTERS, ...storedFilters, ...(isSale ? SALE_DEFAULTS : {}) };
+  const mergedFilters: Filters = { ...DEFAULT_FILTERS, ...storedFilters, ...(isSale ? SALE_DEFAULTS : {}) };
+  const filters: Filters = { ...mergedFilters, stars: isStarFilter(mergedFilters.stars) ? mergedFilters.stars : 'all' };
   const [search, setSearch] = useState('');
   const [sort, setSort] = usePersistedState<{ key: SortKey; dir: SortDir }>(storageKey('cskh_matrix_sort'), { key: 'due', dir: 'asc' });
   const [limit, setLimit] = useState(PAGE);
@@ -163,6 +173,8 @@ export default function CskhMatrix() {
     if (!c.clientIds.length) kinds.add('unlinked');
     return [c.id, {
       groupKey: groupDisplayOf(c, groupById, tierLabel).key,
+      // Sao cao nhất trong các công ty người này gắn (clients.star_rating)
+      star: contactStarOf(c.clientIds, clientById),
       branchIds,
       branchNames,
       kinds,
@@ -191,6 +203,7 @@ export default function CskhMatrix() {
     if (on('owner') && filters.owner !== 'all' && (filters.owner === 'none' ? c.ownerId !== null : c.ownerId !== filters.owner)) return false;
     if (on('kind') && filters.kind !== 'all' && !d.kinds.has(filters.kind)) return false;
     if (on('company') && filters.company !== 'all' && !c.clientIds.includes(filters.company)) return false;
+    if (on('stars') && filters.stars !== 'all' && !matchesStarFilter(d.star, filters.stars)) return false;
     if (on('province') && filters.province !== 'all' && c.province !== filters.province && c.originProvince !== filters.province) return false;
     if (on('gender') && filters.gender !== 'all' && !matchesGender(c, filters.gender)) return false;
     if (on('trait') && trait && !hasTrait(c, trait.field, trait.key)) return false;
@@ -204,8 +217,8 @@ export default function CskhMatrix() {
 
   const filtered = contacts.filter(c => passes(c));
   const sorted = [...filtered].sort((a, b) => {
-    const va = sortValue(a, stats.get(a.id), sort.key);
-    const vb = sortValue(b, stats.get(b.id), sort.key);
+    const va = sortValue(a, stats.get(a.id), sort.key, derived.get(a.id)?.star ?? null);
+    const vb = sortValue(b, stats.get(b.id), sort.key, derived.get(b.id)?.star ?? null);
     if (va === null && vb !== null) return 1;
     if (vb === null && va !== null) return -1;
     let cmp = 0;
@@ -215,6 +228,13 @@ export default function CskhMatrix() {
         : sort.key === 'name' ? compareVnName(String(va), String(vb)) : String(va).localeCompare(String(vb), 'vi');
     }
     if (sort.dir === 'desc') cmp = -cmp;
+    if (!cmp && sort.key === 'stars') {
+      // Cùng mức sao → ai tới hạn chăm sóc gấp hơn lên trước
+      const da = stats.get(a.id)?.daysUntilDue ?? null;
+      const db = stats.get(b.id)?.daysUntilDue ?? null;
+      if (da !== null && db !== null) cmp = da - db;
+      else if (da !== null || db !== null) cmp = da === null ? 1 : -1;
+    }
     return cmp || compareVnName(a.fullName, b.fullName);
   });
   const visible = sorted.slice(0, limit);
@@ -251,8 +271,10 @@ export default function CskhMatrix() {
     const cIds = new Set<string>();
     const provinces = new Set<string>();
     const workplaces = new Map<string, { label: string; n: number }>();
+    const starCounts: Record<ClientStar | 'none', number> = { 3: 0, 2: 0, 1: 0, none: 0 };
     for (const c of contacts) {
       derived.get(c.id)?.branchIds.forEach(id => bIds.add(id));
+      starCounts[derived.get(c.id)?.star ?? 'none'] += 1;
       c.clientIds.forEach(id => cIds.add(id));
       if (c.province) provinces.add(c.province);
       if (c.originProvince) provinces.add(c.originProvince);
@@ -262,6 +284,7 @@ export default function CskhMatrix() {
     return {
       branches: branches.filter(b => bIds.has(b.id)),
       companies: clients.filter(c => cIds.has(c.id)).sort((a, b) => a.name.localeCompare(b.name, 'vi')),
+      starCounts,
       provinces: [...provinces].sort((a, b) => a.localeCompare(b, 'vi')),
       workplaces: [...workplaces.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, 'vi')),
       // Chỉ KCN / ngành đang có Sale chọn, kèm số người
@@ -386,6 +409,7 @@ export default function CskhMatrix() {
   if (filters.owner !== 'all') chips.push({ label: `Phụ trách: ${filters.owner === 'none' ? 'chưa giao' : userName.get(filters.owner) ?? '?'}`, clear: () => setFilter({ owner: 'all' }) });
   if (filters.kind !== 'all') chips.push({ label: `Khách: ${KIND_LABEL[filters.kind]}`, clear: () => setFilter({ kind: 'all' }) });
   if (filters.company !== 'all') chips.push({ label: `Công ty: ${clientById.get(filters.company)?.name ?? '?'}`, clear: () => setFilter({ company: 'all' }) });
+  if (filters.stars !== 'all') chips.push({ label: `Sao: ${starFilterLabel(filters.stars)}`, clear: () => setFilter({ stars: 'all' }) });
   if (filters.province !== 'all') chips.push({ label: filters.province, clear: () => setFilter({ province: 'all' }) });
   if (filters.gender !== 'all') chips.push({ label: GENDER_FILTER_LABEL[filters.gender], clear: () => setFilter({ gender: 'all' }) });
   if (filters.stage !== 'all') chips.push({ label: `Chiêu mộ: ${SALE_STAGE_LABEL[filters.stage]}`, clear: () => setFilter({ stage: 'all' }) });
@@ -585,6 +609,14 @@ export default function CskhMatrix() {
                 <option value="all">Mọi công ty</option>
                 {options.companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </PillSelect>
+              {/* Sao ưu tiên của công ty (gán ở trang Khách hàng) */}
+              <PillSelect value={filters.stars} active={filters.stars !== 'all'} label="Lọc theo sao ưu tiên của công ty" onChange={v => setFilter({ stars: v as StarFilter })}>
+                <option value="all">{starFilterLabel('all')}</option>
+                {CLIENT_STARS.map(st => (
+                  <option key={st} value={String(st)}>{`${starFilterLabel(String(st) as StarFilter)} (${options.starCounts[st]})`}</option>
+                ))}
+                <option value="none">{`${starFilterLabel('none')} (${options.starCounts.none})`}</option>
+              </PillSelect>
             </>
           )}
           {options.provinces.length > 0 && (
@@ -729,6 +761,7 @@ export default function CskhMatrix() {
                           </span>
                           <span className="flex items-center gap-1.5 max-w-[260px]">
                             {c.organization ? <CompanyTag name={c.organization} /> : <span className="text-[12px] text-[#86868B]">{isSale ? 'Chưa ghi nơi làm' : 'Chưa gắn công ty'}</span>}
+                            {!isSale && <ClientStarBadge star={d?.star ?? null} className="shrink-0" />}
                             {c.jobTitle && <span className="text-[12px] text-[#86868B] truncate">{c.jobTitle}</span>}
                           </span>
                         </span>

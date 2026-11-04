@@ -85,6 +85,9 @@ export interface Client {
   khoan_fixed_fee?: number;
   khoan_tiers?: { min_workers: number; lg_pct: number; cn_pct: number }[];
   cooperation_status?: 'active' | 'suspended';
+  /** Xếp sao ưu tiên (migration 198): 3 Quan trọng · 2 Bình thường · 1 Dự án nhỏ · null chưa xếp.
+   *  Đọc qua clientStarOf() trong lib/clientStars — CSKH lọc người liên hệ theo sao này. */
+  star_rating?: number | null;
   suspension_reason?: string | null;
   suspended_at?: string | null;   // thời điểm bấm nút ngưng (dấu vết thao tác)
   suspended_from?: string | null; // ngày ngưng hợp tác thật, 'YYYY-MM-DD' (migration 134)

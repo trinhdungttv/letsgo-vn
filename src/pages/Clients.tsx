@@ -28,6 +28,8 @@ import { formatSuspensionDate, suspendedDuration, suspensionLabel, shortMonth, t
 import ServiceTypeBadge from '../components/ServiceTypeBadge';
 import MobileActionSheet from '../components/ui/MobileActionSheet';
 import { buildCompanyIndex, findSimilarCompanies } from '../lib/companyMatch';
+import { CLIENT_STAR_LABEL, CLIENT_STARS, clientStarOf, isStarFilter, matchesStarFilter, saveClientStar, starFilterLabel, starGlyphs, type ClientStar, type StarFilter } from '../lib/clientStars';
+import { ClientStarBadge, ClientStarPicker } from '../components/clients/ClientStars';
 
 interface ClientsProps {
   clients: Client[];
@@ -82,6 +84,10 @@ export default function Clients({
   const [newZoneName, setNewZoneName] = useState('');
   const [savingZone, setSavingZone] = useState(false);
   const [activeManagers, setActiveManagers] = usePersistedState<string[]>('lgvn_clients_activeManagers', [ALL_OPTION]);
+  // Lọc theo sao ưu tiên (3 Quan trọng · 2 Bình thường · 1 Dự án nhỏ) — nhớ theo trình duyệt như các bộ lọc khác
+  const [storedStars, setActiveStars] = usePersistedState<StarFilter>('lgvn_clients_activeStars', 'all');
+  const activeStars: StarFilter = isStarFilter(storedStars) ? storedStars : 'all';
+  const [starBusy, setStarBusy] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [editingManager, setEditingManager] = useState<Manager | null>(null);
   const [savingManager, setSavingManager] = useState(false);
@@ -229,7 +235,8 @@ export default function Clients({
     const matchManager = activeManagers.includes(ALL_OPTION) || activeManagers.includes(c.manager || '');
     const matchZones = activeZones.includes(ALL_OPTION) || (c.industrial_zones || []).some(z => activeZones.includes(z));
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase());
-    if (!matchRegion || !matchManager || !matchZones || !matchSearch) return false;
+    const matchStars = matchesStarFilter(clientStarOf(c), activeStars);
+    if (!matchRegion || !matchManager || !matchZones || !matchSearch || !matchStars) return false;
     if (quickFilter === 'expiring') {
       const d = Math.round((new Date(c.contract_end || '').getTime() - Date.now()) / 86400000);
       return d >= 0 && d <= 30;
@@ -244,9 +251,9 @@ export default function Clients({
   });
 
   const exportToCSV = useCallback(() => {
-    const headers = ['Tên công ty','Chi nhánh','Quản lý','KCN','LĐ hiện tại','LĐ tối thiểu','Trạng thái','Hết HĐ'];
+    const headers = ['Tên công ty','Sao','Chi nhánh','Quản lý','KCN','LĐ hiện tại','LĐ tối thiểu','Trạng thái','Hết HĐ'];
     const rows = filtered.map(c => [
-      c.name, branchNameOfClient(c), c.manager || '',
+      c.name, (() => { const s = clientStarOf(c); return s ? `${s} sao - ${CLIENT_STAR_LABEL[s]}` : ''; })(), branchNameOfClient(c), c.manager || '',
       (c.industrial_zones || []).join(', '),
       c.current_workers || 0, c.min_workers || 0,
       c.status || '', c.contract_end || '',
@@ -339,6 +346,24 @@ export default function Clients({
     return detectChurnRisk(hist) !== null;
   });
   const unpaidCount = activeClients.filter(c => c.prog_cutoff && !c.paid_this_month).length;
+  // Số công ty theo từng mức sao (trên KH đang hợp tác) — hiện cạnh nút lọc sao
+  const starCounts = { 3: 0, 2: 0, 1: 0, none: 0 } as Record<ClientStar | 'none', number>;
+  for (const c of activeClients) starCounts[clientStarOf(c) ?? 'none'] += 1;
+
+  // Gán / bỏ sao ưu tiên (admin). Lưu xong đẩy vào state của App → CSKH đọc cùng mảng clients nên lọc sao đổi theo ngay.
+  const setStar = async (c: Client, star: ClientStar | null) => {
+    if (!isAdmin || starBusy) return;
+    if (star === clientStarOf(c)) return;
+    setStarBusy(c.id);
+    try {
+      onClientUpdate(await saveClientStar(c, star, user));
+      toast(star ? `${c.name}: ${starGlyphs(star)} ${CLIENT_STAR_LABEL[star]}` : `${c.name}: đã bỏ sao`);
+    } catch (e) {
+      toast('Lỗi: ' + errMsg(e));
+    } finally {
+      setStarBusy(null);
+    }
+  };
   const allScores = activeClients.map(c => {
     const hist = recentLaborCounts(laborHistory[c.id] || []);
     // Phân nhánh theo loại hình dịch vụ.
@@ -1153,6 +1178,25 @@ export default function Clients({
           <FilterDropdown label="Khu công nghiệp" options={zoneNames} selected={activeZones} onChange={setActiveZones} />
           <FilterDropdown label="Chi nhánh" options={regionNames} selected={activeRegion} onChange={onRegionChange} />
           <FilterDropdown label="Quản lý" options={managerNames} selected={activeManagers} onChange={setActiveManagers} />
+          {/* Lọc sao ưu tiên: 3 Quan trọng · 2 Bình thường · 1 Dự án nhỏ — cùng mức sao dùng để lọc bên CSKH */}
+          <div role="group" aria-label="Lọc theo sao ưu tiên"
+            className="inline-flex items-center max-w-full overflow-x-auto no-scrollbar rounded-lg border border-gray-300 bg-white text-[12.5px]">
+            <span className="pl-3 pr-1 text-[#888] whitespace-nowrap">Sao:</span>
+            {(['all', ...CLIENT_STARS.map(String), 'none'] as StarFilter[]).map(f => {
+              const on = activeStars === f;
+              const n = f === 'all' ? null : f === 'none' ? starCounts.none : starCounts[Number(f) as ClientStar];
+              return (
+                <button key={f} type="button" onClick={() => setActiveStars(on && f !== 'all' ? 'all' : f)}
+                  title={starFilterLabel(f)} aria-pressed={on}
+                  className={`inline-flex items-center gap-1 px-2 py-1.5 whitespace-nowrap font-medium transition ${on ? 'bg-amber-50 text-amber-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  {f === 'all' ? 'Tất cả'
+                    : f === 'none' ? 'Chưa xếp'
+                      : <span className="tracking-[-1px]" style={{ color: on ? undefined : '#F5B301' }}>{starGlyphs(Number(f) as ClientStar)}</span>}
+                  {n !== null && n > 0 && <span className={`text-[10px] font-bold px-1 rounded-full ${on ? 'bg-amber-100' : 'bg-gray-100 text-gray-500'}`}>{n}</span>}
+                </button>
+              );
+            })}
+          </div>
           {/* Điện thoại: chip lọc nhanh thành 1 dải cuộn ngang thay vì xếp nhiều dòng */}
           <div className="flex gap-1.5 md:ml-auto w-full md:w-auto overflow-x-auto no-scrollbar md:flex-wrap -mx-3 px-3 md:mx-0 md:px-0">
             {[
@@ -1234,6 +1278,7 @@ export default function Clients({
                       <div className="flex items-center gap-1.5 min-w-0">
                         {underMin && <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
                         <span className="text-[14px] font-semibold text-[#111] truncate">{c.name}</span>
+                        <ClientStarBadge star={clientStarOf(c)} className="shrink-0" />
                         <ServiceTypeBadge type={c.service_type} className="shrink-0" />
                         <ChurnBadge level={churnLevel} />
                       </div>
@@ -1354,6 +1399,8 @@ export default function Clients({
                           <div>
                             <div className="font-semibold text-[13px] flex items-center gap-1.5">
                               {c.name}
+                              <ClientStarPicker value={clientStarOf(c)} readOnly={!isAdmin} busy={starBusy === c.id} size={13}
+                                onChange={s => setStar(c, s)} />
                               {c.cooperation_status === 'suspended' && (
                                 isAdmin ? (
                                   <button
@@ -1741,6 +1788,8 @@ export default function Clients({
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-[13px] font-semibold text-[#111] truncate">{c.name}</div>
+                          <ClientStarPicker value={clientStarOf(c)} readOnly={!isAdmin} busy={starBusy === c.id} size={14}
+                            withLabel={isAdmin} onChange={s => setStar(c, s)} />
                           <div className="text-[11px] text-[#888] truncate">{branchNameOfClient(c)}{zone ? ` · ${zone}` : ''}</div>
                           {c.industry && <div className="text-[10.5px] text-[#aaa] truncate mt-0.5">{c.industry}</div>}
                         </div>

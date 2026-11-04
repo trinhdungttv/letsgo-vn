@@ -49,6 +49,12 @@ import ContactFormModal, { RichTextEditor } from '../../../components/contacts/C
 import MoveCompanyDialog from '../../../components/contacts/MoveCompanyDialog';
 import CareerTimeline from '../../../components/contacts/CareerTimeline';
 import { mapContactRow } from '../../../lib/cskh/mappers';
+import { supabase } from '../../../lib/supabase';
+import { invalidateCompanyIndex } from '../../../hooks/useCompanyDuplicates';
+import {
+  ensureClientForPipelineCompany, fillPipelineContactIfEmpty, PIPELINE_COMPANY_SELECT, pipelineOnlyCompanies,
+  pipelineStageLabel, type PipelineCompanyLite,
+} from '../../../lib/pipelineCompanyLink';
 import { expandOpenExtras, saveProfile, setFollowUpDone, type CskhData } from '../data/api';
 import { mapLinkCoords, useMapLink } from '../data/mapLink';
 import { markContactLaunched } from '../launch';
@@ -178,6 +184,9 @@ function blankContactRaw(): Contact {
   };
 }
 
+/** Khoá tạm của công ty chọn từ BD Pipeline trong danh sách công ty (đổi sang clients.id lúc Lưu). */
+const PIPE_KEY = 'pipe:';
+
 export function ContactProfileModal({ contactId, data, clients, toast, onClose, onLog, onOpenClient, onManageGroups }: {
   /** null = thêm liên hệ mới (form trống, lưu xong là tạo người + hồ sơ chăm sóc trong 1 lần). */
   contactId: string | null;
@@ -209,9 +218,28 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const thisYear = Number(today.slice(0, 4));
   const isSale = data.space === 'sale';
   const groupById = useMemo(() => new Map(data.groups.map(g => [g.id, g])), [data.groups]);
-  // CSKH chỉ nạp khách đang hợp tác → công ty tiềm năng (VD vừa chuyển sang) lấy tên từ dòng nối của người này
+  // Công ty đang ở BD Pipeline (chưa có hồ sơ Khách hàng) chọn được ở "Gắn công ty": giữ tạm khoá "pipe:<id>",
+  // bấm Lưu mới tạo / dùng lại hồ sơ KH tiềm năng cùng tên (lib/pipelineCompanyLink) — Huỷ thì không tạo gì
+  const [pipeline, setPipeline] = useState<PipelineCompanyLite[]>([]);
+  useEffect(() => {
+    if (isSale) return;
+    let alive = true;
+    void supabase.from('crm_pipeline').select(PIPELINE_COMPANY_SELECT).is('client_id', null).order('created_at')
+      .then(({ data: rows }) => { if (alive) setPipeline((rows ?? []) as PipelineCompanyLite[]); });
+    return () => { alive = false; };
+  }, [isSale]);
+  const pipeChoices = useMemo(
+    () => pipelineOnlyCompanies(pipeline, [...clients.map(c => c.name), ...(raw.contact_clients ?? []).map(l => l.clients?.name ?? '')]),
+    [pipeline, clients, raw],
+  );
+  const pipeById = useMemo(() => new Map(pipeChoices.map(e => [e.id, e])), [pipeChoices]);
+  /** Tên hồ sơ vừa tạo từ thẻ Pipeline lúc Lưu (CSKH chưa kịp nạp lại) — để chip vẫn đúng tên nếu lưu lỗi giữa chừng. */
+  const [createdNames, setCreatedNames] = useState<ReadonlyMap<string, string>>(() => new Map());
+  // CSKH chỉ nạp khách đang hợp tác + KH tiềm năng → công ty khác (VD vừa chuyển sang) lấy tên từ dòng nối của người này
   const clientName = (id: string | null) => (id
-    ? clients.find(c => c.id === id)?.name ?? raw.contact_clients?.find(l => l.client_id === id)?.clients?.name ?? null
+    ? (id.startsWith(PIPE_KEY) ? pipeById.get(id.slice(PIPE_KEY.length))?.company_name ?? null : null)
+      ?? createdNames.get(id)
+      ?? clients.find(c => c.id === id)?.name ?? raw.contact_clients?.find(l => l.client_id === id)?.clients?.name ?? null
     : null);
   const clientsSorted = useMemo(() => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'vi')), [clients]);
   const others = useMemo(() => data.contacts.filter(c => c.id !== contactId), [data.contacts, contactId]);
@@ -412,12 +440,38 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
     setSaving(true);
     setError('');
     try {
+      // Công ty chọn từ BD Pipeline → hồ sơ KH tiềm năng cùng tên (có rồi thì dùng lại); thẻ Pipeline giữ nguyên giai đoạn
+      let ids = clientIds;
+      let prim = primaryIds;
+      const pipeEntries: PipelineCompanyLite[] = [];
+      const newNames = new Map(createdNames);
+      const pipeKeys = isSale ? [] : clientIds.filter(id => id.startsWith(PIPE_KEY));
+      if (pipeKeys.length) {
+        const swap = new Map<string, string>();
+        for (const key of pipeKeys) {
+          const entry = pipeById.get(key.slice(PIPE_KEY.length));
+          if (!entry) throw new Error('Không còn thấy công ty BD Pipeline đã chọn — gỡ công ty đó rồi chọn lại');
+          const ens = await ensureClientForPipelineCompany(entry, user);
+          if (ens.created) invalidateCompanyIndex();
+          swap.set(key, ens.id);
+          newNames.set(ens.id, ens.name);
+          pipeEntries.push(entry);
+        }
+        const toReal = (list: readonly string[]) => [...new Set(list.map(id => swap.get(id) ?? id))];
+        ids = toReal(clientIds);
+        prim = toReal(primaryIds);
+        // Lưu lỗi ở bước sau → bấm Lưu lại dùng đúng hồ sơ vừa có, không tạo lần nữa
+        setClientIds(ids);
+        setPrimaryIds(prim);
+        setCreatedNames(newNames);
+      }
+      const nameOf = (id: string | null) => (id ? newNames.get(id) ?? clientName(id) : null);
       const linkCoords = mapLink.trim() ? await mapLinkCoords(mapLink, token) : null;
       const shared = {
         name, phone, email, role,
         // Sale không gắn công ty khách (DB cũng chặn)
-        client_ids: isSale ? [] : clientIds,
-        primary_client_ids: isSale ? [] : primaryIds.filter(id => clientIds.includes(id)),
+        client_ids: isSale ? [] : ids,
+        primary_client_ids: isSale ? [] : prim.filter(id => ids.includes(id)),
         start_date: startDate, channel, address, map_link: mapLink,
         social_link: joinSocialLinks({ ...social, facebook: withScheme(social.facebook), linkedin: withScheme(social.linkedin) }),
         hobbies: splitTags(interests),
@@ -427,7 +481,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       let saveCurrent = current;
       if (isNew) {
         // Bước 1: tạo người (cùng đường lưu với form Khách hàng); bước 2: lưu phần chăm sóc như sửa hồ sơ
-        createdRaw.current ??= await saveContact({ ...emptyContactForm(), ...shared }, null, { user, clientName, kind: data.space });
+        createdRaw.current ??= await saveContact({ ...emptyContactForm(), ...shared }, null, { user, clientName: nameOf, kind: data.space });
         saveRaw = createdRaw.current;
         saveCurrent = { ...current, id: saveRaw.id };
       }
@@ -435,7 +489,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         raw: saveRaw,
         current: saveCurrent,
         user,
-        clientName,
+        clientName: nameOf,
         shared,
         cskh: {
           tier: target.tier,
@@ -454,6 +508,8 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         occasions: planOccasionSave(myOccasions, occRows.filter(r => !isBlankDraft(r))),
         sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleZoneIds, saleIndustryIds } : null,
       });
+      // Thẻ BD Pipeline chưa chọn người liên hệ → đặt người này (không ghi đè người đã có)
+      for (const entry of pipeEntries) await fillPipelineContactIfEmpty(entry, { id: saveRaw.id, name: name.trim() }, user);
       setSaving(false);
       emitCskhDataChanged();
       toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : isNew ? `Đã thêm ${isSale ? 'Sale' : 'liên hệ'} "${name.trim()}"` : 'Đã cập nhật hồ sơ');
@@ -768,9 +824,19 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       {!isSale && <Section title="Công ty & chức vụ">
         <Field label="Công ty phụ trách" full hint="★ = liên hệ chính của công ty đó (mỗi công ty 1 người)">
           <div className="flex flex-wrap items-center gap-1.5">
-            {clientIds.map(id => (
+            {clientIds.map(id => {
+              const pipe = id.startsWith(PIPE_KEY) ? pipeById.get(id.slice(PIPE_KEY.length)) : undefined;
+              return (
               <span key={id} className="inline-flex items-center gap-0.5 rounded-full bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)] pl-3 pr-1 h-9 md:h-8">
-                <button type="button" onClick={() => onOpenClient?.(id)} className="text-[13px] font-medium text-[#1D1D1F] hover:text-[#0066CC] transition-colors">{clientName(id) ?? 'Công ty'}</button>
+                {pipe ? (
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#1D1D1F]"
+                    title={`Đang ở BD Pipeline (${pipelineStageLabel(pipe.stage)}) — bấm Lưu hồ sơ sẽ gắn qua hồ sơ KH tiềm năng cùng tên`}>
+                    {pipe.company_name}
+                    <span className="text-[11px] font-medium text-[#8944AB] bg-[#AF52DE]/10 rounded-full px-1.5">Pipeline</span>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => onOpenClient?.(id)} className="text-[13px] font-medium text-[#1D1D1F] hover:text-[#0066CC] transition-colors">{clientName(id) ?? 'Công ty'}</button>
+                )}
                 <button type="button" title={primaryIds.includes(id) ? 'Bỏ liên hệ chính' : 'Đặt làm liên hệ chính'} disabled={!raw.is_active}
                   onClick={() => setPrimaryIds(primaryIds.includes(id) ? primaryIds.filter(x => x !== id) : [...primaryIds, id])}
                   className="p-1.5 md:p-1 rounded-full hover:bg-[#FF9500]/10 disabled:opacity-40">
@@ -783,13 +849,25 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
                   <X size={12} className="text-[#AEAEB2] hover:text-[#FF3B30]" />
                 </button>
               </span>
-            ))}
+              );
+            })}
             {addingClient ? (
               <select autoFocus defaultValue="" onBlur={() => setAddingClient(false)}
                 onChange={e => { if (e.target.value) setClientIds([...clientIds, e.target.value]); setAddingClient(false); }}
                 className="text-[13px] h-9 md:h-8 px-3 rounded-full border border-[#0071E3] ring-4 ring-[#0071E3]/15 bg-white outline-none max-w-[240px]">
                 <option value="">— Chọn công ty —</option>
-                {clientsSorted.filter(c => !clientIds.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {pipeChoices.length > 0 ? (
+                  <>
+                    <optgroup label="Khách hàng (đang hợp tác / tiềm năng)">
+                      {clientsSorted.filter(c => !clientIds.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                    <optgroup label="Đang ở BD Pipeline (chưa hợp tác)">
+                      {pipeChoices.filter(e => !clientIds.includes(PIPE_KEY + e.id)).map(e => (
+                        <option key={e.id} value={PIPE_KEY + e.id}>{`${e.company_name} — ${pipelineStageLabel(e.stage)}`}</option>
+                      ))}
+                    </optgroup>
+                  </>
+                ) : clientsSorted.filter(c => !clientIds.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             ) : (
               <button type="button" onClick={() => setAddingClient(true)}

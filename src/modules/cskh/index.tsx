@@ -38,6 +38,7 @@ import { GroupLogModal } from './components/GroupLogModal';
 import { ContactProfileModal } from './components/ContactProfileModal';
 import { GroupManagerModal } from './components/GroupManagerModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
+import { useClientsWithProspects } from './data/useProspectClients';
 
 interface ViewProps {
   tab: CskhTabKey;
@@ -56,7 +57,9 @@ export default function CskhModule({ space = 'client', spaces, onDueCounts, ...v
   /** Báo số người cần liên hệ hôm nay của các tệp KHÔNG đang hiện (hiện trên nút chuyển tệp). */
   onDueCounts?: (space: CskhSpace, count: number) => void;
 }) {
-  const { clients, toast } = view;
+  const { toast } = view;
+  // App chỉ nạp khách đang hợp tác — CSKH cần cả KH tiềm năng (người liên hệ gắn công ty đang ở BD Pipeline…)
+  const clients = useClientsWithProspects(view.clients);
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const loadSpaces = spaces?.includes(space) ? spaces : [...(spaces ?? []), space];
@@ -77,7 +80,7 @@ export default function CskhModule({ space = 'client', spaces, onDueCounts, ...v
   return (
     <>
       {/* Đổi tệp = dựng lại toàn bộ hộp thoại / bộ lọc trong tab → không sót trạng thái của tệp kia */}
-      <SpaceView key={space} space={space} data={data} loading={loading} {...view} />
+      <SpaceView key={space} space={space} data={data} loading={loading} {...view} clients={clients} />
       {onDueCounts && bySpace && Object.values(bySpace).map(d => (d && d.space !== space && (
         // key theo cả tệp đang hiện: chuyển tệp là đọc lại bộ lọc vừa dùng ở tệp kia
         <DueCounter key={`${d.space}:${space}`} data={d} clients={clients} onCount={onDueCounts} />

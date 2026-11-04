@@ -4,6 +4,8 @@
 // sẵn hoặc gõ tên để tạo mới (dò trùng như mọi form thêm công ty; tạo dạng KH tiềm năng), ngày
 // chuyển, chức vụ mới. Ghi qua contactOps.moveContactCompany: công ty cũ đóng lại nhưng GIỮ lịch
 // sử; người này giữ nguyên hạng CSKH, nhật ký, quà, ngày quan trọng.
+// Chọn được cả công ty ĐANG Ở BD PIPELINE (đang tìm hiểu / chờ / đàm phán, chưa có hồ sơ Khách hàng):
+// lúc lưu mới tạo (hoặc dùng lại) hồ sơ KH tiềm năng cùng tên — xem lib/pipelineCompanyLink.
 // ============================================================================
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Building2, Plus, Search, X } from 'lucide-react';
@@ -16,10 +18,21 @@ import {
 } from '../../lib/contactOps';
 import { buildCareer, companyNameMatches, moveCompanyError, periodLabel } from '../../lib/contactCareer';
 import { invalidateCompanyIndex, useCompanyDuplicates } from '../../hooks/useCompanyDuplicates';
+import {
+  ensureClientForPipelineCompany, fillPipelineContactIfEmpty, PIPELINE_COMPANY_SELECT, pipelineOnlyCompanies,
+  pipelineStageLabel, type PipelineCompanyLite,
+} from '../../lib/pipelineCompanyLink';
 import DuplicateCompanyNotice from '../common/DuplicateCompanyNotice';
 import RoleSelect from './RoleSelect';
 
 interface ClientLite { id: string; name: string; client_type?: string | null; archived_at?: string | null }
+
+/** 1 dòng trong ô chọn công ty: hồ sơ Khách hàng (đang hợp tác / KH tiềm năng) hoặc thẻ BD Pipeline chưa có hồ sơ. */
+type CompanyOption =
+  | { kind: 'client'; id: string; name: string; client: ClientLite }
+  | { kind: 'pipeline'; id: string; name: string; entry: PipelineCompanyLite };
+
+const PIPE_CHIP = 'text-[10.5px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 whitespace-nowrap';
 
 const FIELD = 'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white';
 const LABEL = 'block text-xs font-semibold text-gray-700 mb-1';
@@ -43,6 +56,9 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
   );
   const [query, setQuery] = useState('');
   const [toId, setToId] = useState<string | null>(null);
+  /** Chọn công ty đang ở BD Pipeline (crm_pipeline.id) — lúc lưu mới tạo / dùng lại hồ sơ KH tiềm năng. */
+  const [toPipeId, setToPipeId] = useState<string | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineCompanyLite[]>([]);
   const [creating, setCreating] = useState(false);
   const [effectiveOn, setEffectiveOn] = useState(today);
   const [role, setRole] = useState(contact.role || '');
@@ -56,6 +72,9 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
   useEffect(() => {
     supabase.from('clients').select('id, name, client_type, archived_at').order('name')
       .then(({ data }) => setClients(((data || []) as ClientLite[]).filter(c => !c.archived_at)));
+    // + công ty ở BD Pipeline chưa có hồ sơ Khách hàng (đang tìm hiểu / chờ / đàm phán ký mới)
+    supabase.from('crm_pipeline').select(PIPELINE_COMPANY_SELECT).is('client_id', null).order('created_at')
+      .then(({ data }) => setPipeline((data || []) as PipelineCompanyLite[]));
   }, []);
 
   // Làm ở công ty cũ từ ngày — tính từ quá trình công tác để chốt vào lịch sử
@@ -73,17 +92,38 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
   }, [contact, links, fromId]);
 
   const nameOf = (id: string | null) => (id ? clients.find(c => c.id === id)?.name ?? links.find(l => l.client_id === id)?.clients?.name ?? null : null);
+  // Thẻ Pipeline trùng tên hồ sơ đã có thì không hiện lần 2 (chọn hồ sơ là đủ)
+  const pipeChoices = useMemo(() => pipelineOnlyCompanies(pipeline, clients.map(c => c.name)), [pipeline, clients]);
   const matches = useMemo(() => {
     const taken = new Set(links.map(l => l.client_id));
-    return clients.filter(c => !taken.has(c.id) && companyNameMatches(c.name, query)).slice(0, 8);
-  }, [clients, query, links]);
+    const all: CompanyOption[] = [
+      ...clients.filter(c => !taken.has(c.id)).map(c => ({ kind: 'client' as const, id: c.id, name: c.name, client: c })),
+      ...pipeChoices.map(e => ({ kind: 'pipeline' as const, id: e.id, name: e.company_name, entry: e })),
+    ];
+    return all.filter(o => companyNameMatches(o.name, query))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
+      .slice(0, 10);
+  }, [clients, pipeChoices, query, links]);
   const dup = useCompanyDuplicates(query, { enabled: creating });
   const picked = toId ? clients.find(c => c.id === toId) ?? null : null;
+  const pickedPipe = toPipeId ? pipeChoices.find(e => e.id === toPipeId) ?? null : null;
   const fromName = nameOf(fromId || null);
-  const toName = picked?.name ?? (creating ? query.trim() : '');
+  const toName = picked?.name ?? pickedPipe?.company_name ?? (creating ? query.trim() : '');
+  const choose = (o: CompanyOption) => {
+    setToId(o.kind === 'client' ? o.id : null);
+    setToPipeId(o.kind === 'pipeline' ? o.id : null);
+    setCreating(false);
+    setError('');
+  };
+  const clearPick = () => { setToId(null); setToPipeId(null); setQuery(''); };
 
   const submit = async () => {
-    const err = moveCompanyError({ fromClientId: fromId || null, toClientId: toId, newCompanyName: creating ? query : '', effectiveOn }, today);
+    const err = moveCompanyError({
+      fromClientId: fromId || null,
+      toClientId: toId ?? (pickedPipe ? `pipeline:${pickedPipe.id}` : null),
+      newCompanyName: creating ? query : '',
+      effectiveOn,
+    }, today);
     if (err) { setError(err); return; }
     if (creating && dup.blocked) { setError('Tên công ty này có vẻ đã có — chọn công ty có sẵn, hoặc tích "Đây là công ty khác"'); return; }
     setSaving(true);
@@ -92,6 +132,16 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
       let targetId = toId;
       const names = new Map(clients.map(c => [c.id, c.name]));
       for (const l of links) if (l.clients?.name) names.set(l.client_id, l.clients.name);
+      if (!targetId && pickedPipe) {
+        // Công ty đang ở BD Pipeline → hồ sơ KH tiềm năng cùng tên (có rồi thì dùng lại); thẻ Pipeline giữ nguyên giai đoạn
+        const ensured = await ensureClientForPipelineCompany(pickedPipe, user);
+        if (ensured.created) invalidateCompanyIndex();
+        if (ensured.id === fromId || links.some(l => l.client_id === ensured.id)) {
+          throw new Error(`Người này đang gắn sẵn hồ sơ "${ensured.name}" — chọn công ty khác`);
+        }
+        targetId = ensured.id;
+        names.set(ensured.id, ensured.name);
+      }
       if (!targetId) {
         const created = await createProspectCompany(query, user);
         invalidateCompanyIndex();
@@ -107,7 +157,10 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
         fromStartedOn,
         note,
       }, { user, clientName: id => (id ? names.get(id) ?? null : null) });
-      toast(fromName ? `Đã chuyển "${contact.name}" sang ${names.get(targetId)}` : `Đã gắn "${contact.name}" vào ${names.get(targetId)}`);
+      // Thẻ Pipeline chưa chọn người liên hệ → đặt người này để thẻ BD Pipeline cũng thấy (không ghi đè người đã có)
+      const pipeFilled = pickedPipe ? await fillPipelineContactIfEmpty(pickedPipe, { id: contact.id, name: contact.name }, user) : false;
+      toast((fromName ? `Đã chuyển "${contact.name}" sang ${names.get(targetId)}` : `Đã gắn "${contact.name}" vào ${names.get(targetId)}`)
+        + (pipeFilled ? ' · thẻ BD Pipeline đã có người liên hệ này' : ''));
       onDone(saved);
     } catch (e) {
       setError((e as Error).message);
@@ -152,29 +205,31 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
           {/* Sang công ty */}
           <div>
             <label className={LABEL}>Sang công ty <span className="text-red-500">*</span></label>
-            {picked ? (
+            {picked || pickedPipe ? (
               <div className="flex items-center gap-2 px-3 py-2 border border-blue-300 bg-blue-50 rounded-lg">
                 <Building2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span className="flex-1 text-[13px] font-medium text-blue-900 truncate">{picked.name}</span>
-                {picked.client_type === 'prospect' && <span className="text-[10.5px] text-blue-700 bg-blue-100 rounded-full px-1.5">KH tiềm năng</span>}
-                <button type="button" onClick={() => { setToId(null); setQuery(''); }} className="text-[12px] text-blue-700 hover:underline">Đổi</button>
+                <span className="flex-1 text-[13px] font-medium text-blue-900 truncate">{toName}</span>
+                {picked?.client_type === 'prospect' && <span className="text-[10.5px] text-blue-700 bg-blue-100 rounded-full px-1.5">KH tiềm năng</span>}
+                {pickedPipe && <span className={PIPE_CHIP}>BD Pipeline · {pipelineStageLabel(pickedPipe.stage)}</span>}
+                <button type="button" onClick={clearPick} className="text-[12px] text-blue-700 hover:underline">Đổi</button>
               </div>
             ) : (
               <>
                 <div className="relative">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input autoFocus value={query} onChange={e => { setQuery(e.target.value); setCreating(false); }}
-                    placeholder="Gõ tên công ty mới…" className={`${FIELD} pl-9`} />
+                    placeholder="Gõ tên công ty — đang hợp tác, KH tiềm năng hoặc đang ở BD Pipeline…" className={`${FIELD} pl-9`} />
                 </div>
                 {!creating && (
                   <ul className="mt-1.5 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-56 overflow-y-auto">
-                    {matches.map(c => (
-                      <li key={c.id}>
-                        <button type="button" onClick={() => { setToId(c.id); setCreating(false); setError(''); }}
+                    {matches.map(o => (
+                      <li key={`${o.kind}:${o.id}`}>
+                        <button type="button" onClick={() => choose(o)}
                           className="w-full text-left px-3 py-2 text-[13px] hover:bg-gray-50 flex items-center gap-2">
-                          <Building2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span className="flex-1 truncate">{c.name}</span>
-                          {c.client_type === 'prospect' && <span className="text-[10.5px] text-gray-500">KH tiềm năng</span>}
+                          <Building2 className={`w-3.5 h-3.5 shrink-0 ${o.kind === 'pipeline' ? 'text-violet-400' : 'text-gray-400'}`} />
+                          <span className="flex-1 truncate">{o.name}</span>
+                          {o.kind === 'client' && o.client.client_type === 'prospect' && <span className="text-[10.5px] text-gray-500">KH tiềm năng</span>}
+                          {o.kind === 'pipeline' && <span className={PIPE_CHIP}>BD Pipeline · {pipelineStageLabel(o.entry.stage)}</span>}
                         </button>
                       </li>
                     ))}
@@ -228,6 +283,10 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
               </div>
             )}
             {fromName && <p>• {fromName} được đóng lại nhưng <b>giữ lịch sử</b>: làm từ khi nào tới khi nào, chức vụ cũ{contact.role ? ` (${contact.role})` : ''}. Hồ sơ {fromName} sẽ ghi “đã chuyển sang {toName || 'công ty mới'}”.</p>}
+            {pickedPipe && (
+              <p>• <b>{pickedPipe.company_name}</b> đang ở BD Pipeline ({pipelineStageLabel(pickedPipe.stage)}) — người này được gắn vào hồ sơ <b>KH tiềm năng</b> cùng tên (chưa có thì tạo). Thẻ Pipeline giữ nguyên giai đoạn; bấm “Bắt đầu hợp tác” ở Pipeline thì hồ sơ này thành khách đang hợp tác, người liên hệ giữ nguyên.</p>
+            )}
+            {pickedPipe && !pickedPipe.contact_id && <p>• Thẻ Pipeline chưa có người liên hệ → đặt {contact.name}.</p>}
             <p>• Giữ nguyên hạng CSKH, nhật ký, quà tặng, ngày quan trọng của người này.</p>
             {!contact.is_active && <p className="text-amber-700">• Người này đang “Đã nghỉ” — chuyển xong sẽ thành Đang phụ trách.</p>}
             {hint && <p className="text-amber-700">• {hint}</p>}
@@ -238,7 +297,7 @@ export default function MoveCompanyDialog({ contact, defaultFromClientId, hint, 
 
         <div className="px-5 py-3 border-t border-gray-200 flex gap-2 justify-end sticky bottom-0 bg-white">
           <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Huỷ</button>
-          <button onClick={() => void submit()} disabled={saving || (!toId && !creating)}
+          <button onClick={() => void submit()} disabled={saving || (!toId && !toPipeId && !creating)}
             className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition">
             {saving ? 'Đang chuyển…' : 'Chuyển công ty'}
           </button>

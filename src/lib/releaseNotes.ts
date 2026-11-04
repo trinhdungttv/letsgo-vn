@@ -16,6 +16,32 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-move-contact-to-pipeline-company',
+    date: '2026-11-04',
+    title: 'Người liên hệ',
+    features: [
+      '"Chuyển công ty": chọn được cả công ty đang ở BD Pipeline (tìm hiểu, chờ, đàm phán ký mới)',
+      'Công ty Pipeline được gắn qua hồ sơ KH tiềm năng cùng tên — có nhãn giai đoạn trong ô chọn',
+      'Bấm "Bắt đầu hợp tác" ở Pipeline: hồ sơ thành khách đang hợp tác, người liên hệ giữ nguyên',
+      'Hồ sơ CSKH → "Gắn công ty": chọn được cả công ty đang ở BD Pipeline (có nhãn giai đoạn)',
+      'Thẻ BD Pipeline chưa có người liên hệ thì tự điền người vừa gắn',
+      'CSKH: người của công ty KH tiềm năng hiện đúng tên công ty, lọc "Tiềm năng" ở Danh bạ ra đủ',
+    ],
+  },
+  {
+    id: '2026-11-04-client-star-rating',
+    date: '2026-11-04',
+    title: 'Khách hàng · CSKH',
+    features: [
+      'Xếp sao công ty khách hàng: ★★★ Quan trọng · ★★ Bình thường · ★ Dự án nhỏ (có thể thay thế)',
+      'Bấm sao ngay trên danh sách Khách hàng (bảng, thẻ) hoặc đầu hồ sơ công ty; bấm lại để bỏ sao',
+      'Khách hàng: lọc theo sao kèm số công ty mỗi mức; file CSV có thêm cột Sao',
+      'CSKH: lọc theo sao công ty ở Danh bạ, Tổng quan, Nhịp độ, Sự kiện, Bản đồ',
+      'Người liên hệ lấy sao cao nhất trong các công ty họ gắn — đổi sao bên Khách hàng là CSKH đổi theo',
+      'Danh bạ CSKH: sắp xếp "Sao công ty: quan trọng trước" (cùng sao thì ai gấp hạn lên trước)',
+    ],
+  },
+  {
     id: '2026-11-04-contact-birthday-career',
     date: '2026-11-04',
     title: 'Người liên hệ',
