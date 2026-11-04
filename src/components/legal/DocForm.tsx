@@ -15,6 +15,7 @@ import {
 } from '../../lib/legal/types';
 import { BTN_PRIMARY, BTN_SECONDARY } from '../workspace/wsTheme';
 import { sourceLabel } from './Embed';
+import { DraftNotice, useFormDraft } from './useFormDraft';
 import { ColorTile, Field, INPUT_CLS, TEXTAREA_CLS, Swatches } from './ui';
 import type { LegalStore } from './useLegal';
 
@@ -51,6 +52,14 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
   const [cardsFrom, setCardsFrom] = useState<string>('');
   const [metaOpen, setMetaOpen] = useState(() => !!(initial && (initial.meta.number || initial.meta.issuer || initial.meta.status)));
   const [busy, setBusy] = useState(false);
+  const draft = useFormDraft(`doc:${initial?.id ?? `new:${preset?.entityId ?? preset?.topicId ?? ''}`}`,
+    { kind, title, url, fileType, place, topicId, entityId, category, meta, tags, summary, color, template, lessonStart, cardsFrom },
+    v => {
+      setKind(v.kind); setTitle(v.title); setUrl(v.url); setFileType(v.fileType); setPlace(v.place); setTopicId(v.topicId);
+      setEntityId(v.entityId); setCategory(v.category); setMeta(v.meta); setTags(v.tags); setSummary(v.summary); setColor(v.color);
+      setTemplate(v.template); setLessonStart(v.lessonStart); setCardsFrom(v.cardsFrom);
+    });
+  const discard = () => { draft.clear(); onClose(); };
 
   const link = url.trim() ? parseDocLink(url) : null;
   const autoType = link ? resolveFileType(link, title) : null;
@@ -83,6 +92,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
       };
       if (editing) {
         const saved = await saveDoc({ id: initial!.id, ...body }, userName);
+        draft.clear();
         onSaved(saved, false);
         return;
       }
@@ -104,6 +114,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
         body.content = { v: 1, cards };
       }
       const saved = await saveDoc(body, userName);
+      draft.clear();
       onSaved(saved, kind === 'mindmap' || kind === 'lesson' || kind === 'cards');
     } catch (e) {
       toast((e as Error).message);
@@ -152,6 +163,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
         </div>
       </div>
 
+      {draft.restored && <DraftNotice onDiscard={discard} />}
       <div className="space-y-3.5">
         {isLink && (
           <Field label={kind === 'drive' ? 'Link Google Drive' : 'Link trang web / video'}
@@ -271,7 +283,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
       </div>
 
       <div className={`${SHEET_FOOTER} bg-[#F2F2F7]/90 md:bg-white/90 mt-5 flex gap-2 justify-end`}>
-        <button type="button" onClick={onClose} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
+        <button type="button" onClick={discard} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
         <button type="button" onClick={submit} disabled={busy} className={`${BTN_PRIMARY} h-10 px-5 text-[14px]`}>
           {busy && <Loader2 size={15} className="animate-spin" />} {editing ? 'Lưu' : (kind === 'drive' || kind === 'link') ? 'Thêm tài liệu' : 'Tạo & mở'}
         </button>

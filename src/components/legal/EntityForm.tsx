@@ -15,6 +15,7 @@ import { listEntities } from '../../lib/costPlan/api';
 import { getStoredSessionToken } from '../../lib/sessionToken';
 import type { QuoteEntity } from '../../lib/costPlan/entity';
 import { BTN_PRIMARY, BTN_SECONDARY, POPOVER } from '../workspace/wsTheme';
+import { DraftNotice, useFormDraft } from './useFormDraft';
 import { EntityLogo, Field, INPUT_CLS, TEXTAREA_CLS, Swatches } from './ui';
 
 type Draft = Omit<LegalEntity, 'id' | 'updated_by' | 'updated_at' | 'created_at' | 'deleted_at' | 'charter_capital'> & { capitalText: string };
@@ -66,6 +67,8 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
   const [quotes, setQuotes] = useState<QuoteEntity[] | null>(null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD(x => ({ ...x, [k]: v }));
   const setInfo = <K extends keyof LegalEntityInfo>(k: K, v: LegalEntityInfo[K]) => setD(x => ({ ...x, info: { ...x.info, [k]: v } }));
+  const draft = useFormDraft<Draft>(`entity:${initial?.id ?? 'new'}`, d, setD);
+  const discard = () => { draft.clear(); onClose(); };
   const capital = parseMoney(d.capitalText);
 
   const loadQuotes = async () => {
@@ -112,6 +115,7 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
         ...rest, id: initial?.id ?? null, name: d.name.trim(), short_name: d.short_name.trim(), charter_capital: capital, info: clean,
         logo_url: d.logo_url?.trim() || null,
       }, userName);
+      draft.clear();
       onSaved(saved);
     } catch (e) {
       toast((e as Error).message);
@@ -152,6 +156,7 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
         )}
       </div>
 
+      {draft.restored && <DraftNotice onDiscard={discard} />}
       <div className="space-y-3">
         <Group title="Nhận diện">
           <div className="grid sm:grid-cols-2 gap-3">
@@ -311,7 +316,7 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
       </div>
 
       <div className={`${SHEET_FOOTER} bg-[#F2F2F7]/90 md:bg-white/90 mt-5 flex gap-2 justify-end`}>
-        <button type="button" onClick={onClose} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
+        <button type="button" onClick={discard} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
         <button type="button" onClick={submit} disabled={busy} className={`${BTN_PRIMARY} h-10 px-5 text-[14px]`}>{busy && <Loader2 size={15} className="animate-spin" />} Lưu</button>
       </div>
     </Sheet>

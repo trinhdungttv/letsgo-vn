@@ -31,7 +31,7 @@ export const LABEL_FONT_RATIO = 0.034;
 export const MIN_RECT = 0.015;
 
 const MAX_ZONES = 300;
-const isColor = (c: unknown): c is string => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+export const isZoneColor = (c: unknown): c is string => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
 const num01 = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null);
 const r4 = (n: number) => Math.round(n * 10_000) / 10_000;
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -59,7 +59,7 @@ export function sanitizeZones(raw: unknown): SiteZone[] {
       id,
       label: str(o.label, 40),
       note: str(o.note, 300),
-      color: isColor(o.color) ? o.color : ZONE_COLORS[0],
+      color: isZoneColor(o.color) ? o.color : ZONE_COLORS[0],
       x: r4(x),
       y: r4(y),
     };
@@ -77,7 +77,7 @@ export function sanitizeZones(raw: unknown): SiteZone[] {
 const collator = typeof Intl !== 'undefined' ? new Intl.Collator('vi', { numeric: true, sensitivity: 'base' }) : null;
 
 /** Bảng chú thích: A3 < A4 < A6 < B3 < B4 < … < B10 < B14 (so số theo giá trị, không theo chữ). Nhãn trống xuống cuối. */
-export function sortZones(zones: readonly SiteZone[]): SiteZone[] {
+export function sortZones<T extends { id: string; label: string }>(zones: readonly T[]): T[] {
   return [...zones].sort((a, b) => {
     const la = a.label.trim(), lb = b.label.trim();
     if (!la !== !lb) return la ? -1 : 1;
@@ -87,7 +87,7 @@ export function sortZones(zones: readonly SiteZone[]): SiteZone[] {
 }
 
 /** Gợi ý tên cho khu vực mới: tiếp số của tên cuối cùng ("B5" → "B6"), chưa có thì "Khu 1". */
-export function nextZoneLabel(zones: readonly SiteZone[]): string {
+export function nextZoneLabel(zones: readonly { label: string }[]): string {
   const taken = new Set(zones.map(z => z.label.trim().toLocaleLowerCase('vi')));
   const last = [...zones].reverse().find(z => /\d+\s*$/.test(z.label.trim()));
   const m = last?.label.trim().match(/^(.*?)(\d+)\s*$/);

@@ -5,6 +5,7 @@ import { Sheet, SHEET_FOOTER } from '../../modules/cskh/components/Sheet';
 import { saveTopic } from '../../lib/legal/api';
 import { SWATCHES, TOPIC_ICONS, type LegalTopic } from '../../lib/legal/types';
 import { BTN_PRIMARY, BTN_SECONDARY } from '../workspace/wsTheme';
+import { DraftNotice, useFormDraft } from './useFormDraft';
 import { ColorTile, Field, INPUT_CLS, TEXTAREA_CLS, Swatches, TopicGlyph } from './ui';
 import type { LegalStore } from './useLegal';
 
@@ -19,6 +20,10 @@ export default function TopicForm({ store, userName, toast, initial, parentId, o
   const [icon, setIcon] = useState(initial?.icon ?? parent?.icon ?? 'book');
   const [busy, setBusy] = useState(false);
   const isSub = !!parent;
+  const draft = useFormDraft(`topic:${initial?.id ?? `new:${parentId ?? ''}`}`, { title, description, color, icon }, v => {
+    setTitle(v.title); setDescription(v.description); setColor(v.color); setIcon(v.icon);
+  });
+  const discard = () => { draft.clear(); onClose(); };
 
   const submit = async () => {
     if (!title.trim()) { toast('Chưa đặt tên chủ đề'); return; }
@@ -29,6 +34,7 @@ export default function TopicForm({ store, userName, toast, initial, parentId, o
         id: initial?.id ?? null, parent_id: parent?.id ?? null, title: title.trim(), description: description.trim(), color, icon,
         sort_order: initial?.sort_order ?? (siblings.reduce((m, t) => Math.max(m, t.sort_order), 0) + 1),
       }, userName);
+      draft.clear();
       onSaved(saved);
     } catch (e) {
       toast((e as Error).message);
@@ -46,6 +52,7 @@ export default function TopicForm({ store, userName, toast, initial, parentId, o
           {isSub && <div className="text-[12px] text-[#86868B]">Thuộc Topic: {parent!.title}</div>}
         </div>
       </div>
+      {draft.restored && <DraftNotice onDiscard={discard} />}
       <div className="space-y-3.5">
         <Field label="Tên">
           <input value={title} onChange={e => setTitle(e.target.value)} autoFocus placeholder={isSub ? 'vd Điều kiện cấp giấy phép' : 'vd Cho thuê lại lao động'} className={INPUT_CLS}
@@ -68,7 +75,7 @@ export default function TopicForm({ store, userName, toast, initial, parentId, o
         </Field>
       </div>
       <div className={`${SHEET_FOOTER} bg-[#F2F2F7]/90 md:bg-white/90 mt-5 flex gap-2 justify-end`}>
-        <button type="button" onClick={onClose} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
+        <button type="button" onClick={discard} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
         <button type="button" onClick={submit} disabled={busy} className={`${BTN_PRIMARY} h-10 px-5 text-[14px]`}>{busy && <Loader2 size={15} className="animate-spin" />} Lưu</button>
       </div>
     </Sheet>

@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-site-satellite-map',
+    date: '2026-11-04',
+    title: 'Khách hàng → Mặt bằng',
+    features: [
+      'Mặt bằng: bản đồ vệ tinh mở đúng vị trí nhà máy đã ghim, khoanh từng khối nhà xưởng',
+      'Ghi tên xưởng + công năng (B3, B5 Gia vị, Kho…) lên từng khối ngay trên bản đồ',
+      'Xoay bản đồ cho nhà xưởng nằm thẳng: thanh xoay, căn thẳng theo cạnh nhà',
+    ],
+  },
+  {
     id: '2026-11-04-legal-hub',
     date: '2026-11-04',
     title: 'Pháp lý',

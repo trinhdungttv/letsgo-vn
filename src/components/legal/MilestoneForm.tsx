@@ -11,6 +11,7 @@ import {
   type LegalEntity, type LegalMilestone, type MilestoneChange, type MilestoneKind, type MilestoneStatus,
 } from '../../lib/legal/types';
 import { BTN_PRIMARY, BTN_SECONDARY } from '../workspace/wsTheme';
+import { DraftNotice, useFormDraft } from './useFormDraft';
 import { DocKindIcon, Field, INPUT_CLS, TEXTAREA_CLS } from './ui';
 import type { LegalStore } from './useLegal';
 
@@ -46,6 +47,13 @@ export default function MilestoneForm({ store, entity, initial, userName, toast,
   const [applyPick, setApplyPick] = useState<boolean | null>(null);
   const apply = applyPick ?? (!initial && isLatest);
   const [busy, setBusy] = useState(false);
+  const draft = useFormDraft(`milestone:${entity.id}:${initial?.id ?? 'new'}`,
+    { date, kind, status, changeNo, title, titleTouched, description, changes, attach, applyPick },
+    v => {
+      setDate(v.date); setKind(v.kind); setStatus(v.status); setChangeNo(v.changeNo); setTitle(v.title); setTitleTouched(v.titleTouched);
+      setDescription(v.description); setChanges(v.changes); setAttach(v.attach); setApplyPick(v.applyPick);
+    });
+  const discard = () => { draft.clear(); onClose(); };
 
   const existingDocs = useMemo(() => (initial ? store.docs.filter(d => d.milestone_id === initial.id && !removeDocs.includes(d.id)) : []), [initial, store.docs, removeDocs]);
 
@@ -88,6 +96,7 @@ export default function MilestoneForm({ store, entity, initial, userName, toast,
         store.putEntity(next);
         toast('Đã lưu mốc và cập nhật thông tin hiện tại của pháp nhân');
       }
+      draft.clear();
       onSaved(saved);
     } catch (e) {
       toast((e as Error).message);
@@ -103,6 +112,7 @@ export default function MilestoneForm({ store, entity, initial, userName, toast,
         <div className="text-[12.5px] text-[#86868B]">{entity.short_name || entity.name}</div>
       </div>
 
+      {draft.restored && <DraftNotice onDiscard={discard} />}
       <div className="space-y-4">
         <Field label="Loại mốc">
           <div className="flex flex-wrap gap-1.5">
@@ -202,7 +212,7 @@ export default function MilestoneForm({ store, entity, initial, userName, toast,
       </div>
 
       <div className={`${SHEET_FOOTER} bg-[#F2F2F7]/90 md:bg-white/90 mt-5 flex gap-2 justify-end`}>
-        <button type="button" onClick={onClose} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
+        <button type="button" onClick={discard} className={`${BTN_SECONDARY} h-10 px-5 text-[14px]`}>Huỷ</button>
         <button type="button" onClick={submit} disabled={busy} className={`${BTN_PRIMARY} h-10 px-5 text-[14px]`}>{busy && <Loader2 size={15} className="animate-spin" />} Lưu mốc</button>
       </div>
     </Sheet>

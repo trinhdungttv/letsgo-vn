@@ -1,22 +1,32 @@
-// Tab "Mặt bằng" trong hồ sơ Khách hàng: tải ảnh sơ đồ nhà xưởng của khách rồi vẽ các khu vực lên (B3, B5 Gia vị, Kho TN…)
-// + bảng chú thích bên cạnh. Mỗi khách nhiều ảnh (nhà máy 1, nhà máy 2…). Ảnh lưu Cloudflare R2 (lib/clientMaps/siteMaps.ts),
-// khu vực lưu riêng dạng toạ độ 0..1 (lib/clientMaps/siteZones.ts) → ảnh gốc giữ nguyên, sửa / xoá khu vực lúc nào cũng được.
-// Thêm ảnh: nút "Thêm ảnh", kéo thả file vào, hoặc dán (⌘V) ảnh chụp màn hình.
+// Tab "Mặt bằng" trong hồ sơ Khách hàng. Mỗi khách nhiều mặt bằng (nhà máy 1, nhà máy 2…), 2 loại:
+//   • Ảnh: tải ảnh sơ đồ nhà xưởng (ảnh chụp, bản vẽ…) rồi vẽ khu vực lên (B3, B5 Gia vị, Kho TN…) + bảng chú thích bên cạnh.
+//     Ảnh lưu Cloudflare R2 (lib/clientMaps/siteMaps.ts), khu vực lưu riêng dạng toạ độ 0..1 (lib/clientMaps/siteZones.ts).
+//     Thêm ảnh: nút "Thêm ảnh", kéo thả file vào, hoặc dán (⌘V) ảnh chụp màn hình.
+//   • Bản đồ vệ tinh (migration 202): mở ở vị trí nhà máy đã ghim, khoanh từng khối nhà + ghi tên / công năng, xoay cho thẳng
+//     — xem SatelliteSiteEditor.tsx.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import {
-  AlertTriangle, Check, ImagePlus, Loader2, Maximize2, Minimize2, MoreHorizontal, MousePointer2, Pencil, RefreshCw, Square, Tag,
+  AlertTriangle, Check, ImagePlus, Loader2, MapPin, Maximize2, Minimize2, MoreHorizontal, MousePointer2, Pencil, RefreshCw, Satellite, Square, Tag,
   Trash2, Undo2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { Client } from '../../lib/types';
 import { useAuth } from '../../lib/auth';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { CLIENT_MAPS_MIGRATION_HINT, isMissingTableError } from '../../lib/clientMaps/orgChart';
-import { archiveSiteMap, createSiteMap, listSiteMaps, updateSiteMap, uploadSiteImage, type ClientSiteMap } from '../../lib/clientMaps/siteMaps';
 import {
-  LABEL_FONT_RATIO, MIN_RECT, ZONE_COLORS, ZONE_SIZES, moveZone, nextZoneLabel, rectFrom, resizeZone, sortZones, zoneId,
+  SITE_GEO_MIGRATION_HINT, archiveSiteMap, createGeoMap, createSiteMap, listSiteMaps, updateSiteMap, uploadSiteImage,
+  type ClientSiteMap, type SiteMapPatch,
+} from '../../lib/clientMaps/siteMaps';
+import {
+  LABEL_FONT_RATIO, MIN_RECT, ZONE_COLORS, moveZone, nextZoneLabel, rectFrom, resizeZone, sortZones, zoneId,
   type SiteZone,
 } from '../../lib/clientMaps/siteZones';
+import { newSiteGeo, type GeoPt, type SiteGeo } from '../../lib/clientMaps/siteGeo';
+import { SOURCE_HINT, loadSiteLocations, type SiteLocation } from '../../lib/clientMaps/siteLocations';
+import { isValidVnLatLng, mapLinkStatus, parseLatLngFromLink } from '../../lib/geo';
+import SatelliteSiteEditor from './SatelliteSiteEditor';
+import { ZoneEditor } from './siteMapParts';
 
 type Tool = 'select' | 'label' | 'rect';
 interface Pt { x: number; y: number }
@@ -31,6 +41,7 @@ const SAVE_DELAY_MS = 800;
 const HISTORY_MAX = 60;
 const ACTIVE_KEY = (clientId: string) => `lgvn_site_map_active:${clientId}`;
 
+const zoneCount = (m: ClientSiteMap) => (m.kind === 'map' ? m.geo?.zones.length ?? 0 : m.zones.length);
 const errText = (e: unknown) => (e as { message?: string })?.message ?? String(e);
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
@@ -46,6 +57,8 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
   const [phase, setPhase] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [loadError, setLoadError] = useState('');
   const [maps, setMaps] = useState<ClientSiteMap[]>([]);
+  const [geoReady, setGeoReady] = useState(true);
+  const [satMenu, setSatMenu] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -70,7 +83,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
   const zonesRef = useRef(zones);
   zonesRef.current = zones;
   const history = useRef<SiteZone[][]>([]);
-  const pending = useRef<{ id: string; zones: SiteZone[] } | null>(null);
+  const pending = useRef<{ id: string; patch: SiteMapPatch } | null>(null);
   const saving = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drag = useRef<Drag | null>(null);
@@ -79,12 +92,16 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
   const addInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
 
+  // Đổi sang bản đồ vệ tinh thì thôi chế độ vẽ của ảnh (bản đồ vệ tinh có chế độ vẽ riêng)
+  useEffect(() => { if (active?.kind === 'map') { setEditing(false); setDraft(null); } }, [active?.kind]);
+
   // ── Tải danh sách ─────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     setPhase('loading');
     try {
-      const rows = await listSiteMaps(clientId);
+      const { maps: rows, geoReady: ready } = await listSiteMaps(clientId);
       setMaps(rows);
+      setGeoReady(ready);
       const remembered = readStored(ACTIVE_KEY(clientId));
       setActiveId(rows.find(r => r.id === remembered)?.id ?? rows[0]?.id ?? null);
       setPhase('ready');
@@ -104,7 +121,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
     saving.current = true;
     setSave({ s: 'saving' });
     try {
-      const row = await updateSiteMap(job.id, { zones: job.zones }, userName);
+      const row = await updateSiteMap(job.id, job.patch, userName);
       setSave({ s: 'saved', at: row.updated_at });
     } catch (e) {
       if (!pending.current) pending.current = job;
@@ -139,10 +156,19 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
     zonesRef.current = next;
     setMaps(ms => ms.map(m => (m.id === id ? { ...m, zones: next } : m)));
     if (pending.current && pending.current.id !== id) void flush();
-    pending.current = { id, zones: next };
+    pending.current = { id, patch: { zones: next } };
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, SAVE_DELAY_MS);
   }, [activeId, flush]);
+
+  /** Bản đồ vệ tinh: khối / góc xoay / khung nhìn đổi → lưu cả cục geo (tự gom 0,8 s). */
+  const applyGeo = useCallback((id: string, geo: SiteGeo) => {
+    setMaps(ms => ms.map(m => (m.id === id ? { ...m, geo } : m)));
+    if (pending.current && pending.current.id !== id) void flush();
+    pending.current = { id, patch: { geo } };
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { void flush(); }, SAVE_DELAY_MS);
+  }, [flush]);
 
   const commit = useCallback((next: SiteZone[]) => applyZones(next, zonesRef.current), [applyZones]);
 
@@ -191,6 +217,24 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
     }
   }, [clientId, maps, phase, selectMap, userName]);
 
+  const addGeoMap = useCallback(async (at: GeoPt, title: string) => {
+    setSatMenu(false);
+    if (phase === 'missing') { setBanner(CLIENT_MAPS_MIGRATION_HINT); return; }
+    if (!geoReady) { setBanner(SITE_GEO_MIGRATION_HINT); return; }
+    setBanner(null);
+    setBusy('Đang mở bản đồ vệ tinh…');
+    try {
+      const sortOrder = maps.reduce((m, r) => Math.max(m, r.sort_order), 0) + 1;
+      const row = await createGeoMap({ clientId, title, geo: newSiteGeo(at), sortOrder, userName });
+      setMaps(ms => [...ms, row]);
+      selectMap(row.id);
+    } catch (e) {
+      setBanner('Không tạo được bản đồ vệ tinh: ' + errText(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [clientId, geoReady, maps, phase, selectMap, userName]);
+
   const replaceImage = async (file: File) => {
     if (!active) return;
     if (!file.type.startsWith('image/')) { setBanner('Chỉ nhận file ảnh (JPG, PNG, WebP…).'); return; }
@@ -211,7 +255,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
   const removeMap = async () => {
     if (!active) return;
     setMenuOpen(false);
-    const ok = window.confirm(`Xoá ảnh mặt bằng "${active.title || 'không tên'}" cùng ${zones.length} khu vực đã vẽ khỏi hồ sơ khách?\n\n(Dữ liệu vẫn giữ trong hệ thống — khôi phục được ở Lịch sử dữ liệu.)`);
+    const ok = window.confirm(`Xoá ${active.kind === 'map' ? 'bản đồ vệ tinh' : 'ảnh mặt bằng'} "${active.title || 'không tên'}" cùng ${zoneCount(active)} khu vực đã vẽ khỏi hồ sơ khách?\n\n(Dữ liệu vẫn giữ trong hệ thống — khôi phục được ở Lịch sử dữ liệu.)`);
     if (!ok) return;
     await flush();
     try {
@@ -447,10 +491,14 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
             ) : (
               <button key={m.id} onClick={() => selectMap(m.id)} onDoubleClick={() => setRenaming(m.id)} title="Bấm đúp để đổi tên"
                 className={`shrink-0 h-8 px-3 rounded-lg text-[12.5px] font-medium border transition whitespace-nowrap ${m.id === activeId ? 'border-[#1D4ED8] bg-[#1D4ED8]/[0.07] text-[#1D4ED8]' : 'border-[#E0E0E5] text-[#555] hover:bg-[#F5F5F7]'}`}>
-                {m.title || 'Không tên'}{m.zones.length ? <span className="ml-1.5 text-[11px] opacity-60">{m.zones.length}</span> : null}
+                {m.kind === 'map' && <Satellite size={12} className="inline -mt-0.5 mr-1 opacity-70" />}{m.title || 'Không tên'}{zoneCount(m) ? <span className="ml-1.5 text-[11px] opacity-60">{zoneCount(m)}</span> : null}
               </button>
             )
           ))}
+          <button onClick={() => (geoReady ? setSatMenu(true) : setBanner(SITE_GEO_MIGRATION_HINT))} disabled={!!busy || phase === 'missing'}
+            className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-dashed border-[#1D4ED8]/50 text-[12px] font-medium text-[#1D4ED8] hover:bg-[#1D4ED8]/[0.06] disabled:opacity-50">
+            <Satellite size={14} /> Bản đồ vệ tinh
+          </button>
           <button onClick={() => addInput.current?.click()} disabled={!!busy || phase === 'missing'}
             className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-dashed border-[#B9B9C3] text-[12px] font-medium text-[#555] hover:bg-[#F5F5F7] disabled:opacity-50">
             <ImagePlus size={14} /> {maps.length ? 'Thêm ảnh' : 'Tải ảnh mặt bằng'}
@@ -461,13 +509,13 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
           {!busy && <SaveBadge save={save} onRetry={() => { void flush(); }} />}
           {active && (
             <>
-              <div className="flex items-center rounded-lg border border-[#E0E0E5]">
+              {active.kind !== 'map' && <div className="flex items-center rounded-lg border border-[#E0E0E5]">
                 <button onClick={() => setZoom(z => ZOOMS[Math.max(0, ZOOMS.indexOf(z) - 1)] ?? 1)} disabled={zoom === ZOOMS[0]} title="Thu nhỏ"
                   className="w-8 h-8 inline-flex items-center justify-center text-[#555] disabled:opacity-30 hover:bg-black/[0.04] rounded-l-lg"><ZoomOut size={14} /></button>
                 <button onClick={() => setZoom(1)} title="Vừa khung" className="h-8 px-1 text-[11px] tabular-nums text-[#555] hover:bg-black/[0.04]">{Math.round(zoom * 100)}%</button>
                 <button onClick={() => setZoom(z => ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(z) + 1)] ?? z)} disabled={zoom === ZOOMS[ZOOMS.length - 1]} title="Phóng to"
                   className="w-8 h-8 inline-flex items-center justify-center text-[#555] disabled:opacity-30 hover:bg-black/[0.04] rounded-r-lg"><ZoomIn size={14} /></button>
-              </div>
+              </div>}
               <button onClick={() => setFull(f => !f)} title={full ? 'Thu về' : 'Toàn màn hình'}
                 className="w-8 h-8 inline-flex items-center justify-center rounded-lg border border-[#E0E0E5] text-[#555] hover:bg-black/[0.04]">
                 {full ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -478,15 +526,15 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
                 {menuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                    <div className="absolute right-0 top-9 z-50 w-48 rounded-xl border border-[#E8E7E2] bg-white shadow-lg py-1 text-[12.5px]">
+                    <div className="absolute right-0 top-9 z-50 w-52 rounded-xl border border-[#E8E7E2] bg-white shadow-lg py-1 text-[12.5px]">
                       <button onClick={() => { setMenuOpen(false); setRenaming(active.id); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><Pencil size={13} /> Đổi tên</button>
-                      <button onClick={() => { setMenuOpen(false); replaceInput.current?.click(); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><RefreshCw size={13} /> Thay ảnh (giữ khu vực)</button>
-                      <button onClick={removeMap} className="w-full flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50"><Trash2 size={13} /> Xoá ảnh này</button>
+                      {active.kind !== 'map' && <button onClick={() => { setMenuOpen(false); replaceInput.current?.click(); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><RefreshCw size={13} /> Thay ảnh (giữ khu vực)</button>}
+                      <button onClick={removeMap} className="w-full flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50"><Trash2 size={13} /> {active.kind === 'map' ? 'Xoá bản đồ này' : 'Xoá ảnh này'}</button>
                     </div>
                   </>
                 )}
               </div>
-              {!editing && (
+              {!editing && active.kind !== 'map' && (
                 <button onClick={() => { setEditing(true); setTool(zones.length ? 'select' : 'label'); }}
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12px] font-medium hover:bg-[#1E40AF]">
                   <Pencil size={13} /> Vẽ khu vực
@@ -498,7 +546,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
       </div>
 
       {/* Hàng 2 (đang vẽ): công cụ */}
-      {editing && active && (
+      {editing && active && active.kind !== 'map' && (
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-3 md:px-5 py-1.5 border-b border-[#E8E7E2] bg-[#F7F8FC]">
           {toolBtn('select', <MousePointer2 size={14} />, 'Chọn / di chuyển')}
           {toolBtn('label', <Tag size={14} />, 'Đặt nhãn')}
@@ -525,17 +573,33 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
 
       {!active ? (
         <div className={`flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center ${dragOver ? 'bg-blue-50' : ''}`}>
-          <div className="w-14 h-14 rounded-2xl bg-[#EEF2FF] text-[#1D4ED8] flex items-center justify-center"><ImagePlus size={26} /></div>
-          <div className="text-[14px] font-semibold text-[#111]">Chưa có ảnh mặt bằng nhà xưởng</div>
-          <div className="text-[12.5px] text-[#777] max-w-sm">
-            Tải ảnh sơ đồ nhà máy của khách (ảnh chụp, bản vẽ, ảnh Google Maps…) rồi đặt nhãn từng khu: B3, B5 Gia vị, Kho TN…
-            {!mobile && ' Có thể kéo thả file vào đây hoặc dán ảnh chụp màn hình (⌘V).'}
+          <div className="w-14 h-14 rounded-2xl bg-[#EEF2FF] text-[#1D4ED8] flex items-center justify-center"><Satellite size={26} /></div>
+          <div className="text-[14px] font-semibold text-[#111]">Chưa có mặt bằng nhà xưởng</div>
+          <div className="text-[12.5px] text-[#777] max-w-md">
+            Mở <b>bản đồ vệ tinh</b> ngay tại vị trí nhà máy đã ghim, tự khoanh từng khối nhà của công ty rồi ghi tên xưởng (B3, B5 Gia vị, Kho TN…) lên đó —
+            xoay bản đồ cho nhà xưởng nằm thẳng. Hoặc tải ảnh sơ đồ có sẵn (ảnh chụp, bản vẽ…).
+            {!mobile && ' Ảnh có thể kéo thả vào đây hoặc dán ảnh chụp màn hình (⌘V).'}
           </div>
-          <button onClick={() => addInput.current?.click()} disabled={!!busy || phase === 'missing'}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-medium hover:bg-[#1E40AF] disabled:opacity-50">
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />} Tải ảnh mặt bằng
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button onClick={() => (geoReady ? setSatMenu(true) : setBanner(SITE_GEO_MIGRATION_HINT))} disabled={!!busy || phase === 'missing'}
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-medium hover:bg-[#1E40AF] disabled:opacity-50">
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Satellite size={14} />} Mở bản đồ vệ tinh
+            </button>
+            <button onClick={() => addInput.current?.click()} disabled={!!busy || phase === 'missing'}
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[#C9CAD3] bg-white text-[#333] text-[12.5px] font-medium hover:bg-[#F5F5F7] disabled:opacity-50">
+              <ImagePlus size={14} /> Tải ảnh mặt bằng
+            </button>
+          </div>
         </div>
+      ) : active.kind === 'map' ? (
+        active.geo ? (
+          <SatelliteSiteEditor key={active.id} map={active} onChange={geo => applyGeo(active.id, geo)} />
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center text-[12.5px] text-[#666]">
+            <AlertTriangle size={20} className="text-amber-500" />
+            Dữ liệu bản đồ vệ tinh này bị thiếu toạ độ tâm nên không mở được. Xoá bản đồ này (nút ⋯) rồi tạo lại.
+          </div>
+        )
       ) : (
         <div className="flex-1 min-h-0 flex flex-col md:flex-row">
           {/* Ảnh + khu vực */}
@@ -608,6 +672,8 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
           </aside>
         </div>
       )}
+
+      {satMenu && <SatelliteStartMenu client={client} onPick={addGeoMap} onClose={() => setSatMenu(false)} />}
     </div>
   );
 }
@@ -650,51 +716,6 @@ function ZoneMark({ z, fontPx, selected, editing }: { z: SiteZone; fontPx: numbe
   );
 }
 
-/** Sửa 1 khu vực trong bảng chú thích: tên, ghi chú, màu, cỡ chữ, xoá. */
-function ZoneEditor({ z, mobile, onFocusText, onText, onStyle, onDelete, onClose }: {
-  z: SiteZone; mobile: boolean;
-  onFocusText: () => void;
-  onText: (patch: Partial<SiteZone>) => void;
-  onStyle: (patch: Partial<SiteZone>) => void;
-  onDelete: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="mx-2 my-1.5 p-3 rounded-xl border border-[#1D4ED8]/40 bg-[#F7F8FC] space-y-2">
-      <div className="flex items-center gap-2">
-        <input id={`zone-label-${z.id}`} value={z.label} maxLength={40} placeholder="Tên khu (B5)"
-          onFocus={onFocusText} onChange={e => onText({ label: e.target.value })}
-          onKeyDown={e => { if (e.key === 'Enter') document.getElementById(`zone-note-${z.id}`)?.focus(); }}
-          className="w-24 h-8 px-2 rounded-lg border border-[#D5D5DC] bg-white text-[13px] font-bold outline-none focus:border-[#1D4ED8]" style={{ color: z.color }} />
-        <input id={`zone-note-${z.id}`} value={z.note} maxLength={300} placeholder="Ghi chú (Gia vị…)"
-          onFocus={onFocusText} onChange={e => onText({ note: e.target.value })}
-          onKeyDown={e => { if (e.key === 'Enter') onClose(); }}
-          className="flex-1 min-w-0 h-8 px-2 rounded-lg border border-[#D5D5DC] bg-white text-[13px] outline-none focus:border-[#1D4ED8]" />
-      </div>
-      <div className="flex items-center gap-1.5">
-        {ZONE_COLORS.map(c => (
-          <button key={c} onClick={() => onStyle({ color: c })} aria-label={`Màu ${c}`}
-            className={`w-6 h-6 rounded-full border-2 transition ${z.color === c ? 'border-[#111] scale-110' : 'border-white shadow-[0_0_0_1px_rgba(0,0,0,0.08)]'}`}
-            style={{ background: c }} />
-        ))}
-      </div>
-      <div className="flex items-center gap-1">
-        {ZONE_SIZES.map(s => (
-          <button key={s.k} onClick={() => onStyle({ size: s.k === 1 ? undefined : s.k })}
-            className={`h-7 px-2 rounded-md text-[11.5px] ${(z.size ?? 1) === s.k ? 'bg-[#1D4ED8] text-white' : 'bg-white border border-[#E0E0E5] text-[#555]'}`}>
-            {s.label}
-          </button>
-        ))}
-        <button onClick={onDelete} className="ml-auto inline-flex items-center gap-1 h-7 px-2 rounded-md text-[11.5px] text-red-600 hover:bg-red-50">
-          <Trash2 size={12} /> Xoá
-        </button>
-        {!mobile && <button onClick={onClose} className="h-7 px-2 rounded-md text-[11.5px] text-[#555] hover:bg-black/[0.05]">Xong</button>}
-        {mobile && <button onClick={onClose} aria-label="Đóng" className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#555]"><X size={14} /></button>}
-      </div>
-    </div>
-  );
-}
-
 function SaveBadge({ save, onRetry }: { save: SaveState; onRetry: () => void }) {
   if (save.s === 'saving') return <span className="text-[11.5px] text-[#888] inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Đang lưu…</span>;
   if (save.s === 'error') {
@@ -706,4 +727,74 @@ function SaveBadge({ save, onRetry }: { save: SaveState; onRetry: () => void }) 
   }
   if (save.s === 'saved') return <span className="hidden sm:inline-flex text-[11.5px] text-[#888] items-center gap-1"><Check size={12} className="text-emerald-600" /> Đã lưu {fmtTime(save.at)}</span>;
   return null;
+}
+
+/** Hộp chọn nơi mở bản đồ vệ tinh: các vị trí nhà máy ĐÃ GHIM của khách (CRM Pipeline → Nhà máy theo KCN, vị trí chính,
+ *  Thị trường) — bấm là mở đúng chỗ đó; chưa ghim thì dán link Google Maps. */
+function SatelliteStartMenu({ client, onPick, onClose }: {
+  client: Client;
+  onPick: (at: GeoPt, title: string) => void;
+  onClose: () => void;
+}) {
+  const [locs, setLocs] = useState<SiteLocation[] | null>(null);
+  const [link, setLink] = useState('');
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    loadSiteLocations(client).then(l => { if (alive) setLocs(l); }).catch(() => { if (alive) setLocs([]); });
+    return () => { alive = false; };
+  }, [client]);
+
+  const openLink = () => {
+    const pt = parseLatLngFromLink(link);
+    if (pt && isValidVnLatLng(pt)) { onPick(pt, 'Mặt bằng vệ tinh'); return; }
+    setErr(mapLinkStatus(link) === 'short'
+      ? 'Link rút gọn (maps.app.goo.gl) không đọc được toạ độ — mở link đó trong trình duyệt rồi dán lại link dài có dạng …/@10.97,106.63,…'
+      : 'Chưa đọc được toạ độ trong link — dán link Google Maps của nhà máy (có dạng …/@10.97,106.63,…).');
+  };
+
+  return (
+    <div className="fixed inset-0 z-[400] bg-black/35 flex items-end md:items-center justify-center p-0 md:p-4" onClick={onClose}>
+      <div className="w-full md:max-w-md bg-white rounded-t-2xl md:rounded-2xl shadow-2xl p-4 md:p-5 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start gap-2">
+          <div className="w-9 h-9 rounded-xl bg-[#EEF2FF] text-[#1D4ED8] flex items-center justify-center shrink-0"><Satellite size={18} /></div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[14px] font-semibold text-[#111]">Bản đồ vệ tinh — chọn nhà máy</div>
+            <div className="text-[12px] text-[#777] mt-0.5">Mở ngay tại vị trí đã ghim, rồi bạn khoanh các khối nhà của {client.name}.</div>
+          </div>
+          <button onClick={onClose} aria-label="Đóng" className="text-[#999] hover:text-[#555]"><X size={16} /></button>
+        </div>
+
+        <div className="mt-3 space-y-1.5">
+          {locs === null && <div className="flex items-center gap-2 text-[12.5px] text-[#999] py-3"><Loader2 size={14} className="animate-spin" /> Đang lấy vị trí nhà máy đã ghim…</div>}
+          {locs?.map(l => (
+            <button key={l.key} onClick={() => onPick({ lat: l.lat, lng: l.lng }, l.source === 'factory' ? l.label : l.source === 'zone' ? `Mặt bằng — ${l.label}` : 'Mặt bằng vệ tinh')}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[#E4E4EA] text-left hover:border-[#1D4ED8] hover:bg-[#1D4ED8]/[0.04] transition">
+              <MapPin size={16} className={l.source === 'zone' ? 'text-[#999]' : 'text-[#DC2626]'} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-[#111] truncate">{l.label}</span>
+                <span className="block text-[11.5px] text-[#888]">{SOURCE_HINT[l.source]} · {l.lat.toFixed(5)}, {l.lng.toFixed(5)}</span>
+              </span>
+            </button>
+          ))}
+          {locs && locs.length === 0 && (
+            <div className="text-[12.5px] text-[#666] bg-[#FAFAF8] border border-[#EEE] rounded-xl px-3 py-2.5">
+              Khách này chưa có vị trí nhà máy nào được ghim. Ghim ở <b>Hồ sơ chăm sóc → Vị trí trên bản đồ</b>, hoặc dán link Google Maps của nhà máy bên dưới.
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 pt-3 border-t border-[#F0F0F2]">
+          <div className="text-[11.5px] font-medium text-[#555] mb-1.5">Hoặc dán link Google Maps của nhà máy</div>
+          <div className="flex gap-2">
+            <input value={link} onChange={e => { setLink(e.target.value); setErr(''); }} onKeyDown={e => { if (e.key === 'Enter') openLink(); }}
+              placeholder="https://www.google.com/maps/@10.97,106.63,…" className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-[#D5D5DC] text-[12.5px] outline-none focus:border-[#1D4ED8]" />
+            <button onClick={openLink} disabled={!link.trim()} className="h-9 px-3.5 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-medium hover:bg-[#1E40AF] disabled:opacity-40">Mở</button>
+          </div>
+          {err && <div className="text-[11.5px] text-amber-700 mt-1.5">{err}</div>}
+        </div>
+      </div>
+    </div>
+  );
 }
