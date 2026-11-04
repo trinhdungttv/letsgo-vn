@@ -11,13 +11,19 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 export const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? 'Trang web';
 
-export function EmbedFrame({ url, title, className = '', rounded = true }: { url: string; title: string; className?: string; rounded?: boolean }) {
+/** iPhone / iPad: Safari & Chrome (WebKit) chặn cookie bên thứ ba trong khung nhúng → Google báo "Không thể truy cập vào tài khoản Google" dù đã đăng nhập. */
+export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+export function EmbedFrame({ url, title, className = '', rounded = true, startPage }: { url: string; title: string; className?: string; rounded?: boolean; startPage?: number }) {
   const link = parseDocLink(url);
   const [loaded, setLoaded] = useState(false);
   const [force, setForce] = useState(false);
   useEffect(() => { setLoaded(false); setForce(false); }, [url]);
 
-  const embed = link.embedUrl ?? (force ? link.openUrl : null);
+  const iosBlocked = link.google && isIOS() && !force;
+  const base = iosBlocked ? null : link.embedUrl ?? (force ? link.openUrl : null);
+  // mở thẳng tới trang đã lưu (PDF trên Drive / link .pdf) — chỉ áp dụng lúc mở, đổi số trang sau đó không tải lại khung
+  const embed = base && startPage && (link.source === 'drive' || link.source === 'pdf') ? `${base.split('#')[0]}#page=${startPage}` : base;
   if (!embed) {
     let host = '';
     try { host = new URL(link.openUrl).hostname.replace(/^www\./, ''); } catch { /* link hỏng */ }
@@ -26,9 +32,9 @@ export function EmbedFrame({ url, title, className = '', rounded = true }: { url
         <div className="w-14 h-14 rounded-[16px] bg-[#0071E3]/10 text-[#0071E3] inline-flex items-center justify-center"><Globe size={26} /></div>
         <div className="text-[15px] font-semibold text-[#1D1D1F]">{host || 'Trang web'}</div>
         <div className="text-[12.5px] text-[#86868B] max-w-[420px] break-all">{link.openUrl}</div>
-        <div className="text-[12px] text-[#86868B] max-w-[420px]">Hầu hết trang web (cổng văn bản pháp luật, trang cơ quan…) chặn xem bên trong ứng dụng khác — mở ở thẻ mới để đọc.</div>
+        <div className="text-[12px] text-[#86868B] max-w-[420px]">{iosBlocked ? 'Trên iPhone / iPad, Safari và Chrome không cho Google nhận đăng nhập bên trong ứng dụng khác nên không xem được tại đây. Bấm "Mở file" — file mở ở Drive / trình duyệt đã đăng nhập Google của bạn. (Muốn xem ngay trong app: đổi chia sẻ file thành "Bất kỳ ai có đường liên kết".)' : 'Hầu hết trang web (cổng văn bản pháp luật, trang cơ quan…) chặn xem bên trong ứng dụng khác — mở ở thẻ mới để đọc.'}</div>
         <div className="flex gap-2 mt-1">
-          <a href={link.openUrl} target="_blank" rel="noreferrer" className={`${BTN_PRIMARY} h-9 px-4 text-[13px]`}><ExternalLink size={14} /> Mở trang</a>
+          <a href={link.openUrl} target="_blank" rel="noreferrer" className={`${BTN_PRIMARY} h-9 px-4 text-[13px]`}><ExternalLink size={14} /> {iosBlocked ? 'Mở file' : 'Mở trang'}</a>
           {link.source !== 'invalid' && <button type="button" onClick={() => setForce(true)} className={`${BTN_SECONDARY} h-9 px-4 text-[13px]`}>Thử xem trong app</button>}
         </div>
       </div>

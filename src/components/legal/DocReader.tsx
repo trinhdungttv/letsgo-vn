@@ -51,6 +51,9 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
     try { return localStorage.getItem(NOTES_KEY) !== '0'; } catch { return true; }
   });
   const [summary, setSummary] = useState(doc.summary);
+  const [pageText, setPageText] = useState(doc.meta.bookmark?.page ? String(doc.meta.bookmark.page) : '');
+  const [partNote, setPartNote] = useState(doc.meta.bookmark?.note ?? '');
+  const startPage = useRef(doc.meta.bookmark?.page).current;
   const [content, setContent] = useState<Content | null>(null);
   const [loadErr, setLoadErr] = useState('');
 
@@ -75,6 +78,22 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
     store.putDoc(saved);
     return saved.updated_at;
   }, [doc.id, userName, store]));
+
+  const bookmarkSave = useAutosave<{ page: string; note: string }>(useCallback(async v => {
+    const page = Number(v.page);
+    const bookmark = { ...(page > 0 ? { page: Math.round(page) } : {}), ...(v.note.trim() ? { note: v.note.trim() } : {}) };
+    const saved = await saveDoc({ id: doc.id, meta: { ...doc.meta, bookmark: Object.keys(bookmark).length ? bookmark : undefined } }, userName);
+    store.putDoc(saved);
+    return saved.updated_at;
+  }, [doc.id, doc.meta, userName, store]), 600);
+  const changeBookmark = (page: string, note: string) => {
+    setPageText(page); setPartNote(note);
+    if (canEdit) bookmarkSave.queue({ page, note });
+  };
+  const link = (doc.kind === 'drive' || doc.kind === 'link') && doc.url ? parseDocLink(doc.url) : null;
+  const [askPage, setAskPage] = useState(false);
+  const [resumeDismissed, setResumeDismissed] = useState(false);
+  const isPdfLike = !!link && (link.source === 'drive' || link.source === 'pdf');
 
   const changeContent = (c: Content) => { setContent(c); contentSave.queue(c.v); };
 
@@ -118,7 +137,6 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
     return parts.join(' › ');
   }, [doc, store.topics, store.entities]);
 
-  const link = (doc.kind === 'drive' || doc.kind === 'link') && doc.url ? parseDocLink(doc.url) : null;
   const color = docColor(doc);
 
   const makeCards = async () => {
@@ -165,7 +183,11 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
       style={mobile ? { paddingTop: 'env(safe-area-inset-top)' } : undefined}>
       {/* ── thanh tiêu đề ── */}
       <header className="shrink-0 flex items-center gap-2 md:gap-3 px-2 md:px-4 h-[58px] bg-white/90 backdrop-blur-xl border-b border-black/[0.06]">
-        <button type="button" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); onClose(); }}
+        <button type="button" onClick={() => {
+          if (isPdfLike && canEdit) { setAskPage(true); return; }
+          if (document.fullscreenElement) void document.exitFullscreen();
+          onClose();
+        }}
           className="inline-flex items-center h-9 pl-1 pr-2.5 rounded-full text-[#0071E3] text-[14px] font-medium hover:bg-[#0071E3]/[0.08]">
           <ChevronLeft size={22} /> <span className="hidden md:inline">Quay lại</span>
         </button>
@@ -184,6 +206,13 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
           </div>
         </div>
         <div className="flex items-center gap-1 md:gap-1.5 shrink-0">
+          {isPdfLike && (
+            <label className="hidden sm:flex items-center gap-1.5 h-8 pl-3 pr-1.5 rounded-full bg-[#FFF4D6] text-[12.5px] font-medium text-[#7A5600]" title="Gõ số trang đang học — lần sau mở lại tự nhảy tới trang này">
+              Trang đang học
+              <input value={pageText} onChange={e => changeBookmark(e.target.value.replace(/\D/g, '').slice(0, 5), partNote)} readOnly={!canEdit} inputMode="numeric" placeholder="—"
+                className="w-12 h-6 rounded-full bg-white text-center text-[13px] font-semibold tabular-nums outline-none focus:ring-2 focus:ring-[#FFCC00]" />
+            </label>
+          )}
           {link && (
             <a href={link.openUrl} target="_blank" rel="noreferrer" className={`${BTN_SECONDARY} h-8 px-3 text-[12.5px]`} title="Mở trong tab mới (sửa trực tiếp trên Google)">
               <ExternalLink size={13} /> <span className="hidden sm:inline">{link.google ? 'Mở Drive' : 'Mở trang'}</span>
@@ -220,7 +249,13 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
         <div className="flex-1 min-w-0 flex flex-col relative">
           {link && (
             <div className="flex-1 min-h-0 flex flex-col p-2 md:p-4 gap-2">
-              <EmbedFrame url={doc.url} title={doc.title} className="flex-1 min-h-0 shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_10px_30px_-18px_rgba(0,0,0,0.3)]" />
+              {isPdfLike && !resumeDismissed && (startPage || doc.meta.bookmark?.note) && (
+                <div className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-[12px] bg-[#FFF4D6] text-[13px] text-[#7A5600]">
+                  <span className="flex-1 min-w-0">Lần trước bạn dừng ở <b>{startPage ? `trang ${startPage}` : 'đoạn đã ghi'}</b>{doc.meta.bookmark?.note ? <> · {doc.meta.bookmark.note}</> : null}. Nếu file chưa tự nhảy tới đó, gõ số trang vào ô trang của trình xem.</span>
+                  <button type="button" onClick={() => setResumeDismissed(true)} className="shrink-0 font-medium text-[#B25000] hover:underline">Đã hiểu</button>
+                </div>
+              )}
+              <EmbedFrame url={doc.url} title={doc.title} startPage={startPage} className="flex-1 min-h-0 shadow-[0_0_0_0.5px_rgba(0,0,0,0.08),0_10px_30px_-18px_rgba(0,0,0,0.3)]" />
               <GoogleAccessHint url={doc.url} />
             </div>
           )}
@@ -274,6 +309,16 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
               {mobile && <button type="button" onClick={toggleNotes} className="text-[13px] text-[#0071E3] font-medium ml-2">Xong</button>}
             </div>
             <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
+              {isPdfLike && (
+                <div className="rounded-[12px] bg-[#FFF4D6] p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#7A5600]">Đang học dở <SaveBadge state={bookmarkSave.state} onRetry={() => void bookmarkSave.flush()} /></div>
+                  <div className="flex gap-2">
+                    <input value={pageText} onChange={e => changeBookmark(e.target.value.replace(/\D/g, '').slice(0, 5), partNote)} readOnly={!canEdit} inputMode="numeric" placeholder="Trang" className="w-16 h-8 rounded-[8px] bg-white px-2 text-center text-[13px] font-semibold outline-none" />
+                    <input value={partNote} onChange={e => changeBookmark(pageText, e.target.value)} readOnly={!canEdit} placeholder="Đoạn: vd Điều 54, khoản 2" className="flex-1 min-w-0 h-8 rounded-[8px] bg-white px-2.5 text-[13px] outline-none" />
+                  </div>
+                  <div className="text-[11px] text-[#7A5600]/80">Mở lại tài liệu sẽ nhảy tới trang này (nếu Google cho phép); đoạn ghi chú luôn hiện ở đây.</div>
+                </div>
+              )}
               <textarea value={summary} readOnly={!canEdit}
                 onChange={e => { setSummary(e.target.value); notesSave.queue(e.target.value); }}
                 placeholder={canEdit ? 'Tóm tắt ý chính, điều khoản cần nhớ, số trang quan trọng…' : 'Chưa có ghi chú'}
@@ -293,6 +338,24 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
           </aside>
         )}
       </div>
+
+      {askPage && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" role="presentation" onClick={() => setAskPage(false)}>
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
+          <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} className="relative w-full max-w-[360px] bg-white rounded-[20px] p-5 shadow-[0_24px_64px_-12px_rgba(0,0,0,0.3)] animate-fade-in">
+            <div className="text-[16px] font-semibold text-[#1D1D1F]">Bạn đang học tới trang mấy?</div>
+            <div className="text-[12.5px] text-[#86868B] mt-1">Lần sau mở lại tài liệu, app nhắc đúng chỗ này.</div>
+            <div className="flex gap-2 mt-3">
+              <input value={pageText} onChange={e => changeBookmark(e.target.value.replace(/\D/g, '').slice(0, 5), partNote)} inputMode="numeric" placeholder="Trang" autoFocus
+                className="w-20 h-10 rounded-[10px] bg-black/[0.05] text-center text-[15px] font-semibold outline-none focus:ring-2 focus:ring-[#FFCC00]" />
+              <input value={partNote} onChange={e => changeBookmark(pageText, e.target.value)} placeholder="Đoạn (tuỳ chọn)" className="flex-1 min-w-0 h-10 rounded-[10px] bg-black/[0.05] px-3 text-[14px] outline-none" />
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <button type="button" onClick={() => { setAskPage(false); void bookmarkSave.flush().then(onClose); }} className="h-9 px-4 rounded-full bg-[#0071E3] text-[13px] font-medium text-white">Lưu & thoát</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmDel && (
         <Confirm title="Xoá tài liệu này?" confirmLabel="Xoá" onClose={() => setConfirmDel(false)} onConfirm={remove}

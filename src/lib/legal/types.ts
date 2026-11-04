@@ -100,6 +100,8 @@ export interface DocMeta {
   effective?: string;
   status?: LawStatus;
   tags?: string[];
+  /** vị trí đang học dở: số trang + đoạn (vd "Điều 54, khoản 2") */
+  bookmark?: { page?: number; note?: string };
 }
 
 export interface LegalDoc {

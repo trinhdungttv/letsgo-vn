@@ -83,6 +83,11 @@ export function normMeta(raw: unknown): DocMeta {
   for (const k of ['number', 'issuer', 'issued', 'effective'] as const) if (s(r[k])) m[k] = s(r[k]);
   if (['active', 'upcoming', 'amended', 'expired'].includes(s(r.status))) m.status = r.status as DocMeta['status'];
   if (Array.isArray(r.tags)) m.tags = r.tags.map(s).filter(Boolean);
+  if (r.bookmark && typeof r.bookmark === 'object') {
+    const b = r.bookmark as Row;
+    const page = num(b.page);
+    if (page || s(b.note)) m.bookmark = { ...(page && page > 0 ? { page: Math.round(page) } : {}), ...(s(b.note) ? { note: s(b.note) } : {}) };
+  }
   return m;
 }
 export function normDoc(r: Row): LegalDoc {
