@@ -18,6 +18,8 @@ export interface LegalEntityInfo {
   industries: LegalIndustry[];
   banks: LegalBank[];
   licenses: LegalLicense[];
+  /** link Google Drive của Giấy chứng nhận đăng ký doanh nghiệp (bấm icon file để xem ngay trong app) */
+  registrationUrl: string;
 }
 
 export interface LegalEntity {
@@ -215,7 +217,7 @@ export const TOPIC_ICONS = [
 export type TopicIcon = typeof TOPIC_ICONS[number];
 
 export function emptyInfo(): LegalEntityInfo {
-  return { owners: [], industries: [], banks: [], licenses: [] };
+  return { owners: [], industries: [], banks: [], licenses: [], registrationUrl: '' };
 }
 
 export function rid(): string {

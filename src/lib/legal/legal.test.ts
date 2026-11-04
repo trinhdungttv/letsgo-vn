@@ -86,7 +86,7 @@ describe('Dòng thời gian pháp nhân', () => {
     expect(companyAge(null)).toBe('');
   });
   it('giấy phép sắp / đã hết hạn', () => {
-    const e = entity({ info: { owners: [], industries: [], banks: [], licenses: [
+    const e = entity({ info: { owners: [], industries: [], banks: [], registrationUrl: '', licenses: [
       { id: 'l1', name: 'GP cho thuê lại LĐ', number: '', issuer: '', issued: '', expires: '2026-12-01', url: '', note: '' },
       { id: 'l2', name: 'GP cũ', number: '', issuer: '', issued: '', expires: '2026-10-01', url: '', note: '' },
       { id: 'l3', name: 'Còn lâu', number: '', issuer: '', issued: '', expires: '2030-01-01', url: '', note: '' },
@@ -189,7 +189,7 @@ describe('Sơ đồ dựng sẵn', () => {
   it('cơ cấu sở hữu + sơ đồ tổng quan pháp nhân', () => {
     const e = entity({
       short_name: "Let's Go", charter_capital: 5e9, tax_code: '0312345678',
-      info: { owners: [{ id: 'o', name: 'Ông A', capital: 5e9, percent: null, note: '' }], industries: [{ id: 'i', code: '7830', name: 'Cung ứng lao động', main: true }], banks: [], licenses: [] },
+      info: { owners: [{ id: 'o', name: 'Ông A', capital: 5e9, percent: null, note: '' }], industries: [{ id: 'i', code: '7830', name: 'Cung ứng lao động', main: true }], banks: [], licenses: [], registrationUrl: '' },
     });
     const own = ownershipMap(e, 'x');
     expect(own.structure).toBe('org');

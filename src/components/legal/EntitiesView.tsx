@@ -17,6 +17,7 @@ import type { LegalCtx } from './ctx';
 import { DocRow } from './DocCard';
 import EntityForm from './EntityForm';
 import EntityTimeline from './EntityTimeline';
+import FileViewer, { FileIconButton } from './FileViewer';
 import { ColorTile, Confirm, Empty, EntityLogo, MoreMenu, Pill, Section, shade, soft } from './ui';
 
 export type EntityTab = 'overview' | 'timeline' | 'maps' | 'docs';
@@ -159,12 +160,18 @@ function EntityOverview({ ctx, e, goTab }: { ctx: LegalCtx; e: LegalEntity; goTa
   const lastChange = ms.find(m => m.kind === 'thay_doi' && m.status === 'done');
   const shares = ownerShares(e.info.owners, e.charter_capital);
   const [allInd, setAllInd] = useState(false);
+  const [viewing, setViewing] = useState<{ title: string; url: string } | null>(null);
   const inds = [...e.info.industries].sort((a, b) => Number(b.main) - Number(a.main));
   const mapUrl = e.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(e.address)}` : '';
 
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Section title="Đăng ký doanh nghiệp" icon={<FileText size={15} />}>
+        <InfoRow label="Giấy chứng nhận ĐKDN">
+          {e.info.registrationUrl
+            ? <span className="inline-flex items-center gap-2"><FileIconButton url={e.info.registrationUrl} label="Xem Giấy chứng nhận ĐKDN" onOpen={() => setViewing({ title: `Giấy chứng nhận ĐKDN – ${e.short_name || e.name}`, url: e.info.registrationUrl })} /><span className="text-[12px] text-[#86868B]">Bấm icon để xem file gốc</span></span>
+            : <span className="text-[#AEAEB2]">Chưa gắn link — Sửa hồ sơ → Đăng ký doanh nghiệp</span>}
+        </InfoRow>
         <InfoRow label="Mã số DN / MST"><Copyable ctx={ctx} value={e.tax_code}><span className="font-semibold tabular-nums">{e.tax_code}</span></Copyable></InfoRow>
         <InfoRow label="Tên đầy đủ"><Copyable ctx={ctx} value={e.name} /></InfoRow>
         {e.english_name && <InfoRow label="Tên tiếng Anh"><Copyable ctx={ctx} value={e.english_name} /></InfoRow>}
@@ -225,8 +232,8 @@ function EntityOverview({ ctx, e, goTab }: { ctx: LegalCtx; e: LegalEntity; goTa
                     <div className="text-[12px] text-[#86868B]">{[l.number && `Số ${l.number}`, l.issuer, l.issued && `cấp ${fmtDate(l.issued)}`].filter(Boolean).join(' · ')}</div>
                   </div>
                   <Pill tint={st.tint}>{st.label}</Pill>
+                  <FileIconButton url={l.url} label="Xem file giấy phép" onOpen={() => setViewing({ title: l.name || 'Giấy phép', url: l.url })} />
                 </div>
-                {l.url && <a href={l.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[12px] text-[#0066CC] hover:underline">Xem file <ExternalLink size={11} /></a>}
               </div>
             );
           })}
@@ -265,6 +272,7 @@ function EntityOverview({ ctx, e, goTab }: { ctx: LegalCtx; e: LegalEntity; goTa
         ))}
       </Section>
 
+      {viewing && <FileViewer title={viewing.title} url={viewing.url} onClose={() => setViewing(null)} />}
       {e.note && <Section title="Ghi chú" className="lg:col-span-2"><p className="text-[13.5px] text-[#3A3A3C] whitespace-pre-wrap leading-relaxed">{e.note}</p></Section>}
     </div>
   );

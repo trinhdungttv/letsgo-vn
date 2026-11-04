@@ -110,6 +110,7 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
         industries: d.info.industries.filter(i => i.code.trim() || i.name.trim()),
         banks: d.info.banks.filter(b => b.bank.trim() || b.number.trim()),
         licenses: d.info.licenses.filter(l => l.name.trim()),
+        registrationUrl: d.info.registrationUrl.trim(),
       };
       const saved = await saveEntity({
         ...rest, id: initial?.id ?? null, name: d.name.trim(), short_name: d.short_name.trim(), charter_capital: capital, info: clean,
@@ -190,6 +191,9 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
             </Field>
             <Field label="Ngày cấp lần đầu">{txt('founded_date', '', 'date')}</Field>
             <Field label="Nơi cấp">{txt('registry_office', 'Phòng ĐKKD – Sở KH&ĐT TP.HCM')}</Field>
+            <Field label="Link file Giấy chứng nhận ĐKDN (Google Drive)" className="sm:col-span-2" hint="Dán link để xem file gốc ngay trong app — bấm icon file ở trang hồ sơ">
+              <input value={d.info.registrationUrl} onChange={e => setInfo('registrationUrl', e.target.value)} placeholder="https://drive.google.com/file/d/…" inputMode="url" className={INPUT_CLS} />
+            </Field>
           </div>
         </Group>
 
@@ -285,7 +289,7 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
                   <input value={l.issuer} onChange={e => upd({ issuer: e.target.value })} placeholder="Cơ quan cấp" className={INPUT_CLS} />
                   <label className="flex items-center gap-2 text-[12px] text-[#86868B]"><span className="w-[58px] shrink-0">Ngày cấp</span><input type="date" value={l.issued} onChange={e => upd({ issued: e.target.value })} className={INPUT_CLS} /></label>
                   <label className="flex items-center gap-2 text-[12px] text-[#86868B]"><span className="w-[58px] shrink-0">Hết hạn</span><input type="date" value={l.expires} onChange={e => upd({ expires: e.target.value })} className={INPUT_CLS} /></label>
-                  <input value={l.url} onChange={e => upd({ url: e.target.value })} placeholder="Link file trên Google Drive" className={`${INPUT_CLS} sm:col-span-2`} />
+                  <input value={l.url} onChange={e => upd({ url: e.target.value })} placeholder="Link file giấy phép trên Google Drive (bấm icon file để xem)" className={`${INPUT_CLS} sm:col-span-2`} />
                 </div>
               );
             })}
