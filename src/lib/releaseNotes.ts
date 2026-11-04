@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-04-clients-avatars',
+    date: '2026-11-04',
+    title: 'Khách hàng',
+    features: [
+      'Bảng Khách hàng: cột Chi nhánh và Quản lý hiện ảnh đại diện (ảnh Trưởng chi nhánh đã cài)',
+      'Quản lý chưa có ảnh vẫn hiện chữ cái đầu như cũ',
+    ],
+  },
+  {
     id: '2026-11-04-edit-done-history',
     date: '2026-11-04',
     title: 'Workspace',

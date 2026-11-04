@@ -30,6 +30,23 @@ import MobileActionSheet from '../components/ui/MobileActionSheet';
 import { buildCompanyIndex, findSimilarCompanies } from '../lib/companyMatch';
 import { CLIENT_STAR_LABEL, CLIENT_STARS, clientStarOf, isStarFilter, matchesStarFilter, saveClientStar, starFilterLabel, starGlyphs, type ClientStar, type StarFilter } from '../lib/clientStars';
 import { ClientStarBadge, ClientStarPicker } from '../components/clients/ClientStars';
+import { BranchAvatar } from '../components/branches/BranchAvatar';
+import { managerAvatarUrl } from '../lib/branchAvatar';
+
+/** Avatar quản lý: ảnh Trưởng chi nhánh nếu tên khớp, không thì chữ cái đầu trên nền màu chi nhánh. */
+function ManagerAvatar({ name, url, color, size }: { name: string | null | undefined; url: string | null; color: string; size: number }) {
+  const box = { width: size, height: size };
+  if (url) return <img src={url} alt="" loading="lazy" className="rounded-full object-cover shrink-0" style={box} />;
+  return (
+    <div
+      aria-hidden
+      className="rounded-full flex items-center justify-center text-white font-bold shrink-0 select-none"
+      style={{ ...box, background: color, fontSize: Math.round(size * 0.41) }}
+    >
+      {(name || '').trim().split(/\s+/).pop()?.[0]?.toLocaleUpperCase('vi') || '?'}
+    </div>
+  );
+}
 
 interface ClientsProps {
   clients: Client[];
@@ -1471,7 +1488,12 @@ export default function Clients({
                               {branchOptions(branches).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                             </select>
                           ) : branchOf(c, branches)
-                            ? branchNameOfClient(c)
+                            ? (
+                              <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                <BranchAvatar branch={branchOf(c, branches)!} size={22} />
+                                {branchNameOfClient(c)}
+                              </span>
+                            )
                             : <span className="text-amber-600 font-medium" title={`Chưa gán chi nhánh${c.region ? ` — dữ liệu cũ ghi "${c.region}"` : ''}. Nhấp đúp để chọn.`}>⚠ Chưa gán</span>}
                         </td>
                       )}
@@ -1520,14 +1542,7 @@ export default function Clients({
                               }}
                               className="flex items-center gap-1.5 hover:opacity-80 transition"
                             >
-                              <div style={{
-                                width: 22, height: 22, borderRadius: '50%',
-                                background: getBranchColor(branchOf(c, branches)?.name ?? null),
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                color: '#fff', fontSize: 9, fontWeight: 700, flexShrink: 0,
-                              }}>
-                                {(c.manager || '').split(' ').pop()?.[0] || '?'}
-                              </div>
+                              <ManagerAvatar name={c.manager} url={managerAvatarUrl(c.manager, branches, branchOf(c, branches)?.id)} color={getBranchColor(branchOf(c, branches)?.name ?? null)} size={22} />
                               <span className="text-blue-600 text-[12px]">{c.manager}</span>
                             </button>
                           ) : '—'}
@@ -2087,7 +2102,10 @@ export default function Clients({
                   className="text-[14px] font-semibold text-[#111] px-2 py-1 rounded border border-blue-400 outline-none flex-1 mr-2"
                 />
               ) : (
-                <h3 className="text-[14px] font-semibold text-[#111]">{selectedManager.name}</h3>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <ManagerAvatar name={selectedManager.name} url={managerAvatarUrl(selectedManager.name, branches)} color={getBranchColor(resolveBranchByLegacyText(selectedManager.region, branches)?.name ?? null)} size={36} />
+                  <h3 className="text-[14px] font-semibold text-[#111] truncate">{selectedManager.name}</h3>
+                </div>
               )}
               <div className="flex items-center gap-1.5">
                 {isAdmin && !editingManager && (
