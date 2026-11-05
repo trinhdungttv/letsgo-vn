@@ -24,7 +24,8 @@ import QuoteInfoBlock from './QuoteInfoBlock';
 import { PipelineSourcePicker } from './PipelineSourceField';
 import { findClientsByName, otherPipelineEntryOf, pipelineDataCounts, linkPipelineToClient } from '../../lib/pipelineHelpers';
 import { sourceOf, cleanSource, sameSource, sourceFullLabel, sourceSaveErrorHint, type PipelineSource } from '../../lib/pipelineSource';
-import { KpiTile, SectionCard, QuickNav, useSectionState } from '../ui/PanelKit';
+import { KpiTile } from '../ui/PanelKit';
+import ClientBriefModule from '../clients/ClientBriefModule';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useCompanyMedia, CoverBanner, CoverEditDialog, CompanyLocationCard, CoverThumbRow, type FactorySite } from './CompanyMedia';
@@ -86,7 +87,7 @@ const PANEL_NAV: { key: PanelSection; label: string; icon: string }[] = [
   { key: 'profile',  label: 'Hồ sơ công ty',    icon: '🏢' },
   { key: 'history',  label: 'Lịch sử chăm sóc', icon: '📞' },
   { key: 'contacts', label: 'Người liên hệ',    icon: '👥' },
-  { key: 'notes',    label: 'Ghi chú nội bộ',   icon: '📝' },
+  { key: 'notes',    label: 'Trao đổi nội bộ',  icon: '💬' },
   { key: 'gifts',    label: 'Quà tặng',         icon: '🎁' },
   { key: 'appendix', label: 'Phụ lục',          icon: '📑' },
   { key: 'prefs',    label: 'Sở thích',         icon: '⭐' },
@@ -211,13 +212,9 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
   // Tên người phụ trách + người liên hệ của từng việc Workspace (tra riêng, lỗi thì chỉ thiếu tên).
   const [taskPeople, setTaskPeople] = useState<{ users: Record<string, string>; contacts: Record<string, string> }>({ users: {}, contacts: {} });
   const [activeSection, setActiveSection] = useState<Section>('info');
-  // Biến thể 'panel' (trang Khách hàng) không dùng tab lồng tab — thay bằng
-  // các thẻ gập/mở + thanh "Đi tới", nhớ trạng thái theo trình duyệt.
-  const { sections, toggle, goto } = useSectionState<PanelSection>(
-    { profile: true, history: true, contacts: false, appendix: false, notes: true, gifts: false, prefs: false },
-    'company-profile-sections-v1',
-    'cp',
-  );
+  // Biến thể 'panel' (trang Khách hàng): các khối bên dưới là tab ngang — bấm tab nào hiện nội dung tab đó, nhớ theo trình duyệt.
+  const [panelTab, setPanelTab] = usePersistedState<PanelSection>('company-profile-tab-v2', 'profile');
+  const goto = (k: PanelSection) => { setPanelTab(k); };
   const [historyForm, setHistoryForm] = useState<'interaction' | 'task' | null>(null);
   const [reportTarget, setReportTarget] = useState<{ kind: 'pipeline_task' | 'work_task'; id: string; title: string } | null>(null);
   const [reportNote, setReportNote] = useState('');
@@ -2172,6 +2169,8 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     setIntType(kind);
     goto('history');
   };
+  // tab đang lưu có thể không còn hợp lệ (vd tab Người liên hệ khi công ty chưa là khách)
+  const activeTab: PanelSection = navItems.some(n => n.key === panelTab) ? panelTab : 'profile';
 
   return (
     <div className="max-w-[1500px] mx-auto">
@@ -2251,72 +2250,53 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
         />
       </div>
 
-      {/* ── Thanh điều hướng nhanh ── */}
+      {/* ── Dòng thời gian + Ghi chú công ty (hiện đầu tiên) ── */}
       <div className="mt-3">
-        <QuickNav items={navItems} onGo={goto} />
+        <ClientBriefModule subjectId={entry.client_id ?? entry.id} companyName={entry.company_name || ''} />
       </div>
 
-      {/* ── 2 cột: trái = quan hệ & hoạt động, phải = hồ sơ & ghi chú ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start mt-3">
-        <div className="xl:col-span-8 space-y-4">
-
-          <SectionCard id="cp-profile" icon="🏢" title="Hồ sơ công ty"
-            open={sections.profile} onToggle={() => toggle('profile')}>
+      {/* ── Tab ngang: bấm tab nào hiện nội dung tab đó ── */}
+      <div className="mt-4 bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
+        <div className="flex items-center gap-1 px-2 border-b border-[#E8E7E2] overflow-x-auto no-scrollbar">
+          {navItems.map(n => {
+            const count = n.key === 'history' ? pendingHistoryTasks.length
+              : n.key === 'contacts' ? contacts.length
+              : n.key === 'notes' ? interactions.filter(i => i.interaction_type === 'note').length
+              : n.key === 'gifts' ? giftCount
+              : n.key === 'appendix' ? appendices.length : 0;
+            const active = activeTab === n.key;
+            return (
+              <button key={n.key} onClick={() => setPanelTab(n.key)}
+                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3.5 py-3 text-[13px] border-b-2 -mb-px transition ${active ? 'border-blue-600 text-blue-700 font-semibold' : 'border-transparent text-[#666] hover:text-[#111]'}`}>
+                <span>{n.icon}</span>{n.label}
+                {count > 0 && <span className={`px-1.5 rounded-full text-[10.5px] font-semibold ${active ? 'bg-blue-100 text-blue-700' : 'bg-[#F1F0EB] text-[#777]'}`}>{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="p-4 md:p-5">
+          {activeTab === 'profile' && (
             <div className="space-y-5">
               {blkBasicInfo}
               {blkWorkerBar}
               {blkMarket}
               {blkQuote}
             </div>
-          </SectionCard>
-
-          <SectionCard id="cp-history" icon="📞" title="Lịch sử chăm sóc"
-            badge={pendingHistoryTasks.length ? `${pendingHistoryTasks.length} việc cần làm` : undefined}
-            open={sections.history} onToggle={() => toggle('history')}>
-            <div className="space-y-4">{blkHistory}</div>
-          </SectionCard>
-
-          {blkContacts && (
-            <SectionCard id="cp-contacts" icon="👥" title="Người liên hệ"
-              badge={`${contacts.length} đầu mối`}
-              open={sections.contacts} onToggle={() => toggle('contacts')}>
-              {blkContacts}
-            </SectionCard>
           )}
-
-          <SectionCard id="cp-appendix" icon="📑" title="Phụ lục hợp đồng"
-            badge={appendices.length ? `${appendices.length} bản` : undefined}
-            open={sections.appendix} onToggle={() => toggle('appendix')}>
-            {blkAppendix}
-          </SectionCard>
-        </div>
-
-        <div className="xl:col-span-4 space-y-4">
-
-          <SectionCard id="cp-notes" icon="📝" title="Ghi chú nội bộ"
-            badge={`${interactions.filter(i => i.interaction_type === 'note').length}`}
-            open={sections.notes} onToggle={() => toggle('notes')}>
-            {blkNotes}
-          </SectionCard>
-
-          <SectionCard id="cp-gifts" icon="🎁" title="Quà tặng"
-            badge={giftCount ? `${giftCount}` : undefined}
-            open={sections.gifts} onToggle={() => toggle('gifts')}>
-            <div className="space-y-4">{blkGifts}</div>
-          </SectionCard>
-
-          <SectionCard id="cp-prefs" icon="⭐" title="Sở thích & lưu ý"
-            open={sections.prefs} onToggle={() => toggle('prefs')}>
-            <div className="space-y-4">{blkPrefs}</div>
-          </SectionCard>
-
-          {(showActivateButton || (isAdmin && !isLinkedToClient && onDelete)) && (
-            <div className="bg-white border border-[#E8E7E2] rounded-[10px] p-4 space-y-3">
-              {blkActivate}
-            </div>
-          )}
+          {activeTab === 'history' && <div className="space-y-4">{blkHistory}</div>}
+          {activeTab === 'contacts' && blkContacts}
+          {activeTab === 'notes' && <div className="max-w-3xl">{blkNotes}</div>}
+          {activeTab === 'gifts' && <div className="space-y-4">{blkGifts}</div>}
+          {activeTab === 'appendix' && blkAppendix}
+          {activeTab === 'prefs' && <div className="space-y-4">{blkPrefs}</div>}
         </div>
       </div>
+
+      {(showActivateButton || (isAdmin && !isLinkedToClient && onDelete)) && (
+        <div className="mt-4 bg-white border border-[#E8E7E2] rounded-[10px] p-4 space-y-3">
+          {blkActivate}
+        </div>
+      )}
     </div>
   );
 }

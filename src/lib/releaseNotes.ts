@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-profile-timeline-notes',
+    date: '2026-11-05',
+    title: 'Khách hàng → Hồ sơ chăm sóc',
+    features: [
+      'Dòng thời gian các mốc quan trọng của công ty (khởi đầu, hợp đồng, gặp gỡ, rủi ro, kế hoạch) ngay đầu hồ sơ',
+      'Ghi chú công ty chuyên nghiệp: viết văn bản có định dạng (tiêu đề, gạch đầu dòng, tick việc) hoặc vẽ sơ đồ tư duy, phóng to toàn màn hình',
+      'Các khối bên dưới (Hồ sơ công ty, Lịch sử chăm sóc, Người liên hệ, Quà tặng…) đổi thành tab ngang, bấm tab nào hiện tab đó',
+    ],
+  },
+  {
     id: '2026-11-05-client-multi-contracts',
     date: '2026-11-05',
     title: 'Khách hàng → Hợp đồng',
