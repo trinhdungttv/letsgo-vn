@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-client-workflow-videos',
+    date: '2026-11-05',
+    title: 'Khách hàng → Quy trình công việc',
+    features: [
+      'Tab mới "Quy trình công việc": chia theo xưởng và công đoạn, mô tả từng việc, nhân sự, ca làm',
+      'Gắn link video YouTube / Google Drive và ảnh vào từng xưởng, từng công đoạn để xem công việc thực tế ngay trong app',
+    ],
+  },
+  {
     id: '2026-11-05-profile-timeline-notes',
     date: '2026-11-05',
     title: 'Khách hàng → Hồ sơ chăm sóc',
