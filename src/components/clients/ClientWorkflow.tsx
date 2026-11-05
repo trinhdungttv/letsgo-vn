@@ -2,7 +2,7 @@
 // hoặc ảnh để xem công việc thực tế ngay trong app. Tự lưu (bảng client_workflows, migration 205).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Check, ExternalLink, Factory, ImageIcon, Loader2, Pencil, Play, Plus, Trash2, Users, X,
+  AlertTriangle, ArrowDown, ArrowUp, Check, ExternalLink, Factory, ImageIcon, Loader2, MapPin, Pencil, Play, Plus, Trash2, Users, X,
 } from 'lucide-react';
 import type { Client } from '../../lib/types';
 import { useAuth } from '../../lib/auth';
@@ -10,15 +10,17 @@ import { isMissingTableError } from '../../lib/clientMaps/orgChart';
 import { parseDocLink } from '../../lib/legal/drive';
 import { EmbedFrame, GoogleAccessHint } from '../legal/Embed';
 import { uid } from '../../lib/quickNotes/mindmap/parse';
+import { listSiteMaps } from '../../lib/clientMaps/siteMaps';
+import { SITE_ACTIVE_KEY, WF_ACTIVE_KEY, sameZone, zoneOptions, type ZoneOption } from '../../lib/clientWorkflow/zoneLinks';
 import {
   WORKFLOW_MIGRATION_HINT, loadWorkflow, mediaCount, mediaInfo, newStep, newWorkshop, parseMediaInput, saveWorkflow,
-  type WfMedia, type WfStep, type WfWorkshop,
+  type WfMedia, type WfStep, type WfWorkshop, type WfZoneRef,
 } from '../../lib/clientWorkflow/workflow';
 
 const SAVE_DELAY_MS = 900;
 type SaveState = { s: 'idle' } | { s: 'saving' } | { s: 'saved'; at: string } | { s: 'error'; msg: string };
 
-export default function ClientWorkflow({ client }: { client: Client }) {
+export default function ClientWorkflow({ client, onOpenSite }: { client: Client; onOpenSite?: () => void }) {
   const { user } = useAuth();
   const userName = user?.full_name || user?.username || '';
   const clientId = client.id;
@@ -27,6 +29,13 @@ export default function ClientWorkflow({ client }: { client: Client }) {
   const [workshops, setWorkshops] = useState<WfWorkshop[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [save, setSave] = useState<SaveState>({ s: 'idle' });
+  // Khu vực đã vẽ ở tab Mặt bằng — để gắn xưởng với khu vực (lỗi / chưa có thì danh sách rỗng)
+  const [zoneOpts, setZoneOpts] = useState<ZoneOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listSiteMaps(clientId).then(r => { if (alive) setZoneOpts(zoneOptions(r.maps)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [clientId]);
   const [viewer, setViewer] = useState<{ list: WfMedia[]; index: number } | null>(null);
 
   const pending = useRef<WfWorkshop[] | null>(null);
@@ -38,7 +47,9 @@ export default function ClientWorkflow({ client }: { client: Client }) {
     try {
       const r = await loadWorkflow(clientId);
       setWorkshops(r.workshops);
-      setActiveId(r.workshops[0]?.id ?? null);
+      let want: string | null = null;
+      try { want = localStorage.getItem(WF_ACTIVE_KEY(clientId)); localStorage.removeItem(WF_ACTIVE_KEY(clientId)); } catch { /* bỏ qua */ }
+      setActiveId(r.workshops.find(w => w.id === want)?.id ?? r.workshops[0]?.id ?? null);
       setSave(r.updatedAt ? { s: 'saved', at: r.updatedAt } : { s: 'idle' });
       setPhase('ready');
     } catch (e) {
@@ -162,7 +173,8 @@ export default function ClientWorkflow({ client }: { client: Client }) {
               })}
             </div>
             {active && (
-              <WorkshopView key={active.id} w={active} readOnly={readOnly}
+              <WorkshopView key={active.id} w={active} readOnly={readOnly} zoneOpts={zoneOpts}
+                onOpenZone={(ref) => { try { localStorage.setItem(SITE_ACTIVE_KEY(clientId), ref.mapId); } catch { /* bỏ qua */ } onOpenSite?.(); }}
                 onPatch={(fn, imm) => patchWorkshop(active.id, fn, imm)}
                 onRemove={() => removeWorkshop(active)}
                 onOpen={(list, index) => setViewer({ list, index })} />
@@ -184,8 +196,8 @@ function SaveBadge({ save, readOnly, onRetry }: { save: SaveState; readOnly: boo
 }
 
 /* ═══════════ 1 xưởng ═══════════ */
-function WorkshopView({ w, readOnly, onPatch, onRemove, onOpen }: {
-  w: WfWorkshop; readOnly: boolean; onPatch: (fn: (w: WfWorkshop) => WfWorkshop, immediate?: boolean) => void;
+function WorkshopView({ w, readOnly, zoneOpts, onOpenZone, onPatch, onRemove, onOpen }: {
+  w: WfWorkshop; readOnly: boolean; zoneOpts: ZoneOption[]; onOpenZone: (z: WfZoneRef) => void; onPatch: (fn: (w: WfWorkshop) => WfWorkshop, immediate?: boolean) => void;
   onRemove: () => void; onOpen: (list: WfMedia[], index: number) => void;
 }) {
   const [editHead, setEditHead] = useState(!w.name.trim());
@@ -237,6 +249,10 @@ function WorkshopView({ w, readOnly, onPatch, onRemove, onOpen }: {
             )}
           </div>
         )}
+        <div className="mt-3 pt-3 border-t border-[#F0EFEA]">
+          <ZoneLinks w={w} readOnly={readOnly} zoneOpts={zoneOpts} onOpenZone={onOpenZone}
+            onChange={zones => onPatch(x => ({ ...x, zones }), true)} />
+        </div>
         {(w.media.length > 0 || !readOnly) && (
           <div className="mt-3 pt-3 border-t border-[#F0EFEA]">
             <div className="text-[11px] uppercase tracking-wide text-[#aaa] font-semibold mb-1.5">Video / ảnh tổng quan xưởng</div>
@@ -301,6 +317,72 @@ function WorkshopView({ w, readOnly, onPatch, onRemove, onOpen }: {
           className="w-full h-11 rounded-[12px] border border-dashed border-[#CFCDC4] text-[13px] text-[#777] hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 inline-flex items-center justify-center gap-1.5 transition">
           <Plus size={15} /> Thêm công đoạn
         </button>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════ Gắn xưởng với khu vực trên Mặt bằng ═══════════ */
+function ZoneLinks({ w, readOnly, zoneOpts, onOpenZone, onChange }: {
+  w: WfWorkshop; readOnly: boolean; zoneOpts: ZoneOption[]; onOpenZone: (z: WfZoneRef) => void; onChange: (z: WfZoneRef[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const optOf = (r: WfZoneRef) => zoneOpts.find(o => sameZone(o, r));
+  const toggle = (o: ZoneOption) => {
+    const ref: WfZoneRef = { mapId: o.mapId, zoneId: o.zoneId, label: o.label, mapTitle: o.mapTitle };
+    onChange(w.zones.some(z => sameZone(z, ref)) ? w.zones.filter(z => !sameZone(z, ref)) : [...w.zones, ref]);
+  };
+  const groups = useMemo(() => {
+    const m = new Map<string, ZoneOption[]>();
+    for (const o of zoneOpts) m.set(o.mapId, [...(m.get(o.mapId) ?? []), o]);
+    return [...m.values()];
+  }, [zoneOpts]);
+
+  return (
+    <div className="relative">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] uppercase tracking-wide text-[#aaa] font-semibold inline-flex items-center gap-1"><MapPin size={11} /> Vị trí trên mặt bằng</span>
+        {w.zones.map(r => {
+          const o = optOf(r);
+          return (
+            <button key={`${r.mapId}:${r.zoneId}`} type="button" onClick={() => o && onOpenZone(r)} disabled={!o}
+              title={o ? 'Mở khu vực này trên Mặt bằng' : 'Khu vực này đã bị xoá khỏi Mặt bằng'}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] border transition ${o ? 'border-[#D6E2FB] bg-[#EEF3FE] text-[#1D4ED8] hover:bg-[#E0EAFD]' : 'border-dashed border-[#DDD] text-[#AAA] line-through'}`}>
+              <span className="w-2 h-2 rounded-sm" style={{ background: o?.color ?? '#ccc' }} />
+              {o?.label ?? r.label}{(o?.mapTitle ?? r.mapTitle) ? <span className="opacity-60"> · {o?.mapTitle ?? r.mapTitle}</span> : null}
+            </button>
+          );
+        })}
+        {!readOnly && (
+          <button type="button" onClick={() => setOpen(v => !v)} className="text-[12px] font-medium text-blue-600 hover:text-blue-700">
+            {w.zones.length ? 'Đổi khu vực' : '+ Gắn khu vực trên mặt bằng'}
+          </button>
+        )}
+        {!w.zones.length && readOnly && <span className="text-[12px] text-[#aaa]">Chưa gắn</span>}
+      </div>
+      {open && !readOnly && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-40 w-[320px] max-h-72 overflow-y-auto rounded-xl border border-[#E8E7E2] bg-white shadow-lg py-1">
+            {groups.length === 0 ? (
+              <div className="px-3 py-3 text-[12px] text-[#888]">Chưa có khu vực nào. Vào tab <b>Mặt bằng</b> khoanh khối nhà / đặt nhãn khu vực trước, rồi quay lại đây để gắn.</div>
+            ) : groups.map(g => (
+              <div key={g[0].mapId}>
+                <div className="px-3 pt-2 pb-1 text-[10.5px] uppercase tracking-wide text-[#aaa] font-semibold">{g[0].mapTitle}</div>
+                {g.map(o => {
+                  const on = w.zones.some(z => sameZone(z, o));
+                  return (
+                    <button key={o.zoneId} type="button" onClick={() => toggle(o)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-[#F5F5F7]">
+                      <span className={`w-4 h-4 rounded border flex items-center justify-center ${on ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300'}`}>{on && <Check size={11} />}</span>
+                      <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: o.color }} />
+                      <span className="text-[12.5px] text-[#222] truncate">{o.label}{o.note ? <span className="text-[#888]"> : {o.note}</span> : null}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

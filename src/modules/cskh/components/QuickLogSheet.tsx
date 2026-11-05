@@ -2,7 +2,9 @@
 // kênh + loại tự điền. Phần mở rộng gập sẵn: ghi chú 1 dòng, kết quả nhanh,
 // "Họ chủ động liên hệ", việc tiếp theo + hạn nhanh. Nút "Chưa" = bỏ qua, không hỏi lại.
 import { useState } from 'react';
-import { Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, PhoneOff } from 'lucide-react';
+import { PendingVoice, RecorderControl, useVoiceCapture } from '../../../components/voice/VoiceUI';
+import type { RecordedAudio } from '../../../components/quickNotes/useAudioRecorder';
 import { interactionTypeOfChannel, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import { EMPTY_GIFT_DRAFT, giftInputOf, type LogGiftDraft, type LogGiftInput } from '../../../lib/cskh/logGift';
 import { rememberDisplayRows } from '../../../lib/cskh/remember';
@@ -22,6 +24,8 @@ export interface QuickLogInput {
   followUpDue: string | null;
   /** Món quà — có khi hình thức là "Quà tặng" (ghi luôn vào Lịch sử quà). */
   gift?: LogGiftInput;
+  /** Bản ghi âm cuộc trao đổi (nếu có) — nơi gọi tải lên và gắn vào người liên hệ. */
+  audio?: RecordedAudio;
 }
 
 /** Hình thức khi ghi thủ công (gặp trực tiếp…). */
@@ -49,7 +53,7 @@ export function RememberList({ contact }: { contact: Pick<CskhContact, 'remember
   );
 }
 
-export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
+export function QuickLogSheet({ contact, channel, today, onSave, onSkip, onMissed }: {
   contact: CskhContact;
   /** Kênh vừa bấm (Gọi/Zalo/SMS); null = ghi nhận thủ công. */
   channel: ContactActionChannel | null;
@@ -57,7 +61,10 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
   /** Trả về câu lỗi (giữ sheet mở) hoặc null khi đã lưu. */
   onSave: (input: QuickLogInput) => Promise<string | null>;
   onSkip: () => void;
+  /** "Khách chưa nghe máy": đẩy xuống cuối hàng đợi hôm nay, bỏ bản ghi âm. Trả về câu lỗi hoặc null. */
+  onMissed: () => Promise<string | null>;
 }) {
+  const voice = useVoiceCapture();
   const [expanded, setExpanded] = useState(false);
   const [manualType, setManualType] = useState<InteractionType>('meet');
   const [note, setNote] = useState('');
@@ -91,7 +98,19 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       followUpAction: action,
       followUpDue: action !== '' ? followUp.due : null,
       gift,
+      audio: voice.pending ?? undefined,
     });
+    setSaving(false);
+    if (err) setError(err);
+  };
+
+  const discardVoice = () => { voice.rec.cancel(); voice.setPending(null); };
+  const handleSkip = () => { discardVoice(); onSkip(); };
+  const handleMissed = async () => {
+    discardVoice(); // khách không nghe máy → bản ghi (nếu lỡ bấm) không giữ
+    setSaving(true);
+    setError('');
+    const err = await onMissed();
     setSaving(false);
     if (err) setError(err);
   };
@@ -99,7 +118,7 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
   const via = channel ? ` qua ${CHANNEL_LABEL[channel]}` : '';
 
   return (
-    <Sheet label={`Ghi nhận liên hệ với ${contact.fullName}`} onClose={onSkip}>
+    <Sheet label={`Ghi nhận liên hệ với ${contact.fullName}`} onClose={handleSkip}>
       <p className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F] pr-6">
         {channel ? 'Đã liên hệ với ' : 'Ghi nhận đã liên hệ với '}
         <span className="text-[#0071E3]">{contact.fullName}</span>{via}?
@@ -109,6 +128,12 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       </p>
 
       <RememberList contact={contact} />
+
+      <div className="mt-3 flex flex-col gap-2 items-start">
+        <RecorderControl rec={voice.rec} onStart={() => { void voice.start(); }} label="Ghi âm cuộc trao đổi" />
+        {voice.pending && <div className="w-full"><PendingVoice audio={voice.pending} onDiscard={() => voice.setPending(null)} /></div>}
+        {voice.rec.active && <p className="text-[11.5px] text-[#86868B]">Đặt máy gần loa ngoài của điện thoại đang gọi. Bấm Dừng rồi mới lưu.</p>}
+      </div>
 
       {channel === null && (
         <div className="flex flex-wrap gap-1.5 mt-3">
@@ -128,15 +153,19 @@ export function QuickLogSheet({ contact, channel, today, onSave, onSkip }: {
       {error && <p className="mt-3 text-[13px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{error}</p>}
 
       <div className="flex gap-2 mt-4">
-        <button type="button" onClick={onSkip} disabled={saving}
+        <button type="button" onClick={handleSkip} disabled={saving}
           className="flex-1 h-12 md:h-10 rounded-full bg-[rgba(118,118,128,0.12)] text-[14px] md:text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">
           Chưa
         </button>
-        <button type="button" onClick={handleSave} disabled={saving}
+        <button type="button" onClick={handleSave} disabled={saving || voice.rec.active}
           className="flex-[2] h-12 md:h-10 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[14px] md:text-[13px] font-semibold hover:bg-[#0077ED] disabled:opacity-40 inline-flex items-center justify-center gap-1.5">
-          <Check size={17} strokeWidth={2.6} /> {saving ? 'Đang lưu…' : 'Đã liên hệ'}
+          <Check size={17} strokeWidth={2.6} /> {saving ? 'Đang lưu…' : voice.rec.active ? 'Dừng ghi âm trước' : 'Đã liên hệ'}
         </button>
       </div>
+      <button type="button" onClick={handleMissed} disabled={saving}
+        className="mt-2 w-full h-11 md:h-9 rounded-full border border-[#FF9500]/40 bg-[#FF9500]/10 text-[#B25000] text-[14px] md:text-[13px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#FF9500]/20 active:scale-[0.98] transition disabled:opacity-40">
+        <PhoneOff size={15} /> Khách chưa nghe máy
+      </button>
 
       <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
         className="mt-3 w-full flex items-center justify-center gap-1 text-[13px] font-medium text-[#0066CC] py-1.5 hover:opacity-70 transition">

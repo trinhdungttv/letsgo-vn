@@ -27,6 +27,7 @@ import { CLASSIFIED_TIERS, INTERACTION_LABEL } from '../../lib/cskh/types';
 import { expandOpenExtras, setFollowUpDone } from './data/api';
 import { useCskh } from './context';
 import { markContactLaunched } from './launch';
+import { useMissedToday } from './data/useMissedToday';
 import { DEFAULT_SCOPE, useCareScope } from './useCareScope';
 import {
   CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
@@ -107,11 +108,12 @@ export default function CskhDashboard() {
     [scoped, interactions, gifts, occasions, cadence, today],
   );
 
+  const missedToday = useMissedToday(today);
   const fullQueue = useMemo(
     () => (cadence
-      ? buildTodayQueue({ contacts: scoped, interactions, occasions, gifts, cadence, today }, Number.MAX_SAFE_INTEGER).items
+      ? buildTodayQueue({ contacts: scoped, interactions, occasions, gifts, cadence, today, missedToday }, Number.MAX_SAFE_INTEGER).items
       : []),
-    [scoped, interactions, occasions, gifts, cadence, today],
+    [scoped, interactions, occasions, gifts, cadence, today, missedToday],
   );
   const queueItems = fullQueue.slice(0, TODAY_QUEUE_LIMIT);
   const hiddenCount = Math.max(0, fullQueue.length - TODAY_QUEUE_LIMIT);

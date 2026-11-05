@@ -40,7 +40,7 @@ export interface BriefRow {
 export const kindOf = (k: string) => MILESTONE_KINDS.find(x => x.key === k) ?? MILESTONE_KINDS[3];
 
 export const sortMilestones = (list: Milestone[]) =>
-  [...list].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || a.title.localeCompare(b.title, 'vi'));
+  [...list].sort((a, b) => (milestoneStart(a.date) || '9999').localeCompare(milestoneStart(b.date) || '9999') || a.title.localeCompare(b.title, 'vi'));
 
 export const newMilestone = (): Milestone => ({
   id: uid(), date: new Date().toISOString().slice(0, 10), title: '', note: '', kind: 'key',
@@ -110,4 +110,41 @@ export async function saveBrief(subjectId: string, patch: BriefPatch, userName: 
     .upsert(row, { onConflict: 'client_id' }).select('updated_at').single();
   if (error) throw error;
   return data?.updated_at ?? new Date().toISOString();
+}
+
+// ── Ngày của mốc: đủ 'YYYY-MM-DD', hoặc chỉ tháng 'YYYY-MM', hoặc chỉ năm 'YYYY' (khi không nhớ rõ) ──
+
+/** "2014" → "2014" · "2014-05" → "Tháng 5/2014" · "2014-05-09" → "09/05/2014" · rỗng → "Chưa rõ ngày". */
+export function fmtMilestoneDate(d: string): string {
+  const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(d.trim());
+  if (!m) return d.trim() || 'Chưa rõ ngày';
+  const [, y, mo, day] = m;
+  if (day && mo) return `${day}/${mo}/${y}`;
+  if (mo) return `Tháng ${Number(mo)}/${y}`;
+  return y;
+}
+
+/** Ngày đầu của khoảng thời gian mốc nói tới ('2026' → '2026-01-01') — để so với hôm nay và xếp thứ tự. */
+export function milestoneStart(d: string): string {
+  const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(d.trim());
+  if (!m) return '';
+  return `${m[1]}-${m[2] ?? '01'}-${m[3] ?? '01'}`;
+}
+
+/** Ghép ô Ngày / Tháng / Năm thành chuỗi lưu. Năm bắt buộc; ngày chỉ nhận khi có tháng; giá trị sai thì bỏ phần đó. */
+export function composeMilestoneDate(day: string, month: string, year: string): string {
+  const y = Number(year.trim());
+  if (!/^\d{4}$/.test(year.trim()) || y < 1900 || y > 2100) return '';
+  const mo = Number(month.trim());
+  if (!month.trim() || !Number.isInteger(mo) || mo < 1 || mo > 12) return String(y);
+  const mm = String(mo).padStart(2, '0');
+  const d = Number(day.trim());
+  const last = new Date(y, mo, 0).getDate();
+  if (!day.trim() || !Number.isInteger(d) || d < 1 || d > last) return `${y}-${mm}`;
+  return `${y}-${mm}-${String(d).padStart(2, '0')}`;
+}
+
+export function splitMilestoneDate(d: string): { day: string; month: string; year: string } {
+  const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(d.trim());
+  return m ? { year: m[1], month: m[2] ? String(Number(m[2])) : '', day: m[3] ? String(Number(m[3])) : '' } : { year: '', month: '', day: '' };
 }

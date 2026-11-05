@@ -8,6 +8,8 @@ import { useAuth } from '../../lib/auth'
 import type { WorkspaceTask } from './MyWorkFeed'
 import { fetchWorkspaceTaskComments, addWorkspaceTaskComment, updateWorkspaceTaskComment, deleteWorkspaceTaskComment } from '../../lib/workspaceTaskComments'
 import { LinkedWorkTasks } from './LinkedWorkTasks'
+import { PendingVoice, RecorderControl, VoiceList, useVoiceCapture } from '../voice/VoiceUI'
+import { isMissingVoiceSetup, listVoice, uploadVoice, VOICE_MIGRATION_HINT, type VoiceRecording } from '../../lib/voiceRec/api'
 
 interface Props {
   branch: Branch
@@ -236,6 +238,23 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
   const [flash, setFlash] = useState('')
   const hasContent = !!(note.status_note.trim() || note.difficulties.trim() || note.opportunities.trim())
 
+  // ---- Ghi âm trao đổi với chi nhánh (migration 206): bản vừa ghi chờ cùng nút "Lưu ghi nhận" ----
+  const voice = useVoiceCapture()
+  const canSave = hasContent || !!voice.pending
+  const [voices, setVoices] = useState<VoiceRecording[]>([])
+  const [voiceMissing, setVoiceMissing] = useState(false)
+  const loadVoices = useCallback(async () => {
+    if (!branch.id) return
+    try { setVoices(await listVoice('branch_visit', branch.id)); setVoiceMissing(false) }
+    catch (e) { if (isMissingVoiceSetup(e as { code?: string; message?: string })) setVoiceMissing(true) }
+  }, [branch.id])
+  useEffect(() => { void loadVoices() }, [loadVoices])
+  const voicesByDate = useMemo(() => {
+    const m = new Map<string, VoiceRecording[]>()
+    for (const v of voices) { const k = v.related_date ?? v.recorded_at.slice(0, 10); m.set(k, [...(m.get(k) ?? []), v]) }
+    return m
+  }, [voices])
+
   useEffect(() => {
     if (!draftKey) return
     try {
@@ -253,10 +272,21 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
   const pickedType = typeMeta(visitType)
 
   async function handleSave() {
-    if (!user || !branch.name || !hasContent || saving) return
+    if (!user || !branch.name || !canSave || saving) return
     setSaving(true)
     try {
-      const res = await recordBranchVisit(user.id, branch.name, note, recordDate, visitType)
+      // Tải bản ghi âm lên TRƯỚC: lỗi thì chưa lưu gì, bấm lại không bị gộp trùng chữ
+      const audio = voice.pending
+      if (audio) {
+        await uploadVoice({
+          type: 'branch_visit', subjectId: branch.id, relatedDate: recordDate, title: pickedType.label,
+          blob: audio.blob, mime: audio.mime, ext: audio.ext, durationSec: audio.durationSec, recordedAt: audio.startedAt,
+          userId: user.id, userName: user.full_name || user.username || '',
+        })
+      }
+      const fields = audio && !hasContent ? { ...note, status_note: '🎙 Ghi âm trao đổi' } : note
+      const res = await recordBranchVisit(user.id, branch.name, fields, recordDate, visitType)
+      if (audio) { voice.setPending(null); void loadVoices() }
       await loadHistory()
       setNote({ ...EMPTY_NOTE })
       setShowIssue(false)
@@ -266,7 +296,7 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
       setTimeout(() => setFlash(''), 3500)
       setRecordDate(todayStr())
     } catch (e) {
-      alert('Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)))
+      alert(isMissingVoiceSetup(e as { code?: string; message?: string }) ? VOICE_MIGRATION_HINT : 'Lỗi khi lưu: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setSaving(false)
     }
@@ -546,6 +576,9 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
               {author && <div className="text-[10.5px] text-[#aaa]">Người ghi: {author}</div>}
             </div>
           )}
+          {!isEditing && voicesByDate.get(h.priority_date) && (
+            <div className="mt-2"><VoiceList items={voicesByDate.get(h.priority_date)!} onChanged={() => void loadVoices()} compact /></div>
+          )}
         </div>
       </li>
     )
@@ -691,6 +724,12 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
               </div>
             )}
           </div>
+          {(voice.pending || voice.rec.error || voiceMissing) && (
+            <div className="px-3.5 pt-2 flex flex-col gap-1.5">
+              {voice.pending && <PendingVoice audio={voice.pending} onDiscard={() => voice.setPending(null)} note="Lưu cùng ghi nhận" />}
+              {voiceMissing && <div className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">{VOICE_MIGRATION_HINT} — chưa lưu được ghi âm.</div>}
+            </div>
+          )}
           {sameDayEntry && hasContent && (
             <div className="mx-3.5 mt-2 text-[11.5px] text-blue-800 bg-blue-50 border border-blue-100 rounded-md px-2.5 py-1.5">
               Ngày {formatDate(recordDate)} bạn đã có ghi nhận cho chi nhánh này — nội dung mới sẽ được <b>gộp thêm</b> vào ghi nhận đó.
@@ -707,6 +746,7 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
                 <TrendingUp size={11} /> + Cơ hội
               </button>
             )}
+            <RecorderControl rec={voice.rec} onStart={() => { void voice.start() }} size="sm" />
             {flash ? (
               <span className="text-[11.5px] text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {flash}</span>
             ) : hasContent && (
@@ -717,7 +757,7 @@ export function BranchHistoryFields({ branch, refreshKey, onSaved }: Props) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || !hasContent || !user}
+              disabled={saving || !canSave || !user || voice.rec.active}
               title="Ctrl/⌘ + Enter"
               className="ml-auto inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[12.5px] font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition shadow-sm"
             >

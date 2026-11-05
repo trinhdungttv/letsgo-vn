@@ -212,3 +212,19 @@ describe('ranh giới múi giờ Việt Nam', () => {
     expect(at0030.items[0]).toMatchObject({ reason: 'followup_overdue', daysOverdue: 1 });
   });
 });
+
+describe('khách chưa nghe máy hôm nay', () => {
+  it('người bị đánh dấu xuống cuối dù ưu tiên cao, còn trong danh sách và có ghi chú', () => {
+    const urgent = contact({ lastInteractionAt: addDays(TODAY, -300) });
+    const mild = contact({ lastInteractionAt: addDays(TODAY, -35) });
+    const base = run({ contacts: [urgent, mild] }).items;
+    expect(base[0].contactId).toBe(urgent.id);
+    const { items } = run({ contacts: [urgent, mild], missedToday: new Set([urgent.id]) });
+    expect(items.map(i => i.contactId)).toEqual([mild.id, urgent.id]);
+    expect(items[1].label).toContain('Chưa nghe máy hôm nay');
+  });
+  it('không truyền missedToday thì xếp như cũ', () => {
+    const c = contact({ lastInteractionAt: addDays(TODAY, -40) });
+    expect(run({ contacts: [c] }).items[0].label).toBe('40 ngày chưa liên hệ');
+  });
+});

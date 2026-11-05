@@ -26,7 +26,9 @@ import { newSiteGeo, type GeoPt, type SiteGeo } from '../../lib/clientMaps/siteG
 import { SOURCE_HINT, loadSiteLocations, type SiteLocation } from '../../lib/clientMaps/siteLocations';
 import { isValidVnLatLng, mapLinkStatus, parseLatLngFromLink } from '../../lib/geo';
 import SatelliteSiteEditor from './SatelliteSiteEditor';
-import { ZoneEditor } from './siteMapParts';
+import { ZoneEditor, ZoneWorkshopBadges } from './siteMapParts';
+import { loadWorkflow } from '../../lib/clientWorkflow/workflow';
+import { workshopsByZone, type ZoneWorkshopInfo } from '../../lib/clientWorkflow/zoneLinks';
 
 type Tool = 'select' | 'label' | 'rect';
 interface Pt { x: number; y: number }
@@ -48,12 +50,19 @@ const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagNa
 const readStored = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const writeStored = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* chỉ nhớ trong phiên */ } };
 
-export default function ClientSiteMaps({ client }: { client: Client }) {
+export default function ClientSiteMaps({ client, onOpenWorkflow }: { client: Client; onOpenWorkflow?: (workshopId: string) => void }) {
   const { user } = useAuth();
   const userName = user?.full_name || user?.username || '';
   const mobile = useIsMobile();
   const clientId = client.id;
 
+  // Xưởng nào (Quy trình công việc, migration 205) nằm ở khu vực nào — lỗi / chưa có bảng thì bỏ qua, không ảnh hưởng mặt bằng
+  const [workshopsOf, setWorkshopsOf] = useState<Map<string, ZoneWorkshopInfo[]>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    loadWorkflow(client.id).then(r => { if (alive) setWorkshopsOf(workshopsByZone(r.workshops)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [client.id]);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [loadError, setLoadError] = useState('');
   const [maps, setMaps] = useState<ClientSiteMap[]>([]);
@@ -593,7 +602,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
         </div>
       ) : active.kind === 'map' ? (
         active.geo ? (
-          <SatelliteSiteEditor key={active.id} map={active} onChange={geo => applyGeo(active.id, geo)} />
+          <SatelliteSiteEditor key={active.id} map={active} onChange={geo => applyGeo(active.id, geo)} workshopsOf={workshopsOf} onOpenWorkflow={onOpenWorkflow} />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center text-[12.5px] text-[#666]">
             <AlertTriangle size={20} className="text-amber-500" />
@@ -661,6 +670,7 @@ export default function ClientSiteMaps({ client }: { client: Client }) {
                         <span className="min-w-0 flex-1 text-[13px] leading-snug">
                           <span className="font-bold" style={{ color: z.color }}>{z.label || '(chưa đặt tên)'}</span>
                           {z.note && <span className="text-[#333]"> : {z.note}</span>}
+                          <ZoneWorkshopBadges items={workshopsOf.get(z.id)} onOpen={onOpenWorkflow} />
                         </span>
                         {editing && <Pencil size={12} className="shrink-0 mt-1 text-[#BBB]" />}
                       </button>

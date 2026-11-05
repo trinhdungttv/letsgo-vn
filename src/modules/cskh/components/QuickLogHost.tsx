@@ -15,6 +15,8 @@ import type { CskhContact } from '../../../lib/cskh/types';
 import type { Client } from '../../../lib/types';
 import { addInteraction, defaultClientIdOf, loadContact, logToast } from '../data/api';
 import { QuickLogSheet, type QuickLogInput } from './QuickLogSheet';
+import { isMissingVoiceSetup, uploadVoice, VOICE_MIGRATION_HINT } from '../../../lib/voiceRec/api';
+import { markMissed } from '../../../lib/voiceRec/missed';
 
 interface Active {
   contactId: string;
@@ -94,8 +96,32 @@ export default function QuickLogHost({ clients, toast }: { clients: readonly Cli
     setActive(null);
     emitCskhDataChanged(); // các tab đang mở tự tải lại: rời hàng đợi, cập nhật điểm
     toastRef.current(input.type === 'gift' || input.followUpAction ? logToast(input) : 'Đã ghi nhận');
+    // Bản ghi âm tải lên sau khi nhật ký đã lưu (lỗi ghi âm không làm mất nhật ký)
+    const audio = input.audio;
+    if (audio) {
+      uploadVoice({
+        type: 'contact_call', subjectId: contact.id, relatedDate: todayVN(), title: contact.fullName,
+        blob: audio.blob, mime: audio.mime, ext: audio.ext, durationSec: audio.durationSec, recordedAt: audio.startedAt,
+        userId: user?.id ?? '', userName: user?.full_name || user?.username || '',
+      }).then(() => toastRef.current('Đã lưu bản ghi âm cuộc trao đổi'))
+        .catch(e => toastRef.current(isMissingVoiceSetup(e as { code?: string; message?: string }) ? `${VOICE_MIGRATION_HINT} — chưa lưu được ghi âm` : 'Nhật ký đã lưu nhưng ghi âm lỗi: ' + (e as Error).message));
+    }
     return null;
   }, [contact, user, clients, branches, storage]);
+
+  const handleMissed = useCallback(async (): Promise<string | null> => {
+    if (!contact) return 'Không tìm thấy người liên hệ';
+    try {
+      await markMissed(contact.id, todayVN(), user?.full_name || user?.username || '');
+    } catch (e) {
+      return isMissingVoiceSetup(e as { code?: string; message?: string }) ? VOICE_MIGRATION_HINT : (e as Error).message;
+    }
+    clearPending(storage);
+    setActive(null);
+    emitCskhDataChanged();
+    toastRef.current(`${contact.fullName} chưa nghe máy — đã xếp xuống cuối danh sách hôm nay`);
+    return null;
+  }, [contact, user, storage]);
 
   if (!active || !contact || contact.id !== active.contactId) return null;
   return (
@@ -106,6 +132,7 @@ export default function QuickLogHost({ clients, toast }: { clients: readonly Cli
       today={todayVN()}
       onSave={handleSave}
       onSkip={close}
+      onMissed={handleMissed}
     />
   );
 }

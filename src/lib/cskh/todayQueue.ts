@@ -49,7 +49,12 @@ export interface TodayQueueInput {
   cadence: CadenceConfig;
   /** "YYYY-MM-DD" giờ Việt Nam. */
   today: string;
+  /** Người đã bấm "Khách chưa nghe máy" HÔM NAY → xuống cuối hàng đợi (xếp lại bình thường vào ngày sau). */
+  missedToday?: ReadonlySet<string>;
 }
+
+/** Trừ vào ưu tiên của người chưa nghe máy hôm nay — lớn hơn mọi mức ưu tiên thật (< 4400) nên luôn xuống cuối. */
+export const MISSED_PENALTY = 10_000;
 
 export interface TodayQueueResult {
   /** Tối đa `limit` người, đã sắp theo ưu tiên. */
@@ -188,18 +193,20 @@ export function buildTodayQueue(input: TodayQueueInput, limit: number = TODAY_QU
     });
   }
 
+  const missed = input.missedToday;
   const all: Array<{ item: TodayQueueItem; name: string }> = [];
   for (const [contactId, list] of candidates) {
     const [primary, ...rest] = [...list].sort((a, b) => b.priority - a.priority);
+    const didMiss = !!missed?.has(contactId);
     all.push({
       name: active.get(contactId)?.fullName ?? '',
       item: {
         contactId,
         reason: primary.reason,
-        priority: primary.priority,
+        priority: didMiss ? primary.priority - MISSED_PENALTY : primary.priority,
         daysOverdue: primary.daysOverdue,
         daysUntil: primary.daysUntil,
-        label: primary.label,
+        label: didMiss ? `Chưa nghe máy hôm nay — gọi lại sau · ${primary.label}` : primary.label,
         interactionId: primary.interactionId,
         alsoLabels: rest.map(r => r.label),
       },

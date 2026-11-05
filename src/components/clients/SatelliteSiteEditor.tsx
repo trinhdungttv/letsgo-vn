@@ -17,7 +17,8 @@ import {
   type GeoPt, type GeoZone, type Pt, type SiteGeo, type View,
 } from '../../lib/clientMaps/siteGeo';
 import { ZONE_COLORS, nextZoneLabel, sortZones } from '../../lib/clientMaps/siteZones';
-import { ZoneEditor } from './siteMapParts';
+import { ZoneEditor, ZoneWorkshopBadges } from './siteMapParts';
+import type { ZoneWorkshopInfo } from '../../lib/clientWorkflow/zoneLinks';
 
 type Tool = 'select' | 'rect' | 'poly' | 'label' | 'align';
 interface Cam { center: GeoPt; zoom: number; bearing: number }
@@ -38,8 +39,11 @@ const writeStored = (k: string, v: string) => { try { localStorage.setItem(k, v)
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 const ptsAttr = (pts: Pt[]) => pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
 
-export default function SatelliteSiteEditor({ map, onChange }: {
+export default function SatelliteSiteEditor({ map, onChange, workshopsOf, onOpenWorkflow }: {
   map: ClientSiteMap;
+  /** zoneId → xưởng (Quy trình công việc) gắn khu vực đó */
+  workshopsOf?: Map<string, ZoneWorkshopInfo[]>;
+  onOpenWorkflow?: (workshopId: string) => void;
   /** Gọi mỗi khi khối / khung nhìn đổi — nơi gọi tự gom và lưu. */
   onChange: (geo: SiteGeo) => void;
 }) {
@@ -732,6 +736,7 @@ export default function SatelliteSiteEditor({ map, onChange }: {
                       <span className="min-w-0 flex-1 text-[13px] leading-snug">
                         <span className="font-bold" style={{ color: z.color }}>{z.label || '(chưa đặt tên)'}</span>
                         {z.note && <span className="text-[#333]"> : {z.note}</span>}
+                        <ZoneWorkshopBadges items={workshopsOf?.get(z.id)} onOpen={onOpenWorkflow} />
                       </span>
                       {editing && <Pencil size={12} className="shrink-0 mt-1 text-[#BBB]" />}
                     </button>

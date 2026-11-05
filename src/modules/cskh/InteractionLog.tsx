@@ -13,7 +13,10 @@
 // Việc Workspace có GẮN người liên hệ (work_tasks.contact_ids) xen vào dòng thời gian (ngày tạo,
 // đã xong thì ngày xong) — chỉ xem, xử lý ở Workspace; lọc riêng bằng loại "Việc Workspace".
 // ============================================================================
-import { useCallback, useMemo, useState } from 'react';
+import { VoiceList } from '../../components/voice/VoiceUI';
+import { listVoiceByType, type VoiceRecording } from '../../lib/voiceRec/api';
+import { onCskhDataChanged } from '../../lib/cskh/events';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, ClipboardList, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
@@ -55,6 +58,15 @@ const TYPE_TILE: Readonly<Record<InteractionType, keyof typeof ICON_TILE>> = {
 
 export default function CskhInteractionLog() {
   const { space, data, loading, clients, toast, openProfile, openLog, openGroupLog } = useCskh();
+  // Bản ghi âm cuộc gọi (migration 206) — hiện dưới dòng nhật ký cùng người + cùng ngày
+  const [voices, setVoices] = useState<VoiceRecording[]>([]);
+  const loadVoices = useCallback(() => { listVoiceByType('contact_call').then(setVoices).catch(() => setVoices([])); }, []);
+  useEffect(() => { loadVoices(); return onCskhDataChanged(loadVoices); }, [loadVoices]);
+  const voicesOf = useMemo(() => {
+    const m = new Map<string, VoiceRecording[]>();
+    for (const v of voices) { const k = `${v.subject_id}|${v.related_date ?? v.recorded_at.slice(0, 10)}`; m.set(k, [...(m.get(k) ?? []), v]); }
+    return m;
+  }, [voices]);
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const today = todayVN();
@@ -377,6 +389,9 @@ export default function CskhInteractionLog() {
                       {i.createdByName && <span>· ghi bởi {i.createdByName}</span>}
                     </div>
                     {i.content && <LogContent text={i.content} />}
+                    {i.contactId && voicesOf.get(`${i.contactId}|${i.occurredAt}`) && (
+                      <div className="mt-2"><VoiceList items={voicesOf.get(`${i.contactId}|${i.occurredAt}`)!} onChanged={loadVoices} compact /></div>
+                    )}
                     {gift && (
                       <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] px-3 py-2 bg-[#FF3B30]/[0.07] text-[13px]">
                         <Gift size={14} className="text-[#D70015] shrink-0" strokeWidth={2.2} />

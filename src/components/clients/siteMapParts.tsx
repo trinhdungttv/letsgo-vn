@@ -1,3 +1,4 @@
+import type { ZoneWorkshopInfo } from '../../lib/clientWorkflow/zoneLinks';
 // Phần dùng chung của tab "Mặt bằng": ô sửa 1 khu vực (tên, ghi chú, màu, cỡ chữ, xoá) ở bảng chú thích —
 // dùng cho cả mặt bằng ảnh (ClientSiteMaps) lẫn bản đồ vệ tinh (SatelliteSiteEditor).
 import type { ReactNode } from 'react';
@@ -50,5 +51,23 @@ export function ZoneEditor({ z, mobile, onFocusText, onText, onStyle, onDelete, 
         {mobile && <button onClick={onClose} aria-label="Đóng" className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#555]"><X size={14} /></button>}
       </div>
     </div>
+  );
+}
+
+/** Dòng nhỏ dưới tên khu vực ở bảng chú thích: khu này là xưởng nào trong Quy trình công việc (bấm để xem video / công đoạn). */
+export function ZoneWorkshopBadges({ items, onOpen }: { items?: ZoneWorkshopInfo[]; onOpen?: (workshopId: string) => void }) {
+  if (!items?.length || !onOpen) return null;
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {items.map(w => (
+        <span key={w.id} role="button" tabIndex={0}
+          onClick={e => { e.stopPropagation(); onOpen(w.id); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); onOpen(w.id); } }}
+          title="Mở quy trình công việc của xưởng này"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#EEF3FE] text-[#1D4ED8] hover:bg-[#E0EAFD] cursor-pointer">
+          🎬 {w.name} · {w.steps} công đoạn{w.media ? ` · ${w.media} video/ảnh` : ''}
+        </span>
+      ))}
+    </span>
   );
 }

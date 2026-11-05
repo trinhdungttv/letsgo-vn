@@ -5,6 +5,7 @@ import { Line, Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler } from 'chart.js';
 import type { Client, LaborHistoryEntry, ClientManagerHistory, ClientBranchHistory, MarketZone, CRMDeal as CRMDealType, ClientGift, ClientDocument, ClientDocumentType, CRMProduct, CRMPipelineEntry, ServiceType } from '../lib/types';
 import { CompanyProfileModal } from '../components/crm/CompanyProfileModal';
+import { WF_ACTIVE_KEY } from '../lib/clientWorkflow/zoneLinks';
 import { getOrCreatePipelineEntryForClient } from '../lib/pipelineHelpers';
 import { formatDate, getMonthLast, recentMonths, getCurrentWeekLabel, recentWeekLabels, weekLabelsForMonth, weekLabelFull, sortLaborHistory, latestLaborEntry, recentLaborCounts, statusPill, monthLabel } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -701,8 +702,11 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           {activeTab === 'org'
             ? <ClientOrgChart key={client.id} client={client} contacts={primaryContacts} />
             : activeTab === 'workflow'
-              ? <ClientWorkflow key={client.id} client={client} />
-              : <ClientSiteMaps key={client.id} client={client} />}
+              ? <ClientWorkflow key={client.id} client={client} onOpenSite={() => setActiveTab('site')} />
+              : <ClientSiteMaps key={client.id} client={client} onOpenWorkflow={wid => {
+                  try { localStorage.setItem(WF_ACTIVE_KEY(client.id), wid); } catch { /* bỏ qua */ }
+                  setActiveTab('workflow');
+                }} />}
         </Suspense>
       ) : (
       <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">

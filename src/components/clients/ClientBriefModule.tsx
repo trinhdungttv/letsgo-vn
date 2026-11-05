@@ -9,10 +9,12 @@ import {
 import { useAuth } from '../../lib/auth';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isMissingTableError } from '../../lib/clientMaps/orgChart';
+import { RecorderControl, VoiceList, useVoiceCapture } from '../voice/VoiceUI';
+import { isMissingVoiceSetup, listVoice, uploadVoice, VOICE_MIGRATION_HINT, type VoiceRecording } from '../../lib/voiceRec/api';
 import type { NotePalette } from '../../lib/quickNotes/colors';
 import type { MindMapDoc } from '../../lib/quickNotes/mindmap/types';
 import {
-  BRIEF_MIGRATION_HINT, EMPTY_BRIEF, MILESTONE_KINDS, defaultNotesMap, kindOf, loadBrief, newMilestone, saveBrief, sortMilestones,
+  BRIEF_MIGRATION_HINT, EMPTY_BRIEF, MILESTONE_KINDS, composeMilestoneDate, defaultNotesMap, fmtMilestoneDate, kindOf, loadBrief, milestoneStart, splitMilestoneDate, newMilestone, saveBrief, sortMilestones,
   type BriefPatch, type BriefRow, type Milestone, type NotesMode,
 } from '../../lib/clientBrief/brief';
 
@@ -24,11 +26,7 @@ const PALETTE: NotePalette = {
 const SAVE_DELAY_MS = 1200;
 type SaveState = { s: 'idle' } | { s: 'saving' } | { s: 'saved'; at: string } | { s: 'error'; msg: string };
 
-const fmtDay = (d: string) => {
-  if (!d) return 'Chưa rõ ngày';
-  const [y, m, day] = d.split('-');
-  return y && m && day ? `${day}/${m}/${y}` : d;
-};
+const fmtDay = fmtMilestoneDate;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export default function ClientBriefModule({ subjectId, companyName }: { subjectId: string; companyName: string }) {
@@ -131,7 +129,7 @@ export default function ClientBriefModule({ subjectId, companyName }: { subjectI
       )}
       <TimelineCard milestones={brief.milestones} readOnly={readOnly} save={save}
         onChange={list => change({ milestones: list }, true)} onRetry={() => void flush()} />
-      <NotesCard brief={brief} companyName={companyName} readOnly={readOnly} save={save}
+      <NotesCard subjectId={subjectId} brief={brief} companyName={companyName} readOnly={readOnly} save={save}
         onText={t => change({ notesText: t })}
         onMap={d => change({ notesMindmap: d })}
         onMode={m => change({ notesMode: m }, true)}
@@ -174,7 +172,7 @@ function TimelineCard({ milestones, readOnly, save, onChange, onRetry }: {
   const sorted = useMemo(() => sortMilestones(milestones), [milestones]);
   const today = todayIso();
   // chèn vạch "Hôm nay" trước mốc đầu tiên có ngày > hôm nay
-  const todayIdx = sorted.findIndex(m => m.date > today);
+  const todayIdx = sorted.findIndex(m => milestoneStart(m.date) > today);
   const scroller = useRef<HTMLDivElement>(null);
 
   // mở ra thì cuộn tới vùng gần hôm nay
@@ -198,7 +196,7 @@ function TimelineCard({ milestones, readOnly, save, onChange, onRetry }: {
   const nodes: ReactNode[] = [];
   sorted.forEach((m, i) => {
     if (i === todayIdx) nodes.push(<TodayMark key="today" />);
-    nodes.push(<MilestoneNode key={m.id} m={m} past={m.date <= today} readOnly={readOnly} onEdit={() => { setEditing(m); setIsNew(false); }} />);
+    nodes.push(<MilestoneNode key={m.id} m={m} past={!m.date || milestoneStart(m.date) <= today} readOnly={readOnly} onEdit={() => { setEditing(m); setIsNew(false); }} />);
   });
   if (todayIdx === -1 && sorted.length) nodes.push(<TodayMark key="today" />);
 
@@ -255,6 +253,29 @@ function MilestoneNode({ m, past, readOnly, onEdit }: { m: Milestone; past: bool
   );
 }
 
+/** Ngày / Tháng / Năm — chỉ năm là đủ; không nhớ ngày thì để trống Ngày (và Tháng). */
+function DateFields({ value, onChange }: { value: string; onChange: (date: string) => void }) {
+  const [f, setF] = useState(() => splitMilestoneDate(value));
+  const set = (k: 'day' | 'month' | 'year', v: string) => {
+    const next = { ...f, [k]: v.replace(/\D/g, '') };
+    setF(next);
+    onChange(composeMilestoneDate(next.day, next.month, next.year));
+  };
+  const cls = 'h-9 px-2 text-[12.5px] text-center border border-gray-300 rounded-lg outline-none focus:border-blue-500 bg-white';
+  return (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <input inputMode="numeric" maxLength={2} value={f.day} onChange={e => set('day', e.target.value)} placeholder="Ngày" aria-label="Ngày" className={`${cls} w-[58px]`} />
+        <span className="text-[#bbb]">/</span>
+        <input inputMode="numeric" maxLength={2} value={f.month} onChange={e => set('month', e.target.value)} placeholder="Tháng" aria-label="Tháng" className={`${cls} w-[62px]`} />
+        <span className="text-[#bbb]">/</span>
+        <input inputMode="numeric" maxLength={4} value={f.year} onChange={e => set('year', e.target.value)} placeholder="Năm" aria-label="Năm" className={`${cls} w-[70px]`} />
+      </div>
+      <div className="mt-1 text-[11px] text-[#999]">Không nhớ ngày thì chỉ nhập năm (hoặc tháng + năm)</div>
+    </div>
+  );
+}
+
 function MilestoneForm({ m, isNew, onChange, onSubmit, onCancel, onDelete }: {
   m: Milestone; isNew: boolean; onChange: (m: Milestone) => void; onSubmit: () => void; onCancel: () => void; onDelete: () => void;
 }) {
@@ -264,9 +285,8 @@ function MilestoneForm({ m, isNew, onChange, onSubmit, onCancel, onDelete }: {
         <div className="text-[12px] font-semibold text-[#333]">{isNew ? 'Thêm mốc mới' : 'Sửa mốc'}</div>
         <button onClick={onCancel} className="p-1 rounded text-[#999] hover:bg-gray-100"><X size={14} /></button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr] gap-2">
-        <input type="date" value={m.date} onChange={e => onChange({ ...m, date: e.target.value })}
-          className="h-9 px-2.5 text-[12.5px] border border-gray-300 rounded-lg outline-none focus:border-blue-500 bg-white" />
+      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-2">
+        <DateFields value={m.date} onChange={date => onChange({ ...m, date })} />
         <input autoFocus value={m.title} onChange={e => onChange({ ...m, title: e.target.value })}
           onKeyDown={e => { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); }}
           placeholder="Tên mốc — vd: Ký hợp đồng khung 2026"
@@ -299,13 +319,40 @@ function MilestoneForm({ m, isNew, onChange, onSubmit, onCancel, onDelete }: {
 }
 
 /* ═══════════════ GHI CHÚ ═══════════════ */
-function NotesCard({ brief, companyName, readOnly, save, onText, onMap, onMode, onRetry }: {
-  brief: BriefRow; companyName: string; readOnly: boolean; save: SaveState;
+function NotesCard({ subjectId, brief, companyName, readOnly, save, onText, onMap, onMode, onRetry }: {
+  subjectId: string; brief: BriefRow; companyName: string; readOnly: boolean; save: SaveState;
   onText: (t: string) => void; onMap: (d: MindMapDoc) => void; onMode: (m: NotesMode) => void; onRetry: () => void;
 }) {
   const mobile = useIsMobile();
+  const { user } = useAuth();
   const mode = brief.notesMode;
   const [full, setFull] = useState(false);
+
+  // ── Ghi âm nhanh thông tin về công ty (migration 206): dừng là tự lưu, nghe lại ở danh sách bên dưới ──
+  const voice = useVoiceCapture();
+  const [voices, setVoices] = useState<VoiceRecording[]>([]);
+  const [voiceMsg, setVoiceMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const loadVoices = useCallback(async () => {
+    try { setVoices(await listVoice('company_note', subjectId)); } catch (e) {
+      if (isMissingVoiceSetup(e as { code?: string; message?: string })) setVoiceMsg({ ok: false, text: VOICE_MIGRATION_HINT });
+    }
+  }, [subjectId]);
+  useEffect(() => { void loadVoices(); }, [loadVoices]);
+  const pendingAudio = voice.pending;
+  useEffect(() => {
+    if (!pendingAudio) return;
+    let alive = true;
+    setVoiceMsg({ ok: true, text: 'Đang lưu bản ghi âm…' });
+    uploadVoice({
+      type: 'company_note', subjectId, title: '', blob: pendingAudio.blob, mime: pendingAudio.mime, ext: pendingAudio.ext,
+      durationSec: pendingAudio.durationSec, recordedAt: pendingAudio.startedAt,
+      userId: user?.id ?? '', userName: user?.full_name || user?.username || '',
+    }).then(() => { if (alive) { voice.setPending(null); setVoiceMsg(null); void loadVoices(); } })
+      .catch(e => { if (alive) setVoiceMsg({ ok: false, text: isMissingVoiceSetup(e as { code?: string; message?: string }) ? VOICE_MIGRATION_HINT : 'Không lưu được ghi âm: ' + (e as Error).message }); });
+    return () => { alive = false; };
+    // chỉ chạy khi có bản ghi mới
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAudio]);
   // sơ đồ mới dựng 1 lần theo tên công ty, chỉ lưu khi người dùng sửa
   const seed = useMemo(() => brief.notesMindmap ?? defaultNotesMap(companyName), [brief.notesMindmap, companyName]);
 
@@ -322,6 +369,13 @@ function NotesCard({ brief, companyName, readOnly, save, onText, onMap, onMode, 
           </Suspense>
         </div>
       )}
+      {(voices.length > 0 || voiceMsg) && (
+        <div className={`border-t border-[#F0EFEA] bg-[#FAFAF8] px-4 py-3 space-y-2 ${full ? 'max-h-56 overflow-y-auto shrink-0' : ''}`}>
+          <div className="text-[11px] uppercase tracking-wide text-[#aaa] font-semibold">🎙 Ghi âm về công ty{voices.length ? ` · ${voices.length}` : ''}</div>
+          {voiceMsg && <div className={`text-[12px] rounded-md px-2.5 py-1.5 ${voiceMsg.ok ? 'text-[#666] bg-white border border-[#E8E7E2]' : 'text-amber-800 bg-amber-50 border border-amber-200'}`}>{voiceMsg.text}</div>}
+          <VoiceList items={voices} onChanged={() => void loadVoices()} readOnly={readOnly} />
+        </div>
+      )}
     </div>
   );
 
@@ -331,6 +385,7 @@ function NotesCard({ brief, companyName, readOnly, save, onText, onMap, onMode, 
     hint: 'Nơi tổng hợp thông tin quan trọng đã tiếp nhận — viết văn bản hoặc vẽ sơ đồ tư duy',
     right: (
       <>
+        {!readOnly && <RecorderControl rec={voice.rec} onStart={() => { setVoiceMsg(null); void voice.start(); }} size="sm" />}
         <SaveBadge save={save} readOnly={readOnly} onRetry={onRetry} />
         <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-[12px]">
           {([['text', 'Văn bản', FileText], ['mindmap', 'Sơ đồ tư duy', Network]] as const).map(([k, label, Icon]) => (

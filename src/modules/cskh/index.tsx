@@ -16,6 +16,7 @@ import { useBranchLookup } from '../../hooks/useBranchLookup';
 import { todayVN } from '../../lib/cskh/dates';
 import type { CskhSpace } from '../../lib/cskh/space';
 import { buildTodayQueue } from '../../lib/cskh/todayQueue';
+import { useMissedToday } from './data/useMissedToday';
 import { emitCskhDataChanged } from '../../lib/cskh/events';
 import type { Client } from '../../lib/types';
 import { addGroup, addInteraction, archiveGroup, assignGroups, logToast, saveGroupLog, setGender, updateGroup } from './data/api';
@@ -96,6 +97,7 @@ export default function CskhModule({ space = 'client', spaces, onDueCounts, ...v
 function DueCounter({ data, clients, onCount }: { data: CskhData; clients: Client[]; onCount: (space: CskhSpace, count: number) => void }) {
   const { scoped } = useCareScope(data.contacts, clients, data.space);
   const today = todayVN();
+  const missedToday = useMissedToday(today);
   const count = useMemo(() => buildTodayQueue({
     contacts: scoped,
     interactions: data.interactions.filter(i => !i.isArchived),
@@ -103,7 +105,8 @@ function DueCounter({ data, clients, onCount }: { data: CskhData; clients: Clien
     gifts: data.gifts.filter(g => !g.isArchived),
     cadence: data.settings.cadence,
     today,
-  }, Number.MAX_SAFE_INTEGER).items.length, [scoped, data, today]);
+    missedToday,
+  }, Number.MAX_SAFE_INTEGER).items.length, [scoped, data, today, missedToday]);
   useEffect(() => { onCount(data.space, count); }, [data.space, count, onCount]);
   return null;
 }

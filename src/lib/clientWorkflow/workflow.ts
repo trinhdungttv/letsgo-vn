@@ -8,10 +8,12 @@ export const WORKFLOW_MIGRATION_HINT = 'Cần chạy migration 205 (Quy trình c
 
 export interface WfMedia { id: string; url: string; title: string }
 export interface WfStep { id: string; name: string; desc: string; workers: string; media: WfMedia[] }
-export interface WfWorkshop { id: string; name: string; note: string; media: WfMedia[]; steps: WfStep[] }
+/** Khu vực đã vẽ ở tab Mặt bằng mà xưởng này nằm trong (label / mapTitle chỉ để hiện khi bản vẽ không còn). */
+export interface WfZoneRef { mapId: string; zoneId: string; label: string; mapTitle: string }
+export interface WfWorkshop { id: string; name: string; note: string; media: WfMedia[]; steps: WfStep[]; zones: WfZoneRef[] }
 
 export const newStep = (): WfStep => ({ id: uid(), name: '', desc: '', workers: '', media: [] });
-export const newWorkshop = (name = ''): WfWorkshop => ({ id: uid(), name, note: '', media: [], steps: [] });
+export const newWorkshop = (name = ''): WfWorkshop => ({ id: uid(), name, note: '', media: [], steps: [], zones: [] });
 
 export interface MediaInfo {
   kind: 'video' | 'image' | 'drive' | 'web' | 'invalid';
@@ -55,6 +57,7 @@ const media = (x: unknown): WfMedia[] => arr(x).filter(m => str(m.url)).map(m =>
 export function parseWorkshops(raw: unknown): WfWorkshop[] {
   return arr(raw).map(w => ({
     id: str(w.id) || uid(), name: str(w.name), note: str(w.note), media: media(w.media),
+    zones: arr(w.zones).filter(z => str(z.mapId) && str(z.zoneId)).map(z => ({ mapId: str(z.mapId), zoneId: str(z.zoneId), label: str(z.label), mapTitle: str(z.mapTitle) })),
     steps: arr(w.steps).map(s => ({ id: str(s.id) || uid(), name: str(s.name), desc: str(s.desc), workers: str(s.workers), media: media(s.media) })),
   }));
 }

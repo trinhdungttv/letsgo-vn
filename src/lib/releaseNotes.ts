@@ -16,6 +16,33 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-timeline-year-only',
+    date: '2026-11-05',
+    title: 'Hồ sơ chăm sóc → Dòng thời gian',
+    features: [
+      'Mốc không nhớ ngày thì chỉ cần nhập năm (hoặc tháng + năm); dòng thời gian hiện đúng độ chính xác đã nhập',
+    ],
+  },
+  {
+    id: '2026-11-05-workflow-site-link',
+    date: '2026-11-05',
+    title: 'Khách hàng → Quy trình & Mặt bằng',
+    features: [
+      'Gắn mỗi xưởng trong Quy trình công việc với khu vực đã vẽ ở tab Mặt bằng',
+      'Bấm qua lại: từ xưởng mở đúng khu vực trên bản đồ, từ chú thích Mặt bằng mở quy trình và video của xưởng đó',
+    ],
+  },
+  {
+    id: '2026-11-05-crm-voice-recording',
+    date: '2026-11-05',
+    title: 'Ghi âm trong CRM',
+    features: [
+      'Nhật ký ghé thăm chi nhánh: nút Ghi âm để ghi nhanh trao đổi, nghe lại ngay dưới dòng nhật ký',
+      'CSKH: ghi âm cuộc gọi khi ghi nhận liên hệ; nút "Khách chưa nghe máy" bỏ bản ghi và xếp người đó xuống cuối danh sách hôm nay',
+      'Ghi chú công ty khách hàng: ghi âm nhanh thông tin về công ty để nghe lại sau',
+    ],
+  },
+  {
     id: '2026-11-05-client-workflow-videos',
     date: '2026-11-05',
     title: 'Khách hàng → Quy trình công việc',
