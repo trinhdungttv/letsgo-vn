@@ -331,7 +331,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
                         <option value={NEW_COUNTRY}>＋ Nước khác…</option>
                       </select>
                       <input value={d.founding} disabled={!data.ready} onChange={e => patch(c.id, { founding: e.target.value })}
-                        placeholder="Thành lập dd/mm/yyyy" aria-label={`Ngày thành lập ${c.name}`}
+                        placeholder="dd/mm/yyyy hoặc chỉ năm" aria-label={`Ngày thành lập ${c.name}`}
                         className={`${INPUT} w-full ${err ? 'border-red-400 bg-red-50' : d.founding ? 'border-blue-300' : ''}`} />
                       <div className="col-span-2 md:col-span-1 flex flex-wrap items-center gap-1.5">
                         {d.extras.map((e, i) => (

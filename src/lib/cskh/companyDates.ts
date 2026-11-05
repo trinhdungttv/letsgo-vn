@@ -23,6 +23,18 @@ export const COMPANY_OCCASION_LABEL: Record<CompanyOccasionKind, string> = {
   other: 'Khác',
 };
 
+/** Ngày thành lập chỉ biết năm: lưu 01/01 + ghi chú này; KHÔNG bao giờ được nhắc. */
+export const YEAR_ONLY_NOTE = '[chỉ năm]';
+export const isYearOnlyOccasion = (o: Pick<CompanyOccasion, 'kind' | 'note'>): boolean =>
+  o.kind === 'founding' && o.note === YEAR_ONLY_NOTE;
+/** "1998" → 1998; còn lại null. */
+export function parseYearOnly(text: string): number | null {
+  const m = /^\d{4}$/.exec(text.trim());
+  if (!m) return null;
+  const y = Number(m[0]);
+  return y >= 1800 && y <= 2200 ? y : null;
+}
+
 export interface CompanyOccasion {
   id: string;
   clientId: string;
@@ -227,7 +239,7 @@ export function buildCompanyAgenda(input: {
 
   for (const o of input.occasions) {
     const client = byId.get(o.clientId);
-    if (o.isArchived || !client) continue;
+    if (o.isArchived || !client || isYearOnlyOccasion(o)) continue;
     const nextIso = nextOccurrenceIso(o.day, o.month, o.isLunar, today);
     const daysUntil = diffDays(today, nextIso);
     if (daysUntil > within) continue;
@@ -329,7 +341,7 @@ export function draftFromCompany(clientId: string, country: string | null, occas
   return {
     clientId,
     country: country ?? '',
-    founding: founding ? formatDayMonthYear(founding) : '',
+    founding: founding ? (isYearOnlyOccasion(founding) ? String(founding.year) : formatDayMonthYear(founding)) : '',
     extras: mine.filter(o => o !== founding).map(o => ({
       id: o.id, kind: o.kind, title: o.title, day: o.day, month: o.month, year: o.year, isLunar: o.isLunar, note: o.note,
     })),
@@ -358,13 +370,15 @@ export function planCompanySave(
   const country = draft.country.replace(/\s+/g, ' ').trim();
   if (countryKey(country) !== countryKey(currentCountry)) plan.country = country === '' ? null : country;
 
-  const parsed = parseDateInput(draft.founding);
-  if (parsed === 'invalid') return { error: `Ngày thành lập "${draft.founding.trim()}" không hợp lệ — gõ dạng 15/08/2010 hoặc 15/08` };
+  const yearOnly = parseYearOnly(draft.founding);
+  const parsed = yearOnly !== null ? { day: 1, month: 1, year: yearOnly } : parseDateInput(draft.founding);
+  if (parsed === 'invalid') return { error: `Ngày thành lập "${draft.founding.trim()}" không hợp lệ — gõ dạng 15/08/2010, 15/08 hoặc chỉ năm 2010` };
   const founding = mine.find(o => o.kind === 'founding');
   if (parsed) {
     const fields: OccasionFieldsWrite = {
       kind: 'founding', title: COMPANY_OCCASION_LABEL.founding, day: parsed.day, month: parsed.month,
-      year: parsed.year, isLunar: false, note: founding?.note ?? '',
+      year: parsed.year, isLunar: false,
+      note: yearOnly !== null ? YEAR_ONLY_NOTE : (founding && !isYearOnlyOccasion(founding) ? founding.note : ''),
     };
     if (!founding) plan.inserts.push(fields);
     else if (!sameFields(fields, { ...founding, title: COMPANY_OCCASION_LABEL.founding })) plan.updates.push({ id: founding.id, fields });
