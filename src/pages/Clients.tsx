@@ -1825,7 +1825,7 @@ export default function Clients({
       </div>
 
       {/* Admin Settings Modal */}
-      {showCompanyDates && <CompanyDatesQuickModal clients={clients} onClose={() => setShowCompanyDates(false)} toast={toast} />}
+      {showCompanyDates && <CompanyDatesQuickModal clients={clients} onClose={() => setShowCompanyDates(false)} onChanged={onReload} toast={toast} />}
       {showBulkMedia && <BulkCompanyMediaModal clients={clients.filter(c => !c.archived_at)} leads={[]} onClose={() => setShowBulkMedia(false)} onRefresh={onReload} toast={toast} />}
       {showSettings && isAdmin && (
         <AdminSettings

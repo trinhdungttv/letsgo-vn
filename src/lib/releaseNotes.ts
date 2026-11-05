@@ -16,10 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-bulk-industry',
+    date: '2026-11-05',
+    title: 'Khách hàng',
+    features: ['Nhập hàng loạt lĩnh vực hoạt động của công ty'],
+  },
+  {
     id: '2026-11-05-founding-year-only',
     date: '2026-11-05',
     title: 'Khách hàng',
-    features: ['Ngày thành lập chỉ biết năm vẫn nhập được (gõ 1998)'],
+    features: ['Ngày thành lập chỉ biết năm vẫn nhập được (gõ 1998 hoặc 10/1996)'],
   },
   {
     id: '2026-11-05-voice-keep-recording',

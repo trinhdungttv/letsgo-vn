@@ -9,9 +9,10 @@
 //     (lưu ngay từng thao tác).
 // Chỉ dòng đã sửa mới nằm trong `drafts`; dòng chưa đụng đọc thẳng dữ liệu đang có.
 // ============================================================================
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarHeart, Globe2, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
+import { supabase } from '../../lib/supabase';
 import type { Client } from '../../lib/types';
 import { useCompanyDates } from '../../hooks/useCompanyDates';
 import { archiveNationalHoliday, saveCompanyPlans, saveNationalHoliday } from '../../lib/companyDatesApi';
@@ -22,7 +23,7 @@ import {
 } from '../../lib/cskh/companyDates';
 import { isCooperatingClient } from '../../lib/cskh/seedTiers';
 
-type Tab = 'company' | 'country';
+type Tab = 'company' | 'country' | 'industry';
 
 interface Props {
   clients: Client[];
@@ -30,6 +31,8 @@ interface Props {
   onlyClientIds?: string[];
   initialTab?: Tab;
   onClose: () => void;
+  /** Gọi sau khi lưu lĩnh vực để trang chủ tải lại danh sách KH. */
+  onChanged?: () => void;
   toast: (msg: string) => void;
 }
 
@@ -69,7 +72,7 @@ interface HolidayForm {
   error: string;
 }
 
-export default function CompanyDatesQuickModal({ clients, onlyClientIds, initialTab = 'company', onClose, toast }: Props) {
+export default function CompanyDatesQuickModal({ clients, onlyClientIds, initialTab = 'company', onClose, onChanged, toast }: Props) {
   const { user } = useAuth();
   const { data, loading, error: loadError, refresh } = useCompanyDates();
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -83,6 +86,63 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
   const [country, setCountry] = useState('');
   const [holidayForm, setHolidayForm] = useState<HolidayForm | null>(null);
   const [busyHoliday, setBusyHoliday] = useState(false);
+
+  // ── Lĩnh vực hoạt động (clients.industry, nhập hàng loạt) ──
+  const [indDrafts, setIndDrafts] = useState<Record<string, string>>({});
+  const [indSaved, setIndSaved] = useState<Record<string, string>>({});
+  const [indPicked, setIndPicked] = useState<Set<string>>(new Set());
+  const [indBulk, setIndBulk] = useState('');
+  const [indSaving, setIndSaving] = useState(false);
+  const [industryNames, setIndustryNames] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void supabase.from('industries').select('name').order('name').then(({ data: rows }) => {
+      if (alive && rows) setIndustryNames(rows.map(r => r.name as string).filter(Boolean));
+    });
+    return () => { alive = false; };
+  }, []);
+  const industryOf = (c: Client) => (c.id in indSaved ? indSaved[c.id] : (c.industry ?? ''));
+  const indValue = (c: Client) => (c.id in indDrafts ? indDrafts[c.id] : industryOf(c));
+  const indChanges = Object.entries(indDrafts)
+    .map(([id, v]) => [id, v.replace(/\s+/g, ' ').trim()] as const)
+    .filter(([id, v]) => { const c = clients.find(x => x.id === id); return !!c && v !== industryOf(c).trim(); });
+  const indOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const n of [...industryNames, ...clients.map(c => c.industry ?? '')]) {
+      const t = n.trim(); const k = t.toLowerCase();
+      if (t && !seen.has(k)) { seen.add(k); out.push(t); }
+    }
+    return out.sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [industryNames, clients]);
+  const applyBulkIndustry = () => {
+    const v = indBulk.replace(/\s+/g, ' ').trim();
+    if (indPicked.size === 0) { toast('Tick chọn công ty trước'); return; }
+    setIndDrafts(prev => ({ ...prev, ...Object.fromEntries([...indPicked].map(id => [id, v])) }));
+    setIndPicked(new Set());
+  };
+  const saveIndustries = async () => {
+    if (indChanges.length === 0) return;
+    setIndSaving(true);
+    const okIds: string[] = [];
+    const errs: string[] = [];
+    try {
+      const byValue = new Map<string, string[]>();
+      for (const [id, v] of indChanges) byValue.set(v, [...(byValue.get(v) ?? []), id]);
+      for (const [v, ids] of byValue) {
+        const { error } = await supabase.from('clients')
+          .update({ industry: v === '' ? null : v, updated_at: new Date().toISOString() }).in('id', ids);
+        if (error) errs.push(error.message); else okIds.push(...ids);
+      }
+      const done = Object.fromEntries(indChanges.filter(([id]) => okIds.includes(id)));
+      setIndSaved(prev => ({ ...prev, ...done }));
+      setIndDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !okIds.includes(id))));
+      if (okIds.length > 0) onChanged?.();
+      toast(errs.length === 0 ? `Đã lưu lĩnh vực của ${okIds.length} công ty` : `Lỗi: ${errs[0]}`);
+    } finally {
+      setIndSaving(false);
+    }
+  };
 
   const single = !!onlyClientIds;
   const countryOptions = useMemo(() => {
@@ -117,7 +177,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
     }
     return { out, errors };
   }, [drafts, data, clients]);
-  const dirty = plans.out.length > 0 || plans.errors.size > 0;
+  const dirty = plans.out.length > 0 || plans.errors.size > 0 || indChanges.length > 0;
 
   const close = () => {
     if (dirty && !confirm('Có thay đổi chưa lưu — đóng và bỏ các thay đổi?')) return;
@@ -275,7 +335,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
         </div>
 
         <div className="flex gap-1 px-4 md:px-5 border-b border-gray-200">
-          {([['company', 'Theo công ty'], ['country', 'Lễ theo quốc gia']] as const).map(([k, label]) => (
+          {([['company', 'Theo công ty'], ['country', 'Lễ theo quốc gia'], ['industry', 'Lĩnh vực hoạt động']] as const).map(([k, label]) => (
             <button key={k} type="button" onClick={() => setTab(k)}
               className={`px-3 py-2 text-[12.5px] font-medium border-b-2 -mb-px transition ${tab === k ? 'border-[#1D4ED8] text-[#1D4ED8]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               {label}
@@ -290,7 +350,53 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
           </p>
         )}
 
-        {tab === 'company' ? (
+        {tab === 'industry' ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 px-4 md:px-5 py-2.5 border-b border-gray-100">
+              <label className="relative flex-1 min-w-[180px]">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm công ty…" className={`${INPUT} w-full pl-7`} />
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-[12px] text-gray-600">
+                <input type="checkbox" checked={showSuspended} onChange={e => setShowSuspended(e.target.checked)} /> Cả KH ngưng hợp tác
+              </label>
+              <span className="text-[11.5px] text-gray-500">{list.filter(c => indValue(c).trim()).length}/{list.length} công ty đã có lĩnh vực</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 px-4 md:px-5 py-2 bg-gray-50 border-b border-gray-100">
+              <label className="inline-flex items-center gap-1.5 text-[12px] text-gray-600">
+                <input type="checkbox" checked={list.length > 0 && list.every(c => indPicked.has(c.id))}
+                  onChange={e => setIndPicked(e.target.checked ? new Set(list.map(c => c.id)) : new Set())} /> Chọn tất cả
+              </label>
+              <input value={indBulk} list="ind-options" onChange={e => setIndBulk(e.target.value)} placeholder="Lĩnh vực áp cho các công ty đã tick…"
+                aria-label="Lĩnh vực áp hàng loạt" className={`${INPUT} flex-1 min-w-[200px]`} />
+              <button type="button" onClick={applyBulkIndustry} className={BTN_GHOST}>Gán cho {indPicked.size} công ty</button>
+            </div>
+            <datalist id="ind-options">{indOptions.map(n => <option key={n} value={n} />)}</datalist>
+            <div className="flex-1 overflow-y-auto px-4 md:px-5 divide-y divide-gray-100">
+              {list.map(c => {
+                const edited = c.id in indDrafts && indChanges.some(([id]) => id === c.id);
+                return (
+                  <div key={c.id} className={`flex items-center gap-3 py-2 ${edited ? 'bg-blue-50/40 -mx-4 md:-mx-5 px-4 md:px-5' : ''}`}>
+                    <input type="checkbox" checked={indPicked.has(c.id)} aria-label={`Chọn ${c.name}`}
+                      onChange={e => setIndPicked(prev => { const n = new Set(prev); if (e.target.checked) n.add(c.id); else n.delete(c.id); return n; })} />
+                    <span className="w-48 md:w-64 shrink-0 text-[12.5px] font-semibold text-gray-900 truncate">{c.name}</span>
+                    <input value={indValue(c)} list="ind-options" onChange={e => setIndDrafts(prev => ({ ...prev, [c.id]: e.target.value }))}
+                      placeholder="VD: Dệt may, Điện tử, Cơ khí…" aria-label={`Lĩnh vực hoạt động ${c.name}`}
+                      className={`${INPUT} flex-1 min-w-0 ${indValue(c).trim() ? 'border-blue-300' : ''}`} />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="px-4 md:px-5 py-3 border-t border-gray-200 flex items-center gap-2">
+              <span className="flex-1 text-[11.5px] text-gray-500">{indChanges.length > 0 ? `${indChanges.length} công ty có thay đổi` : 'Chưa có thay đổi'}</span>
+              <button onClick={close} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Đóng</button>
+              <button onClick={() => void saveIndustries()} disabled={indSaving || indChanges.length === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
+                {indSaving ? 'Đang lưu…' : indChanges.length > 0 ? `Lưu ${indChanges.length} công ty` : 'Lưu'}
+              </button>
+            </div>
+          </>
+        ) : tab === 'company' ? (
           <>
             {!single && (
               <div className="flex flex-wrap items-center gap-2 px-4 md:px-5 py-2.5 border-b border-gray-100">
@@ -331,7 +437,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
                         <option value={NEW_COUNTRY}>＋ Nước khác…</option>
                       </select>
                       <input value={d.founding} disabled={!data.ready} onChange={e => patch(c.id, { founding: e.target.value })}
-                        placeholder="dd/mm/yyyy hoặc chỉ năm" aria-label={`Ngày thành lập ${c.name}`}
+                        placeholder="dd/mm/yyyy · mm/yyyy · yyyy" aria-label={`Ngày thành lập ${c.name}`}
                         className={`${INPUT} w-full ${err ? 'border-red-400 bg-red-50' : d.founding ? 'border-blue-300' : ''}`} />
                       <div className="col-span-2 md:col-span-1 flex flex-wrap items-center gap-1.5">
                         {d.extras.map((e, i) => (
