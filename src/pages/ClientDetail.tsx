@@ -12,6 +12,7 @@ import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { useContacts } from '../hooks/useContacts';
 import { ContractCompareTables } from '../components/ContractCompareTables';
+import ClientContractsBlock from '../components/clients/ClientContractsBlock';
 import { LinkedWorkTasks } from '../components/workspace/LinkedWorkTasks';
 import { useManagers } from '../hooks/useManagers';
 import { useBranchData } from '../hooks/useBranchData';
@@ -169,6 +170,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     'client-detail-sections-v1',
     'cd',
   );
+  const [contractCount, setContractCount] = useState(0); // >0: ngày HĐ của công ty do bảng client_contracts quyết định
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [askingDocId, setAskingDocId] = useState<string | null>(null);
   const [docAnswers, setDocAnswers] = useState<Record<string, string>>({});
@@ -384,7 +386,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         baseUpdates.payment_start = null as any;
         baseUpdates.payment_end = null as any;
       }
-      const updates = baseUpdates;
+      const updates: any = baseUpdates;
+      if (contractCount > 0) { delete updates.contract_start; delete updates.contract_end; } // do danh sách hợp đồng quyết định
       const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
       if (error) throw error;
       onClientUpdate({ ...client, ...updates });
@@ -840,6 +843,10 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         {managers.map(m => <option key={m.id}>{m.name}</option>)}
                       </select>
                     </div>
+                    {contractCount > 0 ? (
+                      <div className="sm:col-span-2 text-[12px] text-[#777] bg-[#FAFAF8] rounded-lg px-3 py-2">Ngày bắt đầu / hết hạn HĐ lấy từ danh sách hợp đồng ở mục Thông tin (thêm, thanh lý, ký lại tại đó).</div>
+                    ) : (
+                      <>
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Ngày bắt đầu HĐ</label>
                       <input type="date" value={form.contract_start} onChange={e => setForm({ ...form, contract_start: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
@@ -848,6 +855,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       <label className="text-[12px] text-[#666] font-medium">Ngày hết hạn HĐ</label>
                       <input type="date" value={form.contract_end} onChange={e => setForm({ ...form, contract_end: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
                     </div>
+                      </>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-[12px] text-[#666] font-medium">Khu Công Nghiệp</label>
@@ -1027,6 +1036,15 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                           </span>
                         )}
                       </InfoRow>
+
+                      <div className="py-2">
+                        <ClientContractsBlock
+                          clientId={client.id}
+                          toast={toast}
+                          onCount={setContractCount}
+                          onSummary={s => onClientUpdate({ ...client, ...s })}
+                        />
+                      </div>
 
                       <InfoRow label="Chi nhánh">
                         <div className="flex items-center justify-between gap-2">

@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-client-multi-contracts',
+    date: '2026-11-05',
+    title: 'Khách hàng → Hợp đồng',
+    features: [
+      'Một công ty có nhiều hợp đồng (theo công đoạn): thêm, sửa, thanh lý từng hợp đồng riêng',
+      'Nút "Ký lại" cho hợp đồng đã thanh lý / hết hạn; ngày hết hạn của công ty tự tính theo các hợp đồng còn hiệu lực',
+    ],
+  },
+  {
     id: '2026-11-05-bulk-labor-carry-delete',
     date: '2026-11-05',
     title: 'Workspace → Nhập nhanh số lao động',
