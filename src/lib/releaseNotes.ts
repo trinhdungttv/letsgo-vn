@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-bulk-labor-carry-delete',
+    date: '2026-11-05',
+    title: 'Workspace → Nhập nhanh số lao động',
+    features: [
+      'Nhập nhanh LĐ: số mờ gợi ý là số tuần gần nhất đã nhập (tuần không nhập thì giữ số cũ), không còn lệch sang số khác',
+      'Nhập nhanh LĐ: xoá trống ô rồi Lưu thì xoá số đã ghi của tuần đó (có hỏi xác nhận), không cần gõ số 0',
+    ],
+  },
+  {
     id: '2026-11-04-site-map-lock-expand',
     date: '2026-11-04',
     title: 'Khách hàng → Mặt bằng',

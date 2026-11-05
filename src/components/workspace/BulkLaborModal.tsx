@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import FilterDropdown, { ALL_OPTION } from '../FilterDropdown'
-import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, prevWeekLabel } from '../../lib/format'
+import { getCurrentWeekLabel, recentWeekLabels, nextWeekLabels, weekLabelFull, weekMondayOf, laborEntryWeekKey } from '../../lib/format'
 import { useBranchData } from '../../hooks/useBranchData'
 import type { Client } from '../../lib/types'
 import { isActiveInMonth, suspensionLabel, formatSuspensionDate } from '../../utils/suspension'
@@ -21,6 +21,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
   const [bulkExtraWeeks, setBulkExtraWeeks] = useState(0)
   const [bulkValues, setBulkValues] = useState<Record<string, string>>({})
   const [bulkPrevValues, setBulkPrevValues] = useState<Record<string, number>>({})
+  const [savedRows, setSavedRows] = useState<Record<string, { id: string; count: number }>>({})
   const [bulkSearch, setBulkSearch] = useState('')
   const [bulkRegions, setBulkRegions] = useState<string[]>([ALL_OPTION])
   const [bulkSaving, setBulkSaving] = useState(false)
@@ -73,28 +74,51 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
     [activeClients, matchesBranchFilter, bulkSearch]
   )
 
+  // Số "gần nhất trước tuần đang nhập" của từng khách (carry-forward) — đúng cách báo cáo LĐ tính khi tuần không nhập.
+  async function fetchCarryForward(week: string): Promise<Record<string, number>> {
+    const ym = monthOfWeek[week]
+    const year = ym ? Number(ym.slice(0, 4)) : new Date().getFullYear()
+    const mon = weekMondayOf(week, year)
+    if (!mon) return {}
+    const selKey = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}-${String(mon.getDate()).padStart(2, '0')}`
+    const rows: { client_id: string; week_label: string; count: number; created_at: string }[] = []
+    for (let from = 0; ; from += 1000) {
+      const { data } = await supabase.from('client_labor_history')
+        .select('client_id, week_label, count, created_at')
+        .order('created_at', { ascending: true })
+        .range(from, from + 999)
+      if (!data || !data.length) break
+      rows.push(...(data as typeof rows))
+      if (data.length < 1000) break
+    }
+    const best: Record<string, { k: string; created: string; count: number }> = {}
+    for (const r of rows) {
+      const k = laborEntryWeekKey(r)
+      if (!k || k >= selKey) continue
+      const b = best[r.client_id]
+      if (!b || k > b.k || (k === b.k && r.created_at > b.created)) best[r.client_id] = { k, created: r.created_at, count: r.count }
+    }
+    const out: Record<string, number> = {}
+    for (const [id, b] of Object.entries(best)) out[id] = b.count
+    return out
+  }
+
   async function loadWeekData(week: string) {
     setWeekDataLoaded(false)
-    const prevWeek = prevWeekLabel(week)
-    const [{ data }, { data: prevData }] = await Promise.all([
-      supabase.from('client_labor_history').select('client_id, count').eq('week_label', week),
-      prevWeek
-        ? supabase.from('client_labor_history').select('client_id, count').eq('week_label', prevWeek)
-        : Promise.resolve({ data: null }),
+    const [{ data }, prev] = await Promise.all([
+      supabase.from('client_labor_history').select('id, client_id, count').eq('week_label', week),
+      fetchCarryForward(week),
     ])
     const prefilled: Record<string, string> = {}
+    const saved: Record<string, { id: string; count: number }> = {}
     if (data) {
-      for (const row of data as { client_id: string; count: number }[]) {
+      for (const row of data as { id: string; client_id: string; count: number }[]) {
         prefilled[row.client_id] = String(row.count)
+        saved[row.client_id] = { id: row.id, count: row.count }
       }
     }
     setBulkValues(prefilled)
-    const prev: Record<string, number> = {}
-    if (prevData) {
-      for (const row of prevData as { client_id: string; count: number }[]) {
-        prev[row.client_id] = row.count
-      }
-    }
+    setSavedRows(saved)
     setBulkPrevValues(prev)
     setWeekDataLoaded(true)
   }
@@ -109,10 +133,26 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
 
   async function save() {
     const entries = Object.entries(bulkValues).filter(([, v]) => v.trim() !== '')
-    if (!entries.length) { toast('Chua nhap so lieu nao'); return }
+    // Ô đã có số lưu cho tuần này mà nay bị xoá trống → xoá số đó (tuần sẽ lấy lại số tuần trước).
+    const toDelete = Object.entries(savedRows).filter(([cid]) => (bulkValues[cid] ?? '').trim() === '')
+    if (!entries.length && !toDelete.length) { toast('Chua nhap so lieu nao'); return }
+    if (toDelete.length) {
+      const names = toDelete.map(([cid]) => clients.find(c => c.id === cid)?.name ?? cid)
+      const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? ` và ${names.length - 5} công ty khác` : '')
+      const ok = window.confirm(
+        `Bạn đã xoá trống số lao động tuần ${bulkWeek} của ${toDelete.length} công ty: ${shown}.\n\n` +
+        `Lưu sẽ XOÁ HẲN số đã ghi của tuần này (không khôi phục được). Tuần đó sẽ lấy lại số của tuần trước.\n\nTiếp tục?`
+      )
+      if (!ok) return
+    }
     setBulkSaving(true)
     let success = 0
     try {
+      for (const [, row] of toDelete) {
+        const { error } = await supabase.from('client_labor_history').delete().eq('id', row.id)
+        if (error) throw error
+        success++
+      }
       for (const [clientId, valStr] of entries) {
         const newCount = Math.max(0, parseInt(valStr) || 0)
         // Kiem tra da co du lieu tuan nay chua
@@ -182,7 +222,11 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
         </div>
 
         {(() => {
-          const totalCur = filteredClients.reduce((s, c) => s + (parseInt(bulkValues[c.id] || '0') || 0), 0)
+          // Ô trống = lấy số tuần trước (giống báo cáo), nên tổng cũng tính theo số đó.
+          const totalCur = filteredClients.reduce((s, c) => {
+            const v = (bulkValues[c.id] ?? '').trim()
+            return s + (v !== '' ? (parseInt(v) || 0) : (bulkPrevValues[c.id] ?? 0))
+          }, 0)
           const totalPrev = filteredClients.reduce((s, c) => s + (bulkPrevValues[c.id] ?? 0), 0)
           const diff = totalCur - totalPrev
           const hasPrev = Object.keys(bulkPrevValues).length > 0
@@ -220,7 +264,7 @@ export function BulkLaborModal({ clients, toast, onClose }: Props) {
                 )}
                 <input
                   type="number" min={0}
-                  placeholder={String(c.current_workers ?? 0)}
+                  placeholder={String(prevVal ?? 0)}
                   value={bulkValues[c.id] ?? ''}
                   onChange={e => setBulkValues(prev => ({ ...prev, [c.id]: e.target.value }))}
                   className="w-20 text-[12px] px-2 py-1 border border-gray-300 rounded-lg outline-none focus:border-blue-500 text-right"
