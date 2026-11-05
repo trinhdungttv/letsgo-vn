@@ -16,11 +16,21 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-05-voice-keep-recording',
+    date: '2026-11-05',
+    title: 'Ghi âm CRM',
+    features: [
+      'Đang ghi âm vẫn chuyển qua lại các tab của công ty / chi nhánh; sang trang khác thì tự dừng và lưu',
+      'Quên tắt ghi âm: nhắc khi im lặng lâu rồi tự dừng, chỉ giữ tới đoạn còn tiếng',
+      'Danh sách ghi âm gọn, có trình nghe tua / đổi tốc độ; tắt trang đột ngột vẫn khôi phục phần đã ghi',
+    ],
+  },
+  {
     id: '2026-11-05-timeline-year-only',
     date: '2026-11-05',
     title: 'Hồ sơ chăm sóc → Dòng thời gian',
     features: [
-      'Mốc không nhớ ngày thì chỉ cần nhập năm (hoặc tháng + năm); dòng thời gian hiện đúng độ chính xác đã nhập',
+      'Mốc không nhớ ngày thì chỉ cần nhập năm (hoặc tháng + năm), dòng thời gian hiện đúng như đã nhập',
     ],
   },
   {
@@ -29,7 +39,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: 'Khách hàng → Quy trình & Mặt bằng',
     features: [
       'Gắn mỗi xưởng trong Quy trình công việc với khu vực đã vẽ ở tab Mặt bằng',
-      'Bấm qua lại: từ xưởng mở đúng khu vực trên bản đồ, từ chú thích Mặt bằng mở quy trình và video của xưởng đó',
+      'Bấm qua lại: từ xưởng mở khu vực trên bản đồ, từ chú thích Mặt bằng mở quy trình và video của xưởng',
     ],
   },
   {
@@ -38,7 +48,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: 'Ghi âm trong CRM',
     features: [
       'Nhật ký ghé thăm chi nhánh: nút Ghi âm để ghi nhanh trao đổi, nghe lại ngay dưới dòng nhật ký',
-      'CSKH: ghi âm cuộc gọi khi ghi nhận liên hệ; nút "Khách chưa nghe máy" bỏ bản ghi và xếp người đó xuống cuối danh sách hôm nay',
+      'CSKH: ghi âm cuộc gọi; nút "Khách chưa nghe máy" bỏ bản ghi, xếp người đó xuống cuối hôm nay',
       'Ghi chú công ty khách hàng: ghi âm nhanh thông tin về công ty để nghe lại sau',
     ],
   },
@@ -48,7 +58,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: 'Khách hàng → Quy trình công việc',
     features: [
       'Tab mới "Quy trình công việc": chia theo xưởng và công đoạn, mô tả từng việc, nhân sự, ca làm',
-      'Gắn link video YouTube / Google Drive và ảnh vào từng xưởng, từng công đoạn để xem công việc thực tế ngay trong app',
+      'Gắn link video YouTube / Google Drive và ảnh vào từng xưởng, công đoạn để xem việc thực tế',
     ],
   },
   {
@@ -56,9 +66,9 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     date: '2026-11-05',
     title: 'Khách hàng → Hồ sơ chăm sóc',
     features: [
-      'Dòng thời gian các mốc quan trọng của công ty (khởi đầu, hợp đồng, gặp gỡ, rủi ro, kế hoạch) ngay đầu hồ sơ',
-      'Ghi chú công ty chuyên nghiệp: viết văn bản có định dạng (tiêu đề, gạch đầu dòng, tick việc) hoặc vẽ sơ đồ tư duy, phóng to toàn màn hình',
-      'Các khối bên dưới (Hồ sơ công ty, Lịch sử chăm sóc, Người liên hệ, Quà tặng…) đổi thành tab ngang, bấm tab nào hiện tab đó',
+      'Dòng thời gian các mốc quan trọng của công ty (khởi đầu, hợp đồng, gặp gỡ, rủi ro…) ngay đầu hồ sơ',
+      'Ghi chú công ty: viết văn bản có định dạng hoặc vẽ sơ đồ tư duy, phóng to toàn màn hình',
+      'Các khối bên dưới (Hồ sơ, Lịch sử, Người liên hệ, Quà tặng…) đổi thành tab ngang',
     ],
   },
   {

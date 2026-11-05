@@ -9,8 +9,9 @@ import {
 import { useAuth } from '../../lib/auth';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isMissingTableError } from '../../lib/clientMaps/orgChart';
-import { RecorderControl, VoiceList, useVoiceCapture } from '../voice/VoiceUI';
-import { isMissingVoiceSetup, listVoice, uploadVoice, VOICE_MIGRATION_HINT, type VoiceRecording } from '../../lib/voiceRec/api';
+import { VoiceList, VoiceRecordButton } from '../voice/VoiceUI';
+import { useVoiceSaved } from '../voice/VoiceRecorderProvider';
+import { isMissingVoiceSetup, listVoice, VOICE_MIGRATION_HINT, type VoiceRecording } from '../../lib/voiceRec/api';
 import type { NotePalette } from '../../lib/quickNotes/colors';
 import type { MindMapDoc } from '../../lib/quickNotes/mindmap/types';
 import {
@@ -324,35 +325,19 @@ function NotesCard({ subjectId, brief, companyName, readOnly, save, onText, onMa
   onText: (t: string) => void; onMap: (d: MindMapDoc) => void; onMode: (m: NotesMode) => void; onRetry: () => void;
 }) {
   const mobile = useIsMobile();
-  const { user } = useAuth();
   const mode = brief.notesMode;
   const [full, setFull] = useState(false);
 
-  // ── Ghi âm nhanh thông tin về công ty (migration 206): dừng là tự lưu, nghe lại ở danh sách bên dưới ──
-  const voice = useVoiceCapture();
+  // ── Ghi âm nhanh thông tin về công ty (migration 206): bộ ghi toàn app — đổi tab vẫn ghi tiếp, dừng là tự lưu ──
   const [voices, setVoices] = useState<VoiceRecording[]>([]);
-  const [voiceMsg, setVoiceMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [voiceMsg, setVoiceMsg] = useState<string | null>(null);
   const loadVoices = useCallback(async () => {
-    try { setVoices(await listVoice('company_note', subjectId)); } catch (e) {
-      if (isMissingVoiceSetup(e as { code?: string; message?: string })) setVoiceMsg({ ok: false, text: VOICE_MIGRATION_HINT });
+    try { setVoices(await listVoice('company_note', subjectId)); setVoiceMsg(null); } catch (e) {
+      if (isMissingVoiceSetup(e as { code?: string; message?: string })) setVoiceMsg(VOICE_MIGRATION_HINT);
     }
   }, [subjectId]);
   useEffect(() => { void loadVoices(); }, [loadVoices]);
-  const pendingAudio = voice.pending;
-  useEffect(() => {
-    if (!pendingAudio) return;
-    let alive = true;
-    setVoiceMsg({ ok: true, text: 'Đang lưu bản ghi âm…' });
-    uploadVoice({
-      type: 'company_note', subjectId, title: '', blob: pendingAudio.blob, mime: pendingAudio.mime, ext: pendingAudio.ext,
-      durationSec: pendingAudio.durationSec, recordedAt: pendingAudio.startedAt,
-      userId: user?.id ?? '', userName: user?.full_name || user?.username || '',
-    }).then(() => { if (alive) { voice.setPending(null); setVoiceMsg(null); void loadVoices(); } })
-      .catch(e => { if (alive) setVoiceMsg({ ok: false, text: isMissingVoiceSetup(e as { code?: string; message?: string }) ? VOICE_MIGRATION_HINT : 'Không lưu được ghi âm: ' + (e as Error).message }); });
-    return () => { alive = false; };
-    // chỉ chạy khi có bản ghi mới
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingAudio]);
+  useVoiceSaved('company_note', subjectId, () => { void loadVoices(); });
   // sơ đồ mới dựng 1 lần theo tên công ty, chỉ lưu khi người dùng sửa
   const seed = useMemo(() => brief.notesMindmap ?? defaultNotesMap(companyName), [brief.notesMindmap, companyName]);
 
@@ -370,10 +355,9 @@ function NotesCard({ subjectId, brief, companyName, readOnly, save, onText, onMa
         </div>
       )}
       {(voices.length > 0 || voiceMsg) && (
-        <div className={`border-t border-[#F0EFEA] bg-[#FAFAF8] px-4 py-3 space-y-2 ${full ? 'max-h-56 overflow-y-auto shrink-0' : ''}`}>
-          <div className="text-[11px] uppercase tracking-wide text-[#aaa] font-semibold">🎙 Ghi âm về công ty{voices.length ? ` · ${voices.length}` : ''}</div>
-          {voiceMsg && <div className={`text-[12px] rounded-md px-2.5 py-1.5 ${voiceMsg.ok ? 'text-[#666] bg-white border border-[#E8E7E2]' : 'text-amber-800 bg-amber-50 border border-amber-200'}`}>{voiceMsg.text}</div>}
-          <VoiceList items={voices} onChanged={() => void loadVoices()} readOnly={readOnly} />
+        <div className={`border-t border-[#F0EFEA] bg-[#FAFAF8] px-4 py-2.5 space-y-2 ${full ? 'max-h-56 overflow-y-auto shrink-0' : ''}`}>
+          {voiceMsg && <div className="text-[12px] rounded-md px-2.5 py-1.5 text-amber-800 bg-amber-50 border border-amber-200">{voiceMsg}</div>}
+          <VoiceList items={voices} onChanged={() => void loadVoices()} readOnly={readOnly} collapsible title="Ghi âm về công ty" />
         </div>
       )}
     </div>
@@ -385,7 +369,7 @@ function NotesCard({ subjectId, brief, companyName, readOnly, save, onText, onMa
     hint: 'Nơi tổng hợp thông tin quan trọng đã tiếp nhận — viết văn bản hoặc vẽ sơ đồ tư duy',
     right: (
       <>
-        {!readOnly && <RecorderControl rec={voice.rec} onStart={() => { setVoiceMsg(null); void voice.start(); }} size="sm" />}
+        {!readOnly && <VoiceRecordButton size="sm" target={{ type: 'company_note', subjectId, label: `Ghi chú ${companyName}` }} />}
         <SaveBadge save={save} readOnly={readOnly} onRetry={onRetry} />
         <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-[12px]">
           {([['text', 'Văn bản', FileText], ['mindmap', 'Sơ đồ tư duy', Network]] as const).map(([k, label, Icon]) => (

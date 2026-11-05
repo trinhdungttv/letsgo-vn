@@ -40,6 +40,8 @@ export async function listVoice(type: VoiceSubject, subjectId: string): Promise<
 }
 
 export interface VoiceUploadInput {
+  /** mã dòng — truyền vào để tải lại không tạo trùng (bản lưu tạm trên máy dùng lại mã cũ) */
+  id?: string;
   type: VoiceSubject;
   subjectId: string;
   relatedDate?: string | null;
@@ -55,19 +57,20 @@ export interface VoiceUploadInput {
 
 /** Tải file lên bucket rồi ghi 1 dòng. Lỗi bucket / bảng chưa có → ném lỗi (isMissingVoiceSetup). */
 export async function uploadVoice(inp: VoiceUploadInput): Promise<VoiceRecording> {
-  const rowId = crypto.randomUUID();
+  const rowId = inp.id ?? crypto.randomUUID();
   const month = new Date().toISOString().slice(0, 7);
   const path = `${inp.type}/${month}/${rowId}.${inp.ext}`;
   const bucket = supabase.storage.from(VOICE_BUCKET);
   const { error: upErr } = await bucket.upload(path, inp.blob, { upsert: false, contentType: inp.mime || inp.blob.type || 'audio/webm', cacheControl: '31536000' });
-  if (upErr) throw upErr;
+  // Tải lại bản đã lên rồi (cùng mã) → coi như xong, chỉ ghi nốt dòng dữ liệu
+  if (upErr && !/already exists|duplicate/i.test(upErr.message ?? '')) throw upErr;
   const row = {
     id: rowId, subject_type: inp.type, subject_id: inp.subjectId, related_date: inp.relatedDate ?? null,
     title: inp.title ?? '', duration_s: Math.round(inp.durationSec * 10) / 10, size_bytes: inp.blob.size,
     mime_type: inp.mime, storage_path: path, url: bucket.getPublicUrl(path).data.publicUrl,
     user_id: inp.userId, user_name: inp.userName, recorded_at: (inp.recordedAt ?? new Date()).toISOString(),
   };
-  const { data, error } = await supabase.from('crm_voice_recordings').insert(row).select(COLS).single();
+  const { data, error } = await supabase.from('crm_voice_recordings').upsert(row, { onConflict: 'id' }).select(COLS).single();
   if (error) throw error;
   return norm(data as VoiceRecording);
 }

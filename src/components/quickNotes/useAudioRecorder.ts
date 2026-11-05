@@ -18,7 +18,14 @@ export interface RecordedAudio {
   ext: string;
   durationSec: number;
   startedAt: Date;
+  /** Có khi bản ghi tự dừng vì lâu không có tiếng (đã cắt bỏ đoạn im lặng ở cuối). */
+  autoStopped?: 'silence';
 }
+
+/** Mức âm lượng (getLevel, 0..1) từ đó coi là "có tiếng". Giọng nói qua loa điện thoại thường 0,05–0,4; tiếng ồn nền < 0,02. */
+export const SOUND_LEVEL = 0.03;
+/** Giữ thêm chừng này sau tiếng cuối cùng khi cắt đoạn im lặng (khỏi cụt chữ cuối câu). */
+const SILENCE_TAIL_MS = 2500;
 
 export interface AudioRecorder {
   phase: RecorderPhase;
@@ -34,6 +41,12 @@ export interface AudioRecorder {
   cancel: () => void;
   getLevel: () => number;
   clearError: () => void;
+  /** Còn bao lâu nữa thì tự dừng vì im lặng (ms); null = chưa tới mức cảnh báo / không bật tính năng này. */
+  silenceLeftMs: number | null;
+  /** "Vẫn đang ghi" — coi như vừa có tiếng, đếm lại thời gian im lặng. */
+  keepAlive: () => void;
+  /** Ảnh chụp phần đã ghi tới lúc này (để lưu nháp phòng tắt trang đột ngột); null nếu chưa có gì. */
+  snapshot: () => { blob: Blob; mime: string; ext: string; durationSec: number; startedAt: Date } | null;
 }
 
 type WakeLockLike = { release: () => Promise<void> };
@@ -48,7 +61,16 @@ function micError(e: unknown): string {
   return `Không bật được micro: ${(e as Error)?.message ?? String(e)}`;
 }
 
+export interface SilenceOptions {
+  /** Im lặng quá chừng này thì hiện cảnh báo "quên tắt ghi âm?" */
+  warnAfterMs: number;
+  /** Im lặng quá chừng này thì tự dừng, lưu tới đoạn cuối còn tiếng */
+  stopAfterMs: number;
+}
+
 export interface RecorderOptions {
+  /** Bật theo dõi im lặng: nhắc rồi tự dừng khi quên tắt. */
+  silence?: SilenceOptions;
   /**
    * Lọc tạp âm cho ghi âm ngoài trời (khảo sát chạy xe): bật thêm tách giọng nếu máy có, cắt tiếng ù gió / máy xe
    * (< ~130 Hz), cắt rít cao (> 7,5 kHz), nén cho giọng đều to nhỏ. Ghi cuộc họp (Ghi chú nhanh) không bật.
@@ -85,6 +107,14 @@ function enhanceStream(ctx: AudioContext, raw: MediaStream): { stream: MediaStre
 export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options: RecorderOptions = {}): AudioRecorder {
   const enhanceRef = useRef(!!options.enhance);
   enhanceRef.current = !!options.enhance;
+  const silenceRef = useRef(options.silence);
+  silenceRef.current = options.silence;
+  const [silenceLeftMs, setSilenceLeftMs] = useState<number | null>(null);
+  const chunkEnds = useRef<number[]>([]);
+  const lastSoundMs = useRef(0);
+  const heardSound = useRef(false);
+  const stopReason = useRef<'silence' | null>(null);
+  const sampler = useRef<ReturnType<typeof setInterval> | null>(null);
   const [phase, setPhase] = useState<RecorderPhase>('idle');
   const [noteId, setNoteId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -112,6 +142,8 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
 
   const teardown = useCallback(() => {
     if (tick.current) { clearInterval(tick.current); tick.current = null; }
+    if (sampler.current) { clearInterval(sampler.current); sampler.current = null; }
+    setSilenceLeftMs(null);
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     void ctxRef.current?.close().catch(() => {});
@@ -185,6 +217,10 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
     streamRef.current = stream;
     recRef.current = rec;
     chunks.current = [];
+    chunkEnds.current = [];
+    lastSoundMs.current = 0;
+    heardSound.current = false;
+    stopReason.current = null;
     bytes.current = 0;
     discard.current = false;
     accMs.current = 0;
@@ -195,6 +231,7 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
     rec.ondataavailable = e => {
       if (!e.data || e.data.size === 0) return;
       chunks.current.push(e.data);
+      chunkEnds.current.push(elapsedNow());
       bytes.current += e.data.size;
       if (bytes.current > MAX_BYTES && rec.state === 'recording') {
         setError('Bản ghi đã tới 45 MB nên tự dừng và lưu — bấm micro để ghi tiếp phần sau.');
@@ -203,15 +240,31 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
     };
     rec.onstop = () => {
       const m = meta.current;
-      const parts = chunks.current;
-      const durationSec = accMs.current / 1000;
+      let parts = chunks.current;
+      let durationSec = accMs.current / 1000;
+      const bySilence = stopReason.current === 'silence';
+      // Tự dừng vì im lặng: bỏ các đoạn sau tiếng cuối cùng (giữ thêm chút đuôi cho khỏi cụt chữ)
+      if (bySilence) {
+        const limit = lastSoundMs.current + SILENCE_TAIL_MS;
+        const ends = chunkEnds.current;
+        const keep = parts.filter((_, i) => (ends[i] ?? 0) <= limit);
+        parts = keep.length ? keep : parts.slice(0, 1);
+        durationSec = Math.min(durationSec, limit / 1000);
+      }
+      const silentAll = bySilence && !heardSound.current;
       chunks.current = [];
+      chunkEnds.current = [];
+      stopReason.current = null;
       teardown();
       setPhase('idle');
       setNoteId(null);
       setElapsedMs(0);
+      if (silentAll) { setError('Không nghe thấy tiếng nào nên đã tự dừng và bỏ bản ghi.'); return; }
       if (!m || discard.current || parts.length === 0) return;
-      onDoneRef.current({ noteId: m.noteId, blob: new Blob(parts, { type: m.mime }), mime: m.mime, ext: m.ext, durationSec, startedAt: m.startedAt });
+      onDoneRef.current({
+        noteId: m.noteId, blob: new Blob(parts, { type: m.mime }), mime: m.mime, ext: m.ext, durationSec, startedAt: m.startedAt,
+        ...(bySilence ? { autoStopped: 'silence' as const } : {}),
+      });
     };
     // Rút micro / đổi thiết bị giữa chừng → lưu phần đã ghi
     stream.getAudioTracks().forEach(t => { t.onended = () => stop(); });
@@ -249,6 +302,18 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
     rec.start(1000);
     setPhase('recording');
     setElapsedMs(0);
+    // Theo dõi có tiếng / im lặng (chỉ khi bật tuỳ chọn silence và đo được âm lượng)
+    sampler.current = setInterval(() => {
+      if (since.current === null || !analyser.current) return; // đang tạm dừng
+      const ms = elapsedNow();
+      if (readLevel() > SOUND_LEVEL) { lastSoundMs.current = ms; heardSound.current = true; }
+      const cfg = silenceRef.current;
+      if (!cfg) { setSilenceLeftMs(null); return; }
+      const quiet = ms - lastSoundMs.current;
+      if (quiet >= cfg.stopAfterMs) { stopReason.current = 'silence'; setSilenceLeftMs(null); stop(); }
+      else if (quiet >= cfg.warnAfterMs) setSilenceLeftMs(cfg.stopAfterMs - quiet);
+      else setSilenceLeftMs(null);
+    }, 150);
     tick.current = setInterval(() => {
       const ms = elapsedNow();
       setElapsedMs(ms);
@@ -279,7 +344,7 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
     else { teardown(); setPhase('idle'); setNoteId(null); }
   }, [teardown]);
 
-  const getLevel = useCallback(() => {
+  const readLevel = () => {
     const node = analyser.current;
     const data = buf.current;
     if (!node || !data) return 0;
@@ -290,6 +355,15 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
       sum += v * v;
     }
     return Math.min(1, Math.sqrt(sum / data.length) * 3);
+  };
+  const getLevel = useCallback(() => readLevel(), []);
+
+  const keepAlive = useCallback(() => { lastSoundMs.current = elapsedNow(); setSilenceLeftMs(null); }, []);
+
+  const snapshot = useCallback(() => {
+    const m = meta.current;
+    if (!m || !recRef.current || chunks.current.length === 0) return null;
+    return { blob: new Blob([...chunks.current], { type: m.mime }), mime: m.mime, ext: m.ext, durationSec: elapsedNow() / 1000, startedAt: m.startedAt };
   }, []);
 
   // Rời khỏi app (đăng xuất) giữa chừng → dừng và vẫn giao file đã ghi (cộng nốt đoạn đang ghi vào thời lượng)
@@ -306,5 +380,6 @@ export function useAudioRecorder(onDone: (audio: RecordedAudio) => void, options
   return {
     phase, noteId, elapsedMs, error, supported, active,
     start, pause, resume, stop, cancel, getLevel, clearError: () => setError(null),
+    silenceLeftMs, keepAlive, snapshot,
   };
 }

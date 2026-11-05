@@ -39,6 +39,7 @@ import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import QuickNotesDock from './components/quickNotes/QuickNotesDock';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
+import { VoiceRecorderProvider } from './components/voice/VoiceRecorderProvider';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
 import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme';
 
@@ -522,7 +523,9 @@ function AppInner() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppInner />
+      <VoiceRecorderProvider>
+        <AppInner />
+      </VoiceRecorderProvider>
       {/* Ngoài AppInner để hiện ở mọi màn hình (kể cả đăng nhập / đang tải), không phụ thuộc đăng nhập */}
       <ReleaseUpdatePrompt />
     </AuthProvider>
