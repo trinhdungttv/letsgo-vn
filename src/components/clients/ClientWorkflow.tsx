@@ -2,7 +2,7 @@
 // hoặc ảnh để xem công việc thực tế ngay trong app. Tự lưu (bảng client_workflows, migration 205).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Check, ExternalLink, Factory, ImageIcon, Loader2, MapPin, Pencil, Play, Plus, Trash2, Users, X,
+  AlertTriangle, ArrowDown, ArrowUp, Check, ExternalLink, Factory, ImageIcon, LayoutGrid, Loader2, MapPin, Pencil, Play, Plus, Rows3, Trash2, Users, X,
 } from 'lucide-react';
 import type { Client } from '../../lib/types';
 import { useAuth } from '../../lib/auth';
@@ -18,6 +18,17 @@ import {
 } from '../../lib/clientWorkflow/workflow';
 
 const SAVE_DELAY_MS = 900;
+
+// Cách xem: 'one' = từng xưởng (bấm tên xưởng để đổi) · 'all' = mọi xưởng trên 1 trang, xếp 1 / 2 / 3 cột. Nhớ theo máy.
+type ViewMode = 'one' | 'all';
+const VIEW_KEY = 'lgvn_wf_view_v1';
+const COLS_CLASS: Record<1 | 2 | 3, string> = { 1: 'grid-cols-1', 2: 'grid-cols-1 xl:grid-cols-2', 3: 'grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3' };
+function readView(): { mode: ViewMode; cols: 1 | 2 | 3 } {
+  try {
+    const o = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') as { mode?: string; cols?: number };
+    return { mode: o.mode === 'all' ? 'all' : 'one', cols: o.cols === 1 || o.cols === 3 ? o.cols : 2 };
+  } catch { return { mode: 'one', cols: 2 }; }
+}
 type SaveState = { s: 'idle' } | { s: 'saving' } | { s: 'saved'; at: string } | { s: 'error'; msg: string };
 
 export default function ClientWorkflow({ client, onOpenSite }: { client: Client; onOpenSite?: () => void }) {
@@ -28,6 +39,12 @@ export default function ClientWorkflow({ client, onOpenSite }: { client: Client;
   const [loadError, setLoadError] = useState('');
   const [workshops, setWorkshops] = useState<WfWorkshop[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [view, setViewState] = useState(readView);
+  const setView = (v: Partial<{ mode: ViewMode; cols: 1 | 2 | 3 }>) => setViewState(prev => {
+    const next = { ...prev, ...v };
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(next)); } catch { /* chế độ riêng tư */ }
+    return next;
+  });
   const [save, setSave] = useState<SaveState>({ s: 'idle' });
   // Khu vực đã vẽ ở tab Mặt bằng — để gắn xưởng với khu vực (lỗi / chưa có thì danh sách rỗng)
   const [zoneOpts, setZoneOpts] = useState<ZoneOption[]>([]);
@@ -123,9 +140,11 @@ export default function ClientWorkflow({ client, onOpenSite }: { client: Client;
     setActiveId(rest[0]?.id ?? null);
   };
 
+  const openZone = (ref: WfZoneRef) => { try { localStorage.setItem(SITE_ACTIVE_KEY(clientId), ref.mapId); } catch { /* bỏ qua */ } onOpenSite?.(); };
+
   return (
     <div className="flex-1 overflow-y-auto p-3 md:p-5">
-      <div className="max-w-[1100px] mx-auto space-y-4">
+      <div className={`mx-auto space-y-4 ${view.mode === 'all' && view.cols > 1 ? 'max-w-[1700px]' : 'max-w-[1100px]'}`}>
         {readOnly && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[12px] text-amber-800">
             <AlertTriangle size={14} className="shrink-0" /> {WORKFLOW_MIGRATION_HINT}. Trong lúc chờ chưa lưu được.
@@ -140,6 +159,24 @@ export default function ClientWorkflow({ client, onOpenSite }: { client: Client;
             </div>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            {workshops.length > 1 && (
+              <div className="inline-flex items-center gap-1.5">
+                <div className="inline-flex rounded-lg border border-[#E2E0D9] bg-white p-0.5" role="group" aria-label="Cách xem">
+                  <button onClick={() => setView({ mode: 'one' })} title="Xem từng xưởng (bấm tên xưởng để đổi)"
+                    className={`h-7 px-2.5 rounded-md text-[12px] inline-flex items-center gap-1 ${view.mode === 'one' ? 'bg-[#111] text-white' : 'text-[#666] hover:bg-[#F4F3EF]'}`}><Rows3 size={13} /> Từng xưởng</button>
+                  <button onClick={() => setView({ mode: 'all' })} title="Hiện tất cả xưởng trên 1 trang"
+                    className={`h-7 px-2.5 rounded-md text-[12px] inline-flex items-center gap-1 ${view.mode === 'all' ? 'bg-[#111] text-white' : 'text-[#666] hover:bg-[#F4F3EF]'}`}><LayoutGrid size={13} /> Tất cả</button>
+                </div>
+                {view.mode === 'all' && (
+                  <div className="hidden xl:inline-flex rounded-lg border border-[#E2E0D9] bg-white p-0.5" role="group" aria-label="Số cột">
+                    {([1, 2, 3] as const).map(n => (
+                      <button key={n} onClick={() => setView({ cols: n })} title={`${n} cột`}
+                        className={`h-7 w-7 rounded-md text-[12px] ${view.cols === n ? 'bg-[#111] text-white' : 'text-[#666] hover:bg-[#F4F3EF]'}`}>{n}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <SaveBadge save={save} readOnly={readOnly} onRetry={() => void flush()} />
             {!readOnly && (
               <button onClick={addWorkshop} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-blue-600 text-white text-[12.5px] font-medium hover:bg-blue-700">
@@ -162,9 +199,10 @@ export default function ClientWorkflow({ client, onOpenSite }: { client: Client;
           <>
             <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
               {workshops.map(w => {
-                const on = w.id === active?.id;
+                const all = view.mode === 'all';
+                const on = !all && w.id === active?.id;
                 return (
-                  <button key={w.id} onClick={() => setActiveId(w.id)}
+                  <button key={w.id} onClick={() => { if (all) document.getElementById(`wf-${w.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); else setActiveId(w.id); }}
                     className={`shrink-0 inline-flex items-center gap-2 px-3.5 h-9 rounded-full text-[13px] border transition ${on ? 'bg-[#111] text-white border-[#111]' : 'bg-white text-[#555] border-[#E2E0D9] hover:border-[#999]'}`}>
                     <Factory size={13} /> {w.name || 'Chưa đặt tên'}
                     <span className={`text-[10.5px] px-1.5 rounded-full ${on ? 'bg-white/20' : 'bg-[#F1F0EB] text-[#777]'}`}>{w.steps.length}</span>
@@ -172,9 +210,21 @@ export default function ClientWorkflow({ client, onOpenSite }: { client: Client;
                 );
               })}
             </div>
-            {active && (
+            {view.mode === 'all' ? (
+              <div className={`grid gap-4 items-start ${COLS_CLASS[view.cols]}`}>
+                {workshops.map(w => (
+                  <div key={w.id} id={`wf-${w.id}`} className="scroll-mt-3 min-w-0">
+                    <WorkshopView w={w} readOnly={readOnly} zoneOpts={zoneOpts}
+                      onOpenZone={openZone}
+                      onPatch={(fn, imm) => patchWorkshop(w.id, fn, imm)}
+                      onRemove={() => removeWorkshop(w)}
+                      onOpen={(list, index) => setViewer({ list, index })} />
+                  </div>
+                ))}
+              </div>
+            ) : active && (
               <WorkshopView key={active.id} w={active} readOnly={readOnly} zoneOpts={zoneOpts}
-                onOpenZone={(ref) => { try { localStorage.setItem(SITE_ACTIVE_KEY(clientId), ref.mapId); } catch { /* bỏ qua */ } onOpenSite?.(); }}
+                onOpenZone={openZone}
                 onPatch={(fn, imm) => patchWorkshop(active.id, fn, imm)}
                 onRemove={() => removeWorkshop(active)}
                 onOpen={(list, index) => setViewer({ list, index })} />
@@ -407,7 +457,7 @@ function MediaBlock({ media, readOnly, onChange, onOpen }: {
   return (
     <div className="space-y-2">
       {media.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(220px, 45%), 1fr))' }}>
           {media.map((m, i) => <MediaTile key={m.id} m={m} readOnly={readOnly} onOpen={() => onOpen(media, i)} onRemove={() => remove(m)} />)}
         </div>
       )}

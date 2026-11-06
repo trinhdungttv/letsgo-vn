@@ -16,6 +16,12 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-06-workflow-all-view',
+    date: '2026-11-06',
+    title: 'Quy trình công việc',
+    features: ['Xem tất cả xưởng trên 1 trang, chọn 1 / 2 / 3 cột; vẫn đổi được về xem từng xưởng'],
+  },
+  {
     id: '2026-11-06-survey-trip-delete-pin',
     date: '2026-11-06',
     title: 'Khảo sát KCN',
