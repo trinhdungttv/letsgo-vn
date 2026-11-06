@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-06-survey-share-map',
+    date: '2026-11-06',
+    title: 'Khảo sát KCN',
+    features: ['Link chia sẻ khảo sát có bản đồ lộ trình: zoom, xem KCN, công ty và đường đã đi'],
+  },
+  {
+    id: '2026-11-06-survey-online',
+    date: '2026-11-06',
+    title: 'Khảo sát KCN',
+    features: ['Khảo sát online: thêm ảnh tuyển dụng trên mạng + vị trí Google Maps, tag "Chưa xác thực"'],
+  },
+  {
     id: '2026-11-06-survey-share',
     date: '2026-11-06',
     title: 'Khảo sát KCN',

@@ -1,15 +1,23 @@
 // Trang xem Khảo sát KCN dành cho NGƯỜI NGOÀI — mở bằng link ngắn #/ks/<mã>, không cần đăng nhập, chỉ cần mã 4 số
 // (kiểu mở khoá iPhone). Chỉ xem: ảnh chỉ tiêu tuyển dụng + các chuyến của những KCN người gửi cho phép, trong hạn xem.
 // Mã được kiểm tra ở server (hàm survey_share_open, migration 209): sai 5 lần thì khoá tạm.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Camera, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
-import { openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
+import { loadSharedTracks, openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
 import { lockMessage } from '../lib/costPlan/api';
 import { provinceKey, provinceLabel } from '../lib/kcnSurvey/province';
-import { fmtDistance } from '../lib/kcnSurvey/track';
+import { fmtDistance, type TrackSegment } from '../lib/kcnSurvey/track';
+import type { SurveyPhoto } from '../lib/kcnSurvey/api';
 import PinPad from '../components/workspace/costplan/PinPad';
 import { FONT } from '../components/workspace/costplan/ui';
 import { MarksSvg } from './market/survey/PhotoMarks';
+import { UNVERIFIED_TAG } from '../lib/kcnSurvey/online';
+
+// Bản đồ Leaflet nặng → chỉ nạp khi mở trang xem (dùng đúng bản đồ trong app của người gửi)
+const SurveyTripMap = lazy(() => import('./market/survey/SurveyTripMap'));
+const NO_VOICE: never[] = [];
+
+const isOnline = (p: SharedPhoto) => p.survey_kind === 'online';
 
 const pinKey = (code: string) => `lgvn_ks_pin_${code}`;
 const readStore = (k: string) => { try { return sessionStorage.getItem(k); } catch { return null; } };
@@ -46,7 +54,11 @@ export default function SharedSurvey({ code }: { code: string }) {
   const [deadMsg, setDeadMsg] = useState('');
   const [data, setData] = useState<SharedSurvey | null>(null);
 
-  const [tab, setTab] = useState<'photos' | 'trips'>('photos');
+  const [tab, setTab] = useState<'photos' | 'trips'>('trips');
+  const [pin, setPin] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<Map<string, TrackSegment[]>>(new Map());
+  const [tracksErr, setTracksErr] = useState<string | null>(null);
   const [province, setProvince] = useState('all');
   const [zoneId, setZoneId] = useState('all');
   const [q, setQ] = useState('');
@@ -58,6 +70,7 @@ export default function SharedSurvey({ code }: { code: string }) {
       const r = await openSurveyShare(code, pin);
       if (r.ok) {
         if (remember) writeStore(pinKey(code), pin);
+        setPin(pin);
         setData(r); setPhase('ready');
         return;
       }
@@ -106,6 +119,25 @@ export default function SharedSurvey({ code }: { code: string }) {
     (data?.photos ?? []).forEach(p => { if (p.trip_id) m.set(p.trip_id, (m.get(p.trip_id) ?? 0) + 1); });
     return m;
   }, [data]);
+
+  // ── Bản đồ lộ trình: vết của chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc (như trong app) ──
+  const trackIds = useMemo(() => (tab !== 'trips' ? [] : selected ? [selected] : trips.slice(0, 40).map(t => t.id)), [tab, selected, trips]);
+  const trackKey = trackIds.join(',');
+  useEffect(() => {
+    if (phase !== 'ready' || !trackIds.length) { setTracks(new Map()); return; }
+    let alive = true;
+    setTracksErr(null);
+    loadSharedTracks(code, pin, trackIds).then(m => { if (alive) setTracks(m); }).catch(e => { if (alive) { setTracks(new Map()); setTracksErr((e as Error).message); } });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackKey, phase]);
+  const selTrip = selected ? trips.find(t => t.id === selected) ?? null : null;
+  const mapPhotos = useMemo(() => (selTrip ? photos.filter(p => p.trip_id === selTrip.id) : photos), [photos, selTrip]);
+  const tripDays = useMemo(() => {
+    const m = new Map<string, typeof trips>();
+    for (const t of trips) { const d = new Date(t.started_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); m.set(d, [...(m.get(d) ?? []), t]); }
+    return [...m.entries()];
+  }, [trips]);
 
   // ────────────── Nhập mã ──────────────
   if (phase === 'pin' || phase === 'opening') {
@@ -190,6 +222,11 @@ export default function SharedSurvey({ code }: { code: string }) {
                     {p.width && p.height && p.annotations && p.annotations.length > 0 && (
                       <MarksSvg marks={p.annotations} aspect={p.height / p.width} fit="cover" className="absolute inset-0 w-full h-full pointer-events-none" />
                     )}
+                    {isOnline(p) && (
+                      <span className={`absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold leading-none text-white shadow ${p.verified_at ? 'bg-[#34C759]' : 'bg-[#FF9F0A]'}`}>
+                        {p.verified_at ? 'Khảo sát online' : UNVERIFIED_TAG}
+                      </span>
+                    )}
                   </div>
                   <div className="p-2.5 space-y-0.5">
                     <div className="text-[13px] font-semibold leading-tight line-clamp-2">{p.company_name || 'Chưa ghi tên công ty'}</div>
@@ -205,26 +242,42 @@ export default function SharedSurvey({ code }: { code: string }) {
             </div>
           ) : <Empty text="Không có ảnh nào khớp bộ lọc." />
         ) : (
-          trips.length ? (
-            <div className="bg-white rounded-2xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] divide-y divide-black/[0.06]">
-              {trips.map(t => (
-                <div key={t.id} className="px-4 py-3 flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-[#eef5ff] text-[#0071e3] flex items-center justify-center shrink-0"><Route size={16} /></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13.5px] font-semibold truncate">{t.title || t.zone_name || 'Chuyến khảo sát'}</div>
-                    <div className="text-[12px] text-[#86868b]">
-                      {fmtDateTime(t.started_at)} · {fmtDistance(Number(t.distance_m) || 0)}
-                      {t.road_coverage != null ? ` · đã đi ${Math.round(Number(t.road_coverage))}% đường` : ''}
-                      {t.passed_count ? ` · ${t.passed_count} công ty đi ngang` : ''}
-                    </div>
+          <div className="grid md:grid-cols-[340px_1fr] gap-3">
+            <div className="order-2 md:order-1 md:max-h-[72vh] overflow-y-auto space-y-3">
+              {tripDays.length ? tripDays.map(([day, list]) => (
+                <div key={day}>
+                  <div className="text-[12px] font-medium text-[#86868b] mb-1 px-1 capitalize">{day} <span className="text-[#a1a1a6]">· {list.length} chuyến · {fmtDistance(list.reduce((n, t) => n + (Number(t.distance_m) || 0), 0))}</span></div>
+                  <div className="bg-white rounded-xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] divide-y divide-black/[0.06] overflow-hidden">
+                    {list.map(t => (
+                      <button key={t.id} onClick={() => setSelected(selected === t.id ? null : t.id)}
+                        className={`w-full text-left px-3 py-2.5 flex items-center gap-3 transition ${selected === t.id ? 'bg-[#fff4e0]' : 'hover:bg-[#fafafa]'}`}>
+                        <div className="text-[13px] font-semibold tabular-nums shrink-0 w-11">{new Date(t.started_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-semibold leading-tight truncate">{t.title || t.zone_name || 'Chuyến khảo sát'}</div>
+                          <div className="text-[11.5px] text-[#86868b] truncate">
+                            {fmtDistance(Number(t.distance_m) || 0)}{t.road_coverage != null ? ` · phủ ${Math.round(Number(t.road_coverage) * 10) / 10}%` : ''}{t.passed_count ? ` · ${t.passed_count} công ty đi ngang` : ''}
+                          </div>
+                        </div>
+                        {photoCountByTrip.get(t.id) ? <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#444] bg-[#f0f0f2] rounded-md px-1.5 py-0.5 shrink-0"><Camera size={11} />{photoCountByTrip.get(t.id)}</span> : null}
+                      </button>
+                    ))}
                   </div>
-                  {photoCountByTrip.get(t.id) ? (
-                    <button onClick={() => { setTab('photos'); setZoneId(t.zone_id ?? 'all'); setQ(''); }} className="text-[12px] font-medium text-[#0071e3] shrink-0">{photoCountByTrip.get(t.id)} ảnh</button>
-                  ) : null}
                 </div>
-              ))}
+              )) : <Empty text="Không có chuyến nào khớp bộ lọc." />}
+              {selected && <button onClick={() => setSelected(null)} className="text-[12.5px] font-medium text-[#0071e3] px-1">Bỏ chọn chuyến — xem tất cả</button>}
             </div>
-          ) : <Empty text="Không có chuyến nào khớp bộ lọc." />
+            <div className="order-1 md:order-2 relative rounded-2xl overflow-hidden shadow-[0_0_0_1px_rgba(0,0,0,0.05)] bg-[#E5E3DF] h-[56vh] md:h-[72vh]">
+              <Suspense fallback={<div className="h-full flex items-center justify-center text-[#86868b]"><Loader2 className="animate-spin" size={20} /></div>}>
+                <SurveyTripMap className="w-full h-full" tracks={tracks} selectedId={selected} photos={mapPhotos as unknown as SurveyPhoto[]} voiceNotes={NO_VOICE}
+                  fitKey={`${province}|${zoneId}|${q}|${selected ?? ''}|${trackKey}|${mapPhotos.length}`}
+                  onPhoto={p => { const hit = photos.find(x => x.id === p.id); if (hit) setOpen(hit); }} onVoice={() => undefined} onTrip={id => setSelected(id)} />
+              </Suspense>
+              {tracksErr && <div className="absolute left-2 bottom-2 right-2 text-[11.5px] bg-white/95 text-[#b3140a] rounded-lg px-2.5 py-1.5">{tracksErr}</div>}
+              <div className="absolute left-2 top-2 text-[11px] bg-white/90 backdrop-blur rounded-lg px-2 py-1 text-[#444] leading-tight pointer-events-none">
+                {mapPhotos.length} công ty / ảnh trên bản đồ · chạm ảnh để xem chi tiết
+              </div>
+            </div>
+          </div>
         )}
 
         <div className="text-[11.5px] text-[#a1a1a6] text-center pb-6">Link riêng tư của Let's Go VN — vui lòng không chuyển tiếp cho người khác.</div>
@@ -258,6 +311,11 @@ function Lightbox({ photo: p, onClose }: { photo: SharedPhoto; onClose: () => vo
       </div>
       <div className="bg-white md:w-80 md:max-h-none max-h-[34vh] overflow-y-auto p-4 space-y-2.5 rounded-t-2xl md:rounded-none">
         <div className="text-[16px] font-semibold tracking-tight leading-snug">{p.company_name || 'Chưa ghi tên công ty'}</div>
+        {isOnline(p) && (
+          <div className={`text-[12px] font-medium rounded-lg px-2.5 py-1.5 leading-snug ${p.verified_at ? 'bg-[#e8f8ed] text-[#1d8a3b]' : 'bg-[#fff4e0] text-[#b25e00]'}`}>
+            {p.verified_at ? 'Khảo sát online, đã được xác thực.' : `${UNVERIFIED_TAG}: lấy từ tin tuyển dụng trên mạng, vị trí theo Google Maps — chưa tới tận nơi kiểm tra.`}
+          </div>
+        )}
         {rows.filter(([, v]) => v).map(([k, v]) => (
           <div key={k}>
             <div className="text-[11px] font-medium text-[#86868b]">{k}</div>

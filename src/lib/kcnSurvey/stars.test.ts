@@ -51,7 +51,7 @@ describe('nhóm chuyến theo ngày', () => {
 const photo = (o: Partial<SurveyPhoto>): SurveyPhoto => ({
   id: Math.random().toString(36), trip_id: null, zone_id: 'z', zone_name: 'KCN A', lat: 10.7, lng: 106.9, accuracy_m: 5, position_source: 'gps',
   taken_at: '2026-11-01T08:00:00Z', storage_path: 'p', url: 'https://x/p.jpg', thumb_url: null, width: 100, height: 100, size_bytes: 1,
-  company_name: '', client_id: null, lead_id: null, crm_id: null, positions: '', headcount: null, wage_text: '', note: '', annotations: [],
+  company_name: '', client_id: null, lead_id: null, crm_id: null, positions: '', headcount: null, wage_text: '', note: '', annotations: [], survey_kind: 'field', verified_at: null,
   user_id: null, user_name: 'Tony', created_at: '', ...o,
 });
 

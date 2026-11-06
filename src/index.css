@@ -336,6 +336,10 @@ body {
   font-size: 15px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
+.kcs-photo.kcs-online img,
+.kcs-photo.kcs-online span { border: 2px dashed #FF9F0A; }
+.kcs-photo.kcs-online-ok img,
+.kcs-photo.kcs-online-ok span { border: 2px dashed #34C759; }
 .kcs-photo img,
 .kcs-photo span {
   display: flex;

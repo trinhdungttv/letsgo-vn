@@ -121,7 +121,8 @@ export function reportIntro(r: ZoneReport): string[] {
       + ' Người khảo sát đi xe quanh KCN, chụp bảng thông báo tuyển dụng treo ở cổng các nhà máy và ghi lại nội dung.',
     'Mỗi mục ở phần "Chi tiết từng bảng tuyển dụng" là 1 ảnh: ngày chụp, công ty, vị trí đang tuyển, số lượng, mức lương ghi'
       + ' trên bảng (giữ nguyên chữ trên bảng), ghi chú của người khảo sát. Ảnh bảng tuyển dụng (nếu có) nằm ngay dưới mỗi mục.'
-      + ' Nhãn [Chú trọng] = công ty người khảo sát gắn sao, cần chú trọng.',
+      + ' Nhãn [Chú trọng] = công ty người khảo sát gắn sao, cần chú trọng.'
+      + ' Nhãn [Online - Chưa xác thực] = ảnh tuyển dụng lấy trên mạng, vị trí theo link Google Maps, người khảo sát chưa tới tận nơi kiểm tra — độ tin cậy thấp hơn ảnh chụp thực địa.',
     'Gợi ý phân tích: mặt bằng lương theo vị trí (thấp nhất / phổ biến / cao nhất), công ty tuyển nhiều nhất, vị trí đang thiếu,'
       + ' phúc lợi hay được nhắc (xe đưa đón, cơm, phụ cấp…), xu hướng theo thời gian nếu có nhiều lần khảo sát.',
   ];

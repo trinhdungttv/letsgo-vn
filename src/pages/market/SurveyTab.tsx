@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, RotateCcw, Route, Search, Share2, Star, Trash2, X,
+  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, Globe, RotateCcw, Route, Search, Share2, Star, Trash2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -31,6 +31,8 @@ import SurveyTripMap from './survey/SurveyTripMap';
 import SurveyPhotoViewer, { PhotoThumb } from './survey/SurveyPhotoViewer';
 import SurveyVoiceSheet from './survey/SurveyVoiceSheet';
 import SurveyShareDialog from './survey/SurveyShareDialog';
+import OnlinePhotoDialog from './survey/OnlinePhotoDialog';
+import { KIND_FILTERS, matchesKind, type KindFilter } from '../../lib/kcnSurvey/online';
 import type { ShareZone } from '../../lib/kcnSurvey/share';
 import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
@@ -43,14 +45,15 @@ const card = 'bg-white border border-[#E8E7E2] rounded-[10px]';
 
 // ── Nhớ tab + bộ lọc theo máy (mở lại tab là thấy đúng mục lần trước) ───────
 const PREFS_KEY = 'lgvn_survey_tab_v1';
-interface TabPrefs { sub: Sub; period: number; province: string; zoneId: string; person: string; starOnly: boolean }
-const DEFAULT_PREFS: TabPrefs = { sub: 'trips', period: 30, province: 'all', zoneId: 'all', person: 'all', starOnly: false };
+interface TabPrefs { sub: Sub; period: number; province: string; zoneId: string; person: string; starOnly: boolean; kind: KindFilter }
+const DEFAULT_PREFS: TabPrefs = { sub: 'trips', period: 30, province: 'all', zoneId: 'all', person: 'all', starOnly: false, kind: 'all' };
 function readPrefs(): TabPrefs {
   try {
     const o = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') as Partial<TabPrefs>;
     const p = { ...DEFAULT_PREFS, ...o };
     if (!['trips', 'photos', 'voice', 'zones', 'archive'].includes(p.sub)) p.sub = 'trips';
     if (!PERIODS.some(x => x.d === p.period)) p.period = 30;
+    if (!KIND_FILTERS.some(x => x.id === p.kind)) p.kind = 'all';
     p.province = normalizeSavedProvince(p.province); // bản cũ lưu nguyên văn "TP. Đồng Nai"
     return p;
   } catch { return { ...DEFAULT_PREFS }; }
@@ -61,6 +64,7 @@ const PURGE_KEY = 'lgvn_survey_purge_at';
 export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast }: MarketTabProps) {
   const { user, token } = useAuth();
   const [shareOpen, setShareOpen] = useState(false);
+  const [onlineOpen, setOnlineOpen] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trips, setTrips] = useState<SurveyTrip[]>([]);
   const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
@@ -75,7 +79,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* chế độ riêng tư */ }
     return next;
   }), []);
-  const { sub, period, province, zoneId, person, starOnly } = prefs;
+  const { sub, period, province, zoneId, person, starOnly, kind } = prefs;
   const [search, setSearch] = useState('');
   /** Ảnh / ghi âm đang lọc theo 1 chuyến (nút "Xem n ảnh" ở tab Chuyến đi) */
   const [tripFilter, setTripFilter] = useState<string | null>(null);
@@ -179,8 +183,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const q = fold(search.trim());
   const fTrips = useMemo(() => trips.filter(t => okTime(t.started_at) && okZone(t.zone_id) && okPerson(t.user_name)
     && (!q || fold([t.title, t.zone_name, t.note, t.user_name, ...t.passed.map(p => p.name)].join(' ')).includes(q))), [trips, okTime, okZone, okPerson, q]);
-  const fPhotosAll = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name)
-    && (!q || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(q))), [photos, okTime, okZone, okPerson, q]);
+  const fPhotosAll = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name) && matchesKind(p, kind)
+    && (!q || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(q))), [photos, okTime, okZone, okPerson, q, kind]);
   const fPhotos = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))), [fPhotosAll, tripFilter, starOnly, starOf]);
   const starredCount = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && starOf(p)).length, [fPhotosAll, tripFilter, starOf]);
   const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name) && (!tripFilter || n.trip_id === tripFilter)
@@ -246,13 +250,13 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       if (t.road_coverage != null) r.cover = Math.max(r.cover ?? 0, t.road_coverage);
     });
     const touch = (r: { last: string | null }, at: string) => { if (!r.last || at > r.last) r.last = at; };
-    photos.filter(p => okTime(p.taken_at) && okPerson(p.user_name) && okProvince(p.zone_id)).forEach(p => {
+    photos.filter(p => okTime(p.taken_at) && okPerson(p.user_name) && okProvince(p.zone_id) && matchesKind(p, kind)).forEach(p => {
       const r = row(p.zone_id, p.zone_name); r.photos += 1; touch(r, p.taken_at);
       if (starOf(p)) r.starCos.add(foldName(p.company_name));
     });
     voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name) && okProvince(n.zone_id)).forEach(n => { const r = row(n.zone_id, n.zone_name); r.voice += 1; touch(r, n.recorded_at); });
     return [...m.values()].sort((a, b) => (b.last ?? '').localeCompare(a.last ?? '') || b.photos - a.photos);
-  }, [trips, photos, voiceNotes, okTime, okPerson, okProvince, marketZones, zoneProvLabel, starOf]);
+  }, [trips, photos, voiceNotes, okTime, okPerson, okProvince, marketZones, zoneProvLabel, starOf, kind]);
 
   const totalM = fTrips.reduce((s, t) => s + t.distance_m, 0);
   const zonesCount = new Set(fTrips.map(t => t.zone_id).filter(Boolean)).size;
@@ -296,9 +300,9 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     } catch (e) { say((e as Error).message); }
   };
   const exportPhotos = () => {
-    const head = ['Ngày chụp', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
+    const head = ['Ngày chụp', 'Loại', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
     const esc = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, p.headcount ?? '', p.wage_text, p.note, p.user_name,
+    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.survey_kind === 'online' ? (p.verified_at ? 'Online - đã xác thực' : 'Online - chưa xác thực') : 'Đi thực địa', p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, p.headcount ?? '', p.wage_text, p.note, p.user_name,
       p.lat.toFixed(6), p.lng.toFixed(6), p.url, `https://www.google.com/maps?q=${p.lat},${p.lng}`]);
     const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(',')).join('\n');
     const d = new Date();
@@ -341,6 +345,10 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
           )}
         </div>
         <div className="flex flex-row gap-2 shrink-0">
+          <button onClick={() => setOnlineOpen(true)} title="Thêm ảnh tuyển dụng lấy trên mạng + vị trí Google Maps (không đi thực địa)"
+            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
+            <Globe size={15} /> Ảnh online
+          </button>
           <button onClick={() => setShareOpen(true)} title="Gửi link + mã 4 số cho người ngoài xem khảo sát"
             className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
             <Share2 size={15} /> Chia sẻ
@@ -390,6 +398,9 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             {people.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         )}
+        <select value={kind} onChange={e => setPrefs({ kind: e.target.value as KindFilter })} className="h-9 px-2.5 rounded-lg border border-[#E8E7E2] text-[12.5px] bg-white" aria-label="Loại khảo sát">
+          {KIND_FILTERS.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+        </select>
         <div className="relative flex-1 min-w-[180px]">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#aaa]" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm công ty, vị trí tuyển, ghi chú…"
@@ -672,6 +683,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             : voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name) && (pdfFor.id === 'none' ? !n.zone_id : n.zone_id === pdfFor.id))}
           stars={stars} say={say} onClose={() => setPdfFor(null)} />
       )}
+      {onlineOpen && <OnlinePhotoDialog zones={marketZones} leads={marketLeads} user={user ? { id: user.id, full_name: user.full_name } : null} defaultZoneId={zoneId !== 'all' && zoneId !== 'none' ? zoneId : null}
+        say={say} onClose={() => setOnlineOpen(false)} onSaved={ps => setPhotos(list => [...ps, ...list])} />}
       {shareOpen && <SurveyShareDialog zones={shareZones} token={token} say={say} onClose={() => setShareOpen(false)} />}
       {surveyOpen && (
         <KcnSurveyMode marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory} goTab={goTab}

@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import { streetTiles } from '../../../lib/mapTiles';
 import { escapeMapHtml, SOUTH_VN_BOUNDS } from '../../../lib/mapGroups';
 import type { SurveyPhoto, SurveyVoiceNote } from '../../../lib/kcnSurvey/api';
+import { UNVERIFIED_TAG } from '../../../lib/kcnSurvey/online';
 import type { TrackSegment } from '../../../lib/kcnSurvey/track';
 import { fmtClock } from './surveyFormat';
 
@@ -70,12 +71,12 @@ export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, 
     }
     for (const p of photos) {
       const icon = L.divIcon({
-        className: 'kcs-photo',
+        className: p.survey_kind === 'online' ? (p.verified_at ? 'kcs-photo kcs-online-ok' : 'kcs-photo kcs-online') : 'kcs-photo',
         html: p.thumb_url ? `<img src="${escapeMapHtml(p.thumb_url)}" alt="" />` : '<span>📷</span>',
         iconSize: [34, 34], iconAnchor: [17, 17],
       });
       const m = L.marker([p.lat, p.lng], { icon, zIndexOffset: 500 });
-      m.bindTooltip(escapeMapHtml([p.company_name || 'Ảnh chỉ tiêu', new Date(p.taken_at).toLocaleDateString('vi-VN')].join(' · ')), { direction: 'top', offset: [0, -16], className: 'lgmap-tooltip' });
+      m.bindTooltip(escapeMapHtml([p.company_name || 'Ảnh chỉ tiêu', ...(p.survey_kind === 'online' ? [p.verified_at ? 'Online' : UNVERIFIED_TAG] : []), new Date(p.taken_at).toLocaleDateString('vi-VN')].join(' · ')), { direction: 'top', offset: [0, -16], className: 'lgmap-tooltip' });
       m.on('click', () => cb.current.onPhoto(p));
       m.addTo(ly.marks);
       if (!sel.length || p.trip_id === selectedId) bounds.extend([p.lat, p.lng]);

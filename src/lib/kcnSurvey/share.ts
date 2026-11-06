@@ -2,6 +2,8 @@
 // Phần thuần (mã PIN, link, soạn tin Zalo, nhóm KCN theo tỉnh) có test; phần gọi DB đi qua RPC — bảng bị khoá với anon.
 import { supabase } from '../supabase';
 import { provinceKey, provinceLabel } from './province';
+import { groupChunks, type TrackChunk } from './api';
+import type { TrackSegment } from './track';
 
 export const SURVEY_SHARE_HINT = 'Chưa chạy migration 209 (Chia sẻ khảo sát) trên Supabase — chạy file 20261106100000_209_kcn_survey_shares.sql rồi thử lại';
 
@@ -169,6 +171,9 @@ export interface SharedPhoto {
   url: string; thumb_url: string | null; width: number | null; height: number | null;
   company_name: string; positions: string; headcount: number | null; wage_text: string; note: string;
   annotations: import('./markup').PhotoMark[] | null;
+  /** Migration 210; bản cũ của hàm chia sẻ không trả → coi như thực địa */
+  survey_kind?: 'field' | 'online';
+  verified_at?: string | null;
 }
 export interface SharedSurvey {
   label: string; provinces: string[]; expires_at: string | null;
@@ -181,3 +186,15 @@ export type OpenSurveyShareResult =
 
 export const openSurveyShare = (code: string, pin: string, count = true) =>
   rpc<OpenSurveyShareResult>('survey_share_open', { p_code: code, p_pin: pin, p_count: count });
+
+export type SharedTracksResult =
+  | { ok: true; chunks: TrackChunk[] }
+  | { ok: false; reason: SurveyShareFail; seconds?: number; remaining?: number };
+
+/** Vết GPS của các chuyến (chỉ chuyến thuộc KCN link cho phép, tối đa 60) → tripId → các đoạn đường (migration 211). */
+export async function loadSharedTracks(code: string, pin: string, tripIds: readonly string[]): Promise<Map<string, TrackSegment[]>> {
+  if (!tripIds.length) return new Map();
+  const r = await rpc<SharedTracksResult>('survey_share_tracks', { p_code: code, p_pin: pin, p_trip_ids: tripIds });
+  if (!r.ok) throw new Error(r.reason === 'expired' ? 'Link đã hết hạn' : 'Không tải được lộ trình');
+  return groupChunks(r.chunks);
+}
