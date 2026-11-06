@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Camera, ChevronDown, ChevronRight, Loader2, MapPin, Pencil, Route, Trash2, X } from 'lucide-react';
 import type { MarketZone } from '../../../lib/types';
 import {
-  listPhotos, listTrips, loadTracks, softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip,
+  listPhotos, listTrips, loadTracks, deleteTripWithPin, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip,
   type SurveyPhoto, type SurveyTrip,
 } from '../../../lib/kcnSurvey/api';
 import { surveyTitle } from '../../../lib/kcnSurvey/zones';
@@ -12,6 +12,8 @@ import { fmtDistance, fmtDuration, trackBounds, trackLength, type TrackSegment }
 import { fold } from './surveyData';
 import SurveyPhotoViewer, { PhotoThumb } from './SurveyPhotoViewer';
 import { fmtDateTime } from './surveyFormat';
+import SurveyPinGate from './SurveyPinGate';
+import type { PinRequest } from '../../../components/quickNotes/PinDialog';
 
 export interface PhotoFilter {
   label: string;
@@ -46,6 +48,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
   const [viewer, setViewer] = useState<SurveyPhoto | null>(null);
   const [search, setSearch] = useState('');
   const [busyTrip, setBusyTrip] = useState<string | null>(null);
+  const [pinReq, setPinReq] = useState<Extract<PinRequest, { kind: 'verify' }> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,14 +127,19 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
     } catch (e) { say((e as Error).message); }
   };
 
-  const deleteTrip = async (t: SurveyTrip) => {
-    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến chuyển vào Lưu trữ 30 ngày (tab Khảo sát KCN → Lưu trữ, khôi phục được), không còn tính là đường đã đi. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`)) return;
-    try {
-      await softDeleteTrip(t.id);
-      say('Đã chuyển chuyến vào Lưu trữ (30 ngày)');
-      await load();
-      onChanged();
-    } catch (e) { say((e as Error).message); }
+  // Xoá chuyến BẮT BUỘC nhập mã 4 số (mã phụ của hệ thống) — server cũng chặn nếu thiếu mã (migration 212)
+  const deleteTrip = (t: SurveyTrip) => {
+    setPinReq({
+      kind: 'verify', danger: true, confirmLabel: 'Xoá chuyến',
+      title: 'Nhập mã để xoá chuyến khảo sát',
+      message: `${t.title || t.zone_name || 'Chuyến khảo sát'} · ${new Date(t.started_at).toLocaleDateString('vi-VN')}. Chuyến vào Lưu trữ 30 ngày (tab Khảo sát KCN → Lưu trữ, khôi phục được), không còn tính là đường đã đi. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`,
+      run: async pin => {
+        await deleteTripWithPin(t.id, pin);
+        say('Đã chuyển chuyến vào Lưu trữ (30 ngày)');
+        await load();
+        onChanged();
+      },
+    });
   };
 
   return (
@@ -265,6 +273,7 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
         )}
       </div>
 
+      {pinReq && <SurveyPinGate req={pinReq} onClose={() => setPinReq(null)} onDone={() => setPinReq(null)} />}
       {viewer && (
         <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
           starred={starOf?.(viewer)} onStar={onStar}

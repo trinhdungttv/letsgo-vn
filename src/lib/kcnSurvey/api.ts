@@ -5,6 +5,8 @@ import type { Bounds, TrackPoint, TrackSegment } from './track';
 import type { PassedCompany } from './companies';
 import { sanitizeMarks, type PhotoMark } from './markup';
 import { r2PutFiles, r2Status, R2_PATH_PREFIX } from '../r2Upload';
+import { getStoredSessionToken } from '../sessionToken';
+import { LockError } from '../quickNotes/api';
 import { ARCHIVE_DAYS, starKey, type StarRef, type SurveyStar } from './stars';
 
 export const SURVEY_MIGRATION_HINT = 'Chưa chạy migration 190 (Khảo sát KCN) trên Supabase — chạy file 20261102100000_190_kcn_survey_trips.sql rồi thử lại';
@@ -138,11 +140,30 @@ export async function countTripsBetween(zoneId: string, from: string, to: string
   return error ? 0 : count ?? 0;
 }
 
-/** Xoá mềm — chuyến và vết GPS vẫn nằm trong DB (khôi phục được bằng cách đặt deleted_at = NULL). */
-export async function softDeleteTrip(id: string) {
-  const { error } = await supabase.from('kcn_survey_trips').update({ deleted_at: new Date().toISOString() }).eq('id', id);
-  if (error) throw new Error(surveyErrorText(error));
+export const TRIP_PIN_MIGRATION_HINT = 'Chưa chạy migration 212 (xoá chuyến cần mã 4 số) trên Supabase — chạy file 20261106180000_212_kcn_survey_trip_delete_pin.sql rồi thử lại';
+
+/** Gọi hàm xoá có mã 4 số. Sai mã / tạm khoá / chưa đặt mã → LockError (hộp nhập mã hiện câu báo). */
+async function tripPinRpc(fn: 'kcn_survey_trip_delete' | 'kcn_survey_trip_purge', id: string, pin: string): Promise<void> {
+  const { data, error } = await supabase.rpc(fn, { p_token: getStoredSessionToken(), p_id: id, p_pin: pin });
+  if (error) {
+    if (/could not find the function|schema cache|PGRST202|42883/i.test(error.message)) throw new Error(TRIP_PIN_MIGRATION_HINT);
+    throw new Error(surveyErrorText(error));
+  }
+  const r = (data ?? {}) as { ok?: boolean; reason?: string; remaining?: number; seconds?: number };
+  if (r.ok) return;
+  if (r.reason === 'not_found') throw new Error('Chuyến không còn tồn tại hoặc đã được xoá');
+  const reason = (['wrong_pin', 'locked', 'no_pin'] as const).find(x => x === r.reason) ?? 'wrong_pin';
+  throw new LockError({ reason, remaining: r.remaining, seconds: r.seconds });
 }
+
+/**
+ * Xoá chuyến → Lưu trữ 30 ngày (chuyến và vết GPS vẫn nằm trong DB, khôi phục được). BẮT BUỘC mã 4 số — kiểm ở server
+ * (migration 212): UPDATE deleted_at trực tiếp bị trigger chặn. Cùng mã với khoá chống xoá Ghi chú / Sơ đồ tư duy.
+ */
+export const deleteTripWithPin = (id: string, pin: string) => tripPinRpc('kcn_survey_trip_delete', id, pin);
+
+/** Xoá HẲN 1 chuyến đang ở Lưu trữ — cũng cần mã 4 số. */
+export const purgeTripWithPin = (id: string, pin: string) => tripPinRpc('kcn_survey_trip_purge', id, pin);
 
 export async function getTrip(id: string): Promise<SurveyTrip | null> {
   const data = await withTitleFallback(cols => supabase.from('kcn_survey_trips').select(cols).eq('id', id).is('deleted_at', null).maybeSingle());

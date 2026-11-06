@@ -16,7 +16,7 @@ import type { Branch } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 import {
   ARCHIVE_MIGRATION_HINT, listArchived, listPhotos, listStars, listTrips, listVoiceNotes, loadTracks, purgeArchive, restoreArchived, setStar,
-  softDeleteTrip, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, VOICE_MIGRATION_HINT,
+  deleteTripWithPin, purgeTripWithPin, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, VOICE_MIGRATION_HINT,
   type ArchiveKind, type ArchivedPhoto, type ArchivedTrip, type ArchivedVoice, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote,
 } from '../../lib/kcnSurvey/api';
 import { STATUS_META, type SurveyStatus } from '../../lib/kcnSurvey/companies';
@@ -31,6 +31,8 @@ import SurveyTripMap from './survey/SurveyTripMap';
 import SurveyPhotoViewer, { PhotoThumb } from './survey/SurveyPhotoViewer';
 import SurveyVoiceSheet from './survey/SurveyVoiceSheet';
 import SurveyShareDialog from './survey/SurveyShareDialog';
+import SurveyPinGate from './survey/SurveyPinGate';
+import type { PinRequest } from '../../components/quickNotes/PinDialog';
 import OnlinePhotoDialog from './survey/OnlinePhotoDialog';
 import { KIND_FILTERS, matchesKind, type KindFilter } from '../../lib/kcnSurvey/online';
 import type { ShareZone } from '../../lib/kcnSurvey/share';
@@ -64,6 +66,8 @@ const PURGE_KEY = 'lgvn_survey_purge_at';
 export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast }: MarketTabProps) {
   const { user, token } = useAuth();
   const [shareOpen, setShareOpen] = useState(false);
+  /** Hộp nhập mã 4 số đang mở (xoá chuyến / xoá hẳn chuyến) */
+  const [pinReq, setPinReq] = useState<Extract<PinRequest, { kind: 'verify' }> | null>(null);
   const [onlineOpen, setOnlineOpen] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trips, setTrips] = useState<SurveyTrip[]>([]);
@@ -273,15 +277,20 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       setRenaming(null);
     } catch (e) { say((e as Error).message); }
   };
-  const deleteTrip = async (t: SurveyTrip) => {
-    if (!window.confirm(`Xoá chuyến khảo sát ${t.title || t.zone_name || ''} ngày ${new Date(t.started_at).toLocaleDateString('vi-VN')}?\n\nChuyến chuyển vào Lưu trữ ${ARCHIVE_DAYS} ngày (khôi phục được), không còn hiện trên bản đồ / tính là đường đã đi. Quá ${ARCHIVE_DAYS} ngày mới tự xoá hẳn. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`)) return;
-    try {
-      await softDeleteTrip(t.id);
-      setTrips(list => list.filter(x => x.id !== t.id));
-      setSelected(null);
-      say(`Đã chuyển chuyến vào Lưu trữ (${ARCHIVE_DAYS} ngày)`);
-      void loadArchive();
-    } catch (e) { say((e as Error).message); }
+  // Xoá chuyến BẮT BUỘC nhập mã 4 số (mã phụ của hệ thống, chung với khoá Ghi chú) — server cũng chặn nếu không có mã (migration 212)
+  const deleteTrip = (t: SurveyTrip) => {
+    setPinReq({
+      kind: 'verify', danger: true, confirmLabel: 'Xoá chuyến',
+      title: 'Nhập mã để xoá chuyến khảo sát',
+      message: `${t.title || t.zone_name || 'Chuyến khảo sát'} · ${new Date(t.started_at).toLocaleDateString('vi-VN')}. Chuyến vào Lưu trữ ${ARCHIVE_DAYS} ngày (khôi phục được), không còn hiện trên bản đồ / tính là đường đã đi. Ảnh chỉ tiêu và ghi âm của chuyến vẫn giữ nguyên.`,
+      run: async pin => {
+        await deleteTripWithPin(t.id, pin);
+        setTrips(list => list.filter(x => x.id !== t.id));
+        setSelected(null);
+        say(`Đã chuyển chuyến vào Lưu trữ (${ARCHIVE_DAYS} ngày)`);
+        void loadArchive();
+      },
+    });
   };
   const restore = async (kind: ArchiveKind, id: string) => {
     try {
@@ -291,7 +300,16 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     } catch (e) { say((e as Error).message); }
   };
   const purgeOne = async (kind: ArchiveKind, id: string, label: string) => {
-    if (!window.confirm(`XOÁ HẲN “${label}” khỏi hệ thống?\n\nKhông khôi phục lại được trong app nữa${kind === 'trip' ? ' (vết GPS của chuyến xoá theo; ảnh / ghi âm của chuyến vẫn giữ)' : ''}. Bản sao dòng dữ liệu vẫn còn trong Lịch sử dữ liệu.`)) return;
+    if (kind === 'trip') {
+      setPinReq({
+        kind: 'verify', danger: true, confirmLabel: 'Xoá hẳn',
+        title: 'Nhập mã để xoá hẳn chuyến',
+        message: `“${label}” sẽ bị xoá hẳn khỏi hệ thống, không khôi phục lại được trong app (vết GPS của chuyến xoá theo; ảnh / ghi âm của chuyến vẫn giữ). Bản sao dòng dữ liệu vẫn còn trong Lịch sử dữ liệu.`,
+        run: async pin => { await purgeTripWithPin(id, pin); say('Đã xoá hẳn'); await loadArchive(); },
+      });
+      return;
+    }
+    if (!window.confirm(`XOÁ HẲN “${label}” khỏi hệ thống?\n\nKhông khôi phục lại được trong app nữa. Bản sao dòng dữ liệu vẫn còn trong Lịch sử dữ liệu.`)) return;
     try {
       const n = await purgeArchive({ kind, id });
       if (n == null) { say(ARCHIVE_MIGRATION_HINT); setArchiveMissing(true); return; }
@@ -685,6 +703,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       )}
       {onlineOpen && <OnlinePhotoDialog zones={marketZones} leads={marketLeads} user={user ? { id: user.id, full_name: user.full_name } : null} defaultZoneId={zoneId !== 'all' && zoneId !== 'none' ? zoneId : null}
         say={say} onClose={() => setOnlineOpen(false)} onSaved={ps => setPhotos(list => [...ps, ...list])} />}
+      {pinReq && <SurveyPinGate req={pinReq} onClose={() => setPinReq(null)} onDone={() => setPinReq(null)} />}
       {shareOpen && <SurveyShareDialog zones={shareZones} token={token} say={say} onClose={() => setShareOpen(false)} />}
       {surveyOpen && (
         <KcnSurveyMode marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory} goTab={goTab}

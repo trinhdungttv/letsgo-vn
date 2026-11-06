@@ -16,6 +16,12 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-06-survey-trip-delete-pin',
+    date: '2026-11-06',
+    title: 'Khảo sát KCN',
+    features: ['Xoá chuyến khảo sát phải nhập mã 4 số (chung mã với khoá Ghi chú)'],
+  },
+  {
     id: '2026-11-06-survey-share-map',
     date: '2026-11-06',
     title: 'Khảo sát KCN',
