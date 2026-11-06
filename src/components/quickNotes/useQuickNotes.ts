@@ -125,6 +125,7 @@ export function useQuickNotes(userId: string): QuickNotesStore {
       mindmap: init.mindmap ?? null,
       view_mode: init.view_mode ?? 'text',
       locked_at: null,
+      tags: init.tags ?? [],
     };
     localOnly.current.add(note.id);
     commit([...notesRef.current, note]);

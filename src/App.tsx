@@ -34,6 +34,7 @@ import Recruit from './pages/Recruit';
 import SharedCostPlan from './pages/SharedCostPlan';
 import { parseShareHash } from './lib/costPlan/api';
 import { parseApplyHash } from './lib/recruit/publicLink';
+import { parseSurveyShareHash } from './lib/kcnSurvey/share';
 import { RECRUIT_ENABLED } from './lib/featureFlags';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import QuickNotesDock from './components/quickNotes/QuickNotesDock';
@@ -49,6 +50,8 @@ const OfficeRental = lazy(() => import('./modules/office-rental'));
 const Legal = lazy(() => import('./pages/Legal'));
 // Form ứng tuyển công khai (#/apply/<mã>) — người ngoài mở, không cần đăng nhập
 const PublicApply = lazy(() => import('./pages/PublicApply'));
+// Link chia sẻ Khảo sát KCN (#/ks/<mã>) — người ngoài xem bằng mã 4 số, không cần đăng nhập
+const SharedSurvey = lazy(() => import('./pages/SharedSurvey'));
 
 /** Trang Mạng lưới Sale cũ — nay là tệp Sale trong CSKH (#/crm-leads/sale). */
 const LEGACY_SALE_PAGE = 'crm-sales';
@@ -74,8 +77,10 @@ function AppInner() {
   const [shareCode, setShareCode] = useState<string | null>(() => parseShareHash(window.location.hash));
   // Link ứng tuyển (#/apply/<mã>[/<id CTV>]) — cũng mở không cần đăng nhập, không nạp dữ liệu app
   const [applyLink, setApplyLink] = useState(() => readApplyLink(window.location.hash));
+  // Link chia sẻ Khảo sát KCN (#/ks/<mã>) — cũng không cần đăng nhập, không nạp dữ liệu app
+  const [surveyShare, setSurveyShare] = useState<string | null>(() => parseSurveyShareHash(window.location.hash));
   useEffect(() => {
-    const sync = () => { setShareCode(parseShareHash(window.location.hash)); setApplyLink(readApplyLink(window.location.hash)); };
+    const sync = () => { setShareCode(parseShareHash(window.location.hash)); setApplyLink(readApplyLink(window.location.hash)); setSurveyShare(parseSurveyShareHash(window.location.hash)); };
     window.addEventListener('hashchange', sync);
     window.addEventListener('popstate', sync);
     return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); };
@@ -89,7 +94,7 @@ function AppInner() {
     marketSurveys, competitors, marketZones, setMarketZones, marketLeads,
     loading, error,
     loadClients, loadFinance, loadMarket,
-  } = useAppData(!!user && !shareCode && !applyLink);
+  } = useAppData(!!user && !shareCode && !applyLink && !surveyShare);
 
   const {
     leads,
@@ -98,7 +103,7 @@ function AppInner() {
     activities, setActivities,
     pipeline,
     reloadPipeline,
-  } = useCRMData(!!user && !shareCode && !applyLink);
+  } = useCRMData(!!user && !shareCode && !applyLink && !surveyShare);
 
   function parseHash(): Page {
     const parts = window.location.hash.replace('#/', '').split('/');
@@ -346,6 +351,7 @@ function AppInner() {
   const handleActivityCreate = useCallback((a: CRMActivity) => setActivities(prev => [a, ...prev]), [setActivities]);
 
   if (shareCode) return <SharedCostPlan code={shareCode} />;
+  if (surveyShare) return <Suspense fallback={null}><SharedSurvey code={surveyShare} /></Suspense>;
   if (applyLink) {
     return (
       <Suspense fallback={<div className="h-screen bg-[#F5F5F7]" />}>

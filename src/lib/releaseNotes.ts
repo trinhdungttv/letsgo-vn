@@ -16,6 +16,46 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-06-survey-share',
+    date: '2026-11-06',
+    title: 'Khảo sát KCN',
+    features: ['Chia sẻ khảo sát cho người ngoài bằng link + mã 4 số, kèm tin nhắn Zalo soạn sẵn'],
+  },
+  {
+    id: '2026-11-06-notes-tags',
+    date: '2026-11-06',
+    title: 'Ghi chú nhanh',
+    features: ['Thẻ (tag) cho ghi chú & sơ đồ tư duy: gắn thẻ, lọc theo thẻ, gõ #thẻ để tìm'],
+  },
+  {
+    id: '2026-11-06-notes-lock-readonly',
+    date: '2026-11-06',
+    title: 'Ghi chú nhanh',
+    features: ['Khoá ghi chú / sơ đồ = chỉ xem: muốn sửa, thêm hay xoá đều phải nhập mã 4 số'],
+  },
+  {
+    id: '2026-11-06-legal-topic-order-timeline',
+    date: '2026-11-06',
+    title: 'Pháp lý',
+    features: [
+      'Sắp xếp thứ tự Topic bằng kéo thả (hoặc ⋯ → Chuyển lên / xuống)',
+      'Sơ đồ Dòng thời gian cho từng Topic: 3 kiểu (trục chấm tròn, dải mũi tên, uốn lượn), tải ảnh',
+      'Sơ đồ tư duy: nút Dòng thời gian xem các nhánh theo 3 kiểu',
+    ],
+  },
+  {
+    id: '2026-11-05-holidays-ch-uk-dk',
+    date: '2026-11-05',
+    title: 'CSKH',
+    features: ['Thêm ngày lễ Thụy Sĩ, Anh Quốc, Đan Mạch'],
+  },
+  {
+    id: '2026-11-05-company-dates-autosave',
+    date: '2026-11-05',
+    title: 'Khách hàng',
+    features: ['Nhập nhanh ngày lễ & lĩnh vực tự động lưu, khung không đổi cỡ giữa các tab'],
+  },
+  {
     id: '2026-11-05-bulk-industry',
     date: '2026-11-05',
     title: 'Khách hàng',

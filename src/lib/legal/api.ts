@@ -76,7 +76,7 @@ export function normTopic(r: Row): LegalTopic {
   };
 }
 
-const DOC_KINDS: DocKind[] = ['drive', 'link', 'mindmap', 'lesson', 'cards'];
+const DOC_KINDS: DocKind[] = ['drive', 'link', 'mindmap', 'timeline', 'lesson', 'cards'];
 export function normMeta(raw: unknown): DocMeta {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Row;
   const m: DocMeta = {};
@@ -165,6 +165,13 @@ export async function saveTopic(input: TopicInput, userName: string): Promise<Le
   const { data, error } = await q;
   if (error) fail(error);
   return normTopic(data as Row);
+}
+
+/** Lưu thứ tự mới của 1 nhóm Topic (cùng cấp): sort_order = vị trí + 1. Chỉ ghi những dòng đổi. */
+export async function reorderTopics(changes: { id: string; sort_order: number }[], userName: string): Promise<void> {
+  const results = await Promise.all(changes.map(c => supabase.from('legal_topics').update({ sort_order: c.sort_order, updated_by: userName }).eq('id', c.id)));
+  const bad = results.find(r => r.error);
+  if (bad?.error) fail(bad.error);
 }
 
 export type DocInput = Partial<Omit<LegalDoc, 'id' | 'updated_by' | 'updated_at' | 'created_at' | 'deleted_at'>> & { id?: string | null; content?: unknown };

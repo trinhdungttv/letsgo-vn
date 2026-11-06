@@ -6,6 +6,7 @@ import { supabase } from '../supabase';
 import { getStoredSessionToken } from '../sessionToken';
 import { isMissingFunction } from '../recruit/api';
 import { parseDoc } from './mindmap/parse';
+import { normTags } from './noteText';
 import { lockFailText, type LockFail, type LockFailReason } from './lock';
 import type { TranscribeEvent } from './transcript';
 import { NOTE_COLORS, NOTE_FONTS, type PendingAudio, type QuickNote, type QuickNoteRecording } from './types';
@@ -85,6 +86,7 @@ export function toNote(raw: unknown): QuickNote {
     // Bản thử 01/11 cho đổi qua lại Văn bản ⇄ Sơ đồ trên cùng 1 mục: mục chữ trống mà có sơ đồ thì coi là Sơ đồ
     view_mode: r.view_mode === 'mindmap' || (!String(r.body ?? '').trim() && mindmap) ? 'mindmap' : 'text',
     locked_at: typeof r.locked_at === 'string' ? r.locked_at : null,
+    tags: normTags(r.tags),
   };
 }
 
@@ -101,6 +103,8 @@ export async function saveNote(n: QuickNote): Promise<QuickNote> {
   const raw = await notesRpc<Record<string, unknown>>('save', {
     id: n.id, title: n.title, body: n.body, color: n.color, font_size: n.font_size, font: n.font,
     pinned: n.pinned, archived: !!n.archived_at, view_mode: n.view_mode,
+    // Máy chưa chạy migration 208: hàm cũ bỏ qua trường này (thẻ chỉ nhớ tạm trên màn hình)
+    tags: n.tags,
     // Không gửi sơ đồ rỗng: máy đang mở bản cũ (chưa có sơ đồ) sửa chữ thì không xoá mất sơ đồ vừa vẽ ở máy khác
     ...(n.mindmap ? { mindmap: n.mindmap } : mindmapClears.has(n.id) ? { mindmap: null } : {}),
   });

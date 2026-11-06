@@ -2,7 +2,7 @@
 // menu ⋯, hộp xác nhận, trạng thái trống.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  BookOpen, Briefcase, Building2, Clock, Coins, Factory, FileText, Folder, Gavel, Globe, GraduationCap, Heart, Image,
+  BookOpen, GanttChart, Briefcase, Building2, Clock, Coins, Factory, FileText, Folder, Gavel, Globe, GraduationCap, Heart, Image,
   Landmark, Layers, Lightbulb, Link2, MoreHorizontal, Network, Presentation, Receipt, Scale, ShieldCheck, Sheet as SheetIcon,
   HardHat, Users, Video, NotebookPen, FileSpreadsheet, Check,
 } from 'lucide-react';
@@ -67,6 +67,7 @@ export function EntityLogo({ name, color, url, size = 40 }: { name: string; colo
 
 export function DocKindIcon({ kind, fileType, size = 16 }: { kind: DocKind; fileType?: FileType | ''; size?: number }) {
   if (kind === 'mindmap') return <Network size={size} />;
+  if (kind === 'timeline') return <GanttChart size={size} />;
   if (kind === 'lesson') return <NotebookPen size={size} />;
   if (kind === 'cards') return <Layers size={size} />;
   switch (fileType) {

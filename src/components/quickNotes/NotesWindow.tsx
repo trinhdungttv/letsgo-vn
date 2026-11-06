@@ -10,8 +10,9 @@ import { Segmented, SearchField } from '../../modules/cskh/components/apple';
 import { errText, listTrash, restoreNote } from '../../lib/quickNotes/api';
 import { PALETTE } from '../../lib/quickNotes/colors';
 import {
-  checklistCount, displayTitle, isMindmap, listOrder, mindmapCount, noteMatches, notePreview, relativeTime,
+  checklistCount, displayTitle, hasAllTags, isMindmap, listOrder, mindmapCount, noteMatches, notePreview, relativeTime, tagCounts,
 } from '../../lib/quickNotes/noteText';
+import { TagChip } from './TagBar';
 import type { WinPlace } from '../../lib/quickNotes/lastPlace';
 import type { NotesTab, NoteView, QuickNote } from '../../lib/quickNotes/types';
 import type { QuickNotesStore } from './useQuickNotes';
@@ -72,6 +73,12 @@ function NoteRow({ note, selected, recording, attention, onClick }: {
           {map && note.mindmap && <span className="shrink-0 inline-flex items-center gap-0.5"><Network size={11} /> {mindmapCount(note.mindmap)}</span>}
           <span className="truncate text-[#AEAEB2]">{preview}</span>
         </span>
+        {note.tags.length > 0 && (
+          <span className="flex gap-1 mt-1 overflow-hidden">
+            {note.tags.slice(0, 4).map(t => <TagChip key={t} tag={t} />)}
+            {note.tags.length > 4 && <span className="text-[11px] text-[#86868B] self-center">+{note.tags.length - 4}</span>}
+          </span>
+        )}
       </span>
     </button>
   );
@@ -102,6 +109,7 @@ export default function NotesWindow({
 }) {
   const [tab, setTab] = useState<NotesTab>(initialTab);
   const [q, setQ] = useState('');
+  const [tagSel, setTagSel] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [trash, setTrash] = useState<QuickNote[] | null>(null);
   const [trashErr, setTrashErr] = useState<string | null>(null);
@@ -141,9 +149,11 @@ export default function NotesWindow({
 
   const rows = useMemo(() => {
     const base = tab === 'trash' ? (trash ?? []) : live.filter(n => (tab === 'archive' ? !!n.archived_at : !n.archived_at));
-    const hit = base.filter(n => kindOf(n) === section && noteMatches(n, q));
+    const hit = base.filter(n => kindOf(n) === section && hasAllTags(n, tagSel) && noteMatches(n, q));
     return tab === 'trash' ? hit : listOrder(hit);
-  }, [tab, trash, live, q, section]);
+  }, [tab, trash, live, q, section, tagSel]);
+  const sectionTags = useMemo(() => tagCounts(live.filter(n => kindOf(n) === section && (tab === 'archive' ? !!n.archived_at : !n.archived_at))), [live, section, tab]);
+  const toggleTag = (t: string) => setTagSel(s => (s.includes(t) ? s.filter(x => x !== t) : [...s, t]));
 
   const selected = (selectedId && (live.find(n => n.id === selectedId) ?? trash?.find(n => n.id === selectedId))) || null;
   const selectedInTrash = !!selected && !live.some(n => n.id === selected.id);
@@ -222,8 +232,16 @@ export default function NotesWindow({
         ]} />
       </div>
       <div className={`${isMobile ? 'px-4' : 'px-3'} py-2`}>
-        <SearchField value={q} onChange={setQ} placeholder={isMap ? 'Tìm trong các sơ đồ' : 'Tìm ghi chú'} />
+        <SearchField value={q} onChange={setQ} placeholder={isMap ? 'Tìm sơ đồ · gõ #thẻ để lọc theo thẻ' : 'Tìm ghi chú · gõ #thẻ để lọc theo thẻ'} />
       </div>
+      {(sectionTags.length > 0 || tagSel.length > 0) && tab !== 'trash' && (
+        <div className={`${isMobile ? 'px-4' : 'px-3'} pb-2 flex gap-1.5 overflow-x-auto no-scrollbar`}>
+          {tagSel.length > 0 && <button type="button" onClick={() => setTagSel([])} className="shrink-0 h-[22px] px-2 rounded-full bg-black/[0.07] text-[12px] font-medium hover:bg-black/[0.12]">Bỏ lọc ✕</button>}
+          {[...sectionTags, ...tagSel.filter(t => !sectionTags.some(x => x.tag === t)).map(tag => ({ tag, count: 0 }))].map(({ tag, count }) => (
+            <TagChip key={tag} tag={tag} count={count || undefined} active={tagSel.includes(tag)} onClick={() => toggleTag(tag)} />
+          ))}
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2">
         {(store.phase === 'error' || trashErr) && (
           <div className="mx-1 mb-2 flex items-start gap-2 rounded-[10px] bg-[#FF3B30]/10 px-3 py-2 text-[12.5px] text-[#B0000F]">

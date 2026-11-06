@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, RotateCcw, Route, Search, Star, Trash2, X,
+  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, RotateCcw, Route, Search, Share2, Star, Trash2, X,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -30,6 +30,8 @@ import KcnSurveyMode from './survey/KcnSurveyMode';
 import SurveyTripMap from './survey/SurveyTripMap';
 import SurveyPhotoViewer, { PhotoThumb } from './survey/SurveyPhotoViewer';
 import SurveyVoiceSheet from './survey/SurveyVoiceSheet';
+import SurveyShareDialog from './survey/SurveyShareDialog';
+import type { ShareZone } from '../../lib/kcnSurvey/share';
 import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
 import { fold } from './survey/surveyData';
@@ -57,7 +59,8 @@ function readPrefs(): TabPrefs {
 const PURGE_KEY = 'lgvn_survey_purge_at';
 
 export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast }: MarketTabProps) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const [shareOpen, setShareOpen] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [trips, setTrips] = useState<SurveyTrip[]>([]);
   const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
@@ -192,6 +195,14 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     .filter(z => province === 'all' || (province === NO_PROVINCE ? !zoneProv.get(z.id) : zoneProv.get(z.id) === province))
     .sort((a, b) => Number(usedZones.has(b.id)) - Number(usedZones.has(a.id)) || a.name.localeCompare(b.name, 'vi'))
     .map(z => ({ id: z.id, name: z.name, used: usedZones.has(z.id) })), [marketZones, usedZones, province, zoneProv]);
+
+  // KCN có dữ liệu để chia sẻ cho người ngoài (ảnh hoặc chuyến), kèm số ảnh / chuyến
+  const shareZones = useMemo<ShareZone[]>(() => {
+    const ph = new Map<string, number>(), tr = new Map<string, number>();
+    photos.forEach(p => { if (p.zone_id) ph.set(p.zone_id, (ph.get(p.zone_id) ?? 0) + 1); });
+    trips.forEach(t => { if (t.zone_id) tr.set(t.zone_id, (tr.get(t.zone_id) ?? 0) + 1); });
+    return marketZones.filter(z => ph.has(z.id) || tr.has(z.id)).map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0 }));
+  }, [marketZones, photos, trips]);
 
   // ── Vết: chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc ──────
   const trackIds = useMemo(() => (sub !== 'trips' ? [] : selected ? [selected] : fTrips.slice(0, 40).map(t => t.id)), [sub, selected, fTrips]);
@@ -330,6 +341,10 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
           )}
         </div>
         <div className="flex flex-row gap-2 shrink-0">
+          <button onClick={() => setShareOpen(true)} title="Gửi link + mã 4 số cho người ngoài xem khảo sát"
+            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
+            <Share2 size={15} /> Chia sẻ
+          </button>
           <button onClick={() => setSurveyOpen('area')}
             className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
             <Plus size={16} /> Thêm KCN<span className="hidden sm:inline"> / vùng</span>
@@ -657,6 +672,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             : voiceNotes.filter(n => okTime(n.recorded_at) && okPerson(n.user_name) && (pdfFor.id === 'none' ? !n.zone_id : n.zone_id === pdfFor.id))}
           stars={stars} say={say} onClose={() => setPdfFor(null)} />
       )}
+      {shareOpen && <SurveyShareDialog zones={shareZones} token={token} say={say} onClose={() => setShareOpen(false)} />}
       {surveyOpen && (
         <KcnSurveyMode marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory} goTab={goTab}
           startWith={surveyOpen === 'area' ? 'area' : undefined}

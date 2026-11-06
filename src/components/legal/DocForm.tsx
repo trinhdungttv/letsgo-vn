@@ -1,13 +1,14 @@
 // Pháp lý — thêm / sửa 1 tài liệu: chọn loại (Drive, trang web, sơ đồ tư duy, bài học trực quan, thẻ ghi nhớ),
 // nơi lưu (chủ đề thư viện / hồ sơ pháp nhân), thông tin văn bản (số hiệu, cơ quan, hiệu lực), nhãn, tóm tắt.
 import { useMemo, useState } from 'react';
-import { ChevronDown, Layers, Link2, Loader2, Network, NotebookPen, Sheet as SheetIcon } from 'lucide-react';
+import { ChevronDown, GanttChart, Layers, Link2, Loader2, Network, NotebookPen, Sheet as SheetIcon } from 'lucide-react';
 import { Sheet, SHEET_FOOTER, ChoiceChip } from '../../modules/cskh/components/Sheet';
 import { loadDocContent, saveDoc, type DocInput } from '../../lib/legal/api';
 import { cardsFromLesson, cardsFromMindmap } from '../../lib/legal/cards';
 import { parseDocLink, resolveFileType } from '../../lib/legal/drive';
 import { parseLesson, starterLesson } from '../../lib/legal/lesson';
 import { entityOverviewMap, MAP_TEMPLATES, templateMap, type MapTemplate } from '../../lib/legal/maps';
+import { starterTimeline, TIMELINE_STYLES, type TimelineStyle } from '../../lib/legal/timelineChart';
 import { parseDoc } from '../../lib/quickNotes/mindmap/parse';
 import {
   DOC_KINDS, ENTITY_DOC_CATEGORIES, FILE_TYPES, LAW_STATUS, SWATCHES,
@@ -28,7 +29,7 @@ export interface DocPreset {
   template?: MapTemplate | 'overview';
 }
 
-const KIND_ICON: Record<DocKind, typeof Link2> = { drive: SheetIcon, link: Link2, mindmap: Network, lesson: NotebookPen, cards: Layers };
+const KIND_ICON: Record<DocKind, typeof Link2> = { drive: SheetIcon, link: Link2, mindmap: Network, timeline: GanttChart, lesson: NotebookPen, cards: Layers };
 
 export default function DocForm({ store, userName, toast, initial, preset, onClose, onSaved }: {
   store: LegalStore; userName: string; toast: (m: string) => void; initial?: LegalDoc | null; preset?: DocPreset;
@@ -47,6 +48,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
   const [tags, setTags] = useState((initial?.meta.tags ?? []).join(', '));
   const [summary, setSummary] = useState(initial?.summary ?? '');
   const [color, setColor] = useState(initial?.color ?? '');
+  const [timelineStyle, setTimelineStyle] = useState<TimelineStyle>('dots');
   const [template, setTemplate] = useState<MapTemplate | 'overview'>(preset?.template ?? (preset?.entityId ? 'overview' : 'procedure'));
   const [lessonStart, setLessonStart] = useState<'starter' | 'blank'>('starter');
   const [cardsFrom, setCardsFrom] = useState<string>('');
@@ -101,6 +103,8 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
         body.content = template === 'overview' && entity
           ? entityOverviewMap(entity, store.milestones.filter(m => m.entity_id === entity.id))
           : templateMap(template === 'overview' ? 'blank' : template, name, entity);
+      } else if (kind === 'timeline') {
+        body.content = starterTimeline(timelineStyle);
       } else if (kind === 'lesson') {
         body.content = lessonStart === 'starter' ? starterLesson(name) : { v: 1, accent: '#FF9500', blocks: [] };
       } else if (kind === 'cards') {
@@ -115,7 +119,7 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
       }
       const saved = await saveDoc(body, userName);
       draft.clear();
-      onSaved(saved, kind === 'mindmap' || kind === 'lesson' || kind === 'cards');
+      onSaved(saved, kind === 'mindmap' || kind === 'timeline' || kind === 'lesson' || kind === 'cards');
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -194,6 +198,19 @@ export default function DocForm({ store, userName, toast, initial, preset, onClo
                 ...MAP_TEMPLATES.filter(t => !t.entityOnly || place === 'entity')].map(t => (
                 <button key={t.id} type="button" onClick={() => setTemplate(t.id)}
                   className={`text-left p-2.5 rounded-[12px] transition ${template === t.id ? 'bg-[#AF52DE]/[0.12] shadow-[inset_0_0_0_1.5px_#AF52DE]' : 'bg-black/[0.03] hover:bg-black/[0.06]'}`}>
+                  <span className="block text-[13px] font-semibold text-[#1D1D1F]">{t.label}</span>
+                  <span className="block text-[11.5px] text-[#86868B] leading-snug">{t.hint}</span>
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+        {!editing && kind === 'timeline' && (
+          <Field label="Kiểu hiển thị (đổi lại được bất cứ lúc nào)">
+            <div className="grid gap-1.5 sm:grid-cols-3">
+              {TIMELINE_STYLES.map(t => (
+                <button key={t.id} type="button" onClick={() => setTimelineStyle(t.id)}
+                  className={`text-left p-2.5 rounded-[12px] transition ${timelineStyle === t.id ? 'bg-[#FF3B30]/[0.1] shadow-[inset_0_0_0_1.5px_#FF3B30]' : 'bg-black/[0.03] hover:bg-black/[0.06]'}`}>
                   <span className="block text-[13px] font-semibold text-[#1D1D1F]">{t.label}</span>
                   <span className="block text-[11.5px] text-[#86868B] leading-snug">{t.hint}</span>
                 </button>

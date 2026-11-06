@@ -9,7 +9,7 @@
 //     (lưu ngay từng thao tác).
 // Chỉ dòng đã sửa mới nằm trong `drafts`; dòng chưa đụng đọc thẳng dữ liệu đang có.
 // ============================================================================
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarHeart, Globe2, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
@@ -93,6 +93,8 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
   const [indPicked, setIndPicked] = useState<Set<string>>(new Set());
   const [indBulk, setIndBulk] = useState('');
   const [indSaving, setIndSaving] = useState(false);
+  const indSavingRef = useRef(false);
+  const [indNote, setIndNote] = useState('');
   const [industryNames, setIndustryNames] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
@@ -121,11 +123,13 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
     setIndDrafts(prev => ({ ...prev, ...Object.fromEntries([...indPicked].map(id => [id, v])) }));
     setIndPicked(new Set());
   };
-  const saveIndustries = async () => {
-    if (indChanges.length === 0) return;
+  const saveIndustries = async (auto = false) => {
+    if (indChanges.length === 0 || indSavingRef.current) return;
+    indSavingRef.current = true;
     setIndSaving(true);
     const okIds: string[] = [];
     const errs: string[] = [];
+    const snap = new Map(indChanges);
     try {
       const byValue = new Map<string, string[]>();
       for (const [id, v] of indChanges) byValue.set(v, [...(byValue.get(v) ?? []), id]);
@@ -134,12 +138,16 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
           .update({ industry: v === '' ? null : v, updated_at: new Date().toISOString() }).in('id', ids);
         if (error) errs.push(error.message); else okIds.push(...ids);
       }
-      const done = Object.fromEntries(indChanges.filter(([id]) => okIds.includes(id)));
-      setIndSaved(prev => ({ ...prev, ...done }));
-      setIndDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !okIds.includes(id))));
-      if (okIds.length > 0) onChanged?.();
-      toast(errs.length === 0 ? `Đã lưu lĩnh vực của ${okIds.length} công ty` : `Lỗi: ${errs[0]}`);
+      setIndSaved(prev => ({ ...prev, ...Object.fromEntries(okIds.map(id => [id, snap.get(id) as string])) }));
+      // Chỉ bỏ nháp nếu trong lúc lưu người dùng chưa gõ thêm
+      setIndDrafts(prev => Object.fromEntries(Object.entries(prev).filter(
+        ([id, v]) => !okIds.includes(id) || v.replace(/\s+/g, ' ').trim() !== snap.get(id),
+      )));
+      if (okIds.length > 0) { onChanged?.(); setIndNote(`Đã ${auto ? 'tự ' : ''}lưu ${okIds.length} công ty ✓`); }
+      if (errs.length > 0) toast(`Lỗi: ${errs[0]}`);
+      else if (!auto) toast(`Đã lưu lĩnh vực của ${okIds.length} công ty`);
     } finally {
+      indSavingRef.current = false;
       setIndSaving(false);
     }
   };
@@ -177,10 +185,63 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
     }
     return { out, errors };
   }, [drafts, data, clients]);
-  const dirty = plans.out.length > 0 || plans.errors.size > 0 || indChanges.length > 0;
 
-  const close = () => {
-    if (dirty && !confirm('Có thay đổi chưa lưu — đóng và bỏ các thay đổi?')) return;
+  // ── Tự lưu: sau ~1,2 giây không gõ thì ghi các dòng hợp lệ (dòng gõ sai ngày chờ sửa xong) ──
+  const savingRef = useRef(false);
+  const lastFailRef = useRef('');
+  const [autoNote, setAutoNote] = useState('');
+
+  const saveCompanies = async (auto: boolean): Promise<boolean> => {
+    const items = plans.out;
+    if (savingRef.current) return false;
+    if (items.length === 0) return true;
+    savingRef.current = true;
+    setSaving(true);
+    const snap = new Map(items.map(i => [i.clientId, JSON.stringify(drafts[i.clientId])]));
+    try {
+      const { saved, errors, failedIds } = await saveCompanyPlans(items, user);
+      setSaveErrors(errors);
+      lastFailRef.current = errors.length > 0 ? JSON.stringify(items) : '';
+      await refresh();
+      const failed = new Set(failedIds);
+      // Chỉ bỏ nháp nếu trong lúc lưu người dùng chưa gõ thêm
+      setDrafts(prev => Object.fromEntries(Object.entries(prev).filter(
+        ([id, d]) => failed.has(id) || !snap.has(id) || JSON.stringify(d) !== snap.get(id),
+      )));
+      if (saved > 0) {
+        setAutoNote(`Đã ${auto ? 'tự ' : ''}lưu ${saved} công ty ✓`);
+        if (!auto) toast(`Đã lưu ngày lễ của ${saved} công ty`);
+      }
+      if (errors.length > 0 && saved > 0) toast(`Đã lưu ${saved} công ty, ${errors.length} công ty lỗi`);
+      return errors.length === 0;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!data.ready || plans.out.length === 0) return;
+    if (JSON.stringify(plans.out) === lastFailRef.current) return;
+    const t = setTimeout(() => { void saveCompanies(true); }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans, data.ready]);
+
+  useEffect(() => {
+    if (indChanges.length === 0) return;
+    const t = setTimeout(() => { void saveIndustries(true); }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indDrafts]);
+
+  const close = async () => {
+    if (plans.errors.size > 0 && !confirm('Còn dòng gõ sai ngày chưa lưu được — đóng và bỏ các dòng đó?')) return;
+    if (plans.out.length > 0 && data.ready) {
+      const ok = await saveCompanies(false);
+      if (!ok && !confirm('Có công ty chưa lưu được — vẫn đóng?')) return;
+    }
+    if (indChanges.length > 0) await saveIndustries(false);
     onClose();
   };
 
@@ -190,24 +251,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
       return;
     }
     if (plans.out.length === 0) { onClose(); return; }
-    setSaving(true);
-    setSaveErrors([]);
-    try {
-      const { saved, errors, failedIds } = await saveCompanyPlans(plans.out, user);
-      if (errors.length === 0) {
-        toast(`Đã lưu ngày lễ của ${saved} công ty`);
-        onClose();
-        return;
-      }
-      // Dòng đã lưu → bỏ khỏi drafts để đọc lại dữ liệu mới (tránh thêm trùng khi lưu lại)
-      const failed = new Set(failedIds);
-      await refresh();
-      setDrafts(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => failed.has(id))));
-      setSaveErrors(errors);
-      if (saved > 0) toast(`Đã lưu ${saved} công ty, ${errors.length} công ty lỗi`);
-    } finally {
-      setSaving(false);
-    }
+    if (await saveCompanies(false)) onClose();
   };
 
   const pickCountry = (id: string, value: string) => {
@@ -323,7 +367,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 md:p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="bg-white rounded-t-2xl md:rounded-xl shadow-xl w-full md:max-w-5xl max-h-[92vh] md:max-h-[88vh] flex flex-col pb-[env(safe-area-inset-bottom)]">
+      <div className="bg-white rounded-t-2xl md:rounded-xl shadow-xl w-full md:max-w-5xl h-[92vh] md:h-[88vh] flex flex-col pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-start justify-between gap-3 px-4 md:px-5 py-3.5 border-b border-gray-200">
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-gray-900 truncate">{title}</h2>
@@ -331,7 +375,7 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
               Hiện ở CSKH → Sự kiện &amp; Quà · Dashboard “Sắp tới”, popup nhắc trước 2 ngày + đúng ngày để chúc khách.
             </p>
           </div>
-          <button onClick={close} aria-label="Đóng" className="p-1 hover:bg-gray-100 rounded-md shrink-0"><X size={18} className="text-gray-500" /></button>
+          <button onClick={() => void close()} aria-label="Đóng" className="p-1 hover:bg-gray-100 rounded-md shrink-0"><X size={18} className="text-gray-500" /></button>
         </div>
 
         <div className="flex gap-1 px-4 md:px-5 border-b border-gray-200">
@@ -388,9 +432,9 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
               })}
             </div>
             <div className="px-4 md:px-5 py-3 border-t border-gray-200 flex items-center gap-2">
-              <span className="flex-1 text-[11.5px] text-gray-500">{indChanges.length > 0 ? `${indChanges.length} công ty có thay đổi` : 'Chưa có thay đổi'}</span>
-              <button onClick={close} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Đóng</button>
-              <button onClick={() => void saveIndustries()} disabled={indSaving || indChanges.length === 0}
+              <span className="flex-1 text-[11.5px] text-gray-500">{indChanges.length > 0 ? `${indChanges.length} công ty đang chờ tự lưu…` : (indNote || 'Tự động lưu khi bạn nhập')}</span>
+              <button onClick={() => void close()} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Đóng</button>
+              <button onClick={() => void saveIndustries(false)} disabled={indSaving || indChanges.length === 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
                 {indSaving ? 'Đang lưu…' : indChanges.length > 0 ? `Lưu ${indChanges.length} công ty` : 'Lưu'}
               </button>
@@ -500,10 +544,10 @@ export default function CompanyDatesQuickModal({ clients, onlyClientIds, initial
             )}
             <div className="px-4 md:px-5 py-3 border-t border-gray-200 flex items-center gap-2">
               <span className="flex-1 text-[11.5px] text-gray-500">
-                {plans.out.length > 0 ? `${plans.out.length} công ty có thay đổi` : 'Chưa có thay đổi'}
+                {plans.out.length > 0 ? `${plans.out.length} công ty đang chờ tự lưu…` : (autoNote || 'Tự động lưu khi bạn nhập')}
                 {plans.errors.size > 0 && <span className="text-red-600"> · {plans.errors.size} dòng gõ sai ngày</span>}
               </span>
-              <button onClick={close} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Huỷ</button>
+              <button onClick={() => void close()} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Đóng</button>
               <button onClick={save} disabled={saving || !data.ready || plans.out.length === 0 || plans.errors.size > 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
                 {saving ? 'Đang lưu…' : plans.out.length > 0 ? `Lưu ${plans.out.length} công ty` : 'Lưu'}

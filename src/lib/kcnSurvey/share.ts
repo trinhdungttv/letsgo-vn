@@ -1,0 +1,183 @@
+// Chia sẻ Khảo sát KCN cho người ngoài: link ngắn #/ks/<mã> + mã 4 số (migration 209).
+// Phần thuần (mã PIN, link, soạn tin Zalo, nhóm KCN theo tỉnh) có test; phần gọi DB đi qua RPC — bảng bị khoá với anon.
+import { supabase } from '../supabase';
+import { provinceKey, provinceLabel } from './province';
+
+export const SURVEY_SHARE_HINT = 'Chưa chạy migration 209 (Chia sẻ khảo sát) trên Supabase — chạy file 20261106100000_209_kcn_survey_shares.sql rồi thử lại';
+
+function fail(err: { message?: string; code?: string } | null): never {
+  const msg = err?.message ?? 'Lỗi không xác định';
+  if (err?.code === 'PGRST202' || err?.code === '42883' || /could not find the function|schema cache/i.test(msg)) throw new Error(SURVEY_SHARE_HINT);
+  throw new Error(msg);
+}
+
+async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) fail(error);
+  return data as T;
+}
+
+// ── Link + mã ────────────────────────────────────────────────────────────────
+export const SURVEY_SHARE_PREFIX = '#/ks/';
+
+/** https://<tên miền>/#/ks/K7M4QX */
+export const surveyShareUrl = (code: string, origin = window.location.origin) => `${origin}/${SURVEY_SHARE_PREFIX}${code}`;
+
+/** "#/ks/K7M4QX" → "K7M4QX"; không phải link khảo sát → null. */
+export function parseSurveyShareHash(hash: string): string | null {
+  const m = /^#\/ks\/([A-Za-z0-9]{4,12})\/?$/.exec(hash);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** Mã 4 số ngẫu nhiên (crypto), giữ cả số 0 đứng đầu. Tránh dãy dễ đoán như 0000 / 1234 / 1111. */
+export function randomPin(rand: (max: number) => number = cryptoInt): string {
+  for (let i = 0; i < 20; i++) {
+    const pin = String(rand(10000)).padStart(4, '0');
+    if (!isWeakPin(pin)) return pin;
+  }
+  return '7304';
+}
+export function isWeakPin(pin: string): boolean {
+  if (/^(\d)\1{3}$/.test(pin)) return true;
+  return ['0123', '1234', '2345', '3456', '4567', '5678', '6789', '9876', '8765', '7654', '6543', '5432', '4321', '3210'].includes(pin);
+}
+function cryptoInt(max: number): number {
+  const b = new Uint32Array(1);
+  // loại phần dư để các số đều xác suất
+  const limit = Math.floor(0x100000000 / max) * max;
+  do { crypto.getRandomValues(b); } while (b[0] >= limit);
+  return b[0] % max;
+}
+
+// ── Thời hạn ─────────────────────────────────────────────────────────────────
+export const EXPIRY_OPTIONS: { days: number | null; label: string }[] = [
+  { days: 1, label: '1 ngày' },
+  { days: 3, label: '3 ngày' },
+  { days: 7, label: '7 ngày' },
+  { days: 30, label: '30 ngày' },
+  { days: null, label: 'Không giới hạn' },
+];
+export const DEFAULT_EXPIRY_DAYS = 7;
+
+const pad = (n: number) => String(n).padStart(2, '0');
+export const fmtVnDate = (d: Date) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+export const fmtVnDateTime = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())} ${fmtVnDate(d)}`;
+
+/** Trạng thái hiển thị của 1 link trong danh sách */
+export function shareState(s: { revoked: boolean; expires_at: string | null }, now = Date.now()): 'active' | 'expired' | 'revoked' {
+  if (s.revoked) return 'revoked';
+  if (s.expires_at && new Date(s.expires_at).getTime() < now) return 'expired';
+  return 'active';
+}
+
+// ── Nhóm KCN theo tỉnh (để chọn nhanh cả tỉnh) ───────────────────────────────
+export interface ShareZone { id: string; name: string; location: string | null; photos: number; trips: number }
+export interface ProvinceGroup { key: string; label: string; zones: ShareZone[] }
+
+/** Gộp KCN theo tỉnh; tỉnh nhiều KCN lên trước, "Chưa ghi tỉnh" xuống cuối. */
+export function groupZonesByProvince(zones: readonly ShareZone[]): ProvinceGroup[] {
+  const by = new Map<string, ProvinceGroup>();
+  for (const z of zones) {
+    const key = provinceKey(z.location);
+    const g = by.get(key) ?? { key, label: key ? provinceLabel(z.location) : 'Chưa ghi tỉnh', zones: [] };
+    g.zones.push(z);
+    by.set(key, g);
+  }
+  const out = [...by.values()];
+  out.forEach(g => g.zones.sort((a, b) => a.name.localeCompare(b.name, 'vi')));
+  return out.sort((a, b) => Number(!a.key) - Number(!b.key) || b.zones.length - a.zones.length || a.label.localeCompare(b.label, 'vi'));
+}
+
+/** Tên tỉnh (đã bỏ trùng, không có "Chưa ghi tỉnh") của các KCN được chọn */
+export function provincesOf(zones: readonly ShareZone[], selected: ReadonlySet<string>): string[] {
+  const names = new Set<string>();
+  for (const z of zones) if (selected.has(z.id) && provinceKey(z.location)) names.add(provinceLabel(z.location));
+  return [...names].sort((a, b) => a.localeCompare(b, 'vi'));
+}
+
+// ── Tin nhắn Zalo ────────────────────────────────────────────────────────────
+export interface ShareMessageInput {
+  url: string;
+  pin: string;
+  /** Tên KCN được chia sẻ */
+  zoneNames: readonly string[];
+  provinces: readonly string[];
+  /** ISO hoặc null = không giới hạn */
+  expiresAt: string | null;
+  /** Lời chào riêng, vd tên người nhận ("anh Nam"); trống = "anh/chị" */
+  recipient?: string;
+}
+
+const joinNames = (names: readonly string[], max = 6) =>
+  names.length <= max ? names.join(', ') : `${names.slice(0, max).join(', ')} và ${names.length - max} KCN khác`;
+
+/** Nội dung soạn sẵn để dán thẳng vào Zalo: nội dung chia sẻ + link + mã + hạn xem. */
+export function buildShareMessage(i: ShareMessageInput): string {
+  const who = i.recipient?.trim() || 'anh/chị';
+  const where = i.provinces.length ? ` (${i.provinces.join(', ')})` : '';
+  const lines = [
+    `Chào ${who}, Let's Go VN gửi ${who} dữ liệu khảo sát ${i.zoneNames.length} KCN${where}:`,
+    joinNames(i.zoneNames),
+    '',
+    `🔗 Link xem: ${i.url}`,
+    `🔑 Mã xem: ${i.pin}`,
+    i.expiresAt ? `⏳ Xem được đến hết ngày ${fmtVnDate(new Date(i.expiresAt))}` : '⏳ Link không giới hạn thời gian',
+    '',
+    `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ảnh chỉ tiêu tuyển dụng và các chuyến khảo sát. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
+  ];
+  return lines.join('\n');
+}
+
+// ── Gọi DB (người đang đăng nhập) ────────────────────────────────────────────
+export interface SurveyShareRow {
+  id: string; code: string; label: string; zone_ids: string[]; provinces: string[];
+  expires_at: string | null; revoked: boolean; open_count: number; last_opened_at: string | null;
+  locked_until: string | null; created_by_name: string; created_at: string;
+}
+
+export async function listSurveyShares(token: string): Promise<SurveyShareRow[]> {
+  return (await rpc<SurveyShareRow[] | null>('survey_share_list', { p_token: token })) ?? [];
+}
+
+export async function createSurveyShare(token: string, a: { label: string; zoneIds: string[]; provinces: string[]; pin: string; days: number | null }) {
+  return rpc<{ ok: true; id: string; code: string; expires_at: string | null }>('survey_share_create', {
+    p_token: token, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces, p_pin: a.pin, p_days: a.days,
+  });
+}
+
+/** Đặt mã mới (và gia hạn nếu setExpiry) — mở lại được cả link đã hết hạn / thu hồi. */
+export async function updateSurveyShare(token: string, id: string, pin: string, opt: { setExpiry: boolean; days: number | null }) {
+  return rpc<{ ok: true; code: string; expires_at: string | null }>('survey_share_update', {
+    p_token: token, p_id: id, p_pin: pin, p_set_expiry: opt.setExpiry, p_days: opt.days,
+  });
+}
+
+export async function revokeSurveyShare(token: string, id: string): Promise<void> {
+  await rpc<void>('survey_share_revoke', { p_token: token, p_id: id });
+}
+
+// ── Gọi DB (người ngoài, mã link + PIN) ──────────────────────────────────────
+export type SurveyShareFail = 'not_found' | 'expired' | 'locked' | 'wrong_pin';
+
+export interface SharedZone { id: string; name: string; location: string | null }
+export interface SharedTrip {
+  id: string; zone_id: string | null; zone_name: string; title: string | null; started_at: string; ended_at: string | null;
+  distance_m: number; road_coverage: number | null; passed_count: number;
+}
+export interface SharedPhoto {
+  id: string; trip_id: string | null; zone_id: string | null; zone_name: string; lat: number; lng: number; taken_at: string;
+  url: string; thumb_url: string | null; width: number | null; height: number | null;
+  company_name: string; positions: string; headcount: number | null; wage_text: string; note: string;
+  annotations: import('./markup').PhotoMark[] | null;
+}
+export interface SharedSurvey {
+  label: string; provinces: string[]; expires_at: string | null;
+  zones: SharedZone[]; trips: SharedTrip[]; photos: SharedPhoto[];
+}
+
+export type OpenSurveyShareResult =
+  | ({ ok: true } & SharedSurvey)
+  | { ok: false; reason: SurveyShareFail; seconds?: number; remaining?: number };
+
+export const openSurveyShare = (code: string, pin: string, count = true) =>
+  rpc<OpenSurveyShareResult>('survey_share_open', { p_code: code, p_pin: pin, p_count: count });

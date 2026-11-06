@@ -46,6 +46,8 @@ export interface QuickNote {
   view_mode: NoteView;
   /** Khoá chống xoá (migration 196): có giá trị = không xoá được nếu không nhập đúng mã 4 số */
   locked_at: string | null;
+  /** Thẻ phân loại (migration 208) — chữ thường không dấu cách thừa, không trùng */
+  tags: string[];
 }
 
 /** Trạng thái lưu của 1 ghi chú: dirty = vừa sửa, đang chờ tự lưu. */

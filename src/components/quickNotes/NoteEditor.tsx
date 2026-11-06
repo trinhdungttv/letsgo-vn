@@ -16,6 +16,7 @@ import {
 } from '../../lib/quickNotes/noteText';
 import { NOTE_COLORS, NOTE_FONTS, type QuickNote, type QuickNoteRecording, type SaveState } from '../../lib/quickNotes/types';
 import ChecklistOverlay from './ChecklistOverlay';
+import TagBar from './TagBar';
 import RecordingList, { type UploadItem } from './RecordingList';
 import type { TranscribeJob } from './TranscriptPanel';
 import type { AudioRecorder } from './useAudioRecorder';
@@ -52,6 +53,11 @@ export interface NoteEditorProps {
   onDelete: () => void;
   /** Khoá / mở khoá chống xoá (mở khoá cần mã 4 số) */
   onToggleLock?: () => void;
+  /** Mục đang khoá và chưa nhập mã: chỉ xem; bấm nút nhập mã để sửa / thêm */
+  editLocked?: boolean;
+  /** Mọi thẻ đã dùng (gợi ý khi gõ thẻ mới) */
+  allTags?: string[];
+  onUnlockEdit?: () => void;
   onRestore?: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
@@ -118,7 +124,9 @@ function ToolBtn({ title, onClick, active, disabled, keepFocus = true, big, chil
 }
 
 export default function NoteEditor(props: NoteEditorProps) {
-  const { note, variant, saveState, readOnly, recorder } = props;
+  const { note, variant, saveState, recorder } = props;
+  const trash = !!props.readOnly;
+  const readOnly = trash || !!props.editLocked;
   const pal = PALETTE[note.color];
   const ta = useRef<HTMLTextAreaElement>(null);
   const layer = useRef<HTMLDivElement>(null);
@@ -369,6 +377,8 @@ export default function NoteEditor(props: NoteEditorProps) {
         </div>
       )}
 
+      <TagBar tags={note.tags} suggestions={props.allTags ?? []} editable={!readOnly} onChange={tags => props.onChange({ tags })} />
+
       {findOpen && !isMap && (
         <div className="flex items-center gap-1.5 px-3 py-1.5 shrink-0 border-b border-black/[0.06] bg-white/45">
           <Search size={14} className="opacity-60 shrink-0" />
@@ -471,7 +481,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       )}
 
       <div className={`flex items-center gap-1.5 px-3 shrink-0 ${big ? 'h-14 pb-[env(safe-area-inset-bottom)]' : 'h-12'}`}>
-        {readOnly ? (
+        {trash ? (
           <>
             <span className="text-[12px] opacity-60">Đã xoá {note.deleted_at ? relativeTime(note.deleted_at) : ''}</span>
             <span className="flex-1" />
@@ -484,6 +494,12 @@ export default function NoteEditor(props: NoteEditorProps) {
           </>
         ) : (
           <>
+            {props.editLocked ? (
+              <button type="button" onClick={props.onUnlockEdit}
+                className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#0071E3] text-white text-[13px] font-semibold hover:bg-[#0077ED] active:scale-[0.97] transition">
+                <Lock size={13} /> Nhập mã để chỉnh sửa
+              </button>
+            ) : (
             <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
               {NOTE_COLORS.map(c => (
                 <button key={c} type="button" title={PALETTE[c].label} aria-label={`Màu ${PALETTE[c].label}`}
@@ -492,15 +508,16 @@ export default function NoteEditor(props: NoteEditorProps) {
                   style={{ background: PALETTE[c].dot, ['--tw-ring-color' as string]: PALETTE[c].dot, ['--tw-ring-offset-color' as string]: pal.paper }} />
               ))}
             </div>
+            )}
             <span className="flex-1" />
-            <button type="button" onClick={props.onArchive} title={archived ? 'Đưa lại lên dải ghi chú' : 'Cất khỏi dải ghi chú (xem lại ở mục Lưu trữ)'}
+            {!props.editLocked && <button type="button" onClick={props.onArchive} title={archived ? 'Đưa lại lên dải ghi chú' : 'Cất khỏi dải ghi chú (xem lại ở mục Lưu trữ)'}
               className="shrink-0 inline-flex items-center gap-1 h-8 px-2 rounded-lg text-[13px] font-medium hover:bg-black/[0.06]">
               {archived ? <ArchiveRestore size={14} /> : <Archive size={14} className="md:hidden" />}
               <span className={archived ? '' : 'hidden md:inline'}>{archived ? 'Bỏ lưu trữ' : 'Lưu trữ'}</span>
-            </button>
+            </button>}
             {props.onToggleLock && (
               <button type="button" onClick={props.onToggleLock} aria-label={locked ? 'Mở khoá chống xoá' : 'Khoá chống xoá'}
-                title={locked ? 'Đang khoá chống xoá — bấm để mở khoá (cần mã 4 số)' : 'Khoá chống xoá: muốn xoá phải nhập mã 4 số'}
+                title={locked ? 'Đang khoá — bấm để mở khoá hẳn (cần mã 4 số)' : 'Khoá: muốn sửa / thêm / xoá phải nhập mã 4 số'}
                 className={`shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-lg ${locked ? 'bg-black/[0.08]' : 'hover:bg-black/[0.06]'}`}>
                 {locked ? <Lock size={15} /> : <Unlock size={15} className="opacity-70" />}
               </button>

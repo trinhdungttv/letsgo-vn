@@ -87,7 +87,7 @@ export interface LegalTopic {
   deleted_at: string | null;
 }
 
-export type DocKind = 'drive' | 'link' | 'mindmap' | 'lesson' | 'cards';
+export type DocKind = 'drive' | 'link' | 'mindmap' | 'timeline' | 'lesson' | 'cards';
 export type FileType = 'pdf' | 'doc' | 'sheet' | 'slide' | 'folder' | 'image' | 'video' | 'web';
 export type LawStatus = '' | 'active' | 'upcoming' | 'amended' | 'expired';
 
@@ -189,6 +189,7 @@ export const DOC_KINDS: Record<DocKind, { label: string; hint: string; color: st
   drive: { label: 'Google Drive', hint: 'PDF, Word, Excel, PowerPoint, thư mục — xem ngay trong app', color: '#1A73E8' },
   link: { label: 'Trang web / Video', hint: 'Cổng văn bản pháp luật, YouTube, trang cơ quan…', color: '#30B0C7' },
   mindmap: { label: 'Sơ đồ tư duy', hint: 'Tự vẽ: nhánh màu, biểu tượng, liên kết, 6 kiểu bố cục', color: '#AF52DE' },
+  timeline: { label: 'Dòng thời gian', hint: 'Các mốc theo năm: trục chấm tròn, dải mũi tên hoặc uốn lượn — tải ảnh', color: '#FF3B30' },
   lesson: { label: 'Bài học trực quan', hint: 'Khối màu Định nghĩa / Lưu ý / Xử phạt, các bước, bảng so sánh, ảnh', color: '#FF9500' },
   cards: { label: 'Thẻ ghi nhớ', hint: 'Lật thẻ hỏi – đáp, ôn theo hộp nhớ (Leitner)', color: '#34C759' },
 };

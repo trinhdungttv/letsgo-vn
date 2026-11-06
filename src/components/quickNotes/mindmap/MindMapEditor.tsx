@@ -11,11 +11,11 @@
 // Mỗi sơ đồ nhớ trên máy (lib/quickNotes/lastPlace): Sơ đồ / Dàn ý, tab khung bên phải, khung nhìn, chủ đề đang chọn
 // → đóng / tải lại trang rồi mở lại vẫn đúng chỗ cũ.
 // ============================================================================
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import {
   AlertCircle, BoxSelect, Braces, Check, ChevronDown, Download, GitBranchPlus, HelpCircle, ListTree, Maximize, Minimize, Network,
-  Paintbrush, Plus, Redo2, Scan, Smile, Spline, StickyNote, Trash2, Undo2, X, ZoomIn, ZoomOut,
+  GanttChart, Paintbrush, Plus, Redo2, Scan, Smile, Spline, StickyNote, Trash2, Undo2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { FONT_FAMILY, type NotePalette } from '../../../lib/quickNotes/colors';
 import { getMapUi, putMapUi } from '../../../lib/quickNotes/lastPlace';
@@ -27,6 +27,9 @@ import { exportMarkdown, exportPdf, exportPng, exportSvg, docToMarkdown } from '
 import FormatPanel, { type PanelTab } from './FormatPanel';
 import MapContentRaw, { SELECT_COLOR, shapeRadius, TopicText } from './MapContent';
 import OutlineView from './OutlineView';
+import { fromMindmap } from '../../../lib/legal/timelineChart';
+
+const TimelineOverlay = lazy(() => import('../../legal/TimelineChart').then(m => ({ default: m.TimelineOverlay })));
 
 const MapContent = memo(MapContentRaw);
 
@@ -129,6 +132,7 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   const [menu, setMenu] = useState<{ x: number; y: number; at: Pt; onTopic: boolean } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [help, setHelp] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -971,6 +975,7 @@ export default function MindMapEditor(props: MindMapEditorProps) {
           </button>
         ))}
       </div>
+      <TB wide={wide} title="Xem các nhánh cấp 1 dạng dòng thời gian (3 kiểu), tải ảnh" label="Dòng thời gian" active={timelineOpen} onClick={() => { if (editingRef.current) finishEdit(); setTimelineOpen(true); }}><GanttChart size={16} /></TB>
       {!readOnly && <TB wide={wide} title="Định dạng chủ đề & bản đồ" label="Định dạng" active={panel === 'style' || panel === 'map'} onClick={() => setPanel(p => (p === 'style' || p === 'map' ? null : sel.length || selRel ? 'style' : 'map'))}><Paintbrush size={16} /></TB>}
       <div className="relative shrink-0">
         <TB wide={wide} title="Xuất ảnh / PDF / Markdown" label="Xuất" active={exportOpen} onClick={() => setExportOpen(o => !o)}><Download size={16} />{wide && <ChevronDown size={12} className="-ml-1" />}</TB>
@@ -995,6 +1000,11 @@ export default function MindMapEditor(props: MindMapEditorProps) {
   return (
     <div ref={rootRef} className="relative flex flex-col h-full min-h-0 w-full" style={{ background: theme.bg }}>
       {toolbar}
+      {timelineOpen && (
+        <Suspense fallback={null}>
+          <TimelineOverlay initial={fromMindmap(docRef.current)} title={props.title || docRef.current.root.text || 'Dong thoi gian'} onClose={() => setTimelineOpen(false)} toast={m => setToast(m)} />
+        </Suspense>
+      )}
       {props.saveError && (
         <div className="flex items-start gap-2 px-3 py-1.5 shrink-0 bg-[#FFF4CE] text-[#7A5600] text-[12px] border-b border-[#F0DA8A]">
           <AlertCircle size={13} className="mt-0.5 shrink-0" />

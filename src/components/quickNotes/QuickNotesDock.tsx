@@ -26,7 +26,7 @@ import { PALETTE } from '../../lib/quickNotes/colors';
 import { DEFAULT_PLACE, loadPlace, savePlace, type LastPlace, type OpenPlace, type WinPlace } from '../../lib/quickNotes/lastPlace';
 import {
   baseMime, checklistCount, clockDate, displayTitle, formatDuration, isMindmap, meetingTemplate, mindmapCount, notePreview, railOrder,
-  recordingName, relativeTime,
+  recordingName, relativeTime, tagCounts,
 } from '../../lib/quickNotes/noteText';
 import { downloadBlob, dropStashedAudio, listStashedAudio, stashAudio } from '../../lib/quickNotes/pendingAudio';
 import { summaryForNote, TRANSCRIBE_ENABLED } from '../../lib/quickNotes/transcript';
@@ -108,6 +108,17 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   const [win, setWin] = useState<{ selectedId: string | null; tab: NotesTab; section?: WinPlace['section'] } | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [pinReq, setPinReq] = useState<PinRequest | null>(null);
+  // Mục khoá = chỉ xem. Nhập đúng mã → được sửa / thêm trong EDIT_WINDOW_MS (khoá vẫn giữ), hết hạn tự quay về chỉ xem.
+  const [editUntil, setEditUntil] = useState<Record<string, number>>({});
+  const [, setTick] = useState(0);
+  const isEditLocked = (n: QuickNote) => !!n.locked_at && !((editUntil[n.id] ?? 0) > Date.now());
+  const guardEdit = (id: string): boolean => {
+    const n = storeRef.current.notes.find(x => x.id === id);
+    if (!n || !isEditLocked(n)) return true;
+    setNotice('Mục đang khoá — nhập mã 4 số (nút “Nhập mã để chỉnh sửa”) mới sửa / thêm được');
+    return false;
+  };
+  const guardedUpdate = (id: string, patch: Parameters<typeof store.update>[1]) => { if (guardEdit(id)) store.update(id, patch); };
   /** Chỗ đang mở / lần cuối ở đâu (localStorage) — chỉ bắt đầu ghi sau khi đã mở lại chỗ cũ */
   const place = useRef<LastPlace>(DEFAULT_PLACE);
   const restoredFor = useRef<string | null>(null);
@@ -232,6 +243,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   };
 
   const startRecording = (noteId: string) => {
+    if (!guardEdit(noteId)) return;
     recTarget.current = noteId;
     // Lưu ghi chú lên DB trước để bản ghi có chỗ gắn (không chờ — micro phải bật ngay trong cú bấm)
     void store.flush(noteId);
@@ -263,6 +275,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   };
 
   const toggleArchive = (n: QuickNote) => {
+    if (!guardEdit(n.id)) return;
     const archiving = !n.archived_at;
     store.update(n.id, { archived_at: archiving ? new Date().toISOString() : null });
     if (archiving && openId === n.id) setOpenId(null);
@@ -296,14 +309,32 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     });
   };
 
+  // Nhập mã để sửa: server kiểm mã (unlock) rồi khoá lại ngay → mục vẫn "khoá", chỉ máy này được sửa trong thời hạn.
+  const EDIT_WINDOW_MS = 10 * 60 * 1000;
+  const unlockToEdit = (n: QuickNote) => setPinReq({
+    kind: 'verify',
+    title: 'Nhập mã để chỉnh sửa',
+    message: `“${displayTitle(n)}” đang khoá. Nhập mã 4 số để sửa / thêm — hết 10 phút (hoặc tải lại trang) sẽ tự khoá lại.`,
+    confirmLabel: 'Chỉnh sửa',
+    run: async pin => {
+      const open = await unlockNote(n.id, pin);
+      try { storeRef.current.replace(await lockNote(n.id)); }
+      catch { storeRef.current.replace(open); setNotice('Không khoá lại được — mục đang mở khoá, bấm 🔒 để khoá lại'); return; }
+      const until = Date.now() + EDIT_WINDOW_MS;
+      setEditUntil(m => ({ ...m, [n.id]: until }));
+      setTimeout(() => { setEditUntil(m => ({ ...m })); setTick(t => t + 1); }, EDIT_WINDOW_MS + 500);
+      setNotice('Đã mở chỉnh sửa trong 10 phút');
+    },
+  });
+
   // Khoá: mục mới chưa lên DB thì lưu trước; chưa có mã thì đặt mã (nhập 2 lần) rồi khoá luôn. Mở khoá: cần mã.
   const toggleLock = async (n: QuickNote) => {
     const label = isMindmap(n) ? 'sơ đồ' : 'ghi chú';
     if (n.locked_at) {
       setPinReq({
         kind: 'verify',
-        title: 'Mở khoá chống xoá?',
-        message: `Nhập mã 4 số để mở khoá “${displayTitle(n)}”. Mở khoá xong mới xoá được ${label} này.`,
+        title: 'Mở khoá?',
+        message: `Nhập mã 4 số để mở khoá “${displayTitle(n)}”. Mở khoá xong mới sửa / xoá được ${label} này.`,
         confirmLabel: 'Mở khoá',
         run: async pin => {
           storeRef.current.replace(await unlockNote(n.id, pin));
@@ -314,7 +345,8 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
     }
     const doLock = async () => {
       storeRef.current.replace(await lockNote(n.id));
-      setNotice(`Đã khoá ${label} — muốn xoá phải nhập mã 4 số`);
+      setEditUntil(m => { const { [n.id]: _drop, ...rest } = m; return rest; });
+      setNotice(`Đã khoá ${label} — muốn sửa, thêm hay xoá phải nhập mã 4 số`);
     };
     try {
       await store.flush(n.id);
@@ -343,6 +375,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   });
 
   const renameRec = (rec: QuickNoteRecording, title: string) => {
+    if (!guardEdit(rec.note_id)) return;
     renameRecording(rec.id, title).then(store.replace, e => setNotice(errText(e)));
   };
 
@@ -355,7 +388,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   });
 
   const insertSummary = (note: QuickNote, rec: QuickNoteRecording) => {
-    if (!rec.summary) return;
+    if (!rec.summary || !guardEdit(note.id)) return;
     const current = store.notes.find(n => n.id === note.id) ?? note;
     store.update(note.id, { body: `${current.body.trimEnd()}\n\n${summaryForNote(rec.summary, recordingName(rec))}\n` });
     setNotice('Đã chèn tóm tắt vào cuối ghi chú');
@@ -380,6 +413,7 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
   // Mục từ bản thử đổi qua lại Văn bản ⇄ Sơ đồ: chuyển phần đang ẩn sang 1 mục riêng. Chỉ gỡ khỏi mục cũ SAU KHI mục
   // mới đã lưu lên DB → mất mạng giữa chừng cũng không mất chữ / sơ đồ.
   const splitLegacy = async (note: QuickNote, extra: EditorExtra) => {
+    if (!guardEdit(note.id)) return;
     const toNote = isMindmap(note);
     const id = toNote ? store.create({ body: note.body, color: note.color }).id : newMap({ mindmap: note.mindmap, color: note.color });
     await store.flush(id);
@@ -403,7 +437,10 @@ export default function QuickNotesDock({ userId }: { userId: string }) {
       recordError={recorder.error && recTarget.current === note.id ? recorder.error : null}
       uploads={uploads.filter(u => u.item.noteId === note.id)}
       jobs={jobs}
-      onChange={patch => store.update(note.id, patch)}
+      onChange={patch => guardedUpdate(note.id, patch)}
+      allTags={tagCounts(store.notes).map(t => t.tag)}
+      editLocked={isEditLocked(note)}
+      onUnlockEdit={() => unlockToEdit(note)}
       onArchive={() => toggleArchive(note)}
       onDelete={() => askDelete(note)}
       onToggleLock={() => void toggleLock(note)}

@@ -1,10 +1,11 @@
 // Pháp lý — THƯ VIỆN NGÀNH: Topic (chủ đề lớn) → chủ đề con → tài liệu (link Drive / web, sơ đồ tư duy, bài học, thẻ ghi nhớ).
 // Máy tính: cây chủ đề bên trái + nội dung bên phải. Điện thoại: lưới Topic → trang chủ đề → tài liệu (từng màn).
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import {
-  ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Inbox, Library, Pencil, Pin, Plus, Sparkles, Trash2,
+  ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, GanttChart, Inbox, Library, Pencil, Pin, Plus, Sparkles, Trash2,
 } from 'lucide-react';
-import { archive, saveTopic } from '../../lib/legal/api';
+import { archive, reorderTopics, saveTopic } from '../../lib/legal/api';
+import { moveItem } from '../../lib/legal/timelineChart';
 import type { DocKind, LegalDoc, LegalTopic } from '../../lib/legal/types';
 import { BTN_PRIMARY, BTN_SECONDARY, CARD } from '../workspace/wsTheme';
 import type { LegalCtx } from './ctx';
@@ -25,7 +26,7 @@ const QUICK_TOPICS: { title: string; icon: string; color: string; description: s
 ];
 
 const KIND_FILTERS: { id: 'all' | 'files' | DocKind; label: string }[] = [
-  { id: 'all', label: 'Tất cả' }, { id: 'files', label: 'Drive & web' }, { id: 'mindmap', label: 'Sơ đồ' }, { id: 'lesson', label: 'Bài học' }, { id: 'cards', label: 'Thẻ ghi nhớ' },
+  { id: 'all', label: 'Tất cả' }, { id: 'files', label: 'Drive & web' }, { id: 'mindmap', label: 'Sơ đồ' }, { id: 'timeline', label: 'Dòng thời gian' }, { id: 'lesson', label: 'Bài học' }, { id: 'cards', label: 'Thẻ ghi nhớ' },
 ];
 type SortKey = 'updated' | 'title' | 'issued';
 
@@ -42,12 +43,16 @@ function sortDocs(list: LegalDoc[], sort: SortKey): LegalDoc[] {
 
 type MenuItems = Parameters<typeof MoreMenu>[0]['items'];
 
-function TreeItem({ icon, label, count, active, color, depth = 0, menu, toggle, open, onSelect }: {
+interface DragProps { dragging: boolean; over: 'above' | 'below' | null; onStart: () => void; onOver: (e: DragEvent) => void; onDrop: () => void; onEnd: () => void }
+
+function TreeItem({ icon, label, count, active, color, depth = 0, menu, toggle, open, onSelect, drag }: {
   icon: ReactNode; label: string; count?: number; active: boolean; color?: string; depth?: number;
-  menu?: MenuItems; toggle?: () => void; open?: boolean; onSelect: () => void;
+  menu?: MenuItems; toggle?: () => void; open?: boolean; onSelect: () => void; drag?: DragProps;
 }) {
   return (
-    <div className={`group flex items-center gap-1.5 h-9 pr-1 rounded-[10px] cursor-pointer transition ${active ? 'bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.06),0_2px_8px_-4px_rgba(0,0,0,0.15)]' : 'hover:bg-black/[0.04]'}`}
+    <div draggable={!!drag} onDragStart={drag ? e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', label); drag.onStart(); } : undefined}
+      onDragOver={drag ? drag.onOver : undefined} onDrop={drag ? e => { e.preventDefault(); drag.onDrop(); } : undefined} onDragEnd={drag?.onEnd}
+      className={`group relative flex items-center gap-1.5 h-9 pr-1 rounded-[10px] cursor-pointer transition ${drag?.dragging ? 'opacity-40' : ''} ${drag?.over === 'above' ? 'shadow-[0_-2px_0_0_#0071E3]' : drag?.over === 'below' ? 'shadow-[0_2px_0_0_#0071E3]' : ''} ${active ? 'bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.06),0_2px_8px_-4px_rgba(0,0,0,0.15)]' : 'hover:bg-black/[0.04]'}`}
       style={{ paddingLeft: depth ? 30 : 6 }} onClick={onSelect}>
       {toggle ? (
         <button type="button" onClick={e => { e.stopPropagation(); toggle(); }} className="w-4 h-4 inline-flex items-center justify-center text-[#AEAEB2] hover:text-[#1D1D1F]" aria-label={open ? 'Thu gọn' : 'Mở rộng'}>
@@ -70,6 +75,8 @@ export default function LibraryView({ ctx, sel, setSel }: { ctx: LegalCtx; sel: 
   const [kindFilter, setKindFilter] = useState<'all' | 'files' | DocKind>('all');
   const [sort, setSort] = useState<SortKey>('updated');
   const [quickBusy, setQuickBusy] = useState(false);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
   const tops = useMemo(() => store.topics.filter(t => !t.parent_id).sort(byOrder), [store.topics]);
   const childrenOf = (id: string) => store.topics.filter(t => t.parent_id === id).sort(byOrder);
@@ -95,6 +102,42 @@ export default function LibraryView({ ctx, sel, setSel }: { ctx: LegalCtx; sel: 
     setQuickBusy(false);
   };
 
+  // ── sắp xếp thứ tự Topic: kéo thả trong cây (cùng cấp) hoặc ⋯ → Lên / Xuống ──
+  const siblingsOf = (t: LegalTopic) => (t.parent_id ? childrenOf(t.parent_id) : tops);
+  const applyOrder = async (list: LegalTopic[]) => {
+    const changes = list.map((x, i) => ({ id: x.id, sort_order: i + 1 })).filter(c => list.find(x => x.id === c.id)!.sort_order !== c.sort_order);
+    if (!changes.length) return;
+    for (const c of changes) store.putTopic({ ...list.find(x => x.id === c.id)!, sort_order: c.sort_order });
+    try { await reorderTopics(changes, userName); } catch (e) { toast(`Chưa lưu được thứ tự: ${(e as Error).message}`); void store.reload(); }
+  };
+  const moveTopicBy = (t: LegalTopic, delta: number) => {
+    const list = siblingsOf(t);
+    const from = list.findIndex(x => x.id === t.id);
+    void applyOrder(moveItem(list, from, from + delta));
+  };
+  const dropOn = (targetId: string) => {
+    const drag = store.topics.find(x => x.id === dragId);
+    const target = store.topics.find(x => x.id === targetId);
+    setDragId(null); setOverId(null);
+    if (!drag || !target || drag.id === target.id || (drag.parent_id ?? null) !== (target.parent_id ?? null)) return;
+    const list = siblingsOf(drag);
+    void applyOrder(moveItem(list, list.findIndex(x => x.id === drag.id), list.findIndex(x => x.id === target.id)));
+  };
+  const dragProps = (t: LegalTopic): DragProps | undefined => {
+    if (!canEdit) return undefined;
+    const dragT = dragId ? store.topics.find(x => x.id === dragId) : null;
+    const ok = !!dragT && dragT.id !== t.id && (dragT.parent_id ?? null) === (t.parent_id ?? null);
+    const list = siblingsOf(t);
+    const over = ok && overId === t.id ? (list.findIndex(x => x.id === dragT!.id) > list.findIndex(x => x.id === t.id) ? 'above' : 'below') : null;
+    return {
+      dragging: dragId === t.id, over,
+      onStart: () => setDragId(t.id),
+      onOver: e => { if (ok) { e.preventDefault(); setOverId(t.id); } },
+      onDrop: () => dropOn(t.id),
+      onEnd: () => { setDragId(null); setOverId(null); },
+    };
+  };
+
   const removeTopic = async (t: LegalTopic) => {
     const ids = [t.id, ...childrenOf(t.id).map(c => c.id)];
     await archive('legal_topics', ids, userName);
@@ -105,6 +148,8 @@ export default function LibraryView({ ctx, sel, setSel }: { ctx: LegalCtx; sel: 
 
   const topicMenu = (t: LegalTopic) => canEdit ? [
     { label: 'Sửa chủ đề', icon: <Pencil size={14} />, onClick: () => setTopicForm({ initial: t }) },
+    siblingsOf(t).findIndex(x => x.id === t.id) > 0 && { label: 'Chuyển lên', icon: <ArrowUp size={14} />, onClick: () => moveTopicBy(t, -1) },
+    siblingsOf(t).findIndex(x => x.id === t.id) < siblingsOf(t).length - 1 && { label: 'Chuyển xuống', icon: <ArrowDown size={14} />, onClick: () => moveTopicBy(t, 1) },
     !t.parent_id && { label: 'Thêm chủ đề con', icon: <Plus size={14} />, onClick: () => setTopicForm({ parentId: t.id }) },
     { label: 'Xoá chủ đề', icon: <Trash2 size={14} />, danger: true, onClick: () => setDelTopic(t) },
   ] : [];
@@ -128,11 +173,11 @@ export default function LibraryView({ ctx, sel, setSel }: { ctx: LegalCtx; sel: 
           const open = !collapsed.has(t.id);
           return (
             <div key={t.id}>
-              <TreeItem onSelect={() => setSel(t.id)} active={sel === t.id} label={t.title} count={countDeep(t.id)} color={t.color} menu={topicMenu(t)}
+              <TreeItem onSelect={() => setSel(t.id)} active={sel === t.id} label={t.title} count={countDeep(t.id)} color={t.color} menu={topicMenu(t)} drag={dragProps(t)}
                 icon={<ColorTile color={t.color} size={22} radius={6}><TopicGlyph icon={t.icon} size={12} /></ColorTile>}
                 toggle={kids.length ? () => setCollapsed(s => { const n = new Set(s); if (n.has(t.id)) n.delete(t.id); else n.add(t.id); return n; }) : undefined} open={open} />
               {open && kids.map(c => (
-                <TreeItem key={c.id} onSelect={() => setSel(c.id)} depth={1} active={sel === c.id} label={c.title} count={docsIn(c.id).length} color={c.color} menu={topicMenu(c)}
+                <TreeItem key={c.id} onSelect={() => setSel(c.id)} depth={1} active={sel === c.id} label={c.title} count={docsIn(c.id).length} color={c.color} menu={topicMenu(c)} drag={dragProps(c)}
                   icon={<span className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color }} />} />
               ))}
             </div>
@@ -193,6 +238,7 @@ export default function LibraryView({ ctx, sel, setSel }: { ctx: LegalCtx; sel: 
               <div className="flex flex-wrap gap-2 mt-4">
                 <button type="button" onClick={() => ctx.newDoc({ topicId: topic.id })} className={`${BTN_PRIMARY} h-9 px-4 text-[13px]`}><Plus size={15} /> Tài liệu</button>
                 <button type="button" onClick={() => ctx.newDoc({ topicId: topic.id, kind: 'mindmap', template: 'procedure' })} className={`${BTN_SECONDARY} h-9 px-4 text-[13px] !bg-white/70`}>Sơ đồ tư duy</button>
+                <button type="button" onClick={() => ctx.newDoc({ topicId: topic.id, kind: 'timeline' })} className={`${BTN_SECONDARY} h-9 px-4 text-[13px] !bg-white/70`}><GanttChart size={15} /> Dòng thời gian</button>
                 <button type="button" onClick={() => ctx.newDoc({ topicId: topic.id, kind: 'lesson' })} className={`${BTN_SECONDARY} h-9 px-4 text-[13px] !bg-white/70`}>Bài học</button>
                 {!topic.parent_id && <button type="button" onClick={() => setTopicForm({ parentId: topic.id })} className={`${BTN_SECONDARY} h-9 px-4 text-[13px] !bg-white/70`}>Chủ đề con</button>}
               </div>

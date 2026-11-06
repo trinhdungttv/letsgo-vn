@@ -6,6 +6,7 @@ import {
   AlertTriangle, Check, ChevronLeft, Expand, ExternalLink, Focus, Layers, Loader2, NotebookPen, Pencil, Pin, PinOff, Shrink, Trash2,
 } from 'lucide-react';
 import type { NotePalette } from '../../lib/quickNotes/colors';
+import { parseTimeline, starterTimeline, type TimelineDoc } from '../../lib/legal/timelineChart';
 import { defaultDoc } from '../../lib/quickNotes/mindmap/model';
 import { parseDoc } from '../../lib/quickNotes/mindmap/parse';
 import type { MindMapDoc } from '../../lib/quickNotes/mindmap/types';
@@ -19,6 +20,7 @@ import { BTN_SECONDARY } from '../workspace/wsTheme';
 import CardsView from './CardsView';
 import { EmbedFrame, GoogleAccessHint, sourceLabel } from './Embed';
 import LessonEditor from './LessonEditor';
+import { TimelineEditor } from './TimelineChart';
 import { Confirm, DocKindIcon, ColorTile, docColor, docTypeLabel, fmtWhen, MoreMenu, Pill } from './ui';
 import { useAutosave, type SaveState } from './useAutosave';
 import type { LegalStore } from './useLegal';
@@ -28,7 +30,7 @@ const MindMapEditor = lazy(() => import('../quickNotes/mindmap/MindMapEditor'));
 const PAPER: NotePalette = { label: 'Trắng', dot: '#8E8E93', tab: '#D0D0D5', paper: '#FFFFFF', header: '#F5F5F7', strip: '#E5E5EA', ink: '#1D1D1F' };
 const NOTES_KEY = 'legal-reader-notes';
 
-type Content = { kind: 'mindmap'; v: MindMapDoc } | { kind: 'lesson'; v: LessonDoc } | { kind: 'cards'; v: CardsDoc };
+type Content = { kind: 'mindmap'; v: MindMapDoc } | { kind: 'timeline'; v: TimelineDoc } | { kind: 'lesson'; v: LessonDoc } | { kind: 'cards'; v: CardsDoc };
 
 export function SaveBadge({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   if (state.s === 'saving') return <span className="text-[11.5px] text-[#86868B] inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Đang lưu…</span>;
@@ -45,7 +47,7 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
   const [focus, setFocus] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
-  const selfMade = doc.kind === 'mindmap' || doc.kind === 'lesson' || doc.kind === 'cards';
+  const selfMade = doc.kind === 'mindmap' || doc.kind === 'timeline' || doc.kind === 'lesson' || doc.kind === 'cards';
   const [notesOpen, setNotesOpen] = useState(() => {
     if (mobile || selfMade) return false;
     try { return localStorage.getItem(NOTES_KEY) !== '0'; } catch { return true; }
@@ -66,6 +68,7 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
     loadDocContent(doc.id).then(raw => {
       if (!alive) return;
       if (doc.kind === 'mindmap') setContent({ kind: 'mindmap', v: parseDoc(raw) ?? defaultDoc(doc.title || 'Chủ đề trung tâm') });
+      else if (doc.kind === 'timeline') setContent({ kind: 'timeline', v: parseTimeline(raw) ?? starterTimeline() });
       else if (doc.kind === 'lesson') setContent({ kind: 'lesson', v: parseLesson(raw) });
       else setContent({ kind: 'cards', v: parseCards(raw) });
     }).catch(e => { if (alive) setLoadErr((e as Error).message); });
@@ -140,7 +143,7 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
   const color = docColor(doc);
 
   const makeCards = async () => {
-    if (!content || content.kind === 'cards') return;
+    if (!content || content.kind === 'cards' || content.kind === 'timeline') return;
     const cards = content.kind === 'mindmap' ? cardsFromMindmap(content.v) : cardsFromLesson(content.v, doc.title);
     if (!cards.length) { toast(content.kind === 'mindmap' ? 'Sơ đồ chưa có nhánh con để làm thẻ' : 'Bài học chưa có khối màu / các bước để làm thẻ'); return; }
     try {
@@ -171,7 +174,7 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
   const status = meta.status ? LAW_STATUS[meta.status] : null;
   const covering = focus || fullscreen;
 
-  const cardsButton = canEdit && content && content.kind !== 'cards' && (
+  const cardsButton = canEdit && content && content.kind !== 'cards' && content.kind !== 'timeline' && (
     <button type="button" onClick={makeCards} className={`${BTN_SECONDARY} h-8 px-3 text-[12.5px]`} title="Tạo bộ thẻ hỏi – đáp từ nội dung này">
       <Layers size={13} /> <span className="hidden sm:inline">Tạo thẻ ghi nhớ</span>
     </button>
@@ -288,6 +291,10 @@ export default function DocReader({ doc, store, canEdit, userName, toast, mobile
                 </Suspense>
               </div>
             </div>
+          )}
+          {content?.kind === 'timeline' && (
+            <TimelineEditor value={content.v} onChange={v => changeContent({ kind: 'timeline', v })} canEdit={canEdit} title={doc.title} toast={toast}
+              toolbarExtra={<SaveBadge state={contentSave.state} onRetry={() => void contentSave.flush()} />} />
           )}
           {content?.kind === 'lesson' && (
             <LessonEditor value={content.v} onChange={v => changeContent({ kind: 'lesson', v })} canEdit={canEdit} title={doc.title} toast={toast}

@@ -157,8 +157,45 @@ export function findMatches(text: string, q: string): number[] {
   return out;
 }
 
-export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings' | 'mindmap' | 'view_mode'>, q: string): boolean {
+// ── Thẻ (tag) ──
+export const MAX_TAG_LEN = 30;
+export const MAX_TAGS = 40;
+
+/** "  #Hợp  Đồng " → "hợp đồng": bỏ #, gộp khoảng trắng, chữ thường, tối đa 30 ký tự. */
+export function normTag(s: string): string {
+  return s.trim().replace(/^#+/, '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('vi').slice(0, MAX_TAG_LEN).trim();
+}
+
+/** Danh sách thẻ bất kỳ (từ DB / gõ tay) → sạch, không trùng, giữ thứ tự. */
+export function normTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) {
+    const t = typeof x === 'string' ? normTag(x) : '';
+    if (t && !out.includes(t)) out.push(t);
+    if (out.length >= MAX_TAGS) break;
+  }
+  return out;
+}
+
+/** Mọi thẻ đang dùng + số mục dùng; nhiều → ít, bằng nhau thì theo A→Z. */
+export function tagCounts(notes: Pick<QuickNote, 'tags'>[]): { tag: string; count: number }[] {
+  const m = new Map<string, number>();
+  for (const n of notes) for (const t of n.tags ?? []) m.set(t, (m.get(t) ?? 0) + 1);
+  return [...m].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'vi'));
+}
+
+/** Mục có đủ TẤT CẢ thẻ đã chọn (rỗng = mọi mục). */
+export const hasAllTags = (note: Pick<QuickNote, 'tags'>, selected: string[]) => selected.every(t => (note.tags ?? []).includes(t));
+
+export function noteMatches(note: Pick<QuickNote, 'body' | 'recordings' | 'mindmap' | 'view_mode'> & Partial<Pick<QuickNote, 'tags'>>, q: string): boolean {
   if (!q.trim()) return true;
+  // "#thẻ" → chỉ so với thẻ; chữ thường → tìm cả trong tên thẻ
+  if (q.trim().startsWith('#')) {
+    const t = normTag(q);
+    return !t || (note.tags ?? []).some(x => x.includes(t));
+  }
+  if ((note.tags ?? []).some(x => normTag(q) && x.includes(normTag(q)))) return true;
   // Tìm cả trong tên / tóm tắt / lời thoại bản ghi âm → gõ 1 câu khách đã nói cũng ra đúng ghi chú
   return findMatches(isMindmap(note) ? mindmapText(note.mindmap) : note.body, q).length > 0
     || note.recordings.some(r => [r.title, r.summary ?? '', r.transcript ?? ''].some(t => findMatches(t, q).length > 0));

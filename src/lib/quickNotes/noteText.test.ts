@@ -128,3 +128,29 @@ describe('Ghi chú / Sơ đồ tư duy là 2 loại mục riêng', () => {
     expect(mindmapCount(doc)).toBe(3);
   });
 });
+
+import { hasAllTags as _hasAll, noteMatches as _match, normTag as _normTag, normTags as _normTags, tagCounts as _counts } from './noteText';
+
+describe('thẻ (tag)', () => {
+  it('normTag / normTags làm sạch, không trùng', () => {
+    expect(_normTag('  #Hợp   ĐỒNG ')).toBe('hợp đồng');
+    expect(_normTag('x'.repeat(50))).toHaveLength(30);
+    expect(_normTags(['A', '#a', ' b ', '', 5, null])).toEqual(['a', 'b']);
+    expect(_normTags('nope')).toEqual([]);
+  });
+  it('tagCounts nhiều → ít; hasAllTags là AND', () => {
+    const notes = [{ tags: ['a', 'b'] }, { tags: ['b'] }, { tags: [] }];
+    expect(_counts(notes)).toEqual([{ tag: 'b', count: 2 }, { tag: 'a', count: 1 }]);
+    expect(_hasAll(notes[0], ['a', 'b'])).toBe(true);
+    expect(_hasAll(notes[1], ['a', 'b'])).toBe(false);
+    expect(_hasAll(notes[2], [])).toBe(true);
+  });
+  it('noteMatches: #thẻ chỉ so thẻ, chữ thường cũng khớp tên thẻ', () => {
+    const n = { body: 'xin chào', recordings: [], mindmap: null, view_mode: 'text' as const, tags: ['olam', 'hợp đồng'] };
+    expect(_match(n, '#ola')).toBe(true);
+    expect(_match(n, '#xin')).toBe(false);
+    expect(_match(n, 'hợp đồng')).toBe(true);
+    expect(_match(n, 'chào')).toBe(true);
+    expect(_match(n, 'zzz')).toBe(false);
+  });
+});
