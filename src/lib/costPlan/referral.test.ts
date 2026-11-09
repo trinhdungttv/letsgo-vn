@@ -42,6 +42,27 @@ describe('Giới thiệu lao động — tính phí', () => {
     expect(r.months).toBe(0);
     expect(r.profitMonthly).toBe(r.profit);
   });
+  it('hoa hồng đ / ngày công — theo thời gian: × công/tháng × số tháng × số người', () => {
+    const cfg = { ...defaultReferral(), costs: [{ id: 'd', name: 'Hoa hồng CTV', kind: 'per_day' as const, value: 5_000 }] };
+    const r = computeReferral(cfg, { ...S, taxOption: 'none' });
+    expect(r.daysPerWorker).toBe(26 * 6);
+    expect(r.costs).toEqual([{ id: 'd', amount: 5_000 * 26 * 6 * 10 }]);
+  });
+  it('hoa hồng đ / ngày công — trọn gói: × số ngày làm đủ × người được tính phí', () => {
+    const cfg = { ...defaultReferral(), mode: 'lump' as const, minDays: 7, retentionPct: 80, costs: [{ id: 'd', name: 'CTV', kind: 'per_day' as const, value: 10_000 }] };
+    const r = computeReferral(cfg, { ...S, taxOption: 'none' });
+    expect(r.daysPerWorker).toBe(7);
+    expect(r.costs[0].amount).toBe(10_000 * 7 * 8);
+  });
+  it('đ / ngày công nhưng trọn gói chưa nhập số ngày → 0 đ và có cảnh báo', () => {
+    const cfg = { ...defaultReferral(), mode: 'lump' as const, minDays: 0, costs: [{ id: 'd', name: 'CTV', kind: 'per_day' as const, value: 10_000 }] };
+    const r = computeReferral(cfg, S);
+    expect(r.costs[0].amount).toBe(0);
+    expect(r.warnings.some(w => w.level === 'warn' && w.text.includes('ngày công'))).toBe(true);
+  });
+  it('đọc lại từ DB giữ nguyên kind per_day', () => {
+    expect(normalizeReferral({ costs: [{ id: 'x', name: 'CTV', kind: 'per_day', value: 3000 }] }).costs[0]).toMatchObject({ kind: 'per_day', value: 3000 });
+  });
   it('lỗ thì cảnh báo, thuế không âm', () => {
     const r = computeReferral({ ...defaultReferral(), mode: 'lump', lumpFee: 100_000, costs: [{ id: 'x', name: 'x', kind: 'per_worker', value: 500_000 }] }, S);
     expect(r.profitBeforeTax).toBeLessThan(0);

@@ -16,8 +16,9 @@ export type ReferralMode = 'time' | 'lump';
 export interface ReferralCost {
   id: string;
   name: string;
-  /** per_worker = đ / người tuyển được (kể cả người nghỉ sớm) · pct_fee = % trên phí giới thiệu thu được */
-  kind: 'per_worker' | 'pct_fee';
+  /** per_worker = đ / người tuyển được (kể cả người nghỉ sớm) · pct_fee = % trên phí giới thiệu thu được ·
+   *  per_day = đ / ngày công của người được tính phí (theo thời gian: số công/tháng × số tháng thu phí · trọn gói: số ngày làm đủ) */
+  kind: 'per_worker' | 'pct_fee' | 'per_day';
   value: number;
 }
 
@@ -84,7 +85,7 @@ export function normalizeReferral(raw: unknown): ReferralConfig {
     costs: Array.isArray(r.costs)
       ? r.costs.slice(0, 30).map(c => ({
           id: c?.id || newCostId(), name: String(c?.name ?? ''),
-          kind: c?.kind === 'pct_fee' ? 'pct_fee' as const : 'per_worker' as const,
+          kind: c?.kind === 'pct_fee' ? 'pct_fee' as const : c?.kind === 'per_day' ? 'per_day' as const : 'per_worker' as const,
           value: Math.max(0, num(c?.value)),
         }))
       : d.costs,
@@ -108,6 +109,8 @@ export interface ReferralResult {
   feePerWorkerMonth: number;
   /** Phí thu được từ 1 NLĐ suốt thời gian thu phí (lump = phí trọn gói) */
   feePerWorker: number;
+  /** Số ngày công của 1 NLĐ được tính phí — cơ sở tính khoản chi "đ / ngày công" (time = công/tháng × số tháng · lump = số ngày làm đủ) */
+  daysPerWorker: number;
   /** Số tháng thu phí (lump = 0: thu 1 lần) */
   months: number;
   /** time: doanh thu / tháng · lump: = revenueTotal */
@@ -142,7 +145,12 @@ export function computeReferral(cfgIn: ReferralConfig | null | undefined, settin
   const revenueTotal = feePerWorker * billedWorkers;
   const revenueMonthly = c.mode === 'time' ? feePerWorkerMonth * billedWorkers : revenueTotal;
 
-  const costs = c.costs.map(x => ({ id: x.id, amount: x.kind === 'pct_fee' ? (x.value / 100) * revenueTotal : x.value * workers }));
+  const daysPerWorker = c.mode === 'time' ? days * c.durationMonths : c.minDays;
+  const costAmount = (x: ReferralCost) =>
+    x.kind === 'pct_fee' ? (x.value / 100) * revenueTotal
+    : x.kind === 'per_day' ? x.value * daysPerWorker * billedWorkers
+    : x.value * workers;
+  const costs = c.costs.map(x => ({ id: x.id, amount: costAmount(x) }));
   const costTotal = costs.reduce((s, x) => s + x.amount, 0);
   const profitBeforeTax = revenueTotal - costTotal;
   // Phí giới thiệu là giá cố định thoả thuận với khách → thuế TNDN dự phòng trừ vào lợi nhuận (không cộng vào giá như cung ứng)
@@ -157,13 +165,16 @@ export function computeReferral(cfgIn: ReferralConfig | null | undefined, settin
   if (c.mode === 'time' && c.rateUnit === 'hour' && c.maxHoursPerDay > 8) {
     warnings.push({ level: 'info', text: `Đang tính tối đa ${c.maxHoursPerDay} giờ/ngày — giờ làm việc bình thường không quá 8 giờ/ngày (Điều 105 BLLĐ 2019), phần vượt là tăng ca.` });
   }
+  if (c.mode === 'lump' && c.minDays <= 0 && c.costs.some(x => x.kind === 'per_day' && x.value > 0)) {
+    warnings.push({ level: 'warn', text: 'Có khoản chi tính theo ngày công nhưng chưa nhập số ngày làm đủ — khoản này đang tính 0 đ.' });
+  }
   if (revenueTotal > 0 && profitBeforeTax < 0) warnings.push({ level: 'error', text: 'Chi phí tuyển dụng cao hơn phí thu được — phương án này lỗ.' });
   if (c.retentionPct < 100) {
     warnings.push({ level: 'info', text: `Ước tính ${Math.round(billedWorkers * 10) / 10}/${workers} người được tính phí (${c.retentionPct}% đi làm đều${c.mode === 'lump' ? ` đủ ${c.minDays} ngày` : ''}).` });
   }
 
   return {
-    mode: c.mode, workers, billedWorkers, feePerDay, feePerWorkerMonth, feePerWorker, months,
+    mode: c.mode, workers, billedWorkers, feePerDay, feePerWorkerMonth, feePerWorker, daysPerWorker, months,
     revenueMonthly, revenueTotal, costs, costTotal, profitBeforeTax, tax, profit,
     profitMonthly: months > 0 ? profit / months : profit,
     profitPerWorker: profit / workers,

@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-referral-commission-per-day',
+    date: '2026-11-09',
+    title: 'Phương án giá',
+    features: [
+      'Hoa hồng người giới thiệu / CTV chọn được tính theo số tiền / 1 ngày công (ngoài % phí thu được và đ / người)',
+    ],
+  },
+  {
     id: '2026-11-09-recruit-image-tags',
     date: '2026-11-09',
     title: 'CRM Pipeline',

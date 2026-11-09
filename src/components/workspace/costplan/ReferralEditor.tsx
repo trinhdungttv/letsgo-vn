@@ -132,27 +132,35 @@ export default function ReferralEditor({
         <div className={card}>
           <div className="px-5 pt-4 pb-2">
             <div className="text-[14px] font-semibold text-[#1d1d1f]">Chi phí tuyển dụng của mình</div>
-            <div className="text-[12px] text-[#86868b]">Nội bộ — không in lên báo giá. Tính theo mỗi người tuyển được, hoặc % trên phí thu được (hoa hồng)</div>
+            <div className="text-[12px] text-[#86868b]">Nội bộ — không in lên báo giá. Tính theo mỗi người tuyển được, % trên phí thu được, hoặc đ / ngày công (hoa hồng)</div>
           </div>
           <div className="divide-y divide-[#f2f2f4] border-t border-[#f2f2f4]">
             {cfg.costs.map(c => {
               const amount = r.costs.find(x => x.id === c.id)?.amount ?? 0;
               const patch = (p: Partial<typeof c>) => set({ costs: cfg.costs.map(x => (x.id === c.id ? { ...x, ...p } : x)) });
               return (
-                <div key={c.id} className="flex flex-wrap sm:flex-nowrap items-center gap-2 px-5 py-2.5">
-                  <input value={c.name} disabled={dis} onChange={e => patch({ name: e.target.value })} placeholder="Tên khoản chi"
-                    className="flex-1 min-w-[160px] bg-transparent text-[13.5px] font-medium text-[#1d1d1f] outline-none placeholder:text-[#a1a1a6]" />
-                  <div className="flex items-center gap-2 ml-auto">
-                    {c.kind === 'pct_fee'
-                      ? <span className="flex items-center gap-1"><NumInput value={c.value} max={100} step={0.5} disabled={dis} onChange={n => patch({ value: n })} className={`${field} !h-8 w-16 text-right font-semibold`} /><span className="text-[12px] text-[#86868b]">%</span></span>
-                      : <MoneyInput value={c.value} disabled={dis} onChange={n => patch({ value: n })} className={`${field} !h-8 w-[104px] text-right font-semibold`} />}
-                    <Select value={c.kind} disabled={dis} onChange={v => patch({ kind: v as typeof c.kind, value: 0 })} className="w-[132px]" fieldClassName="!h-8 !text-[12px]">
-                      <option value="per_worker">đ / người tuyển</option>
-                      <option value="pct_fee">% phí thu được</option>
-                    </Select>
-                    <span className="w-[72px] text-right text-[12px] tabular-nums text-[#6e6e73]" title={`${fmtD(amount)} ${period}`}>{fmtShort(amount)}</span>
-                    {!dis && <button type="button" onClick={() => set({ costs: cfg.costs.filter(x => x.id !== c.id) })} title="Xoá khoản" className="w-7 h-7 rounded-full flex items-center justify-center text-[#a1a1a6] hover:bg-[#fff1f0] hover:text-[#d70015]"><Trash2 size={13} /></button>}
+                <div key={c.id} className="px-5 py-2.5">
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                    <input value={c.name} disabled={dis} onChange={e => patch({ name: e.target.value })} placeholder="Tên khoản chi"
+                      className="flex-1 min-w-[160px] bg-transparent text-[13.5px] font-medium text-[#1d1d1f] outline-none placeholder:text-[#a1a1a6]" />
+                    <div className="flex items-center gap-2 ml-auto">
+                      {c.kind === 'pct_fee'
+                        ? <span className="flex items-center gap-1"><NumInput value={c.value} max={100} step={0.5} disabled={dis} onChange={n => patch({ value: n })} className={`${field} !h-8 w-16 text-right font-semibold`} /><span className="text-[12px] text-[#86868b]">%</span></span>
+                        : <MoneyInput value={c.value} disabled={dis} onChange={n => patch({ value: n })} className={`${field} !h-8 w-[104px] text-right font-semibold`} />}
+                      <Select value={c.kind} disabled={dis} onChange={v => patch({ kind: v as typeof c.kind, value: 0 })} className="w-[132px]" fieldClassName="!h-8 !text-[12px]">
+                        <option value="per_worker">đ / người tuyển</option>
+                        <option value="pct_fee">% phí thu được</option>
+                        <option value="per_day">đ / ngày công</option>
+                      </Select>
+                      <span className="w-[72px] text-right text-[12px] tabular-nums text-[#6e6e73]" title={`${fmtD(amount)} ${period}`}>{fmtShort(amount)}</span>
+                      {!dis && <button type="button" onClick={() => set({ costs: cfg.costs.filter(x => x.id !== c.id) })} title="Xoá khoản" className="w-7 h-7 rounded-full flex items-center justify-center text-[#a1a1a6] hover:bg-[#fff1f0] hover:text-[#d70015]"><Trash2 size={13} /></button>}
+                    </div>
                   </div>
+                  {c.kind === 'per_day' && (
+                    <div className="mt-1 text-[11.5px] text-[#86868b] leading-snug">
+                      = {fmtD(c.value)} × {r.daysPerWorker} công/người ({time ? `${Math.round(r.daysPerWorker / cfg.durationMonths)} công/tháng × ${cfg.durationMonths} tháng` : 'số ngày làm đủ'}) × {Math.round(r.billedWorkers * 10) / 10} người được tính phí
+                    </div>
+                  )}
                 </div>
               );
             })}
