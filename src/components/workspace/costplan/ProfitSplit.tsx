@@ -32,7 +32,8 @@ export default function ProfitSplit({ settings, result, readOnly, onChange, bran
     onChange({ companyPct: Math.min(100, Math.max(0, Math.round(((clientX - rect.left) / rect.width) * 100))) });
   };
 
-  const presets = [100, 70, 50, 30, 0];
+  // Nút chọn nhanh (phần Công ty / Chi nhánh): không có 100/0 và 0/100 — luôn chia cho cả hai bên
+  const presets = [30, 40, 50];
   const khoanOk = !!branchKhoan && branchKhoan.lgPct + branchKhoan.cnPct === 100;
 
   return (

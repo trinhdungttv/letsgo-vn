@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-profit-split-presets',
+    date: '2026-11-09',
+    title: 'Phương án giá',
+    features: [
+      'Chia lợi nhuận: nút chọn nhanh còn 30/70, 40/60, 50/50 (bỏ 100/0 và 0/100)',
+    ],
+  },
+  {
     id: '2026-11-09-referral-commission-per-day',
     date: '2026-11-09',
     title: 'Phương án giá',
