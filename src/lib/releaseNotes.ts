@@ -16,6 +16,26 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-labor-sources',
+    date: '2026-11-09',
+    title: 'Nguồn Lao Động',
+    features: [
+      'Tab mới "Nguồn LĐ" trong Thị trường (thay Báo giá): hồ sơ trường, trung tâm, địa phương',
+      'Ngành đào tạo gắn ngành công ty, lịch thực tập lặp hằng năm, đợt gửi SV ghi số đi / số đạt',
+      'Tính đường xe khách 16–45 chỗ từ trường tới KCN / công ty, vẽ tuyến trên bản đồ',
+      'Gợi ý trường hợp công ty theo ngành, đường xe, tỷ lệ đạt đợt trước, đúng mùa thực tập',
+      'Trước mùa thực tập tự tạo việc "Liên hệ trường" trong Workspace',
+      'Trường hiện trên Bản đồ, Khảo sát KCN (nguồn LĐ gần KCN) và hồ sơ Khách hàng',
+      'Người liên hệ của trường quản lý ở CSKH tệp Sale / CTV (ô "Đại diện đơn vị nguồn")',
+    ],
+  },
+  {
+    id: '2026-11-09-survey-photo-viewer',
+    date: '2026-11-09',
+    title: 'Khảo sát KCN',
+    features: ['Xem ảnh chỉ tiêu: Esc để đóng, phím ← → để chuyển ảnh', 'Ghi nhanh công ty, ngành nghề, số lượng và chọn khoảng lương ngay khi xem ảnh'],
+  },
+  {
     id: '2026-11-09-map-pipeline-sites',
     date: '2026-11-09',
     title: 'Bản đồ Thị trường',

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { MapPin, Coins, Eye, Building2, FileText, Map as MapIcon, Factory, Route } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { MapPin, Coins, Eye, Building2, GraduationCap, Map as MapIcon, Factory, Route } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client, LaborHistoryEntry } from '../lib/types';
@@ -10,9 +10,10 @@ import CompetitorsTab from './market/CompetitorsTab';
 import LeadsTab from './market/LeadsTab';
 import MapViewTab from './market/MapViewTab';
 import SurveyTab from './market/SurveyTab';
-import Quotes from './Quotes';
+// Nguồn LĐ (thay tab Báo giá 09/11/2026) — tải riêng khi mở tab
+const LaborSourcesTab = lazy(() => import('./market/sources/LaborSourcesTab'));
 
-export type MarketTab = 'zones' | 'industry' | 'wage' | 'comp' | 'leads' | 'quote' | 'map' | 'survey';
+export type MarketTab = 'zones' | 'industry' | 'wage' | 'comp' | 'leads' | 'sources' | 'map' | 'survey';
 
 interface MarketProps {
   marketSurveys: MarketSurvey[];
@@ -31,13 +32,13 @@ const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
   { id: 'wage', label: 'Lương TT', icon: <Coins size={13} /> },
   { id: 'comp', label: 'Đối thủ', icon: <Eye size={13} /> },
   { id: 'leads', label: 'Công ty / Dự án', icon: <Building2 size={13} /> },
-  { id: 'quote', label: 'Báo giá', icon: <FileText size={13} /> },
+  { id: 'sources', label: 'Nguồn LĐ', icon: <GraduationCap size={13} /> },
   { id: 'map', label: 'Bản đồ', icon: <MapIcon size={13} /> },
   { id: 'survey', label: 'Khảo sát KCN', icon: <Route size={13} /> },
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, laborHistory, onRefresh, toast }: MarketProps) {
-  const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'quote', 'map', 'survey'] as const;
+  const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'sources', 'map', 'survey'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
 
@@ -54,7 +55,7 @@ export default function Market({ marketSurveys, competitors, marketZones, market
 
   return (
     <>
-      <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Báo giá · Khảo sát KCN" />
+      <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Nguồn LĐ · Khảo sát KCN" />
       <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
         {/* Điện thoại: 8 tab thành 1 dải cuộn ngang thay vì xếp 3 dòng */}
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 md:flex-wrap">
@@ -78,16 +79,10 @@ export default function Market({ marketSurveys, competitors, marketZones, market
         {tab === 'leads' && <LeadsTab {...shared} />}
         {tab === 'map' && <MapViewTab {...shared} />}
         {tab === 'survey' && <SurveyTab {...shared} />}
-        {tab === 'quote' && (
-          <Quotes
-            key={zoneFilter}
-            marketZones={marketZones}
-            competitors={competitors}
-            clients={clients}
-            marketLeads={marketLeads}
-            toast={toast}
-            initialZone={zoneFilter !== 'all' ? zoneFilter : undefined}
-          />
+        {tab === 'sources' && (
+          <Suspense fallback={<div className="py-12 text-center text-[12px] text-[#999]">Đang tải…</div>}>
+            <LaborSourcesTab {...shared} />
+          </Suspense>
         )}
       </div>
     </>

@@ -38,6 +38,8 @@ import { KIND_FILTERS, headcountText, matchesKind, type KindFilter } from '../..
 import type { ShareZone } from '../../lib/kcnSurvey/share';
 import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
+import { nearestSources, shortName, useLaborLite } from './sources/useLaborLite';
+import { requestOpenSource } from './sources/context';
 import { fold } from './survey/surveyData';
 
 type Sub = 'trips' | 'photos' | 'online' | 'voice' | 'zones' | 'archive';
@@ -63,7 +65,7 @@ function readPrefs(): TabPrefs {
 /** Lần tự dọn Lưu trữ gần nhất trên máy này — dọn tối đa mỗi 6 giờ */
 const PURGE_KEY = 'lgvn_survey_purge_at';
 
-export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast }: MarketTabProps) {
+export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTab, toast, zoneFilter, setZoneFilter }: MarketTabProps) {
   const { user, token } = useAuth();
   const [shareOpen, setShareOpen] = useState(false);
   /** Hộp nhập mã 4 số đang mở (xoá chuyến / xoá hẳn chuyến) */
@@ -144,6 +146,20 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   useEffect(() => {
     supabase.from('branches').select('*').then(({ data }) => setBranches((data as Branch[]) ?? []));
   }, []);
+  // Mở từ nơi khác kèm KCN (VD Nguồn LĐ → hồ sơ trường → "Khảo sát KCN này") → lọc sẵn KCN đó, 1 lần
+  useEffect(() => {
+    if (!zoneFilter || zoneFilter === 'all') return;
+    const z = marketZones.find(x => x.name === zoneFilter);
+    if (z) setPrefs({ zoneId: z.id, province: 'all', sub: 'trips' });
+    setZoneFilter('all');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Nguồn LĐ (trường / trung tâm) gần KCN — theo giờ xe khách đã tính ở tab Nguồn LĐ (chưa tính thì ước tính ≈)
+  const labor = useLaborLite();
+  const nearOf = useCallback((id: string, n = 3) => {
+    const z = marketZones.find(x => x.id === id);
+    return z ? nearestSources(labor, { type: 'zone', id: z.id, lat: z.lat, lng: z.lng }, n) : [];
+  }, [labor, marketZones]);
   // Mở tab: tự xoá hẳn mục nằm trong Lưu trữ quá 30 ngày (hạn tính bằng giờ máy chủ), rồi đọc Lưu trữ
   useEffect(() => {
     (async () => {
@@ -449,6 +465,24 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
         </button>
       </div>
 
+      {/* Trường / nguồn LĐ gần KCN đang lọc — bấm để mở hồ sơ ở Nguồn LĐ */}
+      {zoneId !== 'all' && zoneId !== 'none' && labor.sources.length > 0 && (() => {
+        const near = nearOf(zoneId, 4);
+        if (!near.length) return null;
+        return (
+          <div className={`${card} px-3 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar`}>
+            <span className="shrink-0 text-[12px] font-medium text-[#666]">Nguồn LĐ gần:</span>
+            {near.map(n => (
+              <button key={n.source.id} onClick={() => requestOpenSource(n.source.id)} title={n.estimated ? 'Ước tính — mở hồ sơ để tính đường xe thật' : 'Giờ xe khách 16–45 chỗ'}
+                className="shrink-0 h-7 px-2.5 rounded-full bg-[#0071E3]/10 text-[#0066CC] text-[12px] font-medium whitespace-nowrap">
+                {shortName(n.source)} · {n.estimated ? '≈' : ''}{Math.round(n.min)} phút
+              </button>
+            ))}
+            <button onClick={() => goTab('sources', zoneLabel(zoneId))} className="shrink-0 text-[12px] text-[#0066CC] hover:underline whitespace-nowrap">Xem tất cả →</button>
+          </div>
+        );
+      })()}
+
       <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
         {subTabs.map(t => (
           <button key={t.id} onClick={() => goSub(t.id)}
@@ -477,6 +511,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                 <th className="text-right font-medium px-2 py-2" title="Công ty gắn sao (cần chú trọng)">★</th>
                 <th className="text-right font-medium px-2 py-2">Ghi âm</th>
                 <th className="text-right font-medium px-2 py-2">Lần gần nhất</th>
+                {labor.sources.length > 0 && <th className="text-left font-medium px-2 py-2" title="Trường / nguồn LĐ gần nhất theo giờ xe khách (≈ = ước tính, mở Nguồn LĐ để tính đường thật)">Nguồn LĐ gần</th>}
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -492,6 +527,19 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                   <td className="px-2 py-2 text-right tabular-nums text-[#B7791F]">{r.starCos.size || '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.voice || '—'}</td>
                   <td className="px-2 py-2 text-right text-[#666] whitespace-nowrap">{r.last ? new Date(r.last).toLocaleDateString('vi-VN') : '—'}</td>
+                  {labor.sources.length > 0 && (() => {
+                    const n = r.id !== 'none' ? nearOf(r.id, 1)[0] : undefined;
+                    return (
+                      <td className="px-2 py-2 whitespace-nowrap">
+                        {n ? (
+                          <button onClick={e => { e.stopPropagation(); requestOpenSource(n.source.id); }} title={`${n.source.name} — mở hồ sơ Nguồn LĐ`}
+                            className="text-[12px] text-[#0066CC] hover:underline max-w-[160px] truncate inline-block align-middle">
+                            {shortName(n.source)} · {n.estimated ? '≈' : ''}{Math.round(n.min)}′
+                          </button>
+                        ) : <span className="text-[#bbb]">—</span>}
+                      </td>
+                    );
+                  })()}
                   <td className="px-3 py-1.5 text-right">
                     <button onClick={e => { e.stopPropagation(); setPdfFor({ id: r.id, name: r.name }); }} title="Xuất PDF để đưa AI phân tích lương & tuyển dụng"
                       className="h-7 px-2 rounded-md border border-[#E8E7E2] bg-white text-[11.5px] text-[#333] inline-flex items-center gap-1 hover:bg-[#F2F2F0]">
@@ -500,7 +548,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                   </td>
                 </tr>
               ))}
-              {!zoneRows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
+              {!zoneRows.length && <tr><td colSpan={11} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
             </tbody>
           </table>
         </div>
@@ -734,6 +782,9 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       {viewer && (
         <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
           starred={starOf(viewer)} onStar={togglePhotoStar}
+          nav={{ index: Math.max(0, fPhotosBoth.findIndex(x => x.id === viewer.id)), total: fPhotosBoth.length,
+            onPrev: fPhotosBoth.findIndex(x => x.id === viewer.id) > 0 ? () => setViewer(fPhotosBoth[fPhotosBoth.findIndex(x => x.id === viewer.id) - 1]) : null,
+            onNext: fPhotosBoth.findIndex(x => x.id === viewer.id) < fPhotosBoth.length - 1 ? () => setViewer(fPhotosBoth[fPhotosBoth.findIndex(x => x.id === viewer.id) + 1]) : null }}
           onShowOnMap={() => { const p = viewer; setViewer(null); setFocus({ lat: p.lat, lng: p.lng, key: Date.now() }); }}
           onSaved={p => { setPhotos(list => list.map(x => (x.id === p.id ? p : x))); setViewer(p); }}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); void loadArchive(); }} />

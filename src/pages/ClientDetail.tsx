@@ -43,6 +43,8 @@ const ClientCareBlock = lazy(() => import('../modules/cskh/ClientCareBlock'));
 // Sơ đồ tổ chức + Mặt bằng nhà xưởng — tải riêng khi mở tab (migration 199)
 const ClientOrgChart = lazy(() => import('../components/clients/ClientOrgChart'));
 const ClientSiteMaps = lazy(() => import('../components/clients/ClientSiteMaps'));
+// Nguồn LĐ: trường đã gửi SV + trường phù hợp nhất (Thị trường → Nguồn LĐ)
+const ClientSourcesBlock = lazy(() => import('./market/sources/ClientSourcesBlock'));
 const ClientWorkflow = lazy(() => import('../components/clients/ClientWorkflow'));
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Filler);
@@ -1433,6 +1435,11 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                     <SocialLinksRow websiteUrl={client.website_url} facebookUrl={client.facebook_url} youtubeUrl={client.youtube_url} tiktokUrl={client.tiktok_url} />
                   )}
                 </div>
+
+                {/* ── Nguồn sinh viên (Thị trường → Nguồn LĐ) ── */}
+                <Suspense fallback={null}>
+                  <ClientSourcesBlock key={client.id} client={client} />
+                </Suspense>
 
                 {/* ── Lịch sử thay đổi: quản lý + chi nhánh ── */}
                 <SectionCard

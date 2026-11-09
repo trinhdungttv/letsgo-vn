@@ -3,7 +3,7 @@ import { Bar, Bubble } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, Tooltip, Legend,
 } from 'chart.js';
-import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical, Star } from 'lucide-react';
+import { Plus, ArrowLeft, Check, Building2, Users, MapPin, Coins, Eye, FileText, GraduationCap, X, LayoutGrid, List, Image as ImageIcon, GripVertical, Settings, RotateCcw, Pencil, Trash2, MoreVertical, Star } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { MarketZone } from '../../lib/types';
@@ -668,7 +668,7 @@ export default function ZonesTab({ marketZones, marketSurveys, competitors, mark
               đang hoạt động tại KCN này" ngay trong hồ sơ KCN, kèm link riêng để F5 không mất chỗ. */}
           <button onClick={() => goSection('doi-thu')} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border transition ${section === 'doi-thu' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'}`}><Eye size={11} /> Đối thủ tại đây</button>
           <button onClick={() => goTab('leads', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><Building2 size={11} /> Công ty trong KCN</button>
-          <button onClick={() => goTab('quote', selected.name)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><FileText size={11} /> Tạo báo giá</button>
+          <button onClick={() => goTab('sources', selected.name)} title="Trường / nguồn lao động gần KCN này (theo đường xe khách)" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11.5px] font-medium border border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]"><GraduationCap size={11} /> Nguồn LĐ gần KCN</button>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">

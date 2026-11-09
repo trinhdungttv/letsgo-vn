@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus, Route, Navigation } from 'lucide-react';
+import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus, Route, Navigation, SlidersHorizontal } from 'lucide-react';
 import { createPopulationLayer, createCommuneLayer, createDensityLegend } from './populationDensity';
 import { fetchCommunes } from './populationData';
 import type { CommuneRow } from './populationData';
@@ -22,6 +22,9 @@ import KcnSurveyMode from './survey/KcnSurveyMode';
 import { useLiveLocation } from './useLiveLocation';
 import { readZoneSites } from '../../lib/pipelineZones';
 import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, loadGroupIcons, DEFAULT_VIEW_KEY, loadDefaultView, SOUTH_VN_BOUNDS, type MapGroup, type SavedMapView } from '../../lib/mapGroups';
+import { useLaborLite } from './sources/useLaborLite';
+import { requestOpenSource } from './sources/context';
+import { KIND_LABEL as LABOR_KIND_LABEL } from '../../lib/laborSources/types';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
 type Group = MapGroup;
@@ -62,7 +65,11 @@ function loadMapPrefs(): MapPrefs {
   try {
     const raw = localStorage.getItem(MAP_PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
-    return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+    const saved = { ...DEFAULT_PREFS, ...JSON.parse(raw) } as MapPrefs & { seenGroups?: Group[] };
+    // Nhóm mới thêm sau lần lưu bộ lọc (VD "Nguồn LĐ" 09/11) → tự bật, không bị ẩn vì bộ lọc cũ
+    const seen = saved.seenGroups ?? ['branch', 'kcn', 'client', 'prospect', 'lead'];
+    const fresh = GROUPS.map(g => g.id).filter(id => !seen.includes(id) && !saved.activeGroups.includes(id));
+    return fresh.length ? { ...saved, activeGroups: [...saved.activeGroups, ...fresh] } : saved;
   } catch {
     return { ...DEFAULT_PREFS };
   }
@@ -127,6 +134,9 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   // iPhone Safari không có Fullscreen API cho thẻ div → "toàn màn hình" bằng CSS (phủ kín màn hình)
   const [cssFs, setCssFs] = useState(false);
   const isFullscreen = nativeFs || cssFs;
+  // Bảng bộ lọc nổi khi toàn màn hình — mặc định ẩn, bật/tắt bằng nút bộ lọc
+  const [panelOpen, setPanelOpen] = useState(false);
+  useEffect(() => { if (!isFullscreen) setPanelOpen(false); }, [isFullscreen]);
   const [densityOn, setDensityOn] = useState(prefsLoaded.densityOn);
   const [wageLayerOn, setWageLayerOn] = useState(prefsLoaded.wageLayerOn);
   const [provinceFilter, setProvinceFilter] = useState(prefsLoaded.provinceFilter);
@@ -223,7 +233,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
 
   // Nhớ bộ lọc/hiển thị theo máy — F5 hoặc vào lại vẫn giữ nguyên lựa chọn.
   useEffect(() => {
-    const prefs: MapPrefs = { activeGroups, densityOn, wageLayerOn, satView, labelMode, provinceFilter, industryFilter };
+    const prefs: MapPrefs & { seenGroups: Group[] } = { activeGroups, densityOn, wageLayerOn, satView, labelMode, provinceFilter, industryFilter, seenGroups: GROUPS.map(g => g.id) };
     localStorage.setItem(MAP_PREFS_KEY, JSON.stringify(prefs));
   }, [activeGroups, densityOn, wageLayerOn, satView, labelMode, provinceFilter, industryFilter]);
 
@@ -244,6 +254,19 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     return false;
   };
   const matchesIndustryFilter = (industry: string | null | undefined) => industryFilter === 'all' || industry === industryFilter;
+
+  // Nguồn LĐ: đơn vị nguồn + KCN gần nhất của từng đơn vị (theo đường xe khách đã tính ở tab Nguồn LĐ)
+  const labor = useLaborLite();
+  const laborNearZone = useMemo(() => {
+    const zoneName = new Map(marketZones.map(z => [z.id, z.name]));
+    const m = new Map<string, { zone: string; min: number }>();
+    for (const r of labor.routes) {
+      if (r.target_type !== 'zone' || r.duration_min == null || !zoneName.has(r.target_id)) continue;
+      const cur = m.get(r.source_id);
+      if (!cur || r.duration_min < cur.min) m.set(r.source_id, { zone: zoneName.get(r.target_id)!, min: r.duration_min });
+    }
+    return m;
+  }, [labor.routes, marketZones]);
 
   const points = useMemo<MapPoint[]>(() => {
     const pts: MapPoint[] = [];
@@ -293,6 +316,18 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
         onOpen: ps.clientId ? () => { window.location.hash = `#/client-detail/${shortId(ps.clientId!)}`; } : undefined,
       });
     });
+    // Nguồn LĐ (trường / trung tâm / địa phương) — kèm KCN gần nhất theo giờ xe khách đã tính
+    labor.sources.forEach(s => {
+      if (s.lat == null || s.lng == null) return;
+      if (provinceFilter !== 'all' && s.province !== provinceFilter) return;
+      const near = laborNearZone.get(s.id);
+      pts.push({
+        id: s.id, group: 'source', name: s.short_name || s.name, lat: s.lat, lng: s.lng,
+        sub: [LABOR_KIND_LABEL[s.kind], s.province, near ? `Gần ${near.zone} · xe khách ${Math.round(near.min)} phút` : null].filter(Boolean).join(' · '),
+        mapLink: null,
+        onOpen: () => requestOpenSource(s.id),
+      });
+    });
     marketLeads.forEach(l => {
       if (l.lat == null || l.lng == null) return;
       if (!matchesProvinceFilter(l.region, undefined)) return;
@@ -308,7 +343,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     });
     return pts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branches, marketZones, marketLeads, allClients, pipelineSites, goTab, provinceFilter, industryFilter, zoneToProvince]);
+  }, [branches, marketZones, marketLeads, allClients, pipelineSites, goTab, provinceFilter, industryFilter, zoneToProvince, labor, laborNearZone]);
 
   // Bản ghi thiếu link Google Maps HOẶC thiếu toạ độ — cả hai đều cần bổ sung.
   const missingList = useMemo(() => {
@@ -361,6 +396,16 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     mapRef.current = map;
     clusterRef.current = cluster;
     return () => { map.remove(); mapRef.current = null; clusterRef.current = null; };
+  }, []);
+
+  // Mở từ hồ sơ Nguồn LĐ ("Xem trên Bản đồ") → phóng tới điểm đó, bật nhóm Nguồn LĐ
+  useEffect(() => {
+    let req: { lat?: number; lng?: number; zoom?: number; group?: Group } | null = null;
+    try { req = JSON.parse(sessionStorage.getItem('lgmap_focus') || 'null'); sessionStorage.removeItem('lgmap_focus'); } catch { req = null; }
+    if (!req || typeof req.lat !== 'number' || typeof req.lng !== 'number') return;
+    const g = req.group;
+    if (g && GROUPS.some(x => x.id === g)) setActiveGroups(list => (list.includes(g) ? list : [...list, g]));
+    mapRef.current?.setView([req.lat, req.lng], req.zoom ?? 13);
   }, []);
 
   // Vẽ lại marker khi dữ liệu / filter đổi
@@ -912,7 +957,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
 
       <div ref={mapWrapperRef} className={`bg-white border border-[#E8E7E2] overflow-hidden ${cssFs ? 'fixed inset-0 z-[1250]' : 'relative'} ${isFullscreen ? '' : 'rounded-[10px]'}`}>
         <div ref={mapDivRef} style={{ height: isFullscreen ? '100dvh' : 'calc(100dvh - 260px)', minHeight: 420 }} />
-        {isFullscreen && <FullscreenControlsOverlay>{controls}</FullscreenControlsOverlay>}
+        {isFullscreen && <FullscreenControlsOverlay open={panelOpen} onClose={() => setPanelOpen(false)}>{controls}</FullscreenControlsOverlay>}
         {!isFullscreen && (
           <button onClick={() => setSurveyOpen(true)}
             className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] h-11 pl-4 pr-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold shadow-[0_6px_20px_rgba(10,132,255,0.45)] inline-flex items-center gap-2 active:scale-95 transition whitespace-nowrap">
@@ -925,6 +970,12 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
             className={`w-9 h-9 flex items-center justify-center rounded-lg border shadow ${live.active ? 'bg-[#0A84FF] border-[#0A84FF] text-white' : 'bg-white border-[#D8D6D0] text-[#444] hover:bg-[#F9F9F7]'}`}>
             {live.active && live.follow ? <Navigation size={16} fill="currentColor" /> : <LocateFixed size={16} />}
           </button>
+          {isFullscreen && (
+            <button onClick={() => setPanelOpen(v => !v)} title={panelOpen ? 'Ẩn bộ lọc' : 'Hiện bộ lọc'}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg border shadow ${panelOpen ? 'bg-[#111] border-[#111] text-white' : 'bg-white border-[#D8D6D0] text-[#444] hover:bg-[#F9F9F7]'}`}>
+              <SlidersHorizontal size={16} />
+            </button>
+          )}
           <button onClick={toggleFullscreen} title={isFullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'}
             className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7]">
             {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
@@ -1015,42 +1066,16 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   );
 }
 
-/** Menu bộ lọc nổi trên bản đồ khi ở chế độ toàn màn hình — kiểu Apple: ẩn theo mặc định,
- * di chuột vào dải mỏng trên cùng (hoặc vào chính menu) để hiện, tự ẩn sau 30s không thao tác. */
-function FullscreenControlsOverlay({ children }: { children: ReactNode }) {
-  const [revealed, setRevealed] = useState(true);
-  const hideTimerRef = useRef<number | null>(null);
-
-  const scheduleHide = () => {
-    if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = window.setTimeout(() => setRevealed(false), 30000);
-  };
-  const wake = () => { setRevealed(true); scheduleHide(); };
-
-  useEffect(() => {
-    scheduleHide();
-    return () => { if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+/** Menu bộ lọc nổi trên bản đồ khi ở chế độ toàn màn hình: ẩn theo mặc định, hiện / ẩn bằng nút bộ lọc bên phải bản đồ. */
+function FullscreenControlsOverlay({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+  if (!open) return null;
   return (
-    <>
-      <div onMouseEnter={wake} className="absolute top-0 left-0 right-0 h-3 z-[1001]" />
-      {!revealed && (
-        <div onMouseEnter={wake}
-          className="absolute top-2 left-1/2 -translate-x-1/2 z-[1001] w-10 h-1.5 rounded-full bg-white/50 hover:bg-white/80 cursor-pointer transition" />
-      )}
-      <div
-        onMouseMove={wake}
-        onClick={wake}
-        className={`absolute top-3 left-1/2 -translate-x-1/2 z-[1001] transition-all duration-300 ease-out ${
-          revealed ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'
-        }`}>
-        <div className="bg-white/75 backdrop-blur-xl border border-white/60 shadow-2xl rounded-2xl px-3 py-2.5 max-w-[92vw] max-h-[85vh] overflow-y-auto space-y-2">
-          {children}
-        </div>
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1001] w-[calc(100%-5.5rem)] max-w-[92vw] md:w-auto">
+      <div className="relative bg-white/85 backdrop-blur-xl border border-white/60 shadow-2xl rounded-2xl px-3 py-2.5 max-h-[80dvh] overflow-y-auto space-y-2">
+        <button onClick={onClose} aria-label="Ẩn bộ lọc" className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/5 flex items-center justify-center text-[#555] z-10"><X size={14} /></button>
+        {children}
       </div>
-    </>
+    </div>
   );
 }
 

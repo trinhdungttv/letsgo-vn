@@ -64,6 +64,10 @@ export const TABLE_LABELS: Record<string, string> = {
   industry_metrics: 'Chỉ số ngành theo quý',
   industry_value_chain: 'Chuỗi giá trị ngành',
   industry_terms: 'Thuật ngữ ngành',
+  labor_sources: 'Nguồn LĐ — đơn vị nguồn',
+  labor_source_programs: 'Nguồn LĐ — ngành đào tạo',
+  labor_source_windows: 'Nguồn LĐ — lịch thực tập',
+  labor_source_batches: 'Nguồn LĐ — đợt gửi SV',
 };
 
 export function tableLabel(name: string): string {

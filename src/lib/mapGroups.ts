@@ -2,7 +2,7 @@
 // (MapViewTab) và bản đồ nhỏ trong hồ sơ công ty (MiniMap), để hai nơi hiện giống hệt nhau.
 import { supabase } from './supabase';
 
-export type MapGroup = 'branch' | 'kcn' | 'client' | 'prospect' | 'lead';
+export type MapGroup = 'branch' | 'kcn' | 'client' | 'prospect' | 'lead' | 'source';
 
 export const MAP_GROUPS: { id: MapGroup; label: string; color: string }[] = [
   { id: 'branch', label: 'Chi nhánh', color: '#1D4ED8' },
@@ -10,6 +10,8 @@ export const MAP_GROUPS: { id: MapGroup; label: string; color: string }[] = [
   { id: 'client', label: 'KH đang hợp tác', color: '#059669' },
   { id: 'prospect', label: 'KH tiềm năng', color: '#7C3AED' },
   { id: 'lead', label: 'Công ty / Dự án', color: '#DB2777' },
+  // Trường / trung tâm / địa phương ở Thị trường → Nguồn LĐ (migration 213)
+  { id: 'source', label: 'Nguồn LĐ (trường)', color: '#0891B2' },
 ];
 
 export const MAP_GROUP_COLOR: Record<MapGroup, string> =
@@ -17,7 +19,7 @@ export const MAP_GROUP_COLOR: Record<MapGroup, string> =
 
 // Icon (emoji) mặc định cho từng loại — người dùng tự đổi ở tab Bản đồ (nút Cài đặt), lưu ở máy.
 export const DEFAULT_GROUP_ICONS: Record<MapGroup, string> = {
-  branch: '', kcn: '🏭', client: '', prospect: '', lead: '',
+  branch: '', kcn: '🏭', client: '', prospect: '', lead: '', source: '🎓',
 };
 export const GROUP_ICONS_KEY = 'lgmap_group_icons_v1';
 
@@ -72,11 +74,13 @@ if (typeof window !== 'undefined') window.addEventListener('lgvn:market-changed'
 export function fetchMapContextPoints(force = false): Promise<MapContextPoint[]> {
   if (!cache || force) {
     cache = (async () => {
-      const [b, z, c, l] = await Promise.all([
+      const [b, z, c, l, s] = await Promise.all([
         supabase.from('branches').select('id, name, short_name, lat, lng'),
         supabase.from('market_zones').select('id, name, lat, lng'),
         supabase.from('clients').select('id, name, client_type, lat, lng').is('archived_at', null),
         supabase.from('market_leads').select('id, company_name, crm_id, lat, lng'),
+        // Chưa chạy migration 213 → lỗi → không có điểm Nguồn LĐ, các nhóm khác vẫn hiện
+        supabase.from('labor_sources').select('id, name, short_name, lat, lng').is('deleted_at', null),
       ]);
       const pts: MapContextPoint[] = [];
       const ok = (r: { lat: number | null; lng: number | null }) => r.lat != null && r.lng != null;
@@ -84,6 +88,7 @@ export function fetchMapContextPoints(force = false): Promise<MapContextPoint[]>
       (z.data ?? []).filter(ok).forEach(r => pts.push({ id: r.id, group: 'kcn', name: r.name, lat: r.lat, lng: r.lng }));
       (c.data ?? []).filter(ok).forEach(r => pts.push({ id: r.id, group: r.client_type === 'active' ? 'client' : 'prospect', name: r.name, lat: r.lat, lng: r.lng }));
       (l.data ?? []).filter(ok).forEach(r => pts.push({ id: r.id, group: 'lead', name: r.company_name, lat: r.lat, lng: r.lng, crmId: r.crm_id }));
+      (s.error ? [] : s.data ?? []).filter(ok).forEach(r => pts.push({ id: r.id, group: 'source', name: r.short_name || r.name, lat: r.lat, lng: r.lng }));
       return pts;
     })().catch(() => { cache = null; return []; });
   }

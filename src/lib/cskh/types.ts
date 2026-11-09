@@ -189,6 +189,8 @@ export interface CskhContact {
   saleZoneIds: string[];
   /** Ngành quen — mã industries (migration 179). */
   saleIndustryIds: string[];
+  /** Đại diện đơn vị nguồn lao động nào (trường / trung tâm — labor_sources.id, migration 213). */
+  laborSourceId: string | null;
   fullName: string;
   nickname: string;
   avatarUrl: string;

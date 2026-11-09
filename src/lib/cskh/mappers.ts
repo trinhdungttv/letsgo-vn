@@ -60,6 +60,8 @@ export interface ContactSaleColumns {
   /** Migration 179 — mã KCN (market_zones) / ngành (industries). */
   sale_zone_ids: string[] | null;
   sale_industry_ids: string[] | null;
+  /** Migration 213 — đại diện đơn vị nguồn lao động (trường / trung tâm). */
+  labor_source_id?: string | null;
 }
 export type ContactRow = Contact & Partial<ContactCskhColumns> & Partial<ContactProfileColumns> & Partial<ContactSaleColumns>;
 
@@ -169,6 +171,7 @@ export function mapContactRow(row: ContactRow): CskhContact {
     saleStage: oneOf<SaleStage>(row.sale_stage, SALE_STAGES, 'none'),
     saleZoneIds: idList(row.sale_zone_ids),
     saleIndustryIds: idList(row.sale_industry_ids),
+    laborSourceId: row.labor_source_id ?? null,
     fullName: row.name,
     nickname: text(row.nickname),
     avatarUrl: text(row.avatar_url),

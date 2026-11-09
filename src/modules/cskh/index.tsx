@@ -24,6 +24,7 @@ import { automationMessage, runCareAutomationOnce } from './automationRunner';
 import type { CskhData } from './data/api';
 import { useCskhSpaces } from './data/useCskhData';
 import { useCareScope } from './useCareScope';
+import { CSKH_OPEN_KEY } from '../../lib/laborSources/api';
 import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
 import { SpaceContext } from './space';
 import CskhDashboard from './Dashboard';
@@ -129,6 +130,19 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
   const [groupLogFor, setGroupLogFor] = useState<readonly string[] | null>(null);
 
   const openLog = useCallback((contactId?: string) => { setProfileId(null); setLogFor(contactId ?? ''); }, []);
+
+  // Mở hồ sơ theo yêu cầu từ trang khác (VD Thị trường → Nguồn LĐ → người liên hệ của trường)
+  useEffect(() => {
+    if (!data) return;
+    try {
+      const raw = sessionStorage.getItem(CSKH_OPEN_KEY);
+      if (!raw) return;
+      const req = JSON.parse(raw) as { space?: string; contactId?: string };
+      if (req.space !== space || !req.contactId) return;
+      sessionStorage.removeItem(CSKH_OPEN_KEY);
+      if (data.contacts.some(c => c.id === req.contactId)) setProfileId(req.contactId);
+    } catch { /* bỏ qua */ }
+  }, [data, space]);
   const openGroups = useCallback(() => { setProfileId(null); setManagingGroups(true); }, []);
   const openGroupLog = useCallback((ids?: readonly string[]) => { setProfileId(null); setGroupLogFor(ids ?? []); }, []);
 

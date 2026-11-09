@@ -304,6 +304,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const [saleStage, setSaleStage] = useState<SaleStage>(current.saleStage);
   const [saleZoneIds, setSaleZoneIds] = useState<string[]>(current.saleZoneIds);
   const [saleIndustryIds, setSaleIndustryIds] = useState<string[]>(current.saleIndustryIds);
+  const [laborSourceId, setLaborSourceId] = useState(current.laborSourceId ?? '');
   const referrals = useMemo(
     () => (isSale && !isNew ? referralsByContact([current], data.referrals).get(current.id) ?? [] : []),
     [isSale, isNew, current, data.referrals],
@@ -509,7 +510,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
         },
         geo: { manualPin, linkCoords, preview },
         occasions: planOccasionSave(myOccasions, occRows.filter(r => !isBlankDraft(r))),
-        sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleZoneIds, saleIndustryIds } : null,
+        sale: isSale ? { saleCompany, competitorId: competitorId || null, saleStage, saleZoneIds, saleIndustryIds, laborSourceId: laborSourceId || null } : null,
       });
       // Thẻ BD Pipeline chưa chọn người liên hệ → đặt người này (không ghi đè người đã có)
       for (const entry of pipeEntries) await fillPipelineContactIfEmpty(entry, { id: saveRaw.id, name: name.trim() }, user);
@@ -679,6 +680,22 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
               {data.competitors.map(c => <option key={c.id} value={c.id}>{c.name}{c.zone ? ` · ${c.zone}` : ''}</option>)}
             </select>
           </Field>
+          {data.laborSources.length > 0 && (
+            <Field label="Đại diện đơn vị nguồn" hint="Trường / trung tâm ở Thị trường → Nguồn LĐ (Ban giám hiệu, phòng QHDN, GV…)">
+              <select value={laborSourceId} className={inputCls}
+                onChange={e => {
+                  const next = e.target.value;
+                  const prevName = data.laborSources.find(s => s.id === laborSourceId)?.name ?? '';
+                  const nextName = data.laborSources.find(s => s.id === next)?.name ?? '';
+                  setLaborSourceId(next);
+                  // Ô "Nơi làm" đang trống / đang là tên trường cũ → điền theo trường mới
+                  if (nextName && (!saleCompany.trim() || saleCompany.trim() === prevName)) setSaleCompany(nextName);
+                }}>
+                <option value="">— Không —</option>
+                {data.laborSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Nơi làm hiện tại" hint="Tên công ty / tự do — hiện cạnh tên Sale ở mọi danh sách">
             <input value={saleCompany} onChange={e => setSaleCompany(e.target.value)} className={inputCls} placeholder="VD: Nhân lực MD, làm tự do" />
           </Field>

@@ -1,14 +1,14 @@
 // Xem 1 ảnh chỉ tiêu (dùng ở Lịch sử khảo sát và tab Khảo sát KCN): ảnh + lớp ghi chú vẽ, thông tin bảng tuyển,
 // chỗ chụp, sửa nội dung / vẽ thêm ghi chú lên ảnh / xoá mềm.
-import { useEffect, useState } from 'react';
-import { BadgeCheck, ExternalLink, MapPin, PenLine, Pencil, Star, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, MapPin, PenLine, Pencil, Star, Trash2, X } from 'lucide-react';
 import { softDeletePhoto, updatePhoto, type SurveyPhoto } from '../../../lib/kcnSurvey/api';
 import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
 import { MarkedImage, MarksSvg } from './PhotoMarks';
 import PhotoMarkupEditor from './PhotoMarkupEditor';
 import { HEADCOUNT_BUCKETS, UNVERIFIED_TAG, headcountText } from '../../../lib/kcnSurvey/online';
 import { fmtDateTime } from './surveyFormat';
-import PositionPicker from './PositionPicker';
+import PositionPicker, { WagePicker } from './PositionPicker';
 
 const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ' };
 const posText = (p: SurveyPhoto) => (p.survey_kind === 'online' ? 'Vị trí từ link Google Maps (khảo sát online)' : POS_SOURCE[p.position_source]);
@@ -34,7 +34,9 @@ export function PhotoThumb({ photo, className = '' }: { photo: SurveyPhoto; clas
   );
 }
 
-export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say, starred, onStar }: {
+export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved, onDeleted, say, starred, onStar, nav }: {
+  /** Chuyển ảnh trước / sau trong danh sách đang xem (phím ← →) */
+  nav?: { index: number; total: number; onPrev: (() => void) | null; onNext: (() => void) | null };
   photo: SurveyPhoto;
   onClose: () => void;
   /** null = không có nút "Xem chỗ chụp" (đã có bản đồ ngay cạnh) */
@@ -54,6 +56,21 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
     setForm({ company_name: photo.company_name, positions: photo.positions, headcount: photo.headcount?.toString() ?? '', wage_text: photo.wage_text, note: photo.note });
     setEditing(false);
   }, [photo]);
+
+  // Phím tắt: Esc đóng (đang sửa thì thoát sửa trước) · ← → chuyển ảnh (không khi đang gõ / vẽ ghi chú)
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = e => {
+    if (marking) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement | null)?.tagName ?? '');
+    if (e.key === 'Escape') { e.preventDefault(); if (editing) setEditing(false); else onClose(); }
+    else if (!editing && !typing && e.key === 'ArrowLeft' && nav?.onPrev) { e.preventDefault(); nav.onPrev(); }
+    else if (!editing && !typing && e.key === 'ArrowRight' && nav?.onNext) { e.preventDefault(); nav.onNext(); }
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
 
   const save = async () => {
     setSaving(true);
@@ -97,7 +114,12 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
         <button onClick={onClose} className="h-10 px-3 text-[16px] text-white inline-flex items-center gap-1"><X size={18} /> Đóng</button>
         <a href={photo.url} target="_blank" rel="noopener noreferrer" className="h-10 px-3 text-[14px] text-white/80 inline-flex items-center gap-1"><ExternalLink size={15} /> Ảnh gốc</a>
       </div>
-      <MarkedImage src={photo.url} alt={photo.company_name} marks={photo.annotations} className="flex-1 min-h-0 w-full" />
+      <div className="relative flex-1 min-h-0 w-full flex">
+        <MarkedImage src={photo.url} alt={photo.company_name} marks={photo.annotations} className="flex-1 min-h-0 w-full" />
+        {nav?.onPrev && <button onClick={nav.onPrev} aria-label="Ảnh trước (←)" className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white flex items-center justify-center"><ChevronLeft size={24} /></button>}
+        {nav?.onNext && <button onClick={nav.onNext} aria-label="Ảnh sau (→)" className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white flex items-center justify-center"><ChevronRight size={24} /></button>}
+        {nav && nav.total > 1 && <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/55 text-white text-[12px] tabular-nums">{nav.index + 1} / {nav.total}</div>}
+      </div>
       <div className="shrink-0 bg-[#1C1C1E] text-white px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] space-y-2 max-h-[48vh] overflow-y-auto">
         {!editing ? (
           <>
@@ -140,7 +162,7 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
                   <BadgeCheck size={13} /> {photo.verified_at ? 'Bỏ xác thực' : 'Đánh dấu đã xác thực'}
                 </button>
               )}
-              <button onClick={() => setEditing(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><Pencil size={13} /> Sửa</button>
+              <button onClick={() => setEditing(true)} className="h-9 px-3 rounded-full bg-white/15 text-[12.5px] font-medium inline-flex items-center gap-1"><Pencil size={13} /> Ghi nhanh / Sửa</button>
               <button onClick={del} className="h-9 px-3 rounded-full bg-[#D70015]/80 text-[12.5px] font-medium inline-flex items-center gap-1"><Trash2 size={13} /> Xoá</button>
             </div>
           </>
@@ -155,7 +177,10 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
                     {HEADCOUNT_BUCKETS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
                   </select>
                 : <input value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value.replace(/[^\d]/g, '') }))} inputMode="numeric" placeholder="Số lượng" className={field} />}
-              <input value={form.wage_text} onChange={e => setForm(f => ({ ...f, wage_text: e.target.value }))} placeholder="Lương" className={field} />
+              </div>
+            <div>
+              <div className="text-[11.5px] text-white/60 mb-1">Khoảng lương lao động nhận được</div>
+              <WagePicker dark value={form.wage_text} onChange={w => setForm(f => ({ ...f, wage_text: w }))} />
             </div>
             <textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} rows={2} placeholder="Ghi chú"
               className="w-full px-3 py-2 rounded-xl bg-white/10 text-[14px] text-white outline-none placeholder:text-white/40 resize-none" />

@@ -39,6 +39,7 @@ import { RECRUIT_ENABLED } from './lib/featureFlags';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import QuickNotesDock from './components/quickNotes/QuickNotesDock';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
+import LaborReminderRunner from './pages/market/sources/LaborReminderRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
 import { VoiceRecorderProvider } from './components/voice/VoiceRecorderProvider';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
@@ -520,6 +521,8 @@ function AppInner() {
       {user && <UpcomingDatesReminder userId={user.id} />}
       {/* Việc nhắc tự động CSKH: mỗi ngày 1 lần khi mở app, không cần mở trang CSKH */}
       {user && <CareAutomationRunner clients={clients} toast={toast} />}
+      {/* Nguồn LĐ: trước mùa thực tập của trường tự tạo việc nhắc trong Workspace (mỗi ngày 1 lần) */}
+      {user && <LaborReminderRunner toast={toast} />}
       {/* Ghi chú nhanh: dải thẻ dính mép phải trên mọi trang (ghi chú riêng từng người + ghi âm cuộc họp) */}
       {user && <QuickNotesDock userId={user.id} />}
     </div>

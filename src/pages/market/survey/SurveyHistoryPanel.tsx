@@ -277,6 +277,9 @@ export default function SurveyHistoryPanel({ zones, defaultZoneId, initialTab, p
       {viewer && (
         <SurveyPhotoViewer photo={viewer} onClose={() => setViewer(null)} say={say}
           starred={starOf?.(viewer)} onStar={onStar}
+          nav={{ index: Math.max(0, shownPhotos.findIndex(x => x.id === viewer.id)), total: shownPhotos.length,
+            onPrev: shownPhotos.findIndex(x => x.id === viewer.id) > 0 ? () => setViewer(shownPhotos[shownPhotos.findIndex(x => x.id === viewer.id) - 1]) : null,
+            onNext: shownPhotos.findIndex(x => x.id === viewer.id) < shownPhotos.length - 1 ? () => setViewer(shownPhotos[shownPhotos.findIndex(x => x.id === viewer.id) + 1]) : null }}
           onShowOnMap={() => { onShowPhoto(viewer); setViewer(null); }}
           onSaved={p => { setPhotos(list => list.map(x => x.id === p.id ? p : x)); setViewer(p); onChanged(); }}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); onChanged(); }} />

@@ -137,6 +137,8 @@ export interface CskhData {
   zones: CatalogItem[];
   /** Chỉ tệp Sale: danh mục ngành (Thị trường → Ngành nghề) để chọn "Ngành quen". */
   industries: CatalogItem[];
+  /** Chỉ tệp Sale: đơn vị nguồn lao động (Thị trường → Nguồn LĐ) để chọn "Đại diện trường". Chưa chạy 213 → rỗng. */
+  laborSources: CatalogItem[];
   /**
    * Việc Workspace (chưa xoá) có gắn người của tệp này (work_tasks.contact_ids, migration 200) — hiện ở
    * Nhật ký, thẻ tóm tắt, hồ sơ người liên hệ. Chỉ đọc; không tính vào lần liên hệ / điểm chăm sóc.
@@ -170,7 +172,7 @@ export async function loadCskhData(space: CskhSpace = 'client'): Promise<CskhDat
  */
 export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Partial<Record<CskhSpace, CskhData>>> {
   const sale = spaces.includes('sale');
-  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes, workRes] = await Promise.all([
+  const [contactRows, logRows, dateRes, giftRes, settingsRes, groupRes, userRes, pipeRes, compRes, zoneRes, industryRes, workRes, laborRes] = await Promise.all([
     selectContacts(q => q.order('name'), 'all') as Promise<ContactRow[]>,
     fetchAll<CskhLogRow>((from, to) => supabase.from('cskh_logs').select('*')
       .order('log_date', { ascending: false }).order('created_at', { ascending: false }).order('id').range(from, to)),
@@ -187,6 +189,8 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
     // Việc Workspace có gắn người liên hệ (DB chưa chạy 200 → lỗi thiếu cột → coi như chưa có việc nào)
     supabase.from('work_tasks').select(CSKH_WORK_TASK_SELECT).neq('contact_ids', '{}').is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(2000),
+    // Tệp Sale: trường / trung tâm của Nguồn LĐ (migration 213 — chưa có bảng thì rỗng)
+    sale ? supabase.from('labor_sources').select('id, name').is('deleted_at', null).order('name') : Promise.resolve({ data: [], error: null }),
   ]);
 
   // Bảng có sẵn trước CSKH mà lỗi → báo; bảng mới chưa có (chưa chạy migration) → bỏ qua
@@ -240,6 +244,7 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
     .map(c => ({ id: c.id, name: (c.company_name ?? '').trim(), zone: (c.zone_name ?? '').trim() })).filter(c => c.name);
   const zones = catalogOf(zoneRes);
   const industries = catalogOf(industryRes);
+  const laborSources = catalogOf(laborRes);
   const workTasks = workRes.error ? [] : ((workRes.data ?? []) as WorkTaskRow[]).map(mapWorkTaskRow);
 
   const out: Partial<Record<CskhSpace, CskhData>> = {};
@@ -260,6 +265,7 @@ export async function loadCskhSpaces(spaces: readonly CskhSpace[]): Promise<Part
       competitors: isSale ? competitors : [],
       zones: isSale ? zones : [],
       industries: isSale ? industries : [],
+      laborSources: isSale ? laborSources : [],
       workTasks: workTasksForContacts(workTasks, ids),
     };
   }
@@ -776,6 +782,8 @@ export interface SaleProfilePatch {
   /** Mã KCN (market_zones) / ngành (industries) — migration 179. */
   saleZoneIds: string[];
   saleIndustryIds: string[];
+  /** Đại diện đơn vị nguồn (migration 213) — chỉ ghi khi đổi, DB chưa chạy 213 vẫn lưu được phần còn lại. */
+  laborSourceId?: string | null;
 }
 
 /** Toạ độ nhà hiện tại khi lưu: chấm tay > link Maps > tra chữ (xem lib/cskh/mapPoints.planGeo). */
@@ -862,6 +870,10 @@ export async function saveProfile(opts: {
       sale_industry_ids: [...new Set(sp.saleIndustryIds)],
     }).eq('id', opts.raw.id);
     if (error) throw writeError(error);
+    if (sp.laborSourceId !== undefined && sp.laborSourceId !== current.laborSourceId) {
+      const { error: e213 } = await supabase.from('contacts').update({ labor_source_id: sp.laborSourceId }).eq('id', opts.raw.id);
+      if (e213) throw new Error(isMissingSchema(e213) ? 'Chưa lưu được "Đại diện trường" — cần chạy migration 213 (Nguồn Lao Động) trên Supabase.' : e213.message || 'Lỗi không rõ');
+    }
   }
   const full = await updateContactWith174([opts.raw.id], patch);
   if (occasions && !isEmptyPlan(occasions)) await applyOccasionPlan(opts.raw.id, occasions, opts.user);

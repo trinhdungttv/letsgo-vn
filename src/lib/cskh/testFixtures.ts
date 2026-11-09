@@ -14,6 +14,7 @@ export function makeContact(over: Partial<CskhContact> = {}): CskhContact {
     saleStage: 'none',
     saleZoneIds: [],
     saleIndustryIds: [],
+    laborSourceId: null,
     fullName: `Người ${id}`,
     nickname: '',
     avatarUrl: '',

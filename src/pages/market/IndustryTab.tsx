@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import IndustrySchoolsBlock from './sources/IndustrySchoolsBlock';
 import { Doughnut, Bar, Bubble } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, PointElement, Tooltip, Legend,
@@ -466,6 +467,9 @@ export default function IndustryTab({ clients, marketLeads, marketSurveys, compe
             </div>
           </div>
         )}
+
+        {/* Trường / đơn vị nguồn có ngành đào tạo gắn ngành này (Thị trường → Nguồn LĐ) */}
+        <IndustrySchoolsBlock industryId={selected.id} onOpenTab={() => goTab('sources')} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {noteSection('overview', 'Đánh giá tổng quan thị trường', 'Quy mô ngành, đặc điểm lao động, tình hình hiện tại, đánh giá chung từ thị trường…', <FileText size={13} className="text-blue-600" />, 'border-l-blue-500')}
