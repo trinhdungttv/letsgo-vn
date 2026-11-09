@@ -12,6 +12,7 @@ import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
 import type { StarRef } from '../../../lib/kcnSurvey/stars';
 import { MarkedImage } from './PhotoMarks';
 import PhotoMarkupEditor from './PhotoMarkupEditor';
+import PositionPicker from './PositionPicker';
 
 export interface PhotoPosition {
   lat: number;
@@ -232,7 +233,7 @@ export default function SurveyPhotoSheet({ file, position, suggestions, allCompa
 
           <section className="space-y-2.5">
             <div className="text-[12px] font-semibold text-[#8E8E93] uppercase tracking-wide">Nội dung bảng tuyển (không bắt buộc)</div>
-            <input value={positions} onChange={e => setPositions(e.target.value)} placeholder="Vị trí tuyển — VD: Công nhân may, QC, kho" className={input} />
+            <PositionPicker value={positions} onChange={setPositions} />
             <div className="grid grid-cols-2 gap-2">
               <input value={headcount} onChange={e => setHeadcount(e.target.value.replace(/[^\d]/g, ''))} inputMode="numeric" placeholder="Số lượng" className={input} />
               <input value={wage} onChange={e => setWage(e.target.value)} placeholder="Lương — VD: 8–10tr" className={input} />

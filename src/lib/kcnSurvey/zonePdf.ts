@@ -3,7 +3,7 @@
 // (ảnh tải lỗi — chặn CORS / mất mạng — thì ghi link thay cho ảnh). Thư viện jsPDF nạp động.
 import type { jsPDF as JsPdf } from 'jspdf';
 import { fmtDistance } from './track';
-import { kindPdfTag } from './online';
+import { headcountText, kindPdfTag } from './online';
 import { reportIntro, type ZoneReport } from './zoneReport';
 
 const FONT = 'BeVietnamPro';
@@ -124,7 +124,7 @@ export async function zoneReportPdf(r: ZoneReport, opts: { images: boolean; onPr
       para(`#${k + 1} · ${fmtDT(p.taken_at)} · ${kindPdfTag(p)}${starred ? STAR_TAG : ''}${p.company_name.trim() || 'Chưa rõ công ty'}`, { size: 10.5, bold: true, gap: 0.6 });
       const lines = [
         p.positions && `Vị trí tuyển: ${p.positions}`,
-        p.headcount != null && `Số lượng: ${p.headcount}`,
+        headcountText(p) != null && `Số lượng: ${headcountText(p)}`,
         p.wage_text && `Lương: ${p.wage_text}`,
         p.note && `Ghi chú: ${p.note}`,
         markText.length > 0 && `Chữ ghi trên ảnh: ${markText.join(' · ')}`,

@@ -4,18 +4,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Loader2, X } from 'lucide-react';
 import MapLinkHint from '../../../components/MapLinkHint';
-import { parsePosition } from '../../../lib/kcnSurvey/online';
+import { HEADCOUNT_BUCKETS, parsePosition } from '../../../lib/kcnSurvey/online';
+import { readFileExif } from '../../../lib/kcnSurvey/exif';
+import { isValidVnLatLng } from '../../../lib/geo';
 import { uploadPhoto, type SurveyPhoto } from '../../../lib/kcnSurvey/api';
 import type { MarketLead, MarketZone } from '../../../lib/types';
 import { fold } from './surveyData';
+import PositionPicker from './PositionPicker';
+import { Star } from 'lucide-react';
+import type { StarRef } from '../../../lib/kcnSurvey/stars';
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const lab = 'block text-[11px] font-medium text-[#666] mb-1';
 const inp = 'w-full h-10 px-3 rounded-lg border border-[#E8E7E2] text-[13px] outline-none focus:border-[#0A84FF] bg-white';
 
-interface Pic { key: string; file: File; url: string }
+interface Pic { key: string; file: File; url: string; gps: { lat: number; lng: number } | null }
 
-export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, onClose, onSaved, say }: {
+export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, onClose, onSaved, say, isStarred, onToggleStar }: {
+  isStarred?: (c: StarRef) => boolean;
+  onToggleStar?: (c: StarRef & { zoneName?: string }, on: boolean) => void;
   zones: readonly MarketZone[];
   leads: readonly MarketLead[];
   user: { id: string; full_name: string } | null;
@@ -34,6 +41,7 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
   const [wage, setWage] = useState('');
   const [note, setNote] = useState('');
   const [day, setDay] = useState(today());
+  const [star, setStar] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
@@ -42,7 +50,12 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
   const addFiles = useCallback((list: FileList | File[] | null) => {
     const files = [...(list ?? [])].filter(f => f.type.startsWith('image/'));
     if (!files.length) return;
-    setPics(p => [...p, ...files.map(f => ({ key: `${f.name}-${f.size}-${Math.random().toString(36).slice(2)}`, file: f, url: URL.createObjectURL(f) }))].slice(0, 12));
+    const fresh: Pic[] = files.map(f => ({ key: `${f.name}-${f.size}-${Math.random().toString(36).slice(2)}`, file: f, url: URL.createObjectURL(f), gps: null }));
+    setPics(p => [...p, ...fresh].slice(0, 12));
+    // Ảnh có gắn vị trí chụp (EXIF GPS) → ghim đúng chỗ đó trên bản đồ
+    fresh.forEach(pic => void readFileExif(pic.file).then(x => {
+      if (x?.lat != null && x.lng != null && isValidVnLatLng({ lat: x.lat, lng: x.lng })) setPics(list => list.map(i => (i.key === pic.key ? { ...i, gps: { lat: x.lat!, lng: x.lng! } } : i)));
+    }));
   }, []);
   const removePic = (key: string) => setPics(p => { const x = p.find(i => i.key === key); if (x) URL.revokeObjectURL(x.url); return p.filter(i => i.key !== key); });
   const picsRef = useRef(pics);
@@ -70,28 +83,37 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
     return out.sort((a, b) => a.localeCompare(b, 'vi')).slice(0, 800);
   }, [leads]);
 
+  const starRef: StarRef = { clientId: null, crmId: null, leadId: leads.find(l => fold(l.company_name ?? '') === fold(company.trim()))?.id ?? null, name: company.trim(), zoneId: zoneId || null };
+  const starKey = `${starRef.leadId ?? ''}|${fold(company)}|${zoneId}`;
+  useEffect(() => { setStar(!!isStarred && !!company.trim() && isStarred(starRef)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [starKey]);
+
   const save = async () => {
     if (!pics.length) { setErr('Chọn, kéo thả hoặc dán ít nhất 1 ảnh'); return; }
-    if (!company.trim()) { setErr('Nhập tên công ty'); return; }
-    if (!pos) { setErr('Dán link Google Maps của công ty (link dài có toạ độ) hoặc gõ "vĩ độ, kinh độ"'); return; }
+    if (!positions.trim()) { setErr('Chọn ít nhất 1 vị trí / tay nghề tuyển'); return; }
+    if (mapLink.trim() && !pos) { setErr('Link Google Maps chưa đọc được toạ độ — dán link dài có @vĩ độ,kinh độ hoặc gõ "vĩ độ, kinh độ" (hoặc xoá ô này)'); return; }
+    const zonePt = zone && zone.lat != null && zone.lng != null ? { lat: zone.lat, lng: zone.lng } : null;
+    const where = (pic: Pic) => (pos ? { ...pos, src: 'manual' as const } : pic.gps ? { ...pic.gps, src: 'exif' as const } : zonePt ? { ...zonePt, src: 'manual' as const } : null);
+    if (pics.some(pic => !where(pic))) { setErr('Có ảnh chưa có vị trí: chọn KCN, dán link Google Maps, hoặc dùng ảnh có gắn vị trí chụp'); return; }
     setErr(null);
-    const lead = leads.find(l => fold(l.company_name ?? '') === fold(company.trim())) ?? null;
+    const lead = company.trim() ? leads.find(l => fold(l.company_name ?? '') === fold(company.trim())) ?? null : null;
     const takenAt = new Date(`${day || today()}T09:00:00`).toISOString();
     const noteText = [source.trim() && `Nguồn: ${source.trim()}`, note.trim()].filter(Boolean).join('\n');
     const saved: SurveyPhoto[] = [];
     try {
       for (let i = 0; i < pics.length; i++) {
         setBusy(`Đang lưu ảnh ${i + 1}/${pics.length}…`);
+        const at = where(pics[i])!;
         saved.push(await uploadPhoto(crypto.randomUUID(), pics[i].file, {
           trip_id: null, zone_id: zone?.id ?? null, zone_name: zone?.name ?? '',
-          lat: pos.lat, lng: pos.lng, accuracy_m: null, position_source: 'manual', taken_at: takenAt,
+          lat: at.lat, lng: at.lng, accuracy_m: null, position_source: at.src, taken_at: takenAt,
           company_name: company.trim(), client_id: null, lead_id: lead?.id ?? null, crm_id: null,
-          positions: positions.trim(), headcount: headcount.trim() ? Math.max(0, parseInt(headcount, 10) || 0) : null,
+          positions: positions.trim(), headcount: headcount ? parseInt(headcount, 10) : null,
           wage_text: wage.trim(), note: noteText, annotations: [],
           user_id: user?.id ?? null, user_name: user?.full_name ?? '', survey_kind: 'online',
         }));
       }
       onSaved(saved);
+      if (onToggleStar && isStarred && star !== isStarred(starRef)) onToggleStar({ ...starRef, zoneName: zone?.name ?? '' }, star);
       say(`Đã thêm ${saved.length} ảnh khảo sát online — tag “Chưa xác thực”`);
       onClose();
     } catch (e) {
@@ -120,6 +142,7 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
 
           <div>
             <span className={lab}>Ảnh tuyển dụng (tối đa 12) · chọn file, kéo thả hoặc dán Ctrl+V</span>
+            {pics.some(x => x.gps) && <div className="text-[11px] text-emerald-600 mb-1">✓ {pics.filter(x => x.gps).length}/{pics.length} ảnh có vị trí chụp — sẽ ghim đúng chỗ đó trên bản đồ{pos ? ' (trừ khi dùng link Google Maps bên dưới — link được ưu tiên)' : ''}</div>}
             <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
               onDrop={e => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}
               className={`rounded-xl border-2 border-dashed p-3 transition ${drag ? 'border-[#0A84FF] bg-blue-50' : 'border-[#D8D6D0] bg-[#FAFAF8]'}`}>
@@ -155,13 +178,13 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
           </div>
 
           <label className="block">
-            <span className={lab}>Công ty</span>
+            <span className={lab}>Công ty <span className="text-[#aaa]">· không bắt buộc</span></span>
             <input value={company} onChange={e => setCompany(e.target.value)} list="online-photo-leads" placeholder="Tên công ty đăng tuyển" className={inp} />
             <datalist id="online-photo-leads">{leadNames.map(n => <option key={n} value={n} />)}</datalist>
           </label>
 
           <label className="block">
-            <span className={lab}>Vị trí công ty — link Google Maps</span>
+            <span className={lab}>Vị trí công ty — link Google Maps <span className="text-[#aaa]">· không bắt buộc nếu ảnh đã có vị trí chụp hoặc đã chọn KCN</span></span>
             <input value={mapLink} onChange={e => setMapLink(e.target.value)} placeholder="Dán link Google Maps (dài, có …@10.9,106.8…) hoặc gõ 10.9482, 106.8431" className={inp} />
             {pos ? <div className="text-[11px] text-emerald-600 mt-0.5">✓ Đọc được toạ độ {pos.lat.toFixed(5)}, {pos.lng.toFixed(5)}</div> : <MapLinkHint value={mapLink} className="mt-0.5" />}
           </label>
@@ -172,14 +195,28 @@ export default function OnlinePhotoDialog({ zones, leads, user, defaultZoneId, o
           </label>
 
           <div className="space-y-2.5">
-            <input value={positions} onChange={e => setPositions(e.target.value)} placeholder="Vị trí tuyển — VD: Công nhân may, QC, kho" className={inp} />
+            <div>
+              <span className={lab}>Vị trí / tay nghề tuyển (chọn nhiều) — để lọc công ty đang cần thợ may, thợ hàn…</span>
+              <PositionPicker value={positions} onChange={setPositions} />
+            </div>
             <div className="grid grid-cols-2 gap-2">
-              <input value={headcount} onChange={e => setHeadcount(e.target.value.replace(/[^\d]/g, ''))} inputMode="numeric" placeholder="Số lượng" className={inp} />
+              <select value={headcount} onChange={e => setHeadcount(e.target.value)} className={inp}>
+                <option value="">Số lượng — chưa rõ</option>
+                {HEADCOUNT_BUCKETS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </select>
               <input value={wage} onChange={e => setWage(e.target.value)} placeholder="Lương — VD: 8–10tr" className={inp} />
             </div>
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="Ghi chú"
               className="w-full px-3 py-2 rounded-lg border border-[#E8E7E2] text-[13px] outline-none focus:border-[#0A84FF] resize-none" />
           </div>
+
+          {isStarred && onToggleStar && company.trim() && (
+            <button type="button" onClick={() => setStar(v => !v)}
+              className={`w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${star ? 'bg-[#FFF4D6] ring-1 ring-[#F5B400]/60' : 'bg-[#F5F5F2]'}`}>
+              <Star size={18} className={star ? 'text-[#F5A300]' : 'text-[#999]'} fill={star ? '#F5B400' : 'none'} />
+              <span className="text-[13px] font-medium">{star ? 'Đã gắn sao — công ty cần chú trọng' : 'Gắn sao công ty này'}</span>
+            </button>
+          )}
 
           {err && <div className="text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-lg px-3 py-2">{err}</div>}
           <button onClick={save} disabled={!!busy}

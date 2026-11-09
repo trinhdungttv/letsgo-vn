@@ -6,8 +6,9 @@ import { softDeletePhoto, updatePhoto, type SurveyPhoto } from '../../../lib/kcn
 import type { PhotoMark } from '../../../lib/kcnSurvey/markup';
 import { MarkedImage, MarksSvg } from './PhotoMarks';
 import PhotoMarkupEditor from './PhotoMarkupEditor';
-import { UNVERIFIED_TAG } from '../../../lib/kcnSurvey/online';
+import { HEADCOUNT_BUCKETS, UNVERIFIED_TAG, headcountText } from '../../../lib/kcnSurvey/online';
 import { fmtDateTime } from './surveyFormat';
+import PositionPicker from './PositionPicker';
 
 const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ' };
 const posText = (p: SurveyPhoto) => (p.survey_kind === 'online' ? 'Vị trí từ link Google Maps (khảo sát online)' : POS_SOURCE[p.position_source]);
@@ -115,7 +116,7 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
             {(photo.positions || photo.headcount != null || photo.wage_text) && (
               <div className="text-[13.5px] leading-snug">
                 {photo.positions && <div>Tuyển: <b>{photo.positions}</b></div>}
-                {photo.headcount != null && <div>Số lượng: <b>{photo.headcount}</b></div>}
+                {photo.headcount != null && <div>Số lượng: <b>{headcountText(photo)}</b></div>}
                 {photo.wage_text && <div>Lương: <b>{photo.wage_text}</b></div>}
               </div>
             )}
@@ -146,9 +147,14 @@ export default function SurveyPhotoViewer({ photo, onClose, onShowOnMap, onSaved
         ) : (
           <>
             <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Tên công ty" className={field} />
-            <input value={form.positions} onChange={e => setForm(f => ({ ...f, positions: e.target.value }))} placeholder="Vị trí tuyển" className={field} />
+            <PositionPicker dark value={form.positions} onChange={v => setForm(f => ({ ...f, positions: v }))} />
             <div className="grid grid-cols-2 gap-2">
-              <input value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value.replace(/[^\d]/g, '') }))} inputMode="numeric" placeholder="Số lượng" className={field} />
+              {photo.survey_kind === 'online'
+                ? <select value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value }))} className={field}>
+                    <option value="">Số lượng — chưa rõ</option>
+                    {HEADCOUNT_BUCKETS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+                  </select>
+                : <input value={form.headcount} onChange={e => setForm(f => ({ ...f, headcount: e.target.value.replace(/[^\d]/g, '') }))} inputMode="numeric" placeholder="Số lượng" className={field} />}
               <input value={form.wage_text} onChange={e => setForm(f => ({ ...f, wage_text: e.target.value }))} placeholder="Lương" className={field} />
             </div>
             <textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} rows={2} placeholder="Ghi chú"

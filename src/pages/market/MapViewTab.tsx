@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus, Route } from 'lucide-react';
+import { Crosshair, Ruler, Layers, Tag, Settings, RotateCcw, X, Users, Database, Loader2, DollarSign, LocateFixed, Wrench, ChevronRight, ChevronLeft, Maximize2, Minimize2, BookmarkPlus, Route, Navigation } from 'lucide-react';
 import { createPopulationLayer, createCommuneLayer, createDensityLegend } from './populationDensity';
 import { fetchCommunes } from './populationData';
 import type { CommuneRow } from './populationData';
@@ -19,6 +19,8 @@ import type { Branch, MarketLeadSupplier } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 import { streetTiles } from '../../lib/mapTiles';
 import KcnSurveyMode from './survey/KcnSurveyMode';
+import { useLiveLocation } from './useLiveLocation';
+import { readZoneSites } from '../../lib/pipelineZones';
 import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, loadGroupIcons, DEFAULT_VIEW_KEY, loadDefaultView, SOUTH_VN_BOUNDS, type MapGroup, type SavedMapView } from '../../lib/mapGroups';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
@@ -107,6 +109,8 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   const [surveyPending, setSurveyPending] = useState(() => hasPendingSurvey());
   const [branches, setBranches] = useState<Branch[]>([]);
   const [allClients, setAllClients] = useState<MapClient[]>([]);
+  // Nhà máy theo KCN của công ty trong CRM Pipeline (crm_pipeline.zone_sites, migration 187) — mỗi nhà máy 1 ghim
+  const [pipelineSites, setPipelineSites] = useState<{ key: string; company: string; clientId: string | null; zoneId: string; lat: number; lng: number; link: string | null }[]>([]);
   const [activeGroups, setActiveGroups] = useState<Group[]>(prefsLoaded.activeGroups);
   const [geoProgress, setGeoProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [showMissing, setShowMissing] = useState(false);
@@ -119,8 +123,10 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   const [showIconSettings, setShowIconSettings] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [hasCustomDefaultView, setHasCustomDefaultView] = useState(() => !!loadDefaultView());
-  const [locating, setLocating] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [nativeFs, setNativeFs] = useState(false);
+  // iPhone Safari không có Fullscreen API cho thẻ div → "toàn màn hình" bằng CSS (phủ kín màn hình)
+  const [cssFs, setCssFs] = useState(false);
+  const isFullscreen = nativeFs || cssFs;
   const [densityOn, setDensityOn] = useState(prefsLoaded.densityOn);
   const [wageLayerOn, setWageLayerOn] = useState(prefsLoaded.wageLayerOn);
   const [provinceFilter, setProvinceFilter] = useState(prefsLoaded.provinceFilter);
@@ -138,7 +144,6 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const myLocationMarkerRef = useRef<L.Marker | L.Circle | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
   const osmLayerRef = useRef<L.LayerGroup | null>(null);
   const satLayerRef = useRef<L.TileLayer | null>(null);
@@ -182,6 +187,20 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     setAllClients(rows);
   };
 
+  const loadPipelineSites = async () => {
+    const { data, error } = await supabase.from('crm_pipeline').select('id, company_name, client_id, zone_sites');
+    if (error) return; // chưa chạy migration 187 → không có ghim nhà máy
+    const rows: typeof pipelineSites = [];
+    for (const r of (data ?? []) as { id: string; company_name: string; client_id: string | null; zone_sites: unknown }[]) {
+      for (const [zoneId, site] of Object.entries(readZoneSites(r.zone_sites))) {
+        const pos = site.lat != null && site.lng != null ? { lat: site.lat, lng: site.lng } : parseLatLngFromLink(site.map_link);
+        if (!pos || !isValidVnLatLng(pos)) continue;
+        rows.push({ key: `${r.id}:${zoneId}`, company: r.company_name, clientId: r.client_id, zoneId, lat: pos.lat, lng: pos.lng, link: site.map_link });
+      }
+    }
+    setPipelineSites(rows);
+  };
+
   const loadCommunes = async () => {
     setCommuneLoading(true);
     try {
@@ -197,6 +216,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   useEffect(() => {
     loadBranches();
     loadMapClients();
+    void loadPipelineSites();
     fetchIndustries([...marketLeads.map(l => l.industry)]).then(setIndustries);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -260,6 +280,19 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
         suppliers: c.market_suppliers ?? [],
       });
     });
+    pipelineSites.forEach(ps => {
+      const zone = marketZones.find(z => z.id === ps.zoneId);
+      const client = ps.clientId ? allClients.find(c => c.id === ps.clientId) : null;
+      if (!matchesProvinceFilter(null, zone ? [zone.name] : undefined) && !(zone && provinceFilter !== 'all' && zone.location === provinceFilter)) return;
+      if (!matchesIndustryFilter(client?.industry)) return;
+      pts.push({
+        id: `site:${ps.key}`, group: client?.client_type === 'active' ? 'client' : 'prospect',
+        name: zone ? `${ps.company} (${zone.name})` : ps.company, lat: ps.lat, lng: ps.lng,
+        sub: ['Nhà máy', zone?.name].filter(Boolean).join(' · '),
+        mapLink: ps.link,
+        onOpen: ps.clientId ? () => { window.location.hash = `#/client-detail/${shortId(ps.clientId!)}`; } : undefined,
+      });
+    });
     marketLeads.forEach(l => {
       if (l.lat == null || l.lng == null) return;
       if (!matchesProvinceFilter(l.region, undefined)) return;
@@ -275,7 +308,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     });
     return pts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branches, marketZones, marketLeads, allClients, goTab, provinceFilter, industryFilter, zoneToProvince]);
+  }, [branches, marketZones, marketLeads, allClients, pipelineSites, goTab, provinceFilter, industryFilter, zoneToProvince]);
 
   // Bản ghi thiếu link Google Maps HOẶC thiếu toạ độ — cả hai đều cần bổ sung.
   const missingList = useMemo(() => {
@@ -609,52 +642,40 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     await Promise.all([loadBranches(), loadMapClients(), onRefresh()]);
   };
 
-  // Định vị bằng GPS trình duyệt — zoom mức 15 (nhìn rõ khu vực xung quanh, không quá gần).
-  const locateMe = () => {
-    if (!navigator.geolocation) { toast('Trình duyệt không hỗ trợ định vị'); return; }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        setLocating(false);
-        const map = mapRef.current;
-        if (!map) return;
-        const { latitude, longitude } = pos.coords;
-        if (myLocationMarkerRef.current) myLocationMarkerRef.current.remove();
-        const icon = L.divIcon({
-          className: 'lgmap-my-location',
-          html: '<span class="lgmap-my-location-dot"></span>',
-          iconSize: [18, 18],
-          iconAnchor: [9, 9],
-        });
-        myLocationMarkerRef.current = L.marker([latitude, longitude], { icon, zIndexOffset: 1000 })
-          .addTo(map).bindTooltip('Vị trí của tôi', { direction: 'top', offset: [0, -10] });
-        map.setView([latitude, longitude], 15);
-      },
-      err => {
-        setLocating(false);
-        toast('Không lấy được vị trí: ' + (err.code === 1 ? 'bạn chưa cấp quyền định vị' : err.message));
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
-  };
+  // Định vị trực tiếp kiểu Google Maps (mũi tên theo hướng đi, tự bám + tự zoom) — xem useLiveLocation.
+  const live = useLiveLocation(mapRef, toast);
 
   // Xem toàn màn hình — bấm nút hoặc phím tắt "F" (bỏ qua khi đang gõ trong ô nhập liệu).
   const toggleFullscreen = () => {
     const el = mapWrapperRef.current;
     if (!el) return;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else el.requestFullscreen().catch(() => toast('Trình duyệt không hỗ trợ xem toàn màn hình'));
+    if (document.fullscreenElement) { void document.exitFullscreen(); return; }
+    if (cssFs) { setCssFs(false); return; }
+    if (typeof el.requestFullscreen !== 'function') { setCssFs(true); return; }
+    el.requestFullscreen().catch(() => setCssFs(true));
   };
 
   useEffect(() => {
-    const onChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-      // Kích thước khung map đổi đột ngột khi vào/thoát fullscreen — Leaflet cần được báo lại.
-      setTimeout(() => mapRef.current?.invalidateSize(), 50);
-    };
+    const onChange = () => setNativeFs(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
+
+  // Kích thước khung map đổi đột ngột khi vào/thoát toàn màn hình — Leaflet cần được báo lại.
+  useEffect(() => {
+    const t = setTimeout(() => mapRef.current?.invalidateSize(), 60);
+    return () => clearTimeout(t);
+  }, [isFullscreen]);
+
+  // Toàn màn hình bằng CSS: khoá cuộn trang phía sau + Esc để thoát
+  useEffect(() => {
+    if (!cssFs) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCssFs(false); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [cssFs]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -889,7 +910,7 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     <div className="space-y-3">
       {!isFullscreen && controls}
 
-      <div ref={mapWrapperRef} className={`relative bg-white border border-[#E8E7E2] overflow-hidden ${isFullscreen ? '' : 'rounded-[10px]'}`}>
+      <div ref={mapWrapperRef} className={`bg-white border border-[#E8E7E2] overflow-hidden ${cssFs ? 'fixed inset-0 z-[1250]' : 'relative'} ${isFullscreen ? '' : 'rounded-[10px]'}`}>
         <div ref={mapDivRef} style={{ height: isFullscreen ? '100dvh' : 'calc(100dvh - 260px)', minHeight: 420 }} />
         {isFullscreen && <FullscreenControlsOverlay>{controls}</FullscreenControlsOverlay>}
         {!isFullscreen && (
@@ -900,9 +921,9 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
           </button>
         )}
         <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
-          <button onClick={locateMe} disabled={locating} title="Vị trí của tôi"
-            className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7] disabled:opacity-50">
-            {locating ? <Loader2 size={16} className="animate-spin" /> : <LocateFixed size={16} />}
+          <button onClick={live.toggle} title={!live.active ? 'Định vị & dẫn theo vị trí' : live.follow ? 'Đang bám theo vị trí — bấm để tắt' : 'Bám lại vị trí'}
+            className={`w-9 h-9 flex items-center justify-center rounded-lg border shadow ${live.active ? 'bg-[#0A84FF] border-[#0A84FF] text-white' : 'bg-white border-[#D8D6D0] text-[#444] hover:bg-[#F9F9F7]'}`}>
+            {live.active && live.follow ? <Navigation size={16} fill="currentColor" /> : <LocateFixed size={16} />}
           </button>
           <button onClick={toggleFullscreen} title={isFullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'}
             className="w-9 h-9 flex items-center justify-center rounded-lg bg-white border border-[#D8D6D0] text-[#444] shadow hover:bg-[#F9F9F7]">

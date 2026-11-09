@@ -13,6 +13,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Info, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, NavigationOff, Pause, PenLine, Play, Plus, RefreshCw, Settings, Square, X, AlertTriangle, MapPin,
+  Star,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -36,6 +37,7 @@ import { areaKey, cachedArea, fetchArea, pickZoneBoundary, piecesInZone, type Ar
 import { ringsBounds, ringsCenter } from '../../../lib/kcnSurvey/areaSearch';
 import { readFileExif } from '../../../lib/kcnSurvey/exif';
 import { buildRoadGraph, pointAlong, type NavRoute } from '../../../lib/kcnSurvey/navigate';
+import { headcountText } from '../../../lib/kcnSurvey/online';
 import { findStar, photoStarRef, type StarRef, type SurveyStar } from '../../../lib/kcnSurvey/stars';
 import { angleDiff, bearing, displayHeading } from '../../../lib/kcnSurvey/heading';
 import { fitRotated, rotatedSize, smartZoom } from '../../../lib/kcnSurvey/mapView';
@@ -1813,6 +1815,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {viewerPhoto && (
         <QuickPhotoView photo={viewerPhoto} onClose={() => setViewerPhoto(null)}
+          starred={isStarred(photoStarRef(viewerPhoto))} onStar={() => void toggleStar({ ...photoStarRef(viewerPhoto), zoneName: viewerPhoto.zone_name }, !isStarred(photoStarRef(viewerPhoto)))}
           onOpenHistory={() => {
             const p = viewerPhoto;
             setViewerPhoto(null);
@@ -1950,7 +1953,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /** Bấm ghim ảnh trên bản đồ: xem nhanh ảnh + thông tin, mở Lịch sử để sửa / xoá. */
-function QuickPhotoView({ photo, onClose, onOpenHistory }: { photo: SurveyPhoto; onClose: () => void; onOpenHistory: () => void }) {
+function QuickPhotoView({ photo, onClose, onOpenHistory, starred, onStar }: { photo: SurveyPhoto; onClose: () => void; onOpenHistory: () => void; starred: boolean; onStar: () => void }) {
   return (
     <div className="fixed inset-0 z-[1350] bg-black/90 flex flex-col pt-[env(safe-area-inset-top)]" onClick={onClose}>
       <div className="flex items-center justify-between h-12 px-2 shrink-0">
@@ -1964,9 +1967,14 @@ function QuickPhotoView({ photo, onClose, onOpenHistory }: { photo: SurveyPhoto;
         <div className="text-[15.5px] font-semibold">{photo.company_name || 'Chưa rõ công ty'}</div>
         <div className="text-[12px] text-white/70 mt-0.5">{new Date(photo.taken_at).toLocaleString('vi-VN')}{photo.zone_name ? ` · ${photo.zone_name}` : ''}{photo.user_name ? ` · ${photo.user_name}` : ''}</div>
         {(photo.positions || photo.headcount != null || photo.wage_text) && (
-          <div className="text-[13px] mt-1">{[photo.positions && `Tuyển: ${photo.positions}`, photo.headcount != null && `SL: ${photo.headcount}`, photo.wage_text && `Lương: ${photo.wage_text}`].filter(Boolean).join(' · ')}</div>
+          <div className="text-[13px] mt-1">{[photo.positions && `Tuyển: ${photo.positions}`, headcountText(photo) != null && `SL: ${headcountText(photo)}`, photo.wage_text && `Lương: ${photo.wage_text}`].filter(Boolean).join(' · ')}</div>
         )}
         {photo.note && <div className="text-[12.5px] text-white/80 mt-1 whitespace-pre-line">{photo.note}</div>}
+        {(photo.company_name.trim() || photo.client_id || photo.crm_id || photo.lead_id) && (
+          <button onClick={onStar} className={`mt-2 h-9 px-3 rounded-full text-[12.5px] font-medium inline-flex items-center gap-1 ${starred ? 'bg-[#FFD60A] text-[#1D1D1F]' : 'bg-white/15'}`}>
+            <Star size={13} fill={starred ? 'currentColor' : 'none'} /> {starred ? 'Bỏ sao' : 'Gắn sao công ty'}
+          </button>
+        )}
       </div>
     </div>
   );

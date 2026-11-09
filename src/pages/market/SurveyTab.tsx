@@ -15,7 +15,7 @@ import { useAuth } from '../../lib/auth';
 import type { Branch } from '../../lib/types';
 import type { MarketTabProps } from './shared';
 import {
-  ARCHIVE_MIGRATION_HINT, listArchived, listPhotos, listStars, listTrips, listVoiceNotes, loadTracks, purgeArchive, restoreArchived, setStar,
+  ARCHIVE_MIGRATION_HINT, listArchived, listPhotos, listStars, listTrips, listVoiceNotes, loadTracks, purgeArchive, restoreArchived, setStar, softDeletePhoto,
   deleteTripWithPin, purgeTripWithPin, titleColumnMissing, TITLE_MIGRATION_HINT, updateTrip, VOICE_MIGRATION_HINT,
   type ArchiveKind, type ArchivedPhoto, type ArchivedTrip, type ArchivedVoice, type SurveyPhoto, type SurveyTrip, type SurveyVoiceNote,
 } from '../../lib/kcnSurvey/api';
@@ -34,13 +34,13 @@ import SurveyShareDialog from './survey/SurveyShareDialog';
 import SurveyPinGate from './survey/SurveyPinGate';
 import type { PinRequest } from '../../components/quickNotes/PinDialog';
 import OnlinePhotoDialog from './survey/OnlinePhotoDialog';
-import { KIND_FILTERS, matchesKind, type KindFilter } from '../../lib/kcnSurvey/online';
+import { KIND_FILTERS, headcountText, matchesKind, type KindFilter } from '../../lib/kcnSurvey/online';
 import type { ShareZone } from '../../lib/kcnSurvey/share';
 import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
 import { fold } from './survey/surveyData';
 
-type Sub = 'trips' | 'photos' | 'voice' | 'zones' | 'archive';
+type Sub = 'trips' | 'photos' | 'online' | 'voice' | 'zones' | 'archive';
 const PERIODS = [{ d: 7, label: '7 ngày' }, { d: 30, label: '30 ngày' }, { d: 90, label: '3 tháng' }, { d: 0, label: 'Tất cả' }];
 
 const card = 'bg-white border border-[#E8E7E2] rounded-[10px]';
@@ -189,7 +189,19 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     && (!q || fold([t.title, t.zone_name, t.note, t.user_name, ...t.passed.map(p => p.name)].join(' ')).includes(q))), [trips, okTime, okZone, okPerson, q]);
   const fPhotosAll = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name) && matchesKind(p, kind)
     && (!q || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(q))), [photos, okTime, okZone, okPerson, q, kind]);
-  const fPhotos = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))), [fPhotosAll, tripFilter, starOnly, starOf]);
+  const fPhotosBoth = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))), [fPhotosAll, tripFilter, starOnly, starOf]);
+  // Ảnh ONLINE tách thành mục riêng (tab "Ảnh online"); tab "Ảnh chỉ tiêu" chỉ còn ảnh đi thực địa
+  const fPhotos = useMemo(() => fPhotosBoth.filter(p => sub === 'online' ? p.survey_kind === 'online' : sub === 'photos' ? p.survey_kind !== 'online' : true), [fPhotosBoth, sub]);
+  const [onlineSel, setOnlineSel] = useState<Set<string>>(new Set());
+  const toggleOnlineSel = (id: string) => setOnlineSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const deleteOnlineSel = async () => {
+    const ids = fPhotos.filter(p => onlineSel.has(p.id)).map(p => p.id);
+    if (!ids.length || !window.confirm(`Xoá ${ids.length} ảnh online đã chọn?\n\nẢnh chuyển vào Lưu trữ 30 ngày — khôi phục được trong thời gian đó, quá 30 ngày mới tự xoá hẳn.`)) return;
+    let ok = 0;
+    for (const id of ids) { try { await softDeletePhoto(id); ok++; setPhotos(list => list.filter(x => x.id !== id)); } catch (e) { say((e as Error).message); break; } }
+    setOnlineSel(new Set());
+    if (ok) { say(`Đã chuyển ${ok} ảnh online vào Lưu trữ (30 ngày)`); void loadArchive(); }
+  };
   const starredCount = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && starOf(p)).length, [fPhotosAll, tripFilter, starOf]);
   const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name) && (!tripFilter || n.trip_id === tripFilter)
     && (!q || fold([n.company_name, n.note, n.zone_name].join(' ')).includes(q))), [voiceNotes, okTime, okZone, okPerson, q, tripFilter]);
@@ -225,7 +237,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
 
   const selTrip = selected ? trips.find(t => t.id === selected) ?? null : null;
   const mapPhotos = sub === 'voice' ? [] : sub === 'trips' && selTrip ? fPhotos.filter(p => p.trip_id === selTrip.id) : fPhotos;
-  const mapVoice = sub === 'photos' ? [] : sub === 'trips' && selTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
+  const mapVoice = sub === 'photos' || sub === 'online' ? [] : sub === 'trips' && selTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
 
   const byTrip = useMemo(() => {
     const ph = new Map<string, number>(), vo = new Map<string, number>();
@@ -320,7 +332,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const exportPhotos = () => {
     const head = ['Ngày chụp', 'Loại', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
     const esc = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.survey_kind === 'online' ? (p.verified_at ? 'Online - đã xác thực' : 'Online - chưa xác thực') : 'Đi thực địa', p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, p.headcount ?? '', p.wage_text, p.note, p.user_name,
+    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.survey_kind === 'online' ? (p.verified_at ? 'Online - đã xác thực' : 'Online - chưa xác thực') : 'Đi thực địa', p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, headcountText(p) ?? '', p.wage_text, p.note, p.user_name,
       p.lat.toFixed(6), p.lng.toFixed(6), p.url, `https://www.google.com/maps?q=${p.lat},${p.lng}`]);
     const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(',')).join('\n');
     const d = new Date();
@@ -332,7 +344,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
 
   const subTabs: { id: Sub; label: string; count?: number; icon: ReactNode }[] = [
     { id: 'trips', label: 'Chuyến đi', count: fTrips.length, icon: <Route size={13} /> },
-    { id: 'photos', label: 'Ảnh chỉ tiêu', count: fPhotos.length, icon: <Camera size={13} /> },
+    { id: 'photos', label: 'Ảnh chỉ tiêu', count: fPhotosBoth.filter(p => p.survey_kind !== 'online').length, icon: <Camera size={13} /> },
+    { id: 'online', label: 'Ảnh online', count: fPhotosBoth.filter(p => p.survey_kind === 'online').length, icon: <Globe size={13} /> },
     { id: 'voice', label: 'Ghi âm', count: fVoice.length, icon: <Mic size={13} /> },
     { id: 'zones', label: 'Theo KCN', icon: <MapPin size={13} /> },
     { id: 'archive', label: 'Lưu trữ', count: archive ? archiveCount : undefined, icon: <Archive size={13} /> },
@@ -649,9 +662,48 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                           {st && <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-[#F5B400] text-white flex items-center justify-center shadow" title="Công ty gắn sao"><Star size={11} fill="currentColor" /></span>}
                           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
                             <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.company_name || 'Chưa rõ công ty'}</div>
-                            <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}{p.headcount != null ? ` · SL ${p.headcount}` : ''}</div>
+                            <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}{headcountText(p) != null ? ` · SL ${headcountText(p)}` : ''}</div>
                           </div>
                         </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!loading && sub === 'online' && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button onClick={() => setOnlineOpen(true)} className="h-8 px-2.5 rounded-lg bg-[#0A84FF] text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Thêm ảnh online</button>
+                  {fPhotos.length > 0 && (
+                    <button onClick={() => setOnlineSel(onlineSel.size === fPhotos.length ? new Set() : new Set(fPhotos.map(p => p.id)))}
+                      className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333]">{onlineSel.size === fPhotos.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}</button>
+                  )}
+                  {onlineSel.size > 0 && (
+                    <button onClick={() => void deleteOnlineSel()} className="h-8 px-2.5 rounded-lg bg-[#D70015] text-white text-[12px] font-semibold inline-flex items-center gap-1"><Trash2 size={12} /> Xoá {onlineSel.size} ảnh</button>
+                  )}
+                  <span className="flex-1" />
+                  {fPhotos.length > 0 && (
+                    <button onClick={exportPhotos} className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><Download size={12} /> CSV / Excel</button>
+                  )}
+                </div>
+                {fPhotos.length === 0 ? <Empty icon={<Globe size={22} />} text="Chưa có ảnh khảo sát online nào trong bộ lọc" /> : (
+                  <div className={`grid gap-1.5 ${full ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                    {fPhotos.map(p => {
+                      const sel = onlineSel.has(p.id);
+                      return (
+                        <div key={p.id} className={`relative aspect-square rounded-lg overflow-hidden bg-[#EEE] ${sel ? 'ring-2 ring-[#0A84FF]' : ''}`}>
+                          <button onClick={() => setViewer(p)} className="absolute inset-0 text-left">
+                            <PhotoThumb photo={p} />
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pt-4 pb-1">
+                              <div className="text-[10.5px] font-semibold text-white leading-tight line-clamp-2">{p.positions || p.company_name || 'Chưa ghi vị trí tuyển'}</div>
+                              <div className="text-[9.5px] text-white/80">{new Date(p.taken_at).toLocaleDateString('vi-VN')}{headcountText(p) != null ? ` · SL ${headcountText(p)}` : ''}{p.verified_at ? ' · ✓ đã xác thực' : ''}</div>
+                            </div>
+                          </button>
+                          <button onClick={() => toggleOnlineSel(p.id)} aria-label={sel ? 'Bỏ chọn' : 'Chọn ảnh'}
+                            className={`absolute top-1 left-1 w-6 h-6 rounded-full border-2 flex items-center justify-center text-[12px] ${sel ? 'bg-[#0A84FF] border-[#0A84FF] text-white' : 'bg-black/30 border-white text-transparent'}`}>✓</button>
+                        </div>
                       );
                     })}
                   </div>
@@ -702,7 +754,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
           stars={stars} say={say} onClose={() => setPdfFor(null)} />
       )}
       {onlineOpen && <OnlinePhotoDialog zones={marketZones} leads={marketLeads} user={user ? { id: user.id, full_name: user.full_name } : null} defaultZoneId={zoneId !== 'all' && zoneId !== 'none' ? zoneId : null}
-        say={say} onClose={() => setOnlineOpen(false)} onSaved={ps => setPhotos(list => [...ps, ...list])} />}
+        say={say} isStarred={c => !!findStar(stars, c)} onToggleStar={(c, on) => void toggleStar(c, on)} onClose={() => setOnlineOpen(false)} onSaved={ps => setPhotos(list => [...ps, ...list])} />}
       {pinReq && <SurveyPinGate req={pinReq} onClose={() => setPinReq(null)} onDone={() => setPinReq(null)} />}
       {shareOpen && <SurveyShareDialog zones={shareZones} token={token} say={say} onClose={() => setShareOpen(false)} />}
       {surveyOpen && (

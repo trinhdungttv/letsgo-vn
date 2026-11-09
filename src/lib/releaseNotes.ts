@@ -16,6 +16,24 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-map-pipeline-sites',
+    date: '2026-11-09',
+    title: 'Bản đồ Thị trường',
+    features: ['Nhà máy theo KCN của công ty trong CRM Pipeline hiện lên bản đồ Thị trường'],
+  },
+  {
+    id: '2026-11-09-market-map-live',
+    date: '2026-11-09',
+    title: 'Bản đồ Thị trường',
+    features: ['Bản đồ mở toàn màn hình được trên iPhone', 'Định vị trực tiếp kiểu Google Maps: mũi tên theo hướng đi, tự bám vị trí, tự zoom theo tốc độ'],
+  },
+  {
+    id: '2026-11-09-survey-position-star',
+    date: '2026-11-09',
+    title: 'Khảo sát KCN',
+    features: ['Chọn vị trí / tay nghề tuyển bằng thẻ (thợ may, thợ hàn…) để lọc về sau', 'Gắn sao công ty ngay trong form ảnh online và ở ảnh xem nhanh trên bản đồ', 'Ảnh khảo sát online: không bắt buộc tên công ty, tự ghim theo vị trí chụp trong ảnh, chọn số lượng theo khoảng', 'Mục riêng "Ảnh online" trong Khảo sát KCN — chọn nhiều ảnh để xoá'],
+  },
+  {
     id: '2026-11-06-workflow-all-view',
     date: '2026-11-06',
     title: 'Quy trình công việc',

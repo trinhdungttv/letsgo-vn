@@ -30,3 +30,19 @@ export const matchesKind = (p: KindInfo, f: KindFilter) =>
 
 /** Nhãn cho PDF / CSV: '' với ảnh thực địa */
 export const kindPdfTag = (p: KindInfo) => (p.survey_kind !== 'online' ? '' : p.verified_at ? ONLINE_VERIFIED_PDF_TAG : ONLINE_PDF_TAG);
+
+/** Số lượng tuyển của ảnh ONLINE chọn theo khoảng; lưu 1 số đại diện vào cột headcount (không cần migration) */
+export const HEADCOUNT_BUCKETS = [
+  { value: 50, label: 'Dưới 100' },
+  { value: 200, label: '100 – 300' },
+  { value: 400, label: '300 – 500' },
+  { value: 600, label: 'Trên 500' },
+] as const;
+
+/** Chữ hiển thị số lượng: ảnh online → khoảng, ảnh thực địa → số thật. null = chưa ghi. */
+export function headcountText(p: { survey_kind: 'field' | 'online'; headcount: number | null }): string | null {
+  if (p.headcount == null) return null;
+  if (p.survey_kind !== 'online') return String(p.headcount);
+  const b = HEADCOUNT_BUCKETS.find(x => x.value === p.headcount);
+  return b ? b.label : String(p.headcount);
+}
