@@ -21,7 +21,8 @@ interface Props {
   onRemove: (index: number) => void;
 }
 
-/** Thẻ đối thủ của 1 ảnh: viên thẻ có nút × + ô chọn "Gắn đối thủ…" (chỉ chọn từ danh sách Đối thủ có sẵn, không gõ tay). */
+/** Thẻ đối thủ của 1 ảnh (mỗi ảnh 1 nhà cung ứng): chưa có thì hiện ô chọn "Gắn đối thủ…" (chỉ chọn từ danh sách Đối thủ có sẵn, không gõ tay); có rồi thì hiện viên thẻ + nút ×.
+ * Dữ liệu vẫn là danh sách nên ảnh nào lỡ có nhiều thẻ từ trước vẫn hiện đủ và gỡ từng thẻ được. */
 function TagEditor({ tags, resolved, options, rows, onChange, size = 'sm' }: {
   tags: RecruitTag[];
   resolved: ResolvedTag[];
@@ -43,7 +44,8 @@ function TagEditor({ tags, resolved, options, rows, onChange, size = 'sm' }: {
             className="w-4 h-4 shrink-0 rounded-full hover:bg-black/10 flex items-center justify-center"><X size={10} strokeWidth={2.6} /></button>
         </span>
       ))}
-      {rest.length > 0 && (
+      {/* Mỗi ảnh chỉ 1 nhà cung ứng: đã có thẻ thì ẩn ô chọn — muốn đổi thì bấm × rồi chọn lại */}
+      {resolved.length === 0 && rest.length > 0 && (
         <select value="" onChange={e => { const o = options.find(x => x.id === e.target.value); if (o) onChange(addTag(tags, o)); }}
           onClick={e => e.stopPropagation()} aria-label="Gắn đối thủ cho ảnh"
           className={`${size === 'md' ? 'h-7 text-[12px]' : 'h-6 text-[10.5px]'} max-w-[9.5rem] rounded-full border border-dashed border-blue-300 bg-white text-blue-600 px-1.5 outline-none focus:border-blue-500 cursor-pointer`}>

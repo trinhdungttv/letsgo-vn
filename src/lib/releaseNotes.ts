@@ -22,7 +22,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     features: [
       'Ảnh tuyển dụng hiện đủ cả ảnh (thu nhỏ vừa khung, không còn bị cắt)',
       'Bấm vào ảnh tuyển dụng mở popup xem ngay trong app (← → đổi ảnh, Esc đóng, bấm ảnh để phóng to)',
-      'Gắn thẻ đối thủ cho từng ảnh tuyển dụng để biết của nhà cung ứng nào, có bộ lọc theo đối thủ',
+      'Gắn thẻ nhà cung ứng (đối thủ) cho từng ảnh tuyển dụng, có bộ lọc ảnh theo nhà cung ứng',
     ],
   },
   {
