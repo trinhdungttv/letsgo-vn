@@ -6,7 +6,7 @@ import { LABOR_CHANGED_EVENT } from '../../../lib/laborSources/api';
 import { estimateBusMinutes } from '../../../lib/laborSources/match';
 import type { LaborSource, RouteRow, RouteTargetType, SourceBatch } from '../../../lib/laborSources/types';
 
-export type LiteSource = Pick<LaborSource, 'id' | 'name' | 'short_name' | 'kind' | 'status' | 'province' | 'lat' | 'lng' | 'logo_url'>;
+export type LiteSource = Pick<LaborSource, 'id' | 'name' | 'short_name' | 'kind' | 'status' | 'province' | 'lat' | 'lng' | 'logo_url' | 'map_link'>;
 export interface LaborLite { ready: boolean; sources: LiteSource[]; routes: RouteRow[]; batches: SourceBatch[] }
 
 const EMPTY: LaborLite = { ready: false, sources: [], routes: [], batches: [] };
@@ -16,7 +16,7 @@ function load(): Promise<LaborLite> {
   if (!cache) {
     cache = (async () => {
       const [s, r, b] = await Promise.all([
-        supabase.from('labor_sources').select('id, name, short_name, kind, status, province, lat, lng, logo_url').is('deleted_at', null).order('name'),
+        supabase.from('labor_sources').select('id, name, short_name, kind, status, province, lat, lng, logo_url, map_link').is('deleted_at', null).order('name'),
         supabase.from('labor_source_routes').select('*').limit(20000),
         supabase.from('labor_source_batches').select('*').is('deleted_at', null),
       ]);

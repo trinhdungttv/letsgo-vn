@@ -16,6 +16,26 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-recruit-image-tags',
+    date: '2026-11-09',
+    title: 'CRM Pipeline',
+    features: [
+      'Ảnh tuyển dụng hiện đủ cả ảnh (thu nhỏ vừa khung, không còn bị cắt)',
+      'Bấm vào ảnh tuyển dụng mở popup xem ngay trong app (← → đổi ảnh, Esc đóng, bấm ảnh để phóng to)',
+      'Gắn thẻ đối thủ cho từng ảnh tuyển dụng để biết của nhà cung ứng nào, có bộ lọc theo đối thủ',
+    ],
+  },
+  {
+    id: '2026-11-09-labor-sources-province',
+    date: '2026-11-09',
+    title: 'Nguồn Lao Động',
+    features: [
+      'Chọn Tỉnh / thành cho từng trường theo 34 tỉnh sau sáp nhập (có ghi rõ tỉnh cũ đã gộp)',
+      'Bản đồ: trường chưa ghi tỉnh không còn biến mất khi đang lọc theo tỉnh; có thêm nút Google Maps trong thẻ trường',
+      'Bộ lọc Tỉnh/TP trên Bản đồ có thêm tỉnh của các trường (VD Cần Thơ, Đồng Tháp)',
+    ],
+  },
+  {
     id: '2026-11-09-labor-sources-fullmap',
     date: '2026-11-09',
     title: 'Nguồn Lao Động',

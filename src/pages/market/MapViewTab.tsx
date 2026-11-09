@@ -25,7 +25,8 @@ import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, load
 import { useLaborLite } from './sources/useLaborLite';
 import { requestOpenSource } from './sources/context';
 import { KIND_LABEL as LABOR_KIND_LABEL } from '../../lib/laborSources/types';
-import { provinceKey } from '../../lib/kcnSurvey/province';
+import { provinceKey, provinceLabel } from '../../lib/kcnSurvey/province';
+import { sourceInProvinceFilter } from '../../lib/laborSources/provinces';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
 type Group = MapGroup;
@@ -244,10 +245,18 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     marketZones.forEach(z => { if (z.location) map[z.name] = z.location; });
     return map;
   }, [marketZones]);
-  const provinces = useMemo(
-    () => [...new Set([...marketZones.map(z => z.location), ...branches.map(b => b.location)].filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'vi')),
-    [marketZones, branches],
-  );
+  // Nguồn LĐ: đơn vị nguồn + KCN gần nhất của từng đơn vị (theo đường xe khách đã tính ở tab Nguồn LĐ)
+  const labor = useLaborLite();
+  const provinces = useMemo(() => {
+    const list = [...new Set([...marketZones.map(z => z.location), ...branches.map(b => b.location)].filter(Boolean) as string[])];
+    // Tỉnh của trường chưa có KCN / chi nhánh nào (VD Cần Thơ, Đồng Tháp) → vẫn chọn được để lọc
+    const have = new Set(list.map(provinceKey));
+    for (const s of labor.sources) {
+      const k = provinceKey(s.province);
+      if (k && !have.has(k)) { have.add(k); list.push(provinceLabel(s.province)); }
+    }
+    return list.sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [marketZones, branches, labor.sources]);
   const matchesProvinceFilter = (region: string | null | undefined, zones: string[] | undefined) => {
     if (provinceFilter === 'all') return true;
     if (region && (zoneToProvince[region] === provinceFilter || region === provinceFilter)) return true;
@@ -256,8 +265,6 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   };
   const matchesIndustryFilter = (industry: string | null | undefined) => industryFilter === 'all' || industry === industryFilter;
 
-  // Nguồn LĐ: đơn vị nguồn + KCN gần nhất của từng đơn vị (theo đường xe khách đã tính ở tab Nguồn LĐ)
-  const labor = useLaborLite();
   const laborNearZone = useMemo(() => {
     const zoneName = new Map(marketZones.map(z => [z.id, z.name]));
     const m = new Map<string, { zone: string; min: number }>();
@@ -319,14 +326,16 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     });
     // Nguồn LĐ (trường / trung tâm / địa phương) — kèm KCN gần nhất theo giờ xe khách đã tính
     labor.sources.forEach(s => {
-      if (s.lat == null || s.lng == null) return;
-      // So tỉnh theo khoá chuẩn: "TP. Hồ Chí Minh" = "Hồ Chí Minh" = "TPHCM" (trường gõ tay tỉnh)
-      if (provinceFilter !== 'all' && provinceKey(s.province) !== provinceKey(provinceFilter)) return;
+      // Chưa lưu toạ độ nhưng có link Google Maps dài → đọc thẳng từ link (link rút gọn thì cần mở hồ sơ lưu lại)
+      const pos = s.lat != null && s.lng != null ? { lat: s.lat, lng: s.lng } : parseLatLngFromLink(s.map_link);
+      if (!pos || !isValidVnLatLng(pos)) return;
+      // So tỉnh theo khoá chuẩn ("TP. Hồ Chí Minh" = "Hồ Chí Minh"); trường chưa ghi tỉnh vẫn hiện, không bị loại âm thầm
+      if (!sourceInProvinceFilter(s.province, provinceFilter)) return;
       const near = laborNearZone.get(s.id);
       pts.push({
-        id: s.id, group: 'source', name: s.short_name || s.name, lat: s.lat, lng: s.lng,
-        sub: [LABOR_KIND_LABEL[s.kind], s.province, near ? `Gần ${near.zone} · xe khách ${Math.round(near.min)} phút` : null].filter(Boolean).join(' · '),
-        mapLink: null,
+        id: s.id, group: 'source', name: s.short_name || s.name, lat: pos.lat, lng: pos.lng,
+        sub: [LABOR_KIND_LABEL[s.kind], s.province.trim() || 'Chưa ghi tỉnh', near ? `Gần ${near.zone} · xe khách ${Math.round(near.min)} phút` : null].filter(Boolean).join(' · '),
+        mapLink: s.map_link?.trim() || null,
         onOpen: () => requestOpenSource(s.id),
       });
     });

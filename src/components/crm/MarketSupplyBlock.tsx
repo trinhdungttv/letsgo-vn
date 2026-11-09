@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -9,6 +9,8 @@ import { hasColumn } from '../../lib/serviceMode';
 import { pipelineZones, zoneIdsFromNames, zoneNames, PIPELINE_ZONES_MIGRATION_HINT, type ZoneRef } from '../../lib/pipelineZones';
 import { CatalogPick } from '../../modules/cskh/components/CatalogPick';
 import ImageThumb from '../ImageThumb';
+import RecruitImageGallery, { MIGRATION_216_HINT } from './RecruitImageGallery';
+import { appendImages, buildStore, parseStore, removeImageAt, setTagsAt, tagsForImages, type RecruitTag } from '../../lib/recruitImages';
 
 export interface RefCompetitor { id: string; company_name: string; active_zones: string[] | null; supplying_for: string[] | null }
 
@@ -71,7 +73,18 @@ export const notifyMarketChanged = () => window.dispatchEvent(new Event('lgvn:ma
 export const US: MarketLeadSupplier = { name: "Let's Go VN", qty: 0, is_us: true };
 
 /** region = KCN dạng chữ ở market_leads (KCN chính); clientZones = clients.industrial_zones khi đã là khách. */
-type Target = { kind: 'lead' | 'client'; id: string | null; region: string | null; clientZones: string[]; suppliers: MarketLeadSupplier[]; images: string[] };
+type Target = {
+  kind: 'lead' | 'client'; id: string | null; region: string | null; clientZones: string[]; suppliers: MarketLeadSupplier[];
+  images: string[];
+  /** Thẻ đối thủ của từng ảnh, cùng vị trí với images (cột recruit_image_tags, migration 216). */
+  imageTags: RecruitTag[][];
+};
+
+/** Đọc ảnh tuyển dụng + thẻ từ 1 dòng clients / market_leads (cột thẻ chưa có → ảnh nào cũng "chưa gắn"). */
+const imagesOf = (row: { recruit_image_urls?: string[] | null; recruit_image_tags?: unknown } | null) => {
+  const images = row?.recruit_image_urls ?? [];
+  return { images, imageTags: tagsForImages(images, parseStore(row?.recruit_image_tags)) };
+};
 
 interface Props {
   entry: { id: string; company_name: string; client_id?: string | null; branch_id?: string | null; zone_ids?: string[] | null };
@@ -89,9 +102,14 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
   const { user } = useAuth();
   const { zoneRefs, competitors, branchNames, loaded } = useMarketRefs();
   const [t, setT] = useState<Target | null>(null);
+  // Bản mới nhất của `t` — các thao tác ảnh nối đuôi nhau (gắn thẻ liền tay) luôn xuất phát từ dữ liệu mới nhất, không từ bản cũ của lần vẽ trước.
+  const tRef = useRef<Target | null>(null);
+  const commit = useCallback((n: Target | null) => { tRef.current = n; setT(n); }, []);
+  const imgChain = useRef<Promise<unknown>>(Promise.resolve());
+  /** DB đã có cột recruit_image_tags (migration 216) chưa — chưa có thì vẫn dùng ảnh bình thường, chỉ chưa gắn được thẻ. */
+  const [tagsReady, setTagsReady] = useState(false);
   const [pick, setPick] = useState('');
   const [imgInput, setImgInput] = useState('');
-  const [bad, setBad] = useState<Record<string, boolean>>({});
   // Chọn liền tay nhiều KCN: hiện ngay lựa chọn mới, lưu lần lượt để lần sau không đè lần trước.
   const [draftZones, setDraftZones] = useState<string[] | null>(null);
   const zoneChain = useRef<Promise<void>>(Promise.resolve());
@@ -101,17 +119,23 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
     (async () => {
       if (entry.client_id) {
         const { data } = await supabase.from('clients').select('*').eq('id', entry.client_id).maybeSingle();
-        if (alive && data) setT({ kind: 'client', id: data.id, region: null, clientZones: data.industrial_zones ?? [], suppliers: data.market_suppliers ?? [US], images: data.recruit_image_urls ?? [] });
+        if (alive && data) {
+          setTagsReady(await hasColumn('clients', 'recruit_image_tags'));
+          if (alive) commit({ kind: 'client', id: data.id, region: null, clientZones: data.industrial_zones ?? [], suppliers: data.market_suppliers ?? [US], ...imagesOf(data) });
+        }
         return;
       }
       const { data } = await supabase.from('market_leads').select('*').eq('crm_id', entry.id).limit(1).maybeSingle();
       if (!alive) return;
-      setT(data
-        ? { kind: 'lead', id: data.id, region: data.region ?? null, clientZones: [], suppliers: data.suppliers ?? [US], images: data.recruit_image_urls ?? [] }
-        : { kind: 'lead', id: null, region: null, clientZones: [], suppliers: [US], images: [] });
+      const ready = await hasColumn('market_leads', 'recruit_image_tags');
+      if (!alive) return;
+      setTagsReady(ready);
+      commit(data
+        ? { kind: 'lead', id: data.id, region: data.region ?? null, clientZones: [], suppliers: data.suppliers ?? [US], ...imagesOf(data) }
+        : { kind: 'lead', id: null, region: null, clientZones: [], suppliers: [US], images: [], imageTags: [] });
     })();
     return () => { alive = false; };
-  }, [entry.id, entry.client_id]);
+  }, [entry.id, entry.client_id, commit]);
 
   // Các KCN đang có của công ty (KCN cũ 1 ô → tự thành danh sách 1 KCN)
   const zoneState = useMemo(() => (t && loaded
@@ -141,16 +165,26 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
 
   if (!t) return <div className="text-[11.5px] text-[#999]">Đang tải dữ liệu thị trường…</div>;
 
-  const save = async (next: Partial<Pick<Target, 'region' | 'clientZones' | 'suppliers' | 'images'>>, desc: string) => {
-    const merged = { ...t, ...next };
-    let id = t.id;
+  const save = async (next: Partial<Pick<Target, 'region' | 'clientZones' | 'suppliers' | 'images' | 'imageTags'>>, desc: string) => {
+    // Xuất phát từ bản mới nhất (không phải bản của lần vẽ cũ) để các lần lưu liền nhau không đè lẫn nhau
+    const base = tRef.current ?? t;
+    const merged = { ...base, ...next };
+    let id = base.id;
     let error: { message: string } | null = null;
-    if (t.kind === 'client') {
-      ({ error } = await supabase.from('clients').update({
+    const table = base.kind === 'client' ? 'clients' : 'market_leads';
+    // Ảnh + thẻ đối thủ xếp song song. DB chưa chạy migration 216 (chưa có cột thẻ) → chỉ lưu ảnh như cũ, không lỗi.
+    const imgCols: Record<string, unknown> = {};
+    if (next.images || next.imageTags) {
+      if (next.images) imgCols.recruit_image_urls = next.images;
+      if (await hasColumn(table, 'recruit_image_tags')) imgCols.recruit_image_tags = buildStore(merged.images, merged.imageTags);
+    }
+    if (base.kind === 'client') {
+      const patch = {
         ...(next.suppliers ? { market_suppliers: next.suppliers } : {}),
-        ...(next.images ? { recruit_image_urls: next.images } : {}),
+        ...imgCols,
         ...(next.clientZones ? { industrial_zones: next.clientZones } : {}),
-      }).eq('id', id!));
+      };
+      if (Object.keys(patch).length) ({ error } = await supabase.from('clients').update(patch).eq('id', id!));
     } else {
       // Ảnh bìa / vị trí bản đồ (CompanyMedia) có thể vừa tạo dòng market_leads cho công ty này
       // sau khi khối này nạp — tìm lại trước khi tạo mới để không sinh 2 dòng cho 1 công ty.
@@ -159,27 +193,29 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
         id = data?.id ?? null;
       }
       if (id) {
-        ({ error } = await supabase.from('market_leads').update({
+        const patch = {
           ...(next.suppliers ? { suppliers: next.suppliers } : {}),
-          ...(next.images ? { recruit_image_urls: next.images } : {}),
+          ...imgCols,
           ...(next.region !== undefined ? { region: next.region } : {}),
-        }).eq('id', id));
+        };
+        if (Object.keys(patch).length) ({ error } = await supabase.from('market_leads').update(patch).eq('id', id));
       } else {
         const res = await supabase.from('market_leads').insert({
           company_name: entry.company_name, region: merged.region, workers_needed: 0, source: 'CRM Pipeline', status: 'Chưa LH',
           suppliers: merged.suppliers, crm_id: entry.id,
-          ...(merged.images.length ? { recruit_image_urls: merged.images } : {}),
+          ...(merged.images.length ? { recruit_image_urls: merged.images, ...(imgCols.recruit_image_tags ? { recruit_image_tags: imgCols.recruit_image_tags } : {}) } : {}),
         }).select('id').single();
         error = res.error; id = res.data?.id ?? null;
       }
     }
     if (error) {
-      toast(/recruit_image_urls/.test(error.message) ? 'Chưa chạy migration 147 (cột ảnh tuyển dụng) — chạy xong rồi thử lại' : 'Lỗi: ' + error.message);
+      toast(/recruit_image_tags/.test(error.message) ? MIGRATION_216_HINT
+        : /recruit_image_urls/.test(error.message) ? 'Chưa chạy migration 147 (cột ảnh tuyển dụng) — chạy xong rồi thử lại' : 'Lỗi: ' + error.message);
       return false;
     }
-    setT({ ...merged, id });
+    commit({ ...merged, id });
     notifyMarketChanged();
-    await logActivity({ user, action: 'update', table: t.kind === 'client' ? 'clients' : 'market_leads', recordId: id ?? entry.id, description: `${desc} — "${entry.company_name}"` });
+    await logActivity({ user, action: 'update', table, recordId: id ?? entry.id, description: `${desc} — "${entry.company_name}"` });
     return true;
   };
 
@@ -235,14 +271,52 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
     if (!confirm(`Bỏ NCC "${name}" khỏi công ty này? (kèm số LĐ và lương đã nhập cho NCC này tại đây)`)) return;
     void save({ suppliers: t.suppliers.filter(s => s.name !== name) }, `Bỏ NCC "${name}"`);
   };
+  // Mọi thao tác ảnh (thêm / bỏ / gắn thẻ) xếp hàng lưu lần lượt, mỗi lần xuất phát từ dữ liệu mới nhất.
+  const queueImg = <T,>(job: () => Promise<T>): Promise<T> => {
+    const run = imgChain.current.then(job, job);
+    imgChain.current = run.catch(() => undefined);
+    return run;
+  };
   const addImages = async () => {
     const urls = imgInput.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u) && !t.images.includes(u));
     if (!urls.length) { toast('Dán link ảnh (bắt đầu bằng http…)'); return; }
-    if (await save({ images: [...t.images, ...urls] }, `Thêm ${urls.length} ảnh tuyển dụng`)) setImgInput('');
+    const ok = await queueImg(async () => {
+      const cur = tRef.current ?? t;
+      const fresh = [...new Set(urls)].filter(u => !cur.images.includes(u));
+      if (!fresh.length) return true;
+      const next = appendImages(cur.images, cur.imageTags, fresh);
+      return save({ images: next.urls, imageTags: next.tags }, `Thêm ${fresh.length} ảnh tuyển dụng`);
+    });
+    if (ok) setImgInput('');
   };
-  const removeImage = (u: string) => {
-    if (!confirm('Bỏ ảnh tuyển dụng này khỏi công ty?')) return;
-    void save({ images: t.images.filter(x => x !== u) }, 'Bỏ ảnh tuyển dụng');
+  const removeImage = (index: number) => {
+    if (!confirm('Bỏ ảnh tuyển dụng này khỏi công ty?' + ((t.imageTags[index]?.length ?? 0) > 0 ? ' (thẻ đối thủ của ảnh cũng bị bỏ)' : ''))) return;
+    const url = t.images[index];
+    void queueImg(async () => {
+      const cur = tRef.current ?? t;
+      const at = cur.images.indexOf(url);
+      if (at < 0) return true;
+      const next = removeImageAt(cur.images, cur.imageTags, at);
+      return save({ images: next.urls, imageTags: next.tags }, 'Bỏ ảnh tuyển dụng');
+    });
+  };
+  // Gắn / gỡ thẻ đối thủ của 1 ảnh: hiện ngay, lưu nền; lưu lỗi thì trả lại thẻ cũ.
+  const changeImageTags = (index: number, nextTags: RecruitTag[]) => {
+    if (!tagsReady) { toast(MIGRATION_216_HINT); return; }
+    const before = tRef.current ?? t;
+    const url = before.images[index];
+    if (url === undefined) return;
+    const prevTags = before.imageTags[index] ?? [];
+    commit({ ...before, imageTags: setTagsAt(before.imageTags, index, nextTags) });
+    void queueImg(async () => {
+      const cur = tRef.current ?? before;
+      const ok = await save({ imageTags: cur.imageTags }, `Gắn thẻ đối thủ ảnh tuyển dụng → ${nextTags.map(x => x.n).join(', ') || 'bỏ hết thẻ'}`);
+      if (!ok) {
+        const now = tRef.current ?? cur;
+        const at = now.images.indexOf(url);
+        if (at >= 0) commit({ ...now, imageTags: setTagsAt(now.imageTags, at, prevTags) });
+      }
+    });
   };
 
   return (
@@ -312,20 +386,8 @@ export default function MarketSupplyBlock({ entry, toast, onZonesSaved, onZonesR
 
       <div>
         <div className="text-[11px] text-[#888] font-medium mb-1">Ảnh tuyển dụng</div>
-        {t.images.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            {t.images.map(u => (
-              <div key={u} className="relative group">
-                <a href={u} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc">
-                  {bad[u]
-                    ? <div className="w-full h-24 rounded-lg bg-red-50 border border-red-300 text-red-600 text-[11px] font-semibold flex items-center justify-center text-center px-1">Ảnh lỗi — xoá & dán link khác</div>
-                    : <img src={u} alt="" referrerPolicy="no-referrer" loading="lazy" onError={() => setBad(b => ({ ...b, [u]: true }))} className="w-full h-24 object-cover rounded-lg border border-gray-200" />}
-                </a>
-                <button onClick={() => removeImage(u)} className="absolute top-1 right-1 p-0.5 rounded bg-white/90 text-gray-500 hover:text-red-600 opacity-0 group-hover:opacity-100" title="Bỏ ảnh"><X size={12} /></button>
-              </div>
-            ))}
-          </div>
-        )}
+        <RecruitImageGallery urls={t.images} tags={t.imageTags} competitors={competitors} tagsReady={tagsReady}
+          onChangeTags={changeImageTags} onRemove={removeImage} />
         <div className="flex gap-1.5">
           <ImageThumb url={imgInput.split(/[\s,]+/)[0] ?? ''} onStatus={() => {}} />
           <input value={imgInput} onChange={e => setImgInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addImages(); }}

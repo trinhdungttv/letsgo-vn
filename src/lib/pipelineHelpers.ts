@@ -60,6 +60,7 @@ const LEAD_TO_CLIENT: [string, string][] = [
   ['workers_needed', 'market_workers_needed'],
   ['suppliers', 'market_suppliers'],
   ['recruit_image_urls', 'recruit_image_urls'],
+  ['recruit_image_tags', 'recruit_image_tags'],
   ['wage_min', 'wage_min'],
   ['wage_max', 'wage_max'],
   ['allowance_notes', 'allowance_notes'],
@@ -96,6 +97,8 @@ function leadFieldsForClient(lead: Record<string, unknown>, client?: Record<stri
   const zone = typeof lead.region === 'string' ? lead.region.trim() : '';
   const names = zones.length ? zones : zone ? [zone] : [];
   if (names.length && (!client || blank(client.industrial_zones))) out.industrial_zones = names;
+  // Thẻ đối thủ của ảnh tuyển dụng xếp song song với danh sách ảnh: chỉ chép khi chép cả danh sách ảnh (khách đã có ảnh riêng thì giữ nguyên)
+  if (!out.recruit_image_urls) delete out.recruit_image_tags;
   // Ảnh bìa: chỉ chép cách hiển thị khi có chép ảnh
   if (!out.cover_image_url) { delete out.cover_image_fit; delete out.cover_image_pos_x; delete out.cover_image_pos_y; }
   // Link bản đồ + toạ độ đi cùng nhau: khách đã có link hoặc toạ độ thì giữ nguyên của khách

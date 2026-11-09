@@ -2,9 +2,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, MapPin, Search } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
-import { useProvinces } from '../../../hooks/useProvinces';
 import { nominatimGeocode, isValidVnLatLng } from '../../../lib/geo';
-import { useMapLink } from '../../../modules/cskh/data/mapLink';
+import { mapLinkCoords, useMapLink } from '../../../modules/cskh/data/mapLink';
+import { canonicalNewProvince, NEW_PROVINCES_SORTED, newProvinceOfMerged } from '../../../lib/laborSources/provinces';
 import { Sheet } from '../../../modules/cskh/components/Sheet';
 import { ChoiceChip } from '../../../modules/cskh/components/Sheet';
 import { inputCls } from '../../../modules/cskh/ui';
@@ -38,20 +38,24 @@ export default function SourceForm({ source, onClose, onSaved }: {
   onSaved: (s: LaborSource) => void;
 }) {
   const { user, token } = useAuth();
-  const { data, branches, users, zones, toast, competitorOptions } = useLabor();
-  const { provinces } = useProvinces(zones);
+  const { data, branches, users, toast, competitorOptions } = useLabor();
   const [f, setF] = useState<SourceInput>(() => {
     if (!source) return blank();
     // Chỉ lấy các trường nhập được (bỏ id / người tạo / mốc giờ)
     const base = blank();
     const out = { ...base } as Record<string, unknown>;
     for (const k of Object.keys(base)) out[k] = (source as unknown as Record<string, unknown>)[k];
-    return out as unknown as SourceInput;
+    const init = out as unknown as SourceInput;
+    // "Hồ Chí Minh" / "Tỉnh Đồng Nai" → tên chuẩn trong danh sách 34 tỉnh mới để ô chọn hiện đúng
+    return { ...init, province: canonicalNewProvince(init.province) ?? init.province };
   });
   const set = <K extends keyof SourceInput>(k: K, v: SourceInput[K]) => setF(prev => ({ ...prev, [k]: v }));
   const [saving, setSaving] = useState(false);
   const [locating, setLocating] = useState(false);
   const [tagText, setTagText] = useState(f.tags.join(', '));
+  // Tỉnh đã ghi bằng tên cũ / gõ tay (không thuộc 34 tỉnh mới) → giữ nguyên làm 1 lựa chọn để không mất khi mở form
+  const legacyProvince = f.province.trim() && !canonicalNewProvince(f.province) ? f.province : '';
+  const legacyTo = legacyProvince ? newProvinceOfMerged(legacyProvince) : null;
 
   // Link Google Maps → toạ độ (link rút gọn mở qua server)
   const link = useMapLink(useDebounced(f.map_link, 500), token);
@@ -86,7 +90,13 @@ export default function SourceForm({ source, onClose, onSaved }: {
     setSaving(true);
     try {
       const tags = [...new Set(tagText.split(',').map(t => t.trim()).filter(Boolean))].slice(0, 20);
-      const row = await saveSource({ ...f, tags }, user, source ?? undefined);
+      // Bấm Lưu quá nhanh sau khi dán link (toạ độ chưa kịp đọc) → đọc lại ở đây để không lưu "có link mà không có vị trí"
+      let { lat, lng } = f;
+      if ((lat == null || lng == null) && f.map_link.trim()) {
+        const c = await mapLinkCoords(f.map_link, token);
+        if (c && isValidVnLatLng(c)) { lat = c.lat; lng = c.lng; }
+      }
+      const row = await saveSource({ ...f, lat, lng, tags }, user, source ?? undefined);
       toast(lastSaveMissed214 ? `Đã lưu — riêng đối thủ / nhãn chưa lưu: ${MIGRATION_214_HINT}` : source ? 'Đã lưu hồ sơ' : `Đã thêm "${row.name}"`);
       onSaved(row);
     } catch (e) {
@@ -160,9 +170,16 @@ export default function SourceForm({ source, onClose, onSaved }: {
         <Field label="Địa chỉ" full>
           <input value={f.address} onChange={e => set('address', e.target.value)} className={inputCls} placeholder="Số nhà, đường, phường / xã" />
         </Field>
-        <Field label="Tỉnh / thành">
-          <input value={f.province} onChange={e => set('province', e.target.value)} className={inputCls} list="labor-provinces" placeholder="VD: Đồng Nai" />
-          <datalist id="labor-provinces">{provinces.map(p => <option key={p} value={p} />)}</datalist>
+        <Field label="Tỉnh / thành" hint={legacyProvince
+          ? `"${legacyProvince}" là cách ghi cũ${legacyTo ? ` — từ 1/7/2025 thuộc ${legacyTo}` : ''}. Chọn tỉnh / thành mới trong danh sách.`
+          : 'Theo 34 tỉnh / thành sau sáp nhập'}>
+          <select value={f.province} onChange={e => set('province', e.target.value)} className={inputCls}>
+            <option value="">— Chưa chọn —</option>
+            {legacyProvince && <option value={legacyProvince}>{legacyProvince} (cách ghi cũ)</option>}
+            {NEW_PROVINCES_SORTED.map(p => (
+              <option key={p.name} value={p.name}>{p.merged.length ? `${p.name} (gồm cả ${p.merged.join(', ')})` : p.name}</option>
+            ))}
+          </select>
         </Field>
         <Field label="Toạ độ">
           <div className="flex items-center gap-2 min-h-[38px]">
