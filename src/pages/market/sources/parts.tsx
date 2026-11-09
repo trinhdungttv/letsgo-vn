@@ -1,10 +1,10 @@
 // Khối giao diện nhỏ của tab Nguồn LĐ — kiểu Apple như CSKH (viên màu, ô icon iOS, số lớn).
 import type { ReactNode } from 'react';
-import { Building, Bus, GraduationCap, Landmark, School, Star, Users } from 'lucide-react';
+import { Building, Bus, Clock, Flag, GraduationCap, Landmark, School, ShieldAlert, Star, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../../components/workspace/wsTheme';
 import { fmtDuration, fmtKm, ENGINE_NOTE } from '../../../lib/laborSources/routing';
 import type { MatchReason, ReasonTone } from '../../../lib/laborSources/match';
-import { KIND_LABEL, KIND_SHORT, STATUS_LABEL, type RouteRow, type SourceKind, type SourceStatus } from '../../../lib/laborSources/types';
+import { KIND_LABEL, KIND_SHORT, STATUS_LABEL, type Pursuit, type RouteRow, type SourceKind, type SourceStatus } from '../../../lib/laborSources/types';
 
 export const KIND_TINT: Readonly<Record<SourceKind, keyof typeof ICON_TILE>> = {
   dai_hoc: 'indigo', cao_dang: 'blue', trung_cap: 'teal', trung_tam: 'green', dia_phuong: 'orange', khac: 'gray',
@@ -141,3 +141,16 @@ export function RateBar({ sent, passed }: { sent: number; passed: number }) {
 
 export const fmtDateVN = (iso: string | null | undefined) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
 export const fmtDayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
+/** Nhãn đánh giá: Ưu tiên triển khai (xanh lá) / Để liên hệ sau (xám, kèm ngày hẹn). Chưa đánh giá → không hiện. */
+export function PursuitPill({ pursuit, recontactAt }: { pursuit: Pursuit; recontactAt?: string | null }) {
+  if (pursuit === 'uu_tien') return <Pill tint="green"><Flag size={11} strokeWidth={2.5} /> Ưu tiên</Pill>;
+  if (pursuit === 'lien_he_sau') return <Pill tint="gray"><Clock size={11} strokeWidth={2.5} /> Liên hệ sau{recontactAt ? ` · ${fmtDayMonth(recontactAt)}` : ''}</Pill>;
+  return null;
+}
+
+/** Cảnh báo đối thủ đã làm với trường. */
+export function CompetitorPill({ names }: { names: readonly string[] }) {
+  if (!names.length) return null;
+  return <Pill tint="red" title={`Đối thủ đã làm: ${names.join(', ')}`}><ShieldAlert size={11} strokeWidth={2.5} /> {names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`}</Pill>;
+}

@@ -43,12 +43,32 @@ export interface LaborSource {
   owner_id: string | null;
   tags: string[];
   notes: string;
+  /** Migration 214 — đối thủ đã làm với trường (competitors.id) + ghi chú. */
+  competitor_ids: string[];
+  competitor_note: string;
+  /** Migration 214 — nhãn đánh giá: Ưu tiên triển khai / Để liên hệ sau / chưa đánh giá. */
+  pursuit: Pursuit;
+  /** Ngày hẹn liên hệ lại (nhãn "Để liên hệ sau") — tới ngày tự tạo việc Workspace. */
+  recontact_at: string | null;
+  recontact_task_for: string | null;
   created_by: string;
   updated_by: string;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export type Pursuit = '' | 'uu_tien' | 'lien_he_sau';
+export const PURSUITS: readonly Pursuit[] = ['uu_tien', 'lien_he_sau', ''];
+export const PURSUIT_LABEL: Readonly<Record<Pursuit, string>> = {
+  uu_tien: 'Ưu tiên triển khai',
+  lien_he_sau: 'Để liên hệ sau',
+  '': 'Chưa đánh giá',
+};
+/** Cột của migration 214 (chưa chạy thì lưu không kèm các cột này). */
+export const COLUMNS_214 = ['competitor_ids', 'competitor_note', 'pursuit', 'recontact_at', 'recontact_task_for'] as const;
+export const MIGRATION_214_HINT =
+  'Chưa lưu được đối thủ đã làm / nhãn Ưu tiên – Liên hệ sau — cần chạy migration 214 trên Supabase → SQL Editor.';
 
 export interface SourceProgram {
   id: string;

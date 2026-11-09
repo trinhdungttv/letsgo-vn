@@ -25,6 +25,7 @@ import { MAP_GROUPS, MAP_GROUP_COLOR, DEFAULT_GROUP_ICONS, GROUP_ICONS_KEY, load
 import { useLaborLite } from './sources/useLaborLite';
 import { requestOpenSource } from './sources/context';
 import { KIND_LABEL as LABOR_KIND_LABEL } from '../../lib/laborSources/types';
+import { provinceKey } from '../../lib/kcnSurvey/province';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
 type Group = MapGroup;
@@ -319,7 +320,8 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     // Nguồn LĐ (trường / trung tâm / địa phương) — kèm KCN gần nhất theo giờ xe khách đã tính
     labor.sources.forEach(s => {
       if (s.lat == null || s.lng == null) return;
-      if (provinceFilter !== 'all' && s.province !== provinceFilter) return;
+      // So tỉnh theo khoá chuẩn: "TP. Hồ Chí Minh" = "Hồ Chí Minh" = "TPHCM" (trường gõ tay tỉnh)
+      if (provinceFilter !== 'all' && provinceKey(s.province) !== provinceKey(provinceFilter)) return;
       const near = laborNearZone.get(s.id);
       pts.push({
         id: s.id, group: 'source', name: s.short_name || s.name, lat: s.lat, lng: s.lng,
@@ -405,6 +407,8 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     if (!req || typeof req.lat !== 'number' || typeof req.lng !== 'number') return;
     const g = req.group;
     if (g && GROUPS.some(x => x.id === g)) setActiveGroups(list => (list.includes(g) ? list : [...list, g]));
+    // Mở từ hồ sơ để xem 1 điểm cụ thể → bỏ lọc tỉnh / ngành kẻo điểm đó bị ẩn
+    if (g) { setProvinceFilter('all'); setIndustryFilter('all'); }
     mapRef.current?.setView([req.lat, req.lng], req.zoom ?? 13);
   }, []);
 

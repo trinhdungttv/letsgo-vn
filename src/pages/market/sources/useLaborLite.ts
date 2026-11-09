@@ -20,7 +20,8 @@ function load(): Promise<LaborLite> {
         supabase.from('labor_source_routes').select('*').limit(20000),
         supabase.from('labor_source_batches').select('*').is('deleted_at', null),
       ]);
-      if (s.error) return EMPTY; // chưa chạy migration 213
+      // Lỗi (VD chưa chạy migration 213 / mất mạng) → không nhớ kết quả rỗng, lần mở sau đọc lại
+      if (s.error) { cache = null; return EMPTY; }
       return {
         ready: true,
         sources: (s.data ?? []) as LiteSource[],

@@ -17,7 +17,7 @@ import { VoiceList } from '../../components/voice/VoiceUI';
 import { listVoiceByType, type VoiceRecording } from '../../lib/voiceRec/api';
 import { onCskhDataChanged } from '../../lib/cskh/events';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ClipboardList, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
+import { CalendarClock, Check, ClipboardList, Gift, NotebookText, PenLine, Pencil, Trash2, Users } from 'lucide-react';
 import { ICON_TILE, TINT } from '../../components/workspace/wsTheme';
 import { useAuth } from '../../lib/auth';
 import { useBranchLookup } from '../../hooks/useBranchLookup';
@@ -42,6 +42,7 @@ import {
 import { MigrationBanner, Spinner } from './components/Card';
 import { BatchEditModal } from './components/BatchEditModal';
 import { LogInteractionModal } from './components/LogInteractionModal';
+import { RescheduleSheet } from './components/RescheduleSheet';
 import { CompanyTag, MoreButton, PageTitle, PillSelect, Quiet, Row, SearchField, Switch } from './components/apple';
 
 const PAGE = 50;
@@ -80,6 +81,8 @@ export default function CskhInteractionLog() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<CskhInteraction | null>(null);
   const [editingBatch, setEditingBatch] = useState<InteractionBatch | null>(null);
+  // Việc đã hứa đang hẹn lại / để dịp khác
+  const [resched, setResched] = useState<CskhInteraction | null>(null);
 
   const contactById = useMemo(() => new Map((data?.contacts ?? []).map(c => [c.id, c])), [data]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
@@ -431,9 +434,16 @@ export default function CskhInteractionLog() {
                             {late !== null && late > 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.red}`}>Trễ hạn {late} ngày</span>}
                             {late === 0 && <span className={`px-2 rounded-full text-[11px] font-semibold ${TINT.orange}`}>Hạn hôm nay</span>}
                             {i.followUpDue && (late === null || late < 0) && <span className="text-[11.5px] text-[#86868B]">hạn {formatDateVN(i.followUpDue)}</span>}
-                            {i.followUpTaskId && <span className="text-[11.5px] text-[#86868B]">· có việc trong Workspace</span>}
+                            {!i.followUpDue && !i.followUpDone && <span className={`px-2 rounded-full text-[11px] font-medium ${TINT.orange}`}>Để dịp khác</span>}
+                            {i.followUpTaskId && i.followUpDue && <span className="text-[11.5px] text-[#86868B]">· có việc trong Workspace</span>}
                           </span>
                         </span>
+                        {!i.followUpDone && (
+                          <button type="button" onClick={() => setResched(i)} title="Đổi lịch / huỷ → Hẹn lại hoặc Để dịp khác" aria-label={`Hẹn lại: ${i.followUpAction}`}
+                            className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 -my-0.5 rounded-full text-[12px] font-medium text-[#C93400] hover:bg-[#FF9500]/[0.16] active:scale-95 transition">
+                            <CalendarClock size={14} strokeWidth={2.2} /> <span className="hidden md:inline">Hẹn lại</span>
+                          </button>
+                        )}
                       </div>
                     )}
                     {i.extraTasks.map(t => {
@@ -461,6 +471,12 @@ export default function CskhInteractionLog() {
                               <span className="text-[11.5px] text-[#86868B]">· có việc trong Workspace</span>
                             </span>
                           </span>
+                          {!t.done && (
+                            <button type="button" onClick={() => setResched(row)} title="Đổi lịch → Hẹn lại" aria-label={`Hẹn lại: ${t.action}`}
+                              className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 -my-0.5 rounded-full text-[12px] font-medium text-[#C93400] hover:bg-[#FF9500]/[0.16] active:scale-95 transition">
+                              <CalendarClock size={14} strokeWidth={2.2} /> <span className="hidden md:inline">Hẹn lại</span>
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -505,6 +521,8 @@ export default function CskhInteractionLog() {
           }}
         />
       )}
+
+      {resched && <RescheduleSheet item={resched} onClose={() => setResched(null)} />}
 
       {editingBatch && (
         <BatchEditModal

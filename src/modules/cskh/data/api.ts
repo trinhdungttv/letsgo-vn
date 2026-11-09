@@ -508,6 +508,43 @@ export async function setFollowUpDone(it: CskhInteraction, done: boolean, user: 
   });
 }
 
+/**
+ * Hẹn lại / "Để dịp khác" cho việc đã hứa — khi tới ngày mà hai bên đổi lịch hoặc huỷ.
+ *   • `due` = ngày mới ("YYYY-MM-DD"): đổi hạn ở dòng nhật ký + việc đi kèm trong Workspace
+ *     (việc từng "để dịp khác" thì khôi phục lại Workspace).
+ *   • `due` = null → "Để dịp khác": bỏ hạn. Việc không còn vào "Hôm nay cần liên hệ" và không báo
+ *     trễ nữa, nhưng VẪN mở ở "Việc đang mở" để hẹn lại khi có dịp. Việc đi kèm trong Workspace bị
+ *     xoá mềm (cột hạn ở đó bắt buộc có ngày, để lại thì nó báo trễ mãi) — hẹn lại sẽ khôi phục.
+ * Việc THÊM (id có "#") chỉ nằm ở Workspace, không có chỗ lưu "chưa có hạn" → chỉ hẹn lại ngày mới.
+ */
+export async function rescheduleFollowUp(it: CskhInteraction, due: string | null, user: AppUser | null): Promise<void> {
+  const isExtra = it.id.includes('#');
+  if (due !== null && !/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new Error('Ngày hẹn lại không hợp lệ');
+  if (due === null && isExtra) throw new Error('Việc thêm chỉ hẹn lại được ngày mới');
+  if (it.followUpDone) throw new Error('Việc này đã xong, không cần hẹn lại');
+  if (!isExtra) {
+    const { error } = await supabase.from('cskh_logs').update({ followup_due: due }).eq('id', it.id);
+    if (error) throw writeError(error);
+  }
+  if (it.followUpTaskId) {
+    const now = new Date().toISOString();
+    // Chỉ gửi deleted_at khi thật sự khôi phục việc đã để dịp khác (cột này có từ migration 146)
+    const restore = !isExtra && it.followUpDue === null;
+    const { error: taskError } = await (due === null
+      ? supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', it.followUpTaskId).neq('status', 'done')
+      : supabase.from('work_tasks').update({ due_date: due, updated_at: now, ...(restore ? { deleted_at: null } : {}) }).eq('id', it.followUpTaskId));
+    if (taskError) console.error('[cskh] Không cập nhật được việc đi kèm trong Workspace', taskError);
+  }
+  const fmt = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+  await logActivity({
+    user, action: 'update', table: 'cskh_logs', recordId: it.id.split('#')[0],
+    description: due
+      ? `Hẹn lại việc đã hứa "${it.followUpAction}" với ${it.contactPerson || 'người liên hệ'}: ${it.followUpDue ? fmt(it.followUpDue) : 'chưa có hạn'} → ${fmt(due)}`
+      : `Để dịp khác việc đã hứa "${it.followUpAction}" với ${it.contactPerson || 'người liên hệ'} (trước đó hạn ${it.followUpDue ? fmt(it.followUpDue) : 'chưa có'})`,
+    oldData: { followup_due: it.followUpDue }, newData: { followup_due: due },
+  });
+}
+
 // ── Sửa dòng nhật ký ────────────────────────────────────────────────────────
 export interface InteractionEdit {
   /** Công ty ghi kèm (chỉ đổi được với dòng đã gắn người liên hệ). */
@@ -667,7 +704,12 @@ export async function updateInteraction(
     const now = new Date().toISOString();
     const req = action
       ? (action !== it.followUpAction.trim() || edit.followUpDue !== it.followUpDue)
-        ? supabase.from('work_tasks').update({ title: cskhTaskTitle(client?.name ?? contact?.organization ?? it.clientName, action, who, contact?.kind), due_date: edit.followUpDue, updated_at: now }).eq('id', it.followUpTaskId)
+        ? supabase.from('work_tasks').update({
+          title: cskhTaskTitle(client?.name ?? contact?.organization ?? it.clientName, action, who, contact?.kind),
+          due_date: edit.followUpDue, updated_at: now,
+          // Việc từng "để dịp khác" (hạn trống, Workspace đã gỡ) nay có hạn lại → khôi phục
+          ...(it.followUpDue === null ? { deleted_at: null } : {}),
+        }).eq('id', it.followUpTaskId)
         : null
       : supabase.from('work_tasks').update({ deleted_at: now, updated_at: now }).eq('id', it.followUpTaskId).neq('status', 'done');
     if (req) {

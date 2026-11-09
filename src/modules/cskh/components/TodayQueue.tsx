@@ -5,7 +5,7 @@
 import { CompanyTag } from './apple';
 import { ClientStarBadge } from '../../../components/clients/ClientStars';
 import type { ClientStar } from '../../../lib/clientStars';
-import { Check, CheckCheck } from 'lucide-react';
+import { CalendarClock, Check, CheckCheck } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import type { TodayQueueItem } from '../../../lib/cskh/todayQueue';
 import type { CskhContact, CskhGroup } from '../../../lib/cskh/types';
@@ -16,7 +16,7 @@ import { useSpace } from '../space';
 const roundBtn = 'inline-flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#F2F2F7] text-[#0071E3] hover:bg-[#E5E5EA] transition';
 const pill = 'inline-flex items-center gap-1 h-10 md:h-8 px-3.5 md:px-3 rounded-full text-[13px] font-semibold transition';
 
-export function TodayQueue({ items, contactById, groupById, starOf, loading, onLaunch, onMarkContacted, onDoneFollowUp, onOpenBrief, busyId }: {
+export function TodayQueue({ items, contactById, groupById, starOf, loading, onLaunch, onMarkContacted, onDoneFollowUp, onReschedule, onOpenBrief, busyId }: {
   items: readonly TodayQueueItem[];
   contactById: ReadonlyMap<string, CskhContact>;
   groupById: ReadonlyMap<string, CskhGroup>;
@@ -26,6 +26,8 @@ export function TodayQueue({ items, contactById, groupById, starOf, loading, onL
   onLaunch: (contact: CskhContact, channel: ContactActionChannel) => void;
   onMarkContacted: (contact: CskhContact) => void;
   onDoneFollowUp: (item: TodayQueueItem) => void;
+  /** Tới ngày mà đổi lịch / huỷ → Hẹn lại hoặc Để dịp khác (mở RescheduleSheet). */
+  onReschedule?: (item: TodayQueueItem) => void;
   onOpenBrief: (contact: CskhContact, item: TodayQueueItem) => void;
   /** Dòng nhật ký đang được đánh dấu xong (khoá nút). */
   busyId?: string | null;
@@ -94,6 +96,14 @@ export function TodayQueue({ items, contactById, groupById, starOf, loading, onL
                     </a>
                   );
                 })}
+                {isFollowUp && onReschedule && (
+                  <button type="button" disabled={busyId === item.interactionId} onClick={() => onReschedule(item)}
+                    aria-label={`Hẹn lại hoặc để dịp khác việc đã hứa với ${contact.fullName}`}
+                    title="Đổi lịch / huỷ → Hẹn lại hoặc Để dịp khác"
+                    className="inline-flex items-center justify-center gap-1 w-10 h-10 md:w-auto md:h-8 md:px-3 rounded-full text-[13px] font-semibold bg-[rgba(255,149,0,0.14)] text-[#C93400] hover:bg-[rgba(255,149,0,0.22)] disabled:opacity-50 transition">
+                    <CalendarClock size={15} strokeWidth={2.3} /><span className="hidden md:inline">Hẹn lại</span>
+                  </button>
+                )}
                 {isFollowUp && (
                   <button type="button" disabled={busyId === item.interactionId} onClick={() => onDoneFollowUp(item)}
                     aria-label={`Đánh dấu xong việc đã hứa với ${contact.fullName}`}

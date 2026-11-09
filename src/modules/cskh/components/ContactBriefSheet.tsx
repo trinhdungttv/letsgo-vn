@@ -2,7 +2,7 @@
 // (ô tròn tích xong ngay tại chỗ), việc Workspace có gắn người này, 2 lần trao đổi gần nhất (bấm "Xem thêm"
 // để đọc đủ), nút Gọi / Zalo / SMS + Đã liên hệ.
 import { useState } from 'react';
-import { Check, Contact2 } from 'lucide-react';
+import { CalendarClock, Check, Contact2 } from 'lucide-react';
 import { contactActionLinks, type ContactActionChannel } from '../../../lib/cskh/contactActions';
 import { formatDateVN } from '../../../lib/cskh/dates';
 import { hasRememberNotes } from '../../../lib/cskh/remember';
@@ -43,7 +43,7 @@ function RecentEntry({ i }: { i: CskhInteraction }) {
   );
 }
 
-export function ContactBriefSheet({ contact, item, recent, workTasks = [], companyName = () => null, userName = () => null, onOpenWorkspace, groupLabel, ownerName, onLaunch, onMarkContacted, onDoneFollowUp, onOpenProfile, busyId, onClose }: {
+export function ContactBriefSheet({ contact, item, recent, workTasks = [], companyName = () => null, userName = () => null, onOpenWorkspace, groupLabel, ownerName, onLaunch, onMarkContacted, onDoneFollowUp, onReschedule, onOpenProfile, busyId, onClose }: {
   contact: CskhContact;
   /** Việc Workspace có gắn người này (đã xếp: đang mở trước) — chỉ xem. */
   workTasks?: readonly CskhWorkTask[];
@@ -59,6 +59,8 @@ export function ContactBriefSheet({ contact, item, recent, workTasks = [], compa
   onLaunch: (contact: CskhContact, channel: ContactActionChannel) => void;
   onMarkContacted: (contact: CskhContact) => void;
   onDoneFollowUp: (it: CskhInteraction) => void;
+  /** Đổi lịch / huỷ → Hẹn lại hoặc Để dịp khác (mở RescheduleSheet). */
+  onReschedule?: (it: CskhInteraction) => void;
   /** Mở hồ sơ đầy đủ để bổ sung Điều cần nhớ, thấu hiểu… */
   onOpenProfile: (contact: CskhContact) => void;
   busyId: string | null;
@@ -112,8 +114,17 @@ export function ContactBriefSheet({ contact, item, recent, workTasks = [], compa
                 <TaskCheck busy={busyId === i.id} onDone={() => onDoneFollowUp(i)} label={`Đánh dấu xong: ${i.followUpAction}`} />
                 <span className="flex-1 min-w-0 text-[12.5px] text-[#1D1D1F] leading-snug py-1">
                   {i.followUpAction}
-                  {i.followUpDue && <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>}
+                  {i.followUpDue
+                    ? <span className="text-[#86868B]"> — hạn {formatDateVN(i.followUpDue)}</span>
+                    : <span className="text-[#C93400]"> — để dịp khác (chưa có ngày)</span>}
                 </span>
+                {onReschedule && (
+                  <button type="button" onClick={() => onReschedule(i)} disabled={busyId === i.id}
+                    aria-label={`Hẹn lại: ${i.followUpAction}`} title="Hẹn lại / Để dịp khác"
+                    className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full text-[12px] font-medium text-[#C93400] hover:bg-[#FF9500]/[0.16] active:scale-95 transition disabled:opacity-50">
+                    <CalendarClock size={14} strokeWidth={2.2} /> Hẹn lại
+                  </button>
+                )}
               </div>
             ))}
           </div>

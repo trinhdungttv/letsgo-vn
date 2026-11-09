@@ -14,6 +14,7 @@ const src = (o: Partial<LaborSource> = {}): LaborSource => ({
   priority: null, province: 'Đồng Nai', address: '', map_link: '', lat: 10.95, lng: 106.82, website: '', fanpage: '', phone: '', email: '',
   logo_url: null, student_total: null, intern_per_year: null, has_dorm: null, requirements: [], requirements_note: '',
   mou_signed_at: null, mou_expires_at: null, mou_note: '', branch_id: null, owner_id: null, tags: [], notes: '',
+  competitor_ids: [], competitor_note: '', pursuit: '', recontact_at: null, recontact_task_for: null,
   created_by: '', updated_by: '', deleted_at: null, created_at: '', updated_at: '', ...o,
 });
 const batch = (o: Partial<SourceBatch>): SourceBatch => ({
@@ -168,5 +169,62 @@ describe('gợi ý ghép trường ↔ công ty', () => {
   it('tìm ngành theo tên bỏ dấu', () => {
     expect(industryIdByName('dien tu ', [{ id: 'dt', name: 'Điện tử' }])).toBe('dt');
     expect(industryIdByName('', [{ id: 'dt', name: 'Điện tử' }])).toBeNull();
+  });
+});
+
+import { guessKind, nameKey, parseBulk } from './bulk';
+import { planRecontacts } from './windows';
+
+describe('nhập nhanh danh sách trường', () => {
+  it('dán từ Excel (Tab): nhận tên, tỉnh, người, chức vụ, SĐT; bỏ dòng tiêu đề và dòng trống', () => {
+    const rows = parseBulk('Tên trường\tTỉnh\tNgười phụ trách\tChức vụ\tSĐT\nTrường Cao đẳng Đồng Nai\tĐồng Nai\tNguyễn Văn A\tTrưởng phòng QHDN\t0909 123 456\n\nĐại học Lạc Hồng');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: 'Trường Cao đẳng Đồng Nai', province: 'Đồng Nai', person: 'Nguyễn Văn A', role: 'Trưởng phòng QHDN', phone: '0909 123 456', kind: 'cao_dang' });
+    expect(rows[1]).toMatchObject({ name: 'Đại học Lạc Hồng', province: '', person: '', phone: '', kind: 'dai_hoc' });
+  });
+
+  it('dấu ; và SĐT ở cột bất kỳ', () => {
+    const [r] = parseBulk('Trung cấp nghề Nhơn Trạch; 0251.3560.123; Đồng Nai; Cô Lan');
+    expect(r).toMatchObject({ phone: '0251.3560.123', province: 'Đồng Nai', person: 'Cô Lan', kind: 'trung_cap' });
+  });
+
+  it('đoán loại theo tên, so trùng bỏ dấu', () => {
+    expect(guessKind('UBND xã Phước Thiền')).toBe('dia_phuong');
+    expect(guessKind('Trung tâm GDNN Long Thành')).toBe('trung_tam');
+    expect(guessKind('Trường ABC')).toBeNull();
+    expect(nameKey('  Đại học  Lạc Hồng ')).toBe(nameKey('dai hoc lac hong'));
+  });
+});
+
+describe('hẹn liên hệ lại', () => {
+  it('tới ngày hẹn, nhãn Để liên hệ sau, chưa tạo việc cho ngày hẹn đó', () => {
+    const base = src({ pursuit: 'lien_he_sau', recontact_at: '2026-11-09', recontact_task_for: null, competitor_ids: [], competitor_note: '' });
+    expect(planRecontacts([base], '2026-11-08')).toHaveLength(0);
+    const p = planRecontacts([base], '2026-11-09');
+    expect(p[0].title).toBe('Nguồn LĐ: Liên hệ lại CĐ CNC ĐN (hẹn 09/11/2026)');
+    expect(planRecontacts([{ ...base, recontact_task_for: '2026-11-09' }], '2026-11-10')).toHaveLength(0);
+    expect(planRecontacts([{ ...base, pursuit: 'uu_tien' }], '2026-11-10')).toHaveLength(0);
+  });
+});
+
+import { isMonthOnly, windowLabel, yearlyDates } from './windows';
+
+describe('lịch hằng năm không cần năm', () => {
+  it('chỉ tháng: đầu tháng → cuối tháng, vắt qua năm thì sang năm mốc + 1', () => {
+    expect(yearlyDates(3, null, 5, null)).toEqual({ start: '2000-03-01', end: '2000-05-31' });
+    expect(yearlyDates(12, null, 2, null)).toEqual({ start: '2000-12-01', end: '2001-02-28' });
+    expect(yearlyDates(2, 29, 2, 29)).toEqual({ start: '2000-02-29', end: '2000-02-29' });
+  });
+
+  it('nhãn và lần tới tính đúng năm hiện tại', () => {
+    const w = win({ ...yearlyDates(3, null, 5, null) && { start_date: '2000-03-01', end_date: '2000-05-31' } });
+    expect(isMonthOnly(w)).toBe(true);
+    expect(windowLabel(w)).toBe('T3 – T5 hằng năm');
+    expect(nextOccurrence(w, '2026-11-09')).toEqual({ start: '2027-03-01', end: '2027-05-31' });
+    const d = { ...w, ...(() => { const x = yearlyDates(3, 15, 5, 20); return { start_date: x.start, end_date: x.end }; })() };
+    expect(windowLabel(d)).toBe('15/03 – 20/05 hằng năm');
+    const cross = { ...w, start_date: '2000-12-01', end_date: '2001-02-28' };
+    expect(nextOccurrence(cross, '2027-01-10')).toEqual({ start: '2026-12-01', end: '2027-02-28' });
+    expect(windowLabel({ ...w, repeat_yearly: false, start_date: '2027-03-01', end_date: '2027-04-01' })).toBe('01/03/2027 – 01/04/2027');
   });
 });

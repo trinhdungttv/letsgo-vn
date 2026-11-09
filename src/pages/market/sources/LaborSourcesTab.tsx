@@ -6,8 +6,9 @@
 // Workspace (nhắc trước mùa thực tập).
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarRange, Database, LayoutGrid, List, Loader2, Plus, Sparkles } from 'lucide-react';
+import { CalendarRange, ClipboardList, Database, LayoutGrid, List, Loader2, Plus, Sparkles } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { foldVn } from '../../../lib/companyMatch';
 import { useAuth } from '../../../lib/auth';
 import { useBranchLookup } from '../../../hooks/useBranchLookup';
 import { todayVN } from '../../../lib/cskh/dates';
@@ -17,7 +18,7 @@ import { upcomingMonths } from '../../../lib/laborSources/windows';
 import { batchStats } from '../../../lib/laborSources/match';
 import { MIGRATION_213_HINT, type LaborSource, type RouteRow } from '../../../lib/laborSources/types';
 import { PageTitle, Segmented } from '../../../modules/cskh/components/apple';
-import { PILL_PRIMARY } from '../../../modules/cskh/ui';
+import { PILL_GRAY, PILL_PRIMARY } from '../../../modules/cskh/ui';
 import type { MarketTabProps } from '../shared';
 import { LaborContext, OPEN_SOURCE_KEY, type GroupLite, type IndustryLite, type LaborCtx, type UserLite } from './context';
 import OverviewView from './OverviewView';
@@ -26,6 +27,7 @@ import CalendarView from './CalendarView';
 import MatchView from './MatchView';
 import SourceProfile from './SourceProfile';
 import SourceForm from './SourceForm';
+import BulkAddSheet from './BulkAddSheet';
 
 type View = 'overview' | 'list' | 'calendar' | 'match';
 const VIEW_KEY = 'lgvn_labor_view_v1';
@@ -46,7 +48,7 @@ const groupBy = <T, K extends string>(rows: readonly T[], key: (r: T) => K): Map
   return m;
 };
 
-export default function LaborSourcesTab({ marketZones, marketLeads, clients, zoneFilter, setZoneFilter, goTab, toast }: MarketTabProps) {
+export default function LaborSourcesTab({ marketZones, marketLeads, clients, competitors, zoneFilter, setZoneFilter, goTab, toast }: MarketTabProps) {
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const [data, setData] = useState<LaborData>(EMPTY_LABOR_DATA);
@@ -58,6 +60,7 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
   const [view, setViewState] = useState<View>(readView);
   const [openId, setOpenId] = useState<string | null>(null);
   const [editing, setEditing] = useState<LaborSource | 'new' | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [routing, setRouting] = useState<string | null>(null);
   // KCN nhận từ nút "Nguồn LĐ gần KCN" (Khu vực / Khảo sát) — chỉ đọc 1 lần khi mở tab
   const [nearZone] = useState(() => (zoneFilter && zoneFilter !== 'all' ? marketZones.find(z => z.name === zoneFilter)?.id ?? '' : ''));
@@ -121,6 +124,20 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
     if (rows.length) setData(d => ({ ...d, routes: mergeRoutes(d.routes, rows) }));
   }, []);
 
+  // Đối thủ: cùng 1 công ty có thể có nhiều dòng (mỗi KCN 1 dòng) → gộp theo tên
+  const competitorInfo = useMemo(() => {
+    const nameOf = new Map<string, string>();
+    const options = new Map<string, { id: string; name: string }>();
+    for (const c of competitors) {
+      const name = (c.company_name ?? '').trim();
+      if (!name) continue;
+      nameOf.set(c.id, name);
+      const k = foldVn(name);
+      if (!options.has(k)) options.set(k, { id: c.id, name });
+    }
+    return { nameOf, options: [...options.values()].sort((a, b) => a.name.localeCompare(b.name, 'vi')) };
+  }, [competitors]);
+
   const ctx = useMemo<LaborCtx>(() => {
     const routeIdx = routeIndex(data.routes);
     const windowsBy = groupBy(data.windows, w => w.source_id);
@@ -129,6 +146,8 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
     return {
       data, loading, today, user,
       zones: marketZones, clients, leads: marketLeads, branches, industries, users, groups,
+      competitorOptions: competitorInfo.options,
+      competitorNames: ids => [...new Set(ids.map(id => competitorInfo.nameOf.get(id)).filter((n): n is string => !!n))],
       targets: buildTargets({ zones: marketZones, clients, leads: marketLeads, branches }),
       companies: buildCompanies({ zones: marketZones, clients, leads: marketLeads, industries }),
       programsBy: groupBy(data.programs, p => p.source_id),
@@ -143,7 +162,7 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
       editSource: s => setEditing(s ?? 'new'),
       goTab: (t, zone) => goTab(t, zone),
     };
-  }, [data, loading, today, user, marketZones, clients, marketLeads, branches, industries, users, groups, reload, addRoutes, routing, toast, goTab]);
+  }, [data, loading, today, user, marketZones, clients, marketLeads, branches, industries, users, groups, competitorInfo, reload, addRoutes, routing, toast, goTab]);
 
   const stats = useMemo(() => batchStats(data.batches), [data.batches]);
   const partners = data.sources.filter(s => s.status === 'partner').length;
@@ -160,7 +179,10 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
             ? <>{data.sources.length} đơn vị · {partners} đang hợp tác{stats.sent > 0 && <> · đã gửi {stats.sent.toLocaleString('vi-VN')} SV, đạt {stats.passed.toLocaleString('vi-VN')} ({Math.round((stats.rate ?? 0) * 100)}%)</>}</>
             : 'Trường ĐH / CĐ / Trung cấp, trung tâm, địa phương — nguồn sinh viên thực tập'}
           actions={data.ready ? (
-            <button type="button" onClick={() => setEditing('new')} className={PILL_PRIMARY}><Plus size={16} strokeWidth={2.4} /> Thêm đơn vị nguồn</button>
+            <>
+              <button type="button" onClick={() => setBulkOpen(true)} className={PILL_GRAY} title="Dán nhiều trường 1 lượt (từ Excel / Zalo)"><ClipboardList size={16} /> Nhập nhanh danh sách</button>
+              <button type="button" onClick={() => setEditing('new')} className={PILL_PRIMARY}><Plus size={16} strokeWidth={2.4} /> Thêm đơn vị nguồn</button>
+            </>
           ) : undefined}
         />
 
@@ -204,6 +226,7 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, zon
         </div>
       )}
 
+      {bulkOpen && <BulkAddSheet onClose={() => setBulkOpen(false)} />}
       {openSource && <SourceProfile source={openSource} onClose={() => setOpenId(null)} />}
       {editing && (
         <SourceForm

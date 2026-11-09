@@ -8,7 +8,7 @@ import { ensureToTarget, hasLL, routeLookupKey } from '../../../lib/laborSources
 import { KIND_LABEL, SOURCE_KINDS, SOURCE_STATUSES, STATUS_LABEL, type LaborSource } from '../../../lib/laborSources/types';
 import { MoreButton, Panel, PillSelect, Quiet, Row, SearchField } from '../../../modules/cskh/components/apple';
 import { useLabor } from './context';
-import { BusChip, KindPill, RateBar, SourceAvatar, Stars, StatusPill } from './parts';
+import { BusChip, CompetitorPill, KindPill, PursuitPill, RateBar, SourceAvatar, Stars, StatusPill } from './parts';
 
 type Sort = 'name' | 'priority' | 'near' | 'rate' | 'season';
 const PAGE = 40;
@@ -21,6 +21,8 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
   const [status, setStatus] = useState('all');
   const [province, setProvince] = useState('all');
   const [industry, setIndustry] = useState('all');
+  /** Nhãn / đối thủ: all | uu_tien | lien_he_sau | none | comp | free */
+  const [tagF, setTagF] = useState('all');
   const [zoneId, setZoneId] = useState(initialZoneId);
   const [sort, setSort] = useState<Sort>(initialZoneId ? 'near' : 'priority');
   const [limit, setLimit] = useState(PAGE);
@@ -57,8 +59,12 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
       if (province !== 'all' && s.province.trim() !== province) return false;
       const progs = programsBy.get(s.id) ?? [];
       if (industry !== 'all' && !progs.some(p => p.industry_ids.includes(industry))) return false;
+      if (tagF === 'uu_tien' || tagF === 'lien_he_sau') { if (s.pursuit !== tagF) return false; }
+      else if (tagF === 'none' && s.pursuit) return false;
+      else if (tagF === 'comp' && !s.competitor_ids.length) return false;
+      else if (tagF === 'free' && s.competitor_ids.length) return false;
       if (k) {
-        const hay = foldVn([s.name, s.short_name, s.province, s.address, ...s.tags, ...progs.map(p => p.name)].join(' '));
+        const hay = foldVn([s.name, s.short_name, s.province, s.address, ...s.tags, ...progs.map(p => p.name), ...L.competitorNames(s.competitor_ids)].join(' '));
         if (!hay.includes(k)) return false;
       }
       return true;
@@ -67,6 +73,7 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
       const est = zoneTarget && !route && hasLL(s) ? estimateBusMinutes(s as { lat: number; lng: number }, zoneTarget) : null;
       return { s, route, est, stats: batchStats(batchesBy.get(s.id) ?? []), months: monthsBy.get(s.id) ?? [], progs: programsBy.get(s.id) ?? [] };
     });
+    const rank = (s: LaborSource) => (s.pursuit === 'uu_tien' ? 0 : s.pursuit === 'lien_he_sau' ? 2 : 1) + (s.competitor_ids.length ? 3 : 0);
     const minOf = (r: typeof list[number]) => r.route?.duration_min ?? r.est?.min ?? Number.POSITIVE_INFINITY;
     const firstMonth = (r: typeof list[number]) => {
       const now = +L.today.slice(5, 7);
@@ -77,12 +84,13 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
         case 'near': return minOf(a) - minOf(b);
         case 'rate': return (b.stats.rate ?? -1) - (a.stats.rate ?? -1) || b.stats.sent - a.stats.sent;
         case 'season': return firstMonth(a) - firstMonth(b);
-        case 'priority': return (b.s.priority ?? 0) - (a.s.priority ?? 0) || (a.s.status === 'partner' ? -1 : 0) - (b.s.status === 'partner' ? -1 : 0) || a.s.name.localeCompare(b.s.name, 'vi');
+        // Ưu tiên triển khai lên đầu, trường đối thủ đã làm / để liên hệ sau xuống dưới
+        case 'priority': return rank(a.s) - rank(b.s) || (b.s.priority ?? 0) - (a.s.priority ?? 0) || (a.s.status === 'partner' ? -1 : 0) - (b.s.status === 'partner' ? -1 : 0) || a.s.name.localeCompare(b.s.name, 'vi');
         default: return a.s.name.localeCompare(b.s.name, 'vi');
       }
     });
     return list;
-  }, [data.sources, kind, status, province, industry, q, programsBy, batchesBy, monthsBy, zoneTarget, routeIdx, sort, L.today]);
+  }, [data.sources, kind, status, province, industry, tagF, q, programsBy, batchesBy, monthsBy, zoneTarget, routeIdx, sort, L]);
 
   const doRestore = async (s: LaborSource) => {
     try { await restoreSource(s, L.user); L.toast(`Đã khôi phục "${s.name}"`); await L.reload(); }
@@ -101,6 +109,14 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
           <PillSelect label="Trạng thái" value={status} active={status !== 'all'} onChange={setStatus}>
             <option value="all">Mọi trạng thái</option>
             {SOURCE_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+          </PillSelect>
+          <PillSelect label="Nhãn / đối thủ" value={tagF} active={tagF !== 'all'} onChange={setTagF}>
+            <option value="all">Mọi nhãn</option>
+            <option value="uu_tien">Ưu tiên triển khai</option>
+            <option value="lien_he_sau">Để liên hệ sau</option>
+            <option value="none">Chưa đánh giá</option>
+            <option value="comp">Đối thủ đã làm</option>
+            <option value="free">Chưa có đối thủ</option>
           </PillSelect>
           <PillSelect label="Tỉnh" value={province} active={province !== 'all'} onChange={setProvince}>
             <option value="all">Mọi tỉnh</option>
@@ -160,6 +176,8 @@ export default function ListView({ initialZoneId }: { initialZoneId: string }) {
                   <div className="flex flex-wrap items-center gap-1 mt-1.5">
                     <KindPill kind={r.s.kind} />
                     <StatusPill status={r.s.status} />
+                    <PursuitPill pursuit={r.s.pursuit} recontactAt={r.s.recontact_at} />
+                    <CompetitorPill names={L.competitorNames(r.s.competitor_ids)} />
                     {r.progs.length > 0 && <span className="text-[12px] text-[#6E6E73] truncate max-w-[260px]">{r.progs.slice(0, 3).map(p => p.name).join(', ')}{r.progs.length > 3 ? ` +${r.progs.length - 3}` : ''}</span>}
                     {r.months.length > 0 && <span className="text-[12px] text-[#0066CC]">· TT {monthsLabel(r.months)}</span>}
                     {!hasLL(r.s) && <span className="text-[12px] text-[#B25000]">· chưa có vị trí</span>}

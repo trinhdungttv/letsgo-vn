@@ -2,7 +2,7 @@
 // Công ty có vị trí → tính đường xe khách từ mọi trường tới công ty (1–2 lượt gọi), lưu chung.
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Factory, Plus, Sparkles, X } from 'lucide-react';
-import { Panel, Quiet, Row, Segmented } from '../../../modules/cskh/components/apple';
+import { Panel, Quiet, Row, Segmented, Switch } from '../../../modules/cskh/components/apple';
 import { ROUND_ADD, inputCls } from '../../../modules/cskh/ui';
 import { foldVn } from '../../../lib/companyMatch';
 import { MAX, scoreMatch, type MatchCompany, type MatchContext, type MatchResult } from '../../../lib/laborSources/match';
@@ -10,7 +10,7 @@ import { ensureToTarget, hasLL } from '../../../lib/laborSources/targets';
 import type { LaborSource } from '../../../lib/laborSources/types';
 import { useLabor } from './context';
 import { BatchForm } from './ChildForms';
-import { BusChip, KindPill, ReasonChips, ScoreRing, SourceAvatar, StatusPill } from './parts';
+import { BusChip, CompetitorPill, KindPill, PursuitPill, ReasonChips, ScoreRing, SourceAvatar, StatusPill } from './parts';
 
 type Mode = 'company' | 'zone';
 const KEY = 'lgvn_labor_match_v1';
@@ -22,6 +22,8 @@ export default function MatchView() {
   const [companyKey, setCompanyKey] = useState(saved.company ?? '');
   const [zoneId, setZoneId] = useState(saved.zone ?? '');
   const [query, setQuery] = useState('');
+  /** Ẩn trường đối thủ đã làm / để liên hệ sau — mặc định ẩn để khỏi tốn thời gian kết nối */
+  const [hideBusy, setHideBusy] = useState(true);
   const [batchFor, setBatchFor] = useState<{ source: LaborSource; company: MatchCompany } | null>(null);
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify({ mode, company: companyKey, zone: zoneId })); } catch { /* bỏ qua */ } }, [mode, companyKey, zoneId]);
 
@@ -85,6 +87,9 @@ export default function MatchView() {
     return [];
   }, [mode, company, zone, zoneCompanies, L, ctx]);
 
+  const shown = hideBusy ? ranked.filter(r => !r.s.competitor_ids.length && r.s.pursuit !== 'lien_he_sau') : ranked;
+  const hidden = ranked.length - shown.length;
+
   const options = useMemo(() => {
     const k = foldVn(query).trim();
     const list = k ? L.companies.filter(c => foldVn(c.name).includes(k)) : L.companies;
@@ -136,8 +141,9 @@ export default function MatchView() {
       </Panel>
 
       {(company || zone) && (
-        <Panel title="Trường / nguồn phù hợp" count={ranked.length}>
-          {ranked.length === 0 ? <Quiet>Chưa có đơn vị nguồn nào.</Quiet> : ranked.slice(0, 30).map(({ s, company: c, m, route }, i) => (
+        <Panel title="Trường / nguồn phù hợp" count={shown.length}
+          action={<Switch checked={hideBusy} onChange={setHideBusy} label={<span className="text-[12.5px]">Ẩn đối thủ đã làm / liên hệ sau{hidden ? ` (${hidden})` : ''}</span>} />}>
+          {shown.length === 0 ? <Quiet>{ranked.length ? 'Mọi trường đều đã bị ẩn — tắt công tắc để xem.' : 'Chưa có đơn vị nguồn nào.'}</Quiet> : shown.slice(0, 30).map(({ s, company: c, m, route }, i) => (
             <Row key={s.id} first={i === 0} inset={56} align="start">
               <ScoreRing score={m.score} />
               <div className="min-w-0 flex-1">
@@ -147,6 +153,8 @@ export default function MatchView() {
                 </button>
                 <div className="flex flex-wrap items-center gap-1 mt-1 mb-1.5">
                   <KindPill kind={s.kind} /><StatusPill status={s.status} />
+                  <PursuitPill pursuit={s.pursuit} recontactAt={s.recontact_at} />
+                  <CompetitorPill names={L.competitorNames(s.competitor_ids)} />
                   <BusChip route={route} estimate={!route && m.durationMin != null && m.distanceKm != null ? { min: m.durationMin, km: m.distanceKm } : null} compact />
                   {mode === 'zone' && zoneCompanies.length > 0 && <span className="text-[12px] text-[#6E6E73]">hợp nhất: <b className="font-medium">{c.name}</b></span>}
                 </div>

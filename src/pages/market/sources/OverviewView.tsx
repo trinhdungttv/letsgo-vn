@@ -1,13 +1,13 @@
 // Tổng quan Nguồn LĐ: chỉ số, sắp vào mùa thực tập, nguồn hiệu quả, đợt gần đây, hồ sơ còn thiếu.
 import { useMemo } from 'react';
-import { AlertCircle, CalendarRange, ChevronRight, Send, Trophy } from 'lucide-react';
+import { AlertCircle, CalendarRange, ChevronRight, Flag, Send, Trophy } from 'lucide-react';
 import { Panel, Quiet, Row } from '../../../modules/cskh/components/apple';
 import { batchStats } from '../../../lib/laborSources/match';
 import { addDays, daysBetween, occurrencesBetween } from '../../../lib/laborSources/windows';
 import { hasLL } from '../../../lib/laborSources/targets';
 import { isSchoolKind, KIND_LABEL, SOURCE_KINDS } from '../../../lib/laborSources/types';
 import { useLabor } from './context';
-import { Metric, RateBar, SourceAvatar, fmtDateVN } from './parts';
+import { CompetitorPill, Metric, PursuitPill, RateBar, SourceAvatar, fmtDateVN } from './parts';
 
 export default function OverviewView({ onGo }: { onGo: (v: 'list' | 'calendar' | 'match') => void }) {
   const L = useLabor();
@@ -48,6 +48,13 @@ export default function OverviewView({ onGo }: { onGo: (v: 'list' | 'calendar' |
 
   const recent = alive.slice(0, 6);
 
+  // Cần liên hệ: Ưu tiên triển khai mà chưa hợp tác + hẹn liên hệ lại trong 14 ngày tới (hoặc đã quá hẹn)
+  const soon = addDays(today, 14);
+  const todo = data.sources.filter(s => (s.pursuit === 'uu_tien' && s.status !== 'partner')
+    || (s.pursuit === 'lien_he_sau' && !!s.recontact_at && s.recontact_at <= soon))
+    .sort((a, b) => (a.pursuit === 'uu_tien' ? '0' : a.recontact_at ?? '9').localeCompare(b.pursuit === 'uu_tien' ? '0' : b.recontact_at ?? '9'));
+  const prioCount = data.sources.filter(s => s.pursuit === 'uu_tien').length;
+
   if (!data.sources.length) {
     return (
       <Panel title="Bắt đầu">
@@ -59,13 +66,33 @@ export default function OverviewView({ onGo }: { onGo: (v: 'list' | 'calendar' |
   return (
     <div className="space-y-4 md:space-y-5">
       <div className="rounded-[18px] bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-black/[0.06]">
-        <Metric label="Đơn vị nguồn" value={data.sources.length} sub={`${data.sources.filter(s => s.status === 'partner').length} đang hợp tác`} />
+        <Metric label="Đơn vị nguồn" value={data.sources.length} sub={`${data.sources.filter(s => s.status === 'partner').length} hợp tác · ${prioCount} ưu tiên`} />
         <Metric label={`SV gửi đi năm ${year}`} value={yearStats.sent.toLocaleString('vi-VN')} tone="blue" sub={`${yearStats.count} đợt`} />
         <Metric label={`Đạt năm ${year}`} value={yearStats.passed.toLocaleString('vi-VN')} tone="green" sub={yearStats.rate == null ? 'Chưa có đợt' : `Tỷ lệ ${Math.round(yearStats.rate * 100)}%`} />
         <Metric label="Mùa TT trong 90 ngày" value={upcoming.length} tone="orange" sub={expectedSoon ? `~${expectedSoon.toLocaleString('vi-VN')} SV dự kiến` : 'Chưa ghi số dự kiến'} />
       </div>
 
       <div className="grid gap-4 md:gap-5 lg:grid-cols-2 items-start">
+        {todo.length > 0 && (
+          <Panel title="Cần liên hệ" icon={<Flag size={16} className="text-[#34C759]" />} count={todo.length}
+            meta="Ưu tiên triển khai chưa hợp tác · hẹn liên hệ lại trong 14 ngày tới">
+            {todo.slice(0, 8).map((s, i) => (
+              <Row key={s.id} first={i === 0} inset={52} onClick={() => L.openSource(s.id)}>
+                <SourceAvatar kind={s.kind} logo={s.logo_url} size={38} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] font-medium text-[#1D1D1F] truncate">{s.short_name || s.name}</p>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    <PursuitPill pursuit={s.pursuit} recontactAt={s.recontact_at} />
+                    <CompetitorPill names={L.competitorNames(s.competitor_ids)} />
+                  </div>
+                </div>
+                {s.pursuit === 'lien_he_sau' && s.recontact_at && s.recontact_at <= today && <span className="shrink-0 text-[12px] font-semibold text-[#D70015]">Đến hạn</span>}
+                <ChevronRight size={16} className="text-[#C7C7CC]" />
+              </Row>
+            ))}
+          </Panel>
+        )}
+
         <Panel title="Sắp vào mùa thực tập" icon={<CalendarRange size={16} className="text-[#FF9500]" />} count={upcoming.length}
           action={<button type="button" onClick={() => onGo('calendar')} className="text-[13px] font-medium text-[#0066CC] min-h-[36px] md:min-h-0">Xem lịch</button>}>
           {upcoming.length === 0 ? <Quiet>Không có mùa thực tập nào trong 90 ngày tới.</Quiet> : upcoming.slice(0, 8).map((u, i) => {

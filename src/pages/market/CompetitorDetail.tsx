@@ -35,6 +35,7 @@ function oldNamesOfProvince(name: string): string[] {
 }
 import { useBeforeUnloadWarning } from '../../hooks/useBeforeUnloadWarning';
 import MapLinkHint from '../../components/MapLinkHint';
+import CompetitorSchoolsBlock from './sources/CompetitorSchoolsBlock';
 import { LinkHealthDot, linkHealthCls, linkHealthTitle } from '../../components/LinkHealthDot';
 import { useLinkHealth } from '../../lib/linkCheck';
 import { deriveSupplyFromCompanies, type DerivedSupplyRow } from './supplierLink';
@@ -827,6 +828,8 @@ export default function CompetitorDetail({ competitor, allCompetitors, marketZon
 
         {/* CỘT PHẢI */}
         <div className="space-y-3">
+          {/* Trường / nguồn SV đối thủ này đã làm (Thị trường → Nguồn LĐ) */}
+          <CompetitorSchoolsBlock companyName={competitor.company_name} />
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">KH đang phục vụ</div>
             {missingCols.length > 0 && (

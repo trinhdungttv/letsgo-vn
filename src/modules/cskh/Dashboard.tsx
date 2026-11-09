@@ -30,13 +30,14 @@ import { markContactLaunched } from './launch';
 import { useMissedToday } from './data/useMissedToday';
 import { DEFAULT_SCOPE, useCareScope } from './useCareScope';
 import {
-  CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, INTERACTION_ICON, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
+  CAPTION, CARE_STATUS_COLOR, daysUntilLabel, GREEN, GROUP_COLOR, groupDisplayOf, LINK, ORANGE, PANEL, PILL_PRIMARY, PILL_TINTED, RED, scoreColor, TIER_COLOR,
 } from './ui';
 import { MigrationBanner, Spinner } from './components/Card';
 import { CompanyTag, Panel, PageTitle, Quiet, Row, Segmented } from './components/apple';
 import { CareScopeBar } from './components/CareScopeBar';
-import { ContactAvatar } from './components/ContactAvatar';
+import { AvatarStack, avatarStackWidth, ContactAvatar, type StackPerson } from './components/ContactAvatar';
 import { ContactBriefSheet } from './components/ContactBriefSheet';
+import { RescheduleSheet } from './components/RescheduleSheet';
 import { TodayQueue } from './components/TodayQueue';
 import { SaleNetworkPanel } from './components/SaleNetworkPanel';
 import { useSpace } from './space';
@@ -69,6 +70,8 @@ export default function CskhDashboard() {
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const [brief, setBrief] = useState<{ contactId: string; item: TodayQueueItem | null } | null>(null);
+  // Việc đã hứa đang được hẹn lại / để dịp khác (mở RescheduleSheet)
+  const [resched, setResched] = useState<CskhInteraction | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   /** null = tự chọn đoạn có việc (việc đã hứa → sự kiện → gần đây). */
   const [agendaTab, setAgendaTab] = useState<AgendaKey | null>(null);
@@ -240,6 +243,11 @@ export default function CskhDashboard() {
   const completeById = (id: string | undefined) => {
     const it = id ? interactions.find(i => i.id === id) : undefined;
     if (it) void completeFollowUp(it);
+  };
+  // Tới ngày mà đổi lịch / huỷ → mở "Hẹn lại / Để dịp khác"
+  const rescheduleById = (id: string | undefined) => {
+    const it = id ? interactions.find(i => i.id === id) : undefined;
+    if (it) setResched(it);
   };
 
   const companyOf = (i: CskhInteraction) => i.clientName || (i.contactId ? contactById.get(i.contactId)?.organization : '') || '';
@@ -437,6 +445,7 @@ export default function CskhDashboard() {
                 onLaunch={(c, channel) => markContactLaunched(c.id, channel)}
                 onMarkContacted={c => requestQuickLog({ contactId: c.id, channel: null })}
                 onDoneFollowUp={item => completeById(item.interactionId)}
+                onReschedule={item => rescheduleById(item.interactionId)}
                 onOpenBrief={(c, item) => setBrief({ contactId: c.id, item })}
               />
             </Panel>
@@ -487,7 +496,13 @@ export default function CskhDashboard() {
                                   : late === 0 ? <span className="font-medium" style={{ color: ORANGE }}> · hạn hôm nay</span>
                                     : ` · hạn ${formatDateVN(i.followUpDue)}`
                               )}
+                              {!i.followUpDue && <span className="font-medium" style={{ color: ORANGE }}> · để dịp khác</span>}
                             </span>
+                          </button>
+                          <button type="button" onClick={() => setResched(i)} disabled={busyId === i.id}
+                            aria-label={`Hẹn lại: ${i.followUpAction}`} title="Hẹn lại / Để dịp khác"
+                            className="shrink-0 w-9 h-9 md:w-8 md:h-8 rounded-full text-[#C93400] hover:bg-[#FF9500]/[0.14] active:scale-95 flex items-center justify-center transition disabled:opacity-50">
+                            <CalendarClock size={16} strokeWidth={2.2} />
                           </button>
                         </Row>
                       );
@@ -574,10 +589,14 @@ export default function CskhDashboard() {
                     : view.recent.map((entry, idx) => {
                       if (entry.kind === 'batch') {
                         const b = entry.batch;
-                        const BIcon = INTERACTION_ICON[b.type];
+                        // Avatar những người trong đợt chồng thành nhóm — nhìn là biết đợt này có ai
+                        const crowd: StackPerson[] = b.items.map(i => {
+                          const c = i.contactId ? contactById.get(i.contactId) : undefined;
+                          return { key: i.id, name: c?.fullName ?? i.contactPerson, url: c?.avatarUrl, tier: c?.tier ?? 'unclassified' };
+                        });
                         return (
-                          <Row key={b.key} first={idx === 0} inset={44} onClick={() => goTab('log')} title="Mở Nhật ký để sửa cả đợt">
-                            <span className="w-8 h-8 shrink-0 rounded-full bg-[#F2F2F7] text-[#0071E3] flex items-center justify-center"><BIcon size={15} /></span>
+                          <Row key={b.key} first={idx === 0} inset={avatarStackWidth(crowd.length) + 12} onClick={() => goTab('log')} title="Mở Nhật ký để sửa cả đợt">
+                            <AvatarStack people={crowd} />
                             <span className="min-w-0 flex-1">
                               <span className="block text-[14px] font-medium text-[#1D1D1F] truncate">{b.content || INTERACTION_LABEL[b.type]} · {b.items.length} người</span>
                               <span className={`block ${caption} truncate`}>Ghi cho nhóm{b.createdByName ? ` · ${b.createdByName}` : ''}</span>
@@ -690,10 +709,13 @@ export default function CskhDashboard() {
           onLaunch={(c, channel) => markContactLaunched(c.id, channel)}
           onMarkContacted={c => requestQuickLog({ contactId: c.id, channel: null })}
           onDoneFollowUp={it => void completeFollowUp(it)}
+          onReschedule={setResched}
           onOpenProfile={c => { setBrief(null); openProfile(c.id); }}
           onClose={() => setBrief(null)}
         />
       )}
+
+      {resched && <RescheduleSheet item={resched} onClose={() => setResched(null)} />}
     </div>
   );
 }

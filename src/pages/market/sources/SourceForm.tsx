@@ -8,9 +8,10 @@ import { useMapLink } from '../../../modules/cskh/data/mapLink';
 import { Sheet } from '../../../modules/cskh/components/Sheet';
 import { ChoiceChip } from '../../../modules/cskh/components/Sheet';
 import { inputCls } from '../../../modules/cskh/ui';
-import { saveSource, type SourceInput } from '../../../lib/laborSources/api';
+import { lastSaveMissed214, saveSource, type SourceInput } from '../../../lib/laborSources/api';
+import { CatalogPick } from '../../../modules/cskh/components/CatalogPick';
 import {
-  KIND_LABEL, OWNERSHIP_LABEL, REQUIREMENTS, SOURCE_KINDS, SOURCE_STATUSES, STATUS_LABEL,
+  KIND_LABEL, MIGRATION_214_HINT, OWNERSHIP_LABEL, PURSUITS, PURSUIT_LABEL, REQUIREMENTS, SOURCE_KINDS, SOURCE_STATUSES, STATUS_LABEL,
   type LaborSource, type Ownership,
 } from '../../../lib/laborSources/types';
 import { useLabor } from './context';
@@ -22,6 +23,7 @@ const blank = (): SourceInput => ({
   province: '', address: '', map_link: '', lat: null, lng: null, website: '', fanpage: '', phone: '', email: '',
   logo_url: null, student_total: null, intern_per_year: null, has_dorm: null, requirements: [], requirements_note: '',
   mou_signed_at: null, mou_expires_at: null, mou_note: '', branch_id: null, owner_id: null, tags: [], notes: '',
+  competitor_ids: [], competitor_note: '', pursuit: '', recontact_at: null, recontact_task_for: null,
 });
 
 function useDebounced<T>(v: T, ms: number): T {
@@ -36,7 +38,7 @@ export default function SourceForm({ source, onClose, onSaved }: {
   onSaved: (s: LaborSource) => void;
 }) {
   const { user, token } = useAuth();
-  const { data, branches, users, zones, toast } = useLabor();
+  const { data, branches, users, zones, toast, competitorOptions } = useLabor();
   const { provinces } = useProvinces(zones);
   const [f, setF] = useState<SourceInput>(() => {
     if (!source) return blank();
@@ -85,7 +87,7 @@ export default function SourceForm({ source, onClose, onSaved }: {
     try {
       const tags = [...new Set(tagText.split(',').map(t => t.trim()).filter(Boolean))].slice(0, 20);
       const row = await saveSource({ ...f, tags }, user, source ?? undefined);
-      toast(source ? 'Đã lưu hồ sơ' : `Đã thêm "${row.name}"`);
+      toast(lastSaveMissed214 ? `Đã lưu — riêng đối thủ / nhãn chưa lưu: ${MIGRATION_214_HINT}` : source ? 'Đã lưu hồ sơ' : `Đã thêm "${row.name}"`);
       onSaved(row);
     } catch (e) {
       toast((e as Error).message);
@@ -124,6 +126,27 @@ export default function SourceForm({ source, onClose, onSaved }: {
         <Field label="Mức ưu tiên">
           <div className="h-[38px] flex items-center"><Stars value={f.priority} onChange={v => set('priority', v)} size={20} /></div>
         </Field>
+      </Section>
+
+      <Section title="Đánh giá & đối thủ" note="Trường đối thủ đã làm thì hiện cảnh báo ở mọi danh sách — tránh mất thời gian kết nối.">
+        <Field label="Nhãn" full>
+          <div className="flex flex-wrap gap-1.5">
+            {PURSUITS.map(p => <ChoiceChip key={p || 'none'} active={f.pursuit === p} onClick={() => set('pursuit', p)}>{PURSUIT_LABEL[p]}</ChoiceChip>)}
+          </div>
+        </Field>
+        {f.pursuit === 'lien_he_sau' && (
+          <Field label="Hẹn liên hệ lại" full hint="Tới ngày này app tự tạo việc &quot;Liên hệ lại&quot; trong Workspace (để trống = không nhắc)">
+            <input type="date" value={f.recontact_at ?? ''} onChange={e => set('recontact_at', e.target.value || null)} className={`${inputCls} md:max-w-[220px]`} />
+          </Field>
+        )}
+        <Field label="Đối thủ đã làm với trường" full hint={competitorOptions.length ? 'Chọn từ Thị trường → Đối thủ' : 'Chưa có đối thủ nào trong Thị trường → Đối thủ'}>
+          <CatalogPick items={competitorOptions} value={f.competitor_ids} onChange={v => set('competitor_ids', v)} addLabel="Thêm đối thủ…" emptyText="Chưa có đối thủ nào trong Thị trường → Đối thủ." />
+        </Field>
+        {f.competitor_ids.length > 0 && (
+          <Field label="Ghi chú về đối thủ" full>
+            <input value={f.competitor_note} onChange={e => set('competitor_note', e.target.value)} className={inputCls} placeholder="VD: đã ký độc quyền khoa Điện tử tới 2027; khoa Cơ khí còn trống" />
+          </Field>
+        )}
       </Section>
 
       <Section title="Vị trí" note="Có vị trí mới tính được đường xe khách tới KCN / công ty và hiện trên Bản đồ.">

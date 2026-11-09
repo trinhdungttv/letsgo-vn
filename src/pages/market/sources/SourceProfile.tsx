@@ -8,7 +8,7 @@ import {
 import { Sheet } from '../../../modules/cskh/components/Sheet';
 import { MoreButton, Panel, Quiet, Row } from '../../../modules/cskh/components/apple';
 import { ROUND_ADD } from '../../../modules/cskh/ui';
-import { deleteSource, openInCskh } from '../../../lib/laborSources/api';
+import { deleteSource, openInCskh, setPursuit } from '../../../lib/laborSources/api';
 import { batchStats, MAX, monthsLabel, scoreMatch, type MatchContext } from '../../../lib/laborSources/match';
 import { ensureFromSource, hasLL } from '../../../lib/laborSources/targets';
 import { fetchRouteShape, fmtDuration, fmtKm, ENGINE_NOTE } from '../../../lib/laborSources/routing';
@@ -21,9 +21,13 @@ import { useLabor } from './context';
 import { FOOT_GRAY, FOOT_RED, SheetFooter } from './form';
 import { BatchForm, ContactSheet, ProgramForm, WindowForm } from './ChildForms';
 import RouteMiniMap, { type MiniPoint } from './RouteMiniMap';
+import SourceMapFull from './SourceMapFull';
 import {
-  BusChip, KIND_COLOR, KindPill, Metric, Pill, RateBar, ReasonChips, ScoreRing, SourceAvatar, Stars, StatusPill, fmtDateVN, fmtDayMonth,
+  BusChip, CompetitorPill, KIND_COLOR, KindPill, Metric, Pill, PursuitPill, RateBar, ReasonChips, ScoreRing, SourceAvatar, Stars, StatusPill, fmtDateVN, fmtDayMonth,
 } from './parts';
+import { ChoiceChip } from '../../../modules/cskh/components/Sheet';
+import { addDays, windowLabel } from '../../../lib/laborSources/windows';
+import { PURSUIT_LABEL, type Pursuit } from '../../../lib/laborSources/types';
 
 type Child =
   | { kind: 'program'; item: SourceProgram | null }
@@ -41,6 +45,7 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
   const [shapes, setShapes] = useState<Map<string, [number, number][]>>(new Map());
   const [moreCompanies, setMoreCompanies] = useState(false);
   const [moreZones, setMoreZones] = useState(false);
+  const [fullMap, setFullMap] = useState(false);
 
   const programs = useMemo(() => L.programsBy.get(source.id) ?? [], [L.programsBy, source.id]);
   const windows = L.windowsBy.get(source.id) ?? [];
@@ -109,6 +114,14 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
     if (p) void showRoute(id, p.lat, p.lng);
   };
 
+  const competitorNames = L.competitorNames(source.competitor_ids);
+  /** Đổi nhãn nhanh. "Để liên hệ sau" chưa có ngày → mặc định hẹn 3 tháng sau. */
+  const tag = async (p: Pursuit, date?: string | null) => {
+    const recontact = p === 'lien_he_sau' ? (date !== undefined ? date : source.recontact_at ?? addDays(L.today, 90)) : null;
+    try { await setPursuit(source, p, recontact, L.user); await L.reload(); L.toast(p ? `Đã gắn nhãn "${PURSUIT_LABEL[p]}"${recontact ? ` — hẹn ${fmtDateVN(recontact)}` : ''}` : 'Đã bỏ nhãn'); }
+    catch (e) { L.toast((e as Error).message); }
+  };
+
   const remove = async () => {
     if (!confirm(`Xoá "${source.name}"?\n\nNgành, lịch thực tập, đợt gửi SV vẫn giữ — khôi phục được ở Danh sách → Đã xoá.`)) return;
     try { await deleteSource(source, L.user); L.toast('Đã xoá (khôi phục được)'); onClose(); await L.reload(); }
@@ -142,12 +155,35 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
               <KindPill kind={source.kind} />
               <StatusPill status={source.status} />
+              <PursuitPill pursuit={source.pursuit} recontactAt={source.recontact_at} />
+              <CompetitorPill names={competitorNames} />
               {mouState && <Pill tint={mouState.tint}>{mouState.t}</Pill>}
               {source.priority ? <Stars value={source.priority} size={14} /> : null}
               {source.tags.map(t => <Pill key={t}>#{t}</Pill>)}
             </div>
           </div>
         </div>
+        {competitorNames.length > 0 && (
+          <div className="mt-3 rounded-[12px] bg-[#FF3B30]/[0.08] px-3.5 py-2.5 text-[13px] text-[#B0001A]">
+            <b>Đối thủ đã làm với trường:</b> {competitorNames.join(', ')}{source.competitor_note ? ` — ${source.competitor_note}` : ''}
+          </div>
+        )}
+
+        {/* Gắn nhãn nhanh — không cần mở form */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[12px] font-medium text-[#86868B] mr-1">Nhãn:</span>
+          {(['uu_tien', 'lien_he_sau', ''] as Pursuit[]).map(p => (
+            <ChoiceChip key={p || 'none'} active={source.pursuit === p} onClick={() => void tag(p)}>{PURSUIT_LABEL[p]}</ChoiceChip>
+          ))}
+          {source.pursuit === 'lien_he_sau' && (
+            <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[#6E6E73]">
+              hẹn
+              <input type="date" value={source.recontact_at ?? ''} onChange={e => void tag('lien_he_sau', e.target.value || null)}
+                className="h-8 px-2 rounded-full border border-black/[0.12] bg-white text-[12.5px]" />
+            </label>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2 mt-4">
           <button type="button" onClick={() => L.editSource(source)} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[#0071E3]/10 text-[#0066CC] text-[13px] font-medium"><Pencil size={14} /> Sửa hồ sơ</button>
           <button type="button" onClick={() => setChild({ kind: 'batch', item: null })} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[#0071E3] text-white text-[13px] font-semibold"><Send size={14} /> Ghi đợt gửi SV</button>
@@ -169,13 +205,15 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
 
           {/* ── Bản đồ + đường xe tới KCN ── */}
           <Panel title="Đường xe khách tới KCN" icon={<RouteIcon size={16} className="text-[#0071E3]" />}
-            meta={located ? 'Xe 16–45 chỗ · bấm 1 KCN để xem tuyến trên bản đồ' : undefined} flush>
+            meta={located ? 'Xe 16–45 chỗ · bấm 1 KCN để xem tuyến · ⤢ mở toàn màn hình để xem cả công ty' : undefined} flush
+            action={located ? <button type="button" onClick={() => setFullMap(true)} className="text-[13px] font-medium text-[#0066CC] min-h-[36px] md:min-h-0 shrink-0">Toàn màn hình</button> : undefined}>
             {!located ? (
               <div className="px-4 md:px-5 pb-4"><Quiet icon={<MapPin size={18} />}>Chưa có vị trí — bấm "Sửa hồ sơ" và dán link Google Maps để tính đường xe tới KCN / công ty.</Quiet></div>
             ) : (
               <div className="grid md:grid-cols-[1.1fr_1fr] gap-3 px-4 md:px-5 pb-4">
                 <RouteMiniMap className="h-[240px] md:h-[300px]" home={{ lat: source.lat as number, lng: source.lng as number, label: source.short_name || source.name }}
-                  homeColor={KIND_COLOR[source.kind]} points={mapPoints} route={focus ? shapes.get(focus) ?? null : null} focusId={focus} onPick={pickOnMap} />
+                  homeColor={KIND_COLOR[source.kind]} points={mapPoints} route={focus ? shapes.get(focus) ?? null : null} focusId={focus} onPick={pickOnMap}
+                  onExpand={() => setFullMap(true)} />
                 <div className="min-w-0">
                   {zoneRoutes.slice(0, moreZones ? 40 : 6).map(({ z, r }, i) => (
                     <Row key={z.id} first={i === 0} inset={0}>
@@ -259,10 +297,10 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
                   <Row key={w.id} first={i === 0} inset={0} onClick={() => setChild({ kind: 'window', item: w })}>
                     <div className="min-w-0 flex-1">
                       <p className={`text-[14px] font-medium ${past ? 'text-[#86868B]' : 'text-[#1D1D1F]'}`}>
-                        {fmtDateVN(o.start)} → {fmtDateVN(o.end)}{w.cohort ? <span className="font-normal text-[#6E6E73]"> · {w.cohort}</span> : null}
+                        {windowLabel(w)}{w.cohort ? <span className="font-normal text-[#6E6E73]"> · {w.cohort}</span> : null}
                       </p>
                       <p className="text-[12px] text-[#86868B]">
-                        {[w.expected_count ? `Dự kiến ${w.expected_count} SV` : '', progNames.length ? progNames.join(', ') : 'Cả trường', w.repeat_yearly ? 'Lặp hằng năm' : 'Chỉ 1 lần'].filter(Boolean).join(' · ')}
+                        {[w.repeat_yearly ? `Lần tới ${fmtDateVN(o.start)} → ${fmtDateVN(o.end)}` : '', w.expected_count ? `Dự kiến ${w.expected_count} SV` : '', progNames.length ? progNames.join(', ') : 'Cả trường'].filter(Boolean).join(' · ')}
                       </p>
                     </div>
                     <span className="shrink-0 text-[12px] text-[#86868B] inline-flex items-center gap-1" title={w.remind_days ? `Nhắc trước ${w.remind_days} ngày` : 'Không nhắc'}>
@@ -337,6 +375,7 @@ export default function SourceProfile({ source, onClose }: { source: LaborSource
         </SheetFooter>
       </Sheet>
 
+      {fullMap && located && <SourceMapFull source={source} onClose={() => setFullMap(false)} />}
       {child?.kind === 'program' && <ProgramForm source={source} program={child.item} onClose={() => setChild(null)} />}
       {child?.kind === 'window' && <WindowForm source={source} win={child.item} onClose={() => setChild(null)} />}
       {child?.kind === 'batch' && <BatchForm source={source} batch={child.item} preset={child.preset} onClose={() => setChild(null)} />}

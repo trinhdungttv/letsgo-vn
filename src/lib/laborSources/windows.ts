@@ -131,3 +131,47 @@ export function planReminders(windows: readonly InternWindow[], sources: readonl
   }
   return out;
 }
+
+// ── Hẹn liên hệ lại (nhãn "Để liên hệ sau", migration 214) ──────────────────
+export interface RecontactPlan { source: LaborSource; title: string }
+
+/** Đơn vị "Để liên hệ sau" đã tới ngày hẹn mà chưa tạo việc cho ngày hẹn đó. */
+export function planRecontacts(sources: readonly LaborSource[], today: string): RecontactPlan[] {
+  return sources
+    .filter(s => !s.deleted_at && s.pursuit === 'lien_he_sau' && !!s.recontact_at && s.recontact_at <= today && s.recontact_task_for !== s.recontact_at)
+    .map(s => ({ source: s, title: `Nguồn LĐ: Liên hệ lại ${s.short_name.trim() || s.name.trim()} (hẹn ${fmtDate(s.recontact_at!)})` }));
+}
+
+// ── Lịch lặp hằng năm nhập KHÔNG CẦN NĂM (Tony 09/11) ────────────────────────
+// Lưu vào cột date với NĂM MỐC 2000 (năm nhuận → 29/02 vẫn lưu được). nextOccurrence tự dời sang năm hiện tại.
+// "Chỉ tháng" = ngày đầu tháng bắt đầu → ngày cuối tháng kết thúc. Mùa vắt qua năm (T12 → T2) thì kết thúc ở năm mốc + 1.
+export const YEARLY_BASE = 2000;
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+/** Ngày lưu DB cho mùa lặp hằng năm. day = null → cả tháng (đầu tháng / cuối tháng). */
+export function yearlyDates(startMonth: number, startDay: number | null, endMonth: number, endDay: number | null): { start: string; end: string } {
+  const sd = Math.min(startDay ?? 1, lastDay(YEARLY_BASE, startMonth));
+  const crosses = endMonth < startMonth || (endMonth === startMonth && endDay != null && startDay != null && endDay < startDay);
+  const ey = YEARLY_BASE + (crosses ? 1 : 0);
+  const ed = Math.min(endDay ?? lastDay(ey, endMonth), lastDay(ey, endMonth));
+  return { start: `${YEARLY_BASE}-${pad2(startMonth)}-${pad2(sd)}`, end: `${ey}-${pad2(endMonth)}-${pad2(ed)}` };
+}
+
+/** Mùa nhập "chỉ tháng": bắt đầu ngày 1, kết thúc ngày cuối tháng. */
+export function isMonthOnly(w: Pick<InternWindow, 'start_date' | 'end_date'>): boolean {
+  const e = w.end_date ?? w.start_date;
+  return w.start_date.slice(8, 10) === '01' && +e.slice(8, 10) === lastDay(+e.slice(0, 4), +e.slice(5, 7));
+}
+
+/** Nhãn mùa: hằng năm → "T3 – T5" / "15/03 – 30/05"; 1 lần → ngày đầy đủ. */
+export function windowLabel(w: Pick<InternWindow, 'start_date' | 'end_date' | 'repeat_yearly'>): string {
+  const e = w.end_date ?? w.start_date;
+  if (!w.repeat_yearly) return w.end_date ? `${fmtDate(w.start_date)} – ${fmtDate(e)}` : fmtDate(w.start_date);
+  if (isMonthOnly(w)) {
+    const sm = +w.start_date.slice(5, 7);
+    const em = +e.slice(5, 7);
+    return sm === em && e.slice(0, 4) === w.start_date.slice(0, 4) ? `T${sm} hằng năm` : `T${sm} – T${em} hằng năm`;
+  }
+  return `${w.start_date.slice(8, 10)}/${w.start_date.slice(5, 7)} – ${e.slice(8, 10)}/${e.slice(5, 7)} hằng năm`;
+}

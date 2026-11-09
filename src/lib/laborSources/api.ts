@@ -6,10 +6,10 @@ import { supabase } from '../supabase';
 import { logActivity } from '../audit';
 import type { AppUser } from '../types';
 import {
-  MIGRATION_213_HINT,
-  type InternWindow, type LaborSource, type RouteRow, type SourceBatch, type SourceContact, type SourceProgram,
+  COLUMNS_214, MIGRATION_213_HINT, MIGRATION_214_HINT,
+  type InternWindow, type Pursuit, type SourceKind, type LaborSource, type RouteRow, type SourceBatch, type SourceContact, type SourceProgram,
 } from './types';
-import { planReminders } from './windows';
+import { planRecontacts, planReminders } from './windows';
 
 type DbError = { message?: string; code?: string } | null;
 
@@ -66,7 +66,7 @@ export async function loadLaborData(): Promise<LaborData> {
     throw src.error;
   }
   for (const r of [prog, win, bat]) if (r.error && !isMissingSchema(r.error)) throw r.error;
-  const all = (src.data ?? []) as LaborSource[];
+  const all = ((src.data ?? []) as LaborSource[]).map(normalizeSource);
   return {
     ready: true,
     sources: all.filter(s => !s.deleted_at),
@@ -82,18 +82,41 @@ export async function loadLaborData(): Promise<LaborData> {
 
 const who = (user: AppUser | null) => user?.full_name || user?.username || '';
 
+/** DB chưa chạy 214 → các cột mới không có → điền mặc định để giao diện dùng chung 1 kiểu. */
+export function normalizeSource(s: LaborSource): LaborSource {
+  return {
+    ...s,
+    competitor_ids: Array.isArray(s.competitor_ids) ? s.competitor_ids : [],
+    competitor_note: s.competitor_note ?? '',
+    pursuit: s.pursuit === 'uu_tien' || s.pursuit === 'lien_he_sau' ? s.pursuit : '',
+    recontact_at: s.recontact_at ?? null,
+    recontact_task_for: s.recontact_task_for ?? null,
+  };
+}
+
+const is214Missing = (err: DbError) => isMissingSchema(err) && COLUMNS_214.some(c => (err?.message || '').includes(c));
+const without214 = (o: Record<string, unknown>) => {
+  const c = { ...o };
+  for (const k of COLUMNS_214) delete c[k];
+  return c;
+};
+/** true = lần lưu gần nhất phải bỏ các cột 214 (chưa chạy migration 214). */
+export let lastSaveMissed214 = false;
+
 // ── Đơn vị nguồn ────────────────────────────────────────────────────────────
 export type SourceInput = Omit<LaborSource, 'id' | 'created_by' | 'updated_by' | 'deleted_at' | 'created_at' | 'updated_at'>;
 
 export async function saveSource(input: SourceInput, user: AppUser | null, prev?: LaborSource): Promise<LaborSource> {
   const id = prev?.id;
-  const payload = { ...input, name: input.name.trim(), short_name: input.short_name.trim(), updated_by: who(user) };
-  const q = id
-    ? supabase.from('labor_sources').update(payload).eq('id', id).select().single()
-    : supabase.from('labor_sources').insert({ ...payload, created_by: who(user) }).select().single();
-  const { data, error } = await q;
+  const payload: Record<string, unknown> = { ...input, name: input.name.trim(), short_name: input.short_name.trim(), competitor_note: (input.competitor_note ?? '').trim(), updated_by: who(user) };
+  const run = (body: Record<string, unknown>) => (id
+    ? supabase.from('labor_sources').update(body).eq('id', id).select().single()
+    : supabase.from('labor_sources').insert({ ...body, created_by: who(user) }).select().single());
+  let { data, error } = await run(payload);
+  lastSaveMissed214 = false;
+  if (is214Missing(error)) { ({ data, error } = await run(without214(payload))); lastSaveMissed214 = !error; }
   if (error) throw writeError(error);
-  const row = data as LaborSource;
+  const row = normalizeSource(data as LaborSource);
   // Đổi tên → "Nơi làm" của người liên hệ đang ghi đúng tên cũ cũng đổi theo (hiện cạnh tên ở CSKH)
   if (prev && prev.name !== row.name) {
     await supabase.from('contacts').update({ sale_company: row.name }).eq('labor_source_id', prev.id).eq('sale_company', prev.name);
@@ -116,6 +139,61 @@ export async function restoreSource(s: LaborSource, user: AppUser | null): Promi
   if (error) throw writeError(error);
   await logActivity({ user, action: 'update', table: 'labor_sources', recordId: s.id, description: `Khôi phục đơn vị nguồn "${s.name}"` });
   emitLaborChanged();
+}
+
+/** Gắn nhãn nhanh (Ưu tiên / Để liên hệ sau / bỏ nhãn) không cần mở form. */
+export async function setPursuit(s: LaborSource, pursuit: Pursuit, recontactAt: string | null, user: AppUser | null): Promise<void> {
+  const { error } = await supabase.from('labor_sources')
+    .update({ pursuit, recontact_at: pursuit === 'lien_he_sau' ? recontactAt : null, updated_by: who(user) }).eq('id', s.id);
+  if (error) throw new Error(is214Missing(error) ? MIGRATION_214_HINT : error.message || 'Lỗi không rõ');
+  await logActivity({ user, action: 'update', table: 'labor_sources', recordId: s.id, description: `Gắn nhãn "${pursuit || 'bỏ nhãn'}" cho ${s.name}${recontactAt && pursuit === 'lien_he_sau' ? ` — hẹn ${recontactAt}` : ''}` });
+  emitLaborChanged();
+}
+
+export interface BulkInput {
+  name: string; province: string; kind: SourceKind;
+  person: string; role: string; phone: string;
+}
+
+/**
+ * Thêm nhiều đơn vị 1 lượt + người phụ trách (nếu có) vào CSKH tệp Sale / CTV.
+ * Nhãn / đối thủ / trạng thái chung cho cả lượt. Trả số đơn vị + số người đã thêm.
+ */
+export async function bulkCreateSources(rows: readonly BulkInput[], common: {
+  status: LaborSource['status']; pursuit: Pursuit; competitorIds: string[]; groupId: string | null; groupTier: string | null;
+}, user: AppUser | null): Promise<{ sources: number; contacts: number; missed214: boolean }> {
+  if (!rows.length) return { sources: 0, contacts: 0, missed214: false };
+  const base = rows.map(r => ({
+    name: r.name.trim(), kind: r.kind, province: r.province.trim(), status: common.status,
+    pursuit: common.pursuit, competitor_ids: common.competitorIds,
+    created_by: who(user), updated_by: who(user),
+  }));
+  let { data, error } = await supabase.from('labor_sources').insert(base).select('id, name');
+  let missed214 = false;
+  if (is214Missing(error)) {
+    ({ data, error } = await supabase.from('labor_sources').insert(base.map(b => without214(b))).select('id, name'));
+    missed214 = !error;
+  }
+  if (error) throw writeError(error);
+  const created = (data ?? []) as { id: string; name: string }[];
+  // Người phụ trách → contacts (tệp Sale / CTV), gắn đơn vị theo tên (tên trong 1 lượt đã bỏ trùng)
+  const now = new Date().toISOString();
+  const byName = new Map(created.map(c => [c.name, c]));
+  const people = rows.map(r => ({ r, s: byName.get(r.name.trim()) })).filter(x => x.s && x.r.person.trim()).map(({ r, s }) => ({
+    name: r.person.trim(), role: r.role.trim() || null, phone: r.phone.trim() || null, is_active: true,
+    kind: 'sale', sale_company: s!.name, labor_source_id: s!.id,
+    ...(common.groupId && common.groupTier ? { group_id: common.groupId, tier: common.groupTier } : {}),
+    created_at: now, updated_at: now,
+  }));
+  let contacts = 0;
+  if (people.length) {
+    const { error: ce, data: cd } = await supabase.from('contacts').insert(people).select('id');
+    if (ce) throw new Error(`Đã thêm ${created.length} đơn vị nhưng chưa thêm được người phụ trách: ${ce.message}`);
+    contacts = (cd ?? []).length;
+  }
+  await logActivity({ user, action: 'insert', table: 'labor_sources', recordId: created[0]?.id ?? 'bulk', description: `Nhập nhanh ${created.length} đơn vị nguồn${contacts ? ` + ${contacts} người phụ trách` : ''}` });
+  emitLaborChanged();
+  return { sources: created.length, contacts, missed214 };
 }
 
 // ── Ngành đào tạo / lịch thực tập / đợt ─────────────────────────────────────
@@ -255,8 +333,22 @@ export async function runLaborReminders(user: AppUser, today: string): Promise<n
     }
     await supabase.from('labor_source_windows').update({ reminder_task_id: taskId, reminder_for: p.occurrence.start }).eq('id', p.window.id);
   }
+  // Hẹn "liên hệ lại" (nhãn Để liên hệ sau, migration 214) tới ngày → tạo việc
+  for (const p of planRecontacts(((src.data ?? []) as LaborSource[]).map(normalizeSource), today)) {
+    const { data: dup } = await supabase.from('work_tasks').select('id').eq('title', p.title).is('deleted_at', null).limit(1);
+    if (!(dup as { id: string }[] | null)?.length) {
+      const { error } = await supabase.from('work_tasks').insert({
+        user_id: p.source.owner_id ?? user.id, client_id: null, branch_id: p.source.branch_id,
+        title: p.title, task_type: 'Nguồn LĐ', due_date: today, priority: 'medium', status: 'pending',
+        notes: `Đã hẹn liên hệ lại trường này (nhãn "Để liên hệ sau"). Hồ sơ: Thị trường → Nguồn LĐ.`,
+      });
+      if (error) continue;
+      made += 1;
+    }
+    await supabase.from('labor_sources').update({ recontact_task_for: p.source.recontact_at }).eq('id', p.source.id);
+  }
   if (made) {
-    await logActivity({ user, action: 'insert', table: 'work_tasks', recordId: 'labor-reminders', description: `Tự tạo ${made} việc nhắc mùa thực tập (Nguồn LĐ)` });
+    await logActivity({ user, action: 'insert', table: 'work_tasks', recordId: 'labor-reminders', description: `Tự tạo ${made} việc nhắc Nguồn LĐ (mùa thực tập / liên hệ lại)` });
   }
   return made;
 }

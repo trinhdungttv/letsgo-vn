@@ -13,6 +13,7 @@ import {
   type BatchStatus, type InternWindow, type LaborSource, type ProgramLevel, type SourceBatch, type SourceProgram,
 } from '../../../lib/laborSources/types';
 import { liveClients, liveLeads, zoneIdOfName } from '../../../lib/laborSources/targets';
+import { isMonthOnly, windowLabel, yearlyDates } from '../../../lib/laborSources/windows';
 import { supabase } from '../../../lib/supabase';
 import { useLabor } from './context';
 import { Field, FOOT_BLUE, FOOT_GRAY, FOOT_RED, intOrNull, Section, SheetFooter, SheetHead } from './form';
@@ -80,38 +81,88 @@ export function WindowForm({ source, win, onClose }: { source: LaborSource; win:
   const L = useLabor();
   const programs = L.programsBy.get(source.id) ?? [];
   const [cohort, setCohort] = useState(win?.cohort ?? '');
-  const [start, setStart] = useState(win?.start_date ?? '');
-  const [end, setEnd] = useState(win?.end_date ?? '');
-  const [expected, setExpected] = useState(win?.expected_count?.toString() ?? '');
   const [repeat, setRepeat] = useState(win?.repeat_yearly ?? true);
+  // "Chỉ năm này": ngày đầy đủ
+  const [start, setStart] = useState(win && !win.repeat_yearly ? win.start_date : '');
+  const [end, setEnd] = useState(win && !win.repeat_yearly ? win.end_date ?? '' : '');
+  // "Lặp hằng năm": không cần năm — theo tháng hoặc ngày + tháng
+  const initEnd = win?.end_date ?? win?.start_date ?? '';
+  const [byMonth, setByMonth] = useState(win?.repeat_yearly ? isMonthOnly(win) : true);
+  const [sm, setSm] = useState(win?.repeat_yearly ? +win.start_date.slice(5, 7) : 0);
+  const [sd, setSd] = useState(win?.repeat_yearly ? +win.start_date.slice(8, 10) : 1);
+  const [em, setEm] = useState(win?.repeat_yearly ? +initEnd.slice(5, 7) : 0);
+  const [ed, setEd] = useState(win?.repeat_yearly ? +initEnd.slice(8, 10) : 1);
+  const [expected, setExpected] = useState(win?.expected_count?.toString() ?? '');
   const [remind, setRemind] = useState(win?.remind_days ?? 30);
   const [programIds, setProgramIds] = useState<string[]>(win?.program_ids ?? []);
   const [note, setNote] = useState(win?.note ?? '');
   const { busy, run } = useSaver(onClose);
 
   const submit = () => {
-    if (!start) { L.toast('Chọn ngày bắt đầu'); return; }
-    if (end && end < start) { L.toast('Ngày kết thúc phải sau ngày bắt đầu'); return; }
+    let startDate: string;
+    let endDate: string | null;
+    if (repeat) {
+      if (!sm) { L.toast('Chọn tháng bắt đầu'); return; }
+      const d = yearlyDates(sm, byMonth ? null : sd, em || sm, byMonth ? null : (em ? ed : sd));
+      startDate = d.start;
+      endDate = d.end;
+    } else {
+      if (!start) { L.toast('Chọn ngày bắt đầu'); return; }
+      if (end && end < start) { L.toast('Ngày kết thúc phải sau ngày bắt đầu'); return; }
+      startDate = start;
+      endDate = end || null;
+    }
     void run(() => saveWindow({
-      source_id: source.id, program_ids: programIds, cohort, start_date: start, end_date: end || null,
+      source_id: source.id, program_ids: programIds, cohort, start_date: startDate, end_date: endDate,
       expected_count: intOrNull(expected), repeat_yearly: repeat, remind_days: remind, note: note.trim(),
     }, L.user, win?.id), win ? 'Đã lưu lịch thực tập' : 'Đã thêm lịch thực tập');
   };
+
+  const monthSel = (v: number, set: (n: number) => void, label: string, allowEmpty = false) => (
+    <select value={v} onChange={e => set(+e.target.value)} className={inputCls} aria-label={label}>
+      <option value={0}>{allowEmpty ? '— Cùng tháng —' : '— Tháng —'}</option>
+      {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>Tháng {i + 1}</option>)}
+    </select>
+  );
+  const daySel = (v: number, set: (n: number) => void, label: string) => (
+    <select value={v} onChange={e => set(+e.target.value)} className={`${inputCls} !w-[88px] shrink-0`} aria-label={label}>
+      {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+    </select>
+  );
 
   return (
     <Sheet label="Lịch thực tập" onClose={onClose} wide>
       <SheetHead title={win ? 'Sửa lịch thực tập' : 'Thêm lịch thực tập'} sub={source.short_name || source.name} />
       <Section title="Mùa thực tập">
-        <Field label="Bắt đầu *"><input type="date" value={start} onChange={e => setStart(e.target.value)} className={inputCls} /></Field>
-        <Field label="Kết thúc"><input type="date" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} /></Field>
-        <Field label="Khoá"><input value={cohort} onChange={e => setCohort(e.target.value)} className={inputCls} placeholder="VD: K47, năm 3" /></Field>
-        <Field label="SV dự kiến"><input value={expected} onChange={e => setExpected(e.target.value)} className={inputCls} inputMode="numeric" /></Field>
         <Field label="Năm nào cũng vào mùa này" full>
           <div className="flex gap-1.5">
             <ChoiceChip active={repeat} onClick={() => setRepeat(true)}>Lặp hằng năm</ChoiceChip>
             <ChoiceChip active={!repeat} onClick={() => setRepeat(false)}>Chỉ năm này</ChoiceChip>
           </div>
         </Field>
+        {repeat ? (
+          <>
+            <Field label="Nhập theo" full>
+              <div className="flex gap-1.5">
+                <ChoiceChip active={byMonth} onClick={() => setByMonth(true)}>Chỉ tháng</ChoiceChip>
+                <ChoiceChip active={!byMonth} onClick={() => setByMonth(false)}>Ngày + tháng</ChoiceChip>
+              </div>
+            </Field>
+            <Field label="Từ *">
+              <div className="flex gap-2">{!byMonth && daySel(sd, setSd, 'Ngày bắt đầu')}{monthSel(sm, setSm, 'Tháng bắt đầu')}</div>
+            </Field>
+            <Field label="Đến" hint={em && sm && em < sm ? 'Mùa vắt sang năm sau' : undefined}>
+              <div className="flex gap-2">{!byMonth && daySel(ed, setEd, 'Ngày kết thúc')}{monthSel(em, setEm, 'Tháng kết thúc', true)}</div>
+            </Field>
+          </>
+        ) : (
+          <>
+            <Field label="Bắt đầu *"><input type="date" value={start} onChange={e => setStart(e.target.value)} className={inputCls} /></Field>
+            <Field label="Kết thúc"><input type="date" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} /></Field>
+          </>
+        )}
+        <Field label="Khoá"><input value={cohort} onChange={e => setCohort(e.target.value)} className={inputCls} placeholder="VD: K47, năm 3" /></Field>
+        <Field label="SV dự kiến"><input value={expected} onChange={e => setExpected(e.target.value)} className={inputCls} inputMode="numeric" /></Field>
         {programs.length > 0 && (
           <Field label="Ngành đi thực tập" full hint="Không chọn = cả trường">
             <CatalogPick items={programs.map(p => ({ id: p.id, name: p.name }))} value={programIds} onChange={setProgramIds} addLabel="Thêm ngành…" emptyText="" />
@@ -248,7 +299,7 @@ export function BatchForm({ source, batch, preset, onClose }: {
           <Field label="Thuộc mùa thực tập" full>
             <select value={windowId} onChange={e => setWindowId(e.target.value)} className={inputCls}>
               <option value="">— Không gắn —</option>
-              {windows.map(w => <option key={w.id} value={w.id}>{[w.cohort, `${w.start_date.slice(8, 10)}/${w.start_date.slice(5, 7)}`].filter(Boolean).join(' · ')}{w.repeat_yearly ? ' (hằng năm)' : ''}</option>)}
+              {windows.map(w => <option key={w.id} value={w.id}>{[w.cohort, windowLabel(w)].filter(Boolean).join(' · ')}</option>)}
             </select>
           </Field>
         )}

@@ -16,6 +16,44 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-09-labor-sources-fullmap',
+    date: '2026-11-09',
+    title: 'Nguồn Lao Động',
+    features: [
+      'Hồ sơ trường: bản đồ toàn màn hình, giờ xe khách tới KCN / khách hàng / công ty / chi nhánh',
+      'Lọc theo loại điểm và giới hạn giờ đi (≤ 30′ / 60′ / 90′ / 120′); nút ◎ đưa trường về giữa bản đồ',
+      'Sửa: trường không hiện trên Bản đồ Thị trường khi đang lọc theo tỉnh',
+      'Lịch thực tập hằng năm chỉ cần chọn tháng (VD T3 – T5) hoặc ngày + tháng, không cần năm',
+    ],
+  },
+  {
+    id: '2026-11-09-cskh-reschedule',
+    date: '2026-11-09',
+    title: 'CSKH',
+    features: [
+      'Việc đã hứa: nút "Hẹn lại" khi tới ngày mà đổi lịch / huỷ — chọn ngày mới nhanh hoặc "Để dịp khác"',
+      '"Để dịp khác": hết nhắc mỗi ngày, việc vẫn ở "Việc đang mở" để hẹn lại sau',
+      'Nút Hẹn lại có ở Hôm nay cần liên hệ, thẻ tóm tắt, Việc đã hứa và Nhật ký',
+    ],
+  },
+  {
+    id: '2026-11-09-labor-sources-tags',
+    date: '2026-11-09',
+    title: 'Nguồn Lao Động',
+    features: [
+      'Gắn đối thủ đã làm với trường — cảnh báo đỏ ở mọi danh sách, xem được trong hồ sơ Đối thủ',
+      'Nhãn "Ưu tiên triển khai" / "Để liên hệ sau" (hẹn ngày, tới ngày tự tạo việc Workspace)',
+      'Nhập nhanh danh sách trường kèm người phụ trách — dán thẳng từ Excel, tự bỏ trường trùng',
+      'Tổng quan có khối "Cần liên hệ"; Ghép công ty tự ẩn trường đối thủ đã làm',
+    ],
+  },
+  {
+    id: '2026-11-09-cskh-group-avatars',
+    date: '2026-11-09',
+    title: 'CSKH',
+    features: ['Dòng "Ghi cho nhóm" ở Tổng quan hiện avatar những người trong đợt (VD Gặp mặt · 3 người)'],
+  },
+  {
     id: '2026-11-09-labor-sources',
     date: '2026-11-09',
     title: 'Nguồn Lao Động',

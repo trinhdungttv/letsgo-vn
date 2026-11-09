@@ -21,6 +21,10 @@ export interface LaborCtx {
   leads: MarketLead[];
   branches: Branch[];
   industries: IndustryLite[];
+  /** Đối thủ (Thị trường → Đối thủ) — mỗi công ty 1 mục (gộp các dòng cùng tên ở nhiều KCN). */
+  competitorOptions: { id: string; name: string }[];
+  /** Tên đối thủ (đã bỏ trùng) từ danh sách mã đã gắn. */
+  competitorNames: (ids: readonly string[]) => string[];
   users: UserLite[];
   groups: GroupLite[];
   targets: NamedTarget[];
