@@ -69,5 +69,5 @@ export async function presignUrl(o: PresignInput): Promise<string> {
 
 /** Chỉ cho tải lên đúng các thư mục của app, tên file an toàn (không "..", không ký tự lạ). */
 export function validR2Key(key: string): boolean {
-  return /^(kcn-survey|voice|mirror|client-site|legal)\/[A-Za-z0-9._\-/]{1,200}$/.test(key) && !key.includes('..') && !key.includes('//');
+  return /^(kcn-survey|voice|mirror|client-site|legal|pano)\/[A-Za-z0-9._\-/]{1,200}$/.test(key) && !key.includes('..') && !key.includes('//');
 }

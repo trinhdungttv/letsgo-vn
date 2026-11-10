@@ -347,6 +347,9 @@ body {
   font-size: 15px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
+/* Khảo sát KCN: nhà trọ (cam) + ảnh 360° (xanh) — cùng khuôn tròn với ghi âm */
+.kcs-voice.kcs-lodging span { background: #FF9500; }
+.kcs-voice.kcs-pano span { background: #0A84FF; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: -0.3px; }
 .kcs-photo.kcs-online img,
 .kcs-photo.kcs-online span { border: 2px dashed #FF9F0A; }
 .kcs-photo.kcs-online-ok img,

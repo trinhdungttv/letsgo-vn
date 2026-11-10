@@ -7,8 +7,10 @@ import { ZONE_COLORS, ZONE_SIZES } from '../../lib/clientMaps/siteZones';
 
 export interface ZoneFields { id: string; label: string; note: string; color: string; size?: number }
 
-export function ZoneEditor({ z, mobile, onFocusText, onText, onStyle, onDelete, onClose, extra }: {
+export function ZoneEditor({ z, mobile, onFocusText, onText, onStyle, onDelete, onClose, extra, labelPlaceholder = 'Tên khu (B5)', notePlaceholder = 'Ghi chú (Gia vị…)', labelMax = 40 }: {
   z: ZoneFields; mobile: boolean;
+  /** Chữ gợi ý trong 2 ô (mặc định theo mặt bằng nhà xưởng). */
+  labelPlaceholder?: string; notePlaceholder?: string; labelMax?: number;
   onFocusText: () => void;
   onText: (patch: Partial<ZoneFields>) => void;
   onStyle: (patch: Partial<ZoneFields>) => void;
@@ -20,11 +22,11 @@ export function ZoneEditor({ z, mobile, onFocusText, onText, onStyle, onDelete, 
   return (
     <div className="mx-2 my-1.5 p-3 rounded-xl border border-[#1D4ED8]/40 bg-[#F7F8FC] space-y-2">
       <div className="flex items-center gap-2">
-        <input id={`zone-label-${z.id}`} value={z.label} maxLength={40} placeholder="Tên khu (B5)"
+        <input id={`zone-label-${z.id}`} value={z.label} maxLength={labelMax} placeholder={labelPlaceholder}
           onFocus={onFocusText} onChange={e => onText({ label: e.target.value })}
           onKeyDown={e => { if (e.key === 'Enter') document.getElementById(`zone-note-${z.id}`)?.focus(); }}
           className="w-24 h-8 px-2 rounded-lg border border-[#D5D5DC] bg-white text-[13px] font-bold outline-none focus:border-[#1D4ED8]" style={{ color: z.color }} />
-        <input id={`zone-note-${z.id}`} value={z.note} maxLength={300} placeholder="Ghi chú (Gia vị…)"
+        <input id={`zone-note-${z.id}`} value={z.note} maxLength={300} placeholder={notePlaceholder}
           onFocus={onFocusText} onChange={e => onText({ note: e.target.value })}
           onKeyDown={e => { if (e.key === 'Enter') onClose(); }}
           className="flex-1 min-w-0 h-8 px-2 rounded-lg border border-[#D5D5DC] bg-white text-[13px] outline-none focus:border-[#1D4ED8]" />

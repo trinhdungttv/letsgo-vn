@@ -5,10 +5,12 @@
 //  - ★ công ty cần chú trọng (gắn lúc lưu ảnh); xuất PDF chữ thật theo từng KCN để đưa AI phân tích lương / tuyển dụng.
 //  - Xoá → Lưu trữ 30 ngày (khôi phục được), quá hạn tự xoá hẳn (hàm SQL migration 195, giờ máy chủ).
 //  - Nút Toàn màn hình (điện thoại xem rõ hơn) + phóng to bản đồ kín màn hình.
+//  - Nhà trọ (migration 221) + Ảnh 360° (migration 220) ghi khi đi khảo sát: tab con riêng, ghim trên bản đồ.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, Globe, RotateCcw, Route, Search, Share2, Star, Trash2, X,
+  Home, Orbit, Phone, Bike,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -41,8 +43,15 @@ import { pendingActiveTrip } from './survey/useSurveyRecorder';
 import { nearestSources, shortName, useLaborLite } from './sources/useLaborLite';
 import { requestOpenSource } from './sources/context';
 import { fold } from './survey/surveyData';
+import LodgingSheet from './survey/LodgingSheet';
+import { loadMapCandidates } from './survey/surveyExtras';
+import PanoModal, { type PanoMapPoint } from '../../components/pano/PanoModal';
+import AddPanoModal from '../../components/pano/AddPanoModal';
+import { listPanoramas, panoThumb, PanoMissingTable, PANO_MIGRATION_HINT, type MapPanorama } from '../../lib/pano/panoramas';
+import { listLodgings, LodgingMissingTable, LODGING_MIGRATION_HINT } from '../../lib/kcnSurvey/lodgings';
+import { fmtMin, fmtRent, lodgingTitle, phoneDigits, type Lodging, type RouteCandidate } from '../../lib/kcnSurvey/lodgingCore';
 
-type Sub = 'trips' | 'photos' | 'online' | 'voice' | 'zones' | 'archive';
+type Sub = 'trips' | 'photos' | 'online' | 'voice' | 'lodgings' | 'panos' | 'zones' | 'archive';
 const PERIODS = [{ d: 7, label: '7 ngày' }, { d: 30, label: '30 ngày' }, { d: 90, label: '3 tháng' }, { d: 0, label: 'Tất cả' }];
 
 const card = 'bg-white border border-[#E8E7E2] rounded-[10px]';
@@ -55,7 +64,7 @@ function readPrefs(): TabPrefs {
   try {
     const o = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') as Partial<TabPrefs>;
     const p = { ...DEFAULT_PREFS, ...o };
-    if (!['trips', 'photos', 'voice', 'zones', 'archive'].includes(p.sub)) p.sub = 'trips';
+    if (!['trips', 'photos', 'voice', 'lodgings', 'panos', 'zones', 'archive'].includes(p.sub)) p.sub = 'trips';
     if (!PERIODS.some(x => x.d === p.period)) p.period = 30;
     if (!KIND_FILTERS.some(x => x.id === p.kind)) p.kind = 'all';
     p.province = normalizeSavedProvince(p.province); // bản cũ lưu nguyên văn "TP. Đồng Nai"
@@ -139,6 +148,28 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       setLoading(false);
     }
   }, []);
+  // Nhà trọ + ảnh 360° (migration 221 / 220) — thiếu bảng thì chỉ báo ở tab con, phần khác vẫn chạy
+  const [lodgings, setLodgings] = useState<Lodging[]>([]);
+  const [panos, setPanos] = useState<MapPanorama[]>([]);
+  const [extrasMissing, setExtrasMissing] = useState({ lodging: false, pano: false });
+  const [lodgingSheet, setLodgingSheet] = useState<{ lodging: Lodging | null } | null>(null);
+  const [addPano, setAddPano] = useState(false);
+  const [openPano, setOpenPano] = useState<{ id: string; calibrate: boolean } | null>(null);
+  const [mapPts, setMapPts] = useState<{ candidates: RouteCandidate[]; panoPoints: PanoMapPoint[] }>({ candidates: [], panoPoints: [] });
+  const loadExtras = useCallback(async () => {
+    listLodgings().then(l => { setLodgings(l); setExtrasMissing(m => ({ ...m, lodging: false })); })
+      .catch(e => { if (e instanceof LodgingMissingTable) setExtrasMissing(m => ({ ...m, lodging: true })); });
+    listPanoramas().then(p => { setPanos(p); setExtrasMissing(m => ({ ...m, pano: false })); })
+      .catch(e => { if (e instanceof PanoMissingTable) setExtrasMissing(m => ({ ...m, pano: true })); });
+  }, []);
+  useEffect(() => { void loadExtras(); }, [loadExtras]);
+  // Điểm công ty / KCN để đo đường từ nhà trọ + hiện "gần ảnh 360" — chỉ nạp khi mở 1 trong 2 thứ đó
+  const needPts = !!lodgingSheet || !!openPano;
+  useEffect(() => {
+    if (!needPts || mapPts.candidates.length) return;
+    loadMapCandidates().then(setMapPts).catch(() => {});
+  }, [needPts, mapPts.candidates.length]);
+
   const loadArchive = useCallback(async () => {
     try { setArchive(await listArchived()); } catch (e) { say((e as Error).message); }
   }, [say]);
@@ -222,6 +253,11 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name) && (!tripFilter || n.trip_id === tripFilter)
     && (!q || fold([n.company_name, n.note, n.zone_name].join(' ')).includes(q))), [voiceNotes, okTime, okZone, okPerson, q, tripFilter]);
 
+  const fLodgings = useMemo(() => lodgings.filter(l => okTime(l.created_at) && okZone(l.zone_id) && okPerson(l.created_by)
+    && (!q || fold([lodgingTitle(l), l.address, l.landlord_name, l.landlord_phone, l.note, l.zone_name, l.facilities.join(' ')].join(' ')).includes(q))), [lodgings, okTime, okZone, okPerson, q]);
+  const fPanos = useMemo(() => panos.filter(p => okTime(p.created_at) && okZone(p.zone_id) && okPerson(p.created_by)
+    && (!q || fold([p.title, p.note, p.zone_name, ...p.annotations.map(a => `${a.label} ${a.note}`)].join(' ')).includes(q))), [panos, okTime, okZone, okPerson, q]);
+
   const people = useMemo(() => [...new Set([...trips.map(t => t.user_name), ...photos.map(p => p.user_name), ...voiceNotes.map(n => n.user_name)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')), [trips, photos, voiceNotes]);
   const usedZones = useMemo(() => new Set([...trips.map(t => t.zone_id), ...photos.map(p => p.zone_id), ...voiceNotes.map(n => n.zone_id)]), [trips, photos, voiceNotes]);
   // Tỉnh / thành: tỉnh có KCN đã khảo sát lên trước; KCN chưa ghi tỉnh có nhóm riêng (không bị loại âm thầm khi lọc)
@@ -252,8 +288,11 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   }, [trackKey]);
 
   const selTrip = selected ? trips.find(t => t.id === selected) ?? null : null;
-  const mapPhotos = sub === 'voice' ? [] : sub === 'trips' && selTrip ? fPhotos.filter(p => p.trip_id === selTrip.id) : fPhotos;
-  const mapVoice = sub === 'photos' || sub === 'online' ? [] : sub === 'trips' && selTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
+  const extrasSub = sub === 'lodgings' || sub === 'panos';
+  const mapPhotos = sub === 'voice' || extrasSub ? [] : sub === 'trips' && selTrip ? fPhotos.filter(p => p.trip_id === selTrip.id) : fPhotos;
+  const mapVoice = sub === 'photos' || sub === 'online' || extrasSub ? [] : sub === 'trips' && selTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
+  const mapLodgings = sub === 'lodgings' ? fLodgings : sub === 'trips' && selTrip ? fLodgings.filter(l => l.trip_id === selTrip.id) : [];
+  const mapPanos = sub === 'panos' ? fPanos : sub === 'trips' && selTrip ? fPanos.filter(p => p.trip_id === selTrip.id) : [];
 
   const byTrip = useMemo(() => {
     const ph = new Map<string, number>(), vo = new Map<string, number>();
@@ -363,6 +402,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     { id: 'photos', label: 'Ảnh chỉ tiêu', count: fPhotosBoth.filter(p => p.survey_kind !== 'online').length, icon: <Camera size={13} /> },
     { id: 'online', label: 'Ảnh online', count: fPhotosBoth.filter(p => p.survey_kind === 'online').length, icon: <Globe size={13} /> },
     { id: 'voice', label: 'Ghi âm', count: fVoice.length, icon: <Mic size={13} /> },
+    { id: 'lodgings', label: 'Nhà trọ', count: fLodgings.length, icon: <Home size={13} /> },
+    { id: 'panos', label: 'Ảnh 360°', count: fPanos.length, icon: <Orbit size={13} /> },
     { id: 'zones', label: 'Theo KCN', icon: <MapPin size={13} /> },
     { id: 'archive', label: 'Lưu trữ', count: archive ? archiveCount : undefined, icon: <Archive size={13} /> },
   ];
@@ -561,6 +602,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             <SurveyTripMap
               className="absolute inset-0"
               tracks={tracks} selectedId={selected} photos={mapPhotos} voiceNotes={mapVoice}
+              lodgings={mapLodgings} panos={mapPanos}
+              onLodging={l => setLodgingSheet({ lodging: l })} onPano={p => setOpenPano({ id: p.id, calibrate: false })}
               onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
               fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${mapBig}`} focus={focus} />
             <button onClick={() => setMapBig(v => !v)} title={mapBig ? 'Thu nhỏ bản đồ (Esc)' : 'Phóng bản đồ kín màn hình'}
@@ -775,6 +818,38 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                 )}
               </div>
             )}
+
+            {!loading && sub === 'lodgings' && (
+              <div className="space-y-2">
+                {extrasMissing.lodging && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[12.5px] px-3 py-2">{LODGING_MIGRATION_HINT}</div>}
+                <button onClick={() => (extrasMissing.lodging ? say(LODGING_MIGRATION_HINT) : setLodgingSheet({ lodging: null }))}
+                  className="w-full h-10 rounded-[10px] border border-dashed border-[#FF9500]/60 text-[#C76A00] text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-[#FFF4E5]">
+                  <Plus size={15} /> Thêm nhà trọ
+                </button>
+                <div className="text-[11.5px] text-[#999] px-1">Đang đi thực địa: bấm “Thêm” trong màn khảo sát để tự lấy vị trí GPS.</div>
+                {fLodgings.length === 0 ? <Empty icon={<Home size={22} />} text="Chưa có nhà trọ nào trong bộ lọc" /> : (
+                  <div className={`${card} divide-y divide-[#F0EEE9] overflow-hidden`}>
+                    {fLodgings.map(l => <LodgingRow key={l.id} l={l} onOpen={() => setLodgingSheet({ lodging: l })} onMap={() => { if (l.lat != null && l.lng != null) setFocus({ lat: l.lat, lng: l.lng, key: Date.now() }); }} />)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!loading && sub === 'panos' && (
+              <div className="space-y-2">
+                {extrasMissing.pano && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[12.5px] px-3 py-2">{PANO_MIGRATION_HINT}</div>}
+                <button onClick={() => (extrasMissing.pano ? say(PANO_MIGRATION_HINT) : setAddPano(true))}
+                  className="w-full h-10 rounded-[10px] border border-dashed border-[#0A84FF]/60 text-[#0A84FF] text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-[#EAF3FF]">
+                  <Plus size={15} /> Thêm ảnh 360°
+                </button>
+                <div className="text-[11.5px] text-[#999] px-1">Link Google Photos / Google Drive hoặc ảnh 360 trong máy. Đang đi thực địa: bấm “Thêm” trong màn khảo sát để tự lấy GPS.</div>
+                {fPanos.length === 0 ? <Empty icon={<Orbit size={22} />} text="Chưa có ảnh 360 nào trong bộ lọc" /> : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {fPanos.map(p => <PanoCard key={p.id} p={p} onOpen={() => setOpenPano({ id: p.id, calibrate: false })} />)}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -789,6 +864,33 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
           onSaved={p => { setPhotos(list => list.map(x => (x.id === p.id ? p : x))); setViewer(p); }}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); void loadArchive(); }} />
       )}
+      {lodgingSheet && (
+        <LodgingSheet lodging={lodgingSheet.lodging} candidates={mapPts.candidates}
+          start={lodgingSheet.lodging ? undefined : { position: null, zoneId: zoneId !== 'all' && zoneId !== 'none' ? zoneId : null, zoneName: zoneId !== 'all' && zoneId !== 'none' ? zoneLabel(zoneId) : '', tripId: null }}
+          fallbackCenter={(() => { const z = marketZones.find(x => x.id === zoneId); return z?.lat != null && z.lng != null ? { lat: z.lat, lng: z.lng } : { lat: 10.98, lng: 106.67 }; })()}
+          onClose={() => setLodgingSheet(null)}
+          onSaved={l => setLodgings(list => [l, ...list.filter(x => x.id !== l.id)])}
+          onDeleted={id => setLodgings(list => list.filter(x => x.id !== id))} />
+      )}
+      {addPano && (
+        <AddPanoModal
+          mapCenter={(() => { const z = marketZones.find(x => x.id === zoneId); return z?.lat != null && z.lng != null ? { lat: z.lat, lng: z.lng } : { lat: 10.98, lng: 106.67 }; })()}
+          survey={{ tripId: null, zoneId: zoneId !== 'all' && zoneId !== 'none' ? zoneId : null, zoneName: zoneId !== 'all' && zoneId !== 'none' ? zoneLabel(zoneId) : '' }}
+          zones={marketZones.filter(z => z.lat != null && z.lng != null).map(z => ({ name: z.name, lat: z.lat!, lng: z.lng! }))}
+          onClose={() => setAddPano(false)}
+          onCreated={row => { setAddPano(false); setPanos(list => [row, ...list]); setOpenPano({ id: row.id, calibrate: row.heading == null }); }} />
+      )}
+      {openPano && (() => {
+        const pn = panos.find(x => x.id === openPano.id);
+        if (!pn) return null;
+        return (
+          <PanoModal key={pn.id} pano={pn} points={mapPts.panoPoints} panos={panos} startCalibrate={openPano.calibrate} toast={say}
+            onClose={() => setOpenPano(null)}
+            onChanged={row => setPanos(list => list.map(x => (x.id === row.id ? row : x)))}
+            onDeleted={id => { setOpenPano(null); setPanos(list => list.filter(x => x.id !== id)); say('Đã xoá ảnh 360'); }}
+            onSwitch={id => setOpenPano({ id, calibrate: false })} />
+        );
+      })()}
       {voiceSheet && (
         <SurveyVoiceSheet note={voiceSheet} say={say} onClose={() => setVoiceSheet(null)}
           onShowOnMap={() => { const n = voiceSheet; setVoiceSheet(null); if (n.lat != null && n.lng != null) setFocus({ lat: n.lat, lng: n.lng, key: Date.now() }); }}
@@ -987,6 +1089,49 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-[#888]">{label}</div>
       <div className="text-[17px] font-semibold text-[#111] tabular-nums">{value}</div>
     </div>
+  );
+}
+
+function LodgingRow({ l, onOpen, onMap }: { l: Lodging; onOpen: () => void; onMap: () => void }) {
+  const cover = l.photos.find(p => p.kind === 'house') ?? l.photos[0];
+  const near = l.routes[0];
+  const digits = phoneDigits(l.landlord_phone);
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-[#F9F9F7]">
+      <button onClick={onOpen} className="w-14 h-14 rounded-lg overflow-hidden bg-[#FFF4E5] text-[#FF9500] flex items-center justify-center shrink-0">
+        {cover ? <img src={cover.thumb_url} alt="" loading="lazy" className="w-full h-full object-cover" /> : <Home size={22} />}
+      </button>
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <div className="text-[13px] font-semibold text-[#111] truncate">{lodgingTitle(l)}</div>
+        <div className="text-[11.5px] text-[#666] truncate">
+          {[l.total_rooms != null && `${l.total_rooms} phòng`, l.vacant_rooms != null && `trống ${l.vacant_rooms}`, fmtRent(l.rent_min, l.rent_max), l.zone_name].filter(Boolean).join(' · ') || 'Chưa ghi số phòng / giá'}
+        </div>
+        {near && (
+          <div className="text-[11.5px] text-[#0A5FCC] truncate inline-flex items-center gap-1">
+            <Bike size={12} /> {near.name} · {fmtMin(near.moto_min)}{near.walk_min != null ? ` · đi bộ ${fmtMin(near.walk_min)}` : ''}
+          </div>
+        )}
+      </button>
+      {digits && <a href={`tel:${digits}`} title={`Gọi ${l.landlord_phone}`} className="w-9 h-9 rounded-full bg-[#E8F7EE] text-[#137333] flex items-center justify-center shrink-0"><Phone size={15} /></a>}
+      {l.lat != null && <button onClick={onMap} title="Xem trên bản đồ" className="w-9 h-9 rounded-full bg-[#F3F2EE] text-[#555] flex items-center justify-center shrink-0"><MapPin size={15} /></button>}
+    </div>
+  );
+}
+
+function PanoCard({ p, onOpen }: { p: MapPanorama; onOpen: () => void }) {
+  const thumb = panoThumb(p, 640, 240);
+  return (
+    <button onClick={onOpen} className={`${card} overflow-hidden text-left hover:shadow-md transition`}>
+      <div className="relative h-28 bg-gradient-to-br from-[#0A84FF] to-[#5E5CE6] flex items-center justify-center text-white">
+        {thumb ? <img src={thumb} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover" /> : <Orbit size={34} className="opacity-80" />}
+        <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/55 text-white text-[10.5px] font-bold">360°</span>
+        {p.heading == null && <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-amber-400 text-[#111] text-[10.5px] font-semibold">Chưa căn hướng</span>}
+      </div>
+      <div className="px-3 py-2">
+        <div className="text-[13px] font-semibold text-[#111] truncate">{p.title || 'Ảnh 360'}</div>
+        <div className="text-[11.5px] text-[#888] truncate">{[p.zone_name, p.created_by, new Date(p.created_at).toLocaleDateString('vi-VN'), p.annotations.length ? `${p.annotations.length} đánh dấu` : ''].filter(Boolean).join(' · ')}</div>
+      </div>
+    </button>
   );
 }
 

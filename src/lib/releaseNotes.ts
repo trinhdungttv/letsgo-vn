@@ -16,6 +16,18 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-11-survey-lodging-panorama',
+    date: '2026-11-11',
+    title: 'Khảo sát KCN — Nhà trọ & Ảnh 360°',
+    features: [
+      'Ghi nhà trọ khi khảo sát: ảnh nhà trọ + cơ sở vật chất, SĐT chủ nhà, số phòng, giá, tiện ích',
+      'Nhà trọ tự đo đường xe máy và đi bộ tới các công ty gần nhất (bấm xem đường trên Google Maps)',
+      'Ảnh 360° từ link Google Photos / Drive hoặc ảnh trong máy — xoay, phóng như Google Photos',
+      'Mở ảnh 360 thấy công ty, dự án, KCN ở gần; vẽ vùng, đường, nhãn, chọn màu như Mặt bằng',
+      'Tab Khảo sát KCN có thêm mục Nhà trọ và Ảnh 360°, ghim 🏠 / 360 trên bản đồ khảo sát',
+    ],
+  },
+  {
     id: '2026-11-10-entity-legal-stamp-alerts',
     date: '2026-11-10',
     title: 'Pháp nhân, chữ ký & con dấu',

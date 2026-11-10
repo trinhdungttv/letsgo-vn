@@ -1,4 +1,4 @@
-// Bản đồ nhỏ trong tab Khảo sát KCN: vết các chuyến (chuyến đang chọn tô cam), ảnh chỉ tiêu và ghi âm ở đúng chỗ ghi.
+// Bản đồ nhỏ trong tab Khảo sát KCN: vết các chuyến (chuyến đang chọn tô cam), ảnh chỉ tiêu, ghi âm, nhà trọ 🏠 và ảnh 360° ở đúng chỗ ghi.
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -8,6 +8,8 @@ import type { SurveyPhoto, SurveyVoiceNote } from '../../../lib/kcnSurvey/api';
 import { UNVERIFIED_TAG } from '../../../lib/kcnSurvey/online';
 import type { TrackSegment } from '../../../lib/kcnSurvey/track';
 import { fmtClock } from './surveyFormat';
+import { fmtRent, lodgingTitle, type Lodging } from '../../../lib/kcnSurvey/lodgingCore';
+import type { MapPanorama } from '../../../lib/pano/panoramas';
 
 interface Props {
   /** tripId → vết; chuyến `selectedId` vẽ nổi bật */
@@ -18,6 +20,10 @@ interface Props {
   onPhoto: (p: SurveyPhoto) => void;
   onVoice: (n: SurveyVoiceNote) => void;
   onTrip?: (tripId: string) => void;
+  lodgings?: readonly Lodging[];
+  panos?: readonly MapPanorama[];
+  onLodging?: (l: Lodging) => void;
+  onPano?: (p: MapPanorama) => void;
   /** đổi giá trị này → bản đồ tự canh lại khung nhìn */
   fitKey: string;
   /** đưa bản đồ tới 1 điểm (bấm "Xem chỗ chụp") */
@@ -25,12 +31,12 @@ interface Props {
   className?: string;
 }
 
-export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, onPhoto, onVoice, onTrip, fitKey, focus, className = '' }: Props) {
+export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, onPhoto, onVoice, onTrip, lodgings = [], panos = [], onLodging, onPano, fitKey, focus, className = '' }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<{ tracks: L.LayerGroup; marks: L.LayerGroup; renderer: L.Canvas } | null>(null);
-  const cb = useRef({ onPhoto, onVoice, onTrip });
-  cb.current = { onPhoto, onVoice, onTrip };
+  const cb = useRef({ onPhoto, onVoice, onTrip, onLodging, onPano });
+  cb.current = { onPhoto, onVoice, onTrip, onLodging, onPano };
 
   useEffect(() => {
     if (!divRef.current || mapRef.current) return;
@@ -90,8 +96,27 @@ export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, 
       m.addTo(ly.marks);
       if (!sel.length || n.trip_id === selectedId) bounds.extend([n.lat, n.lng]);
     }
+    for (const l of lodgings) {
+      if (l.lat == null || l.lng == null) continue;
+      const icon = L.divIcon({ className: 'kcs-voice kcs-lodging', html: '<span>🏠</span>', iconSize: [30, 30], iconAnchor: [15, 15] });
+      const m = L.marker([l.lat, l.lng], { icon, zIndexOffset: 480 });
+      const facts = [l.total_rooms != null && `${l.total_rooms} phòng`, fmtRent(l.rent_min, l.rent_max)].filter(Boolean).join(' · ');
+      m.bindTooltip(escapeMapHtml([lodgingTitle(l), facts].filter(Boolean).join(' · ')), { direction: 'top', offset: [0, -14], className: 'lgmap-tooltip' });
+      m.on('click', () => cb.current.onLodging?.(l));
+      m.addTo(ly.marks);
+      if (!sel.length || l.trip_id === selectedId) bounds.extend([l.lat, l.lng]);
+    }
+    for (const p of panos) {
+      if (p.lat == null || p.lng == null) continue;
+      const icon = L.divIcon({ className: 'kcs-voice kcs-pano', html: '<span>360</span>', iconSize: [30, 30], iconAnchor: [15, 15] });
+      const m = L.marker([p.lat, p.lng], { icon, zIndexOffset: 490 });
+      m.bindTooltip(escapeMapHtml(p.title || 'Ảnh 360'), { direction: 'top', offset: [0, -14], className: 'lgmap-tooltip' });
+      m.on('click', () => cb.current.onPano?.(p));
+      m.addTo(ly.marks);
+      if (!sel.length || p.trip_id === selectedId) bounds.extend([p.lat, p.lng]);
+    }
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
-  }, [tracks, selectedId, photos, voiceNotes, fitKey]);
+  }, [tracks, selectedId, photos, voiceNotes, lodgings, panos, fitKey]);
 
   useEffect(() => {
     if (focus && mapRef.current) mapRef.current.setView([focus.lat, focus.lng], Math.max(mapRef.current.getZoom(), 18));
