@@ -3,7 +3,8 @@
 // Chạm nhẹ (không kéo) → onTap(hướng trong ảnh). Kéo phần tử có data-drag="…" → onItemDrag (dời đỉnh, dời nhãn, căn ghim).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import { PanoRenderer, fitTexture, loadPanoImage, type Coverage } from './panoGL';
+import { PanoRenderer, loadPanoImage, type Coverage, type PanoDrawer } from './panoGL';
+import { PanoSoftRenderer } from './panoSoft';
 import { HFOV_DEFAULT, HFOV_MAX, HFOV_MIN, clamp, unproject, wrapYaw, type PanoView, type SphPt } from '../../lib/pano/sphere';
 
 export interface PanoStageHandle {
@@ -42,7 +43,9 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
   const { sources, coverage, initialView, mobile, overlay, cursor } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rendererRef = useRef<PanoRenderer | null>(null);
+  const rendererRef = useRef<PanoDrawer | null>(null);
+  // Bộ vẽ: WebGL, hoặc CPU khi máy không có WebGL (localStorage lgpano_engine = 'soft' để ép thử)
+  const [engine, setEngine] = useState<'webgl' | 'soft'>(() => { try { return localStorage.getItem('lgpano_engine') === 'soft' ? 'soft' : 'webgl'; } catch { return 'webgl'; } });
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setViewState] = useState(() => {
     // Điện thoại cầm dọc: góc ngang hẹp lại để góc dọc ~100° (không giãn méo trên / dưới), giống Google Photos
@@ -99,17 +102,24 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
     return () => ro.disconnect();
   }, []);
 
-  // ── Dựng WebGL + tải ảnh ──
+  // ── Dựng bộ vẽ + tải ảnh ──
+  // WebGL trước; máy không có WebGL (tắt tăng tốc đồ hoạ / GPU bị chặn) hoặc WebGL hỏng giữa chừng → vẽ bằng CPU (panoSoft.ts).
+  // Đổi bộ vẽ = dựng canvas MỚI (key) vì 1 canvas chỉ có 1 kiểu context.
   const srcKey = sources.join('|');
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let alive = true;
-    let r: PanoRenderer;
+    let r: PanoDrawer;
+    const toSoft = (why: unknown) => {
+      console.warn('Ảnh 360: chuyển sang chế độ vẽ không cần WebGL —', (why as Error)?.message ?? why);
+      if (alive) setEngine('soft');
+    };
     try {
-      r = new PanoRenderer(canvas);
+      r = engine === 'webgl' ? new PanoRenderer(canvas) : new PanoSoftRenderer(canvas);
     } catch (e) {
-      setStatus({ s: 'error', msg: (e as Error).message });
+      if (engine === 'webgl') toSoft(e);
+      else setStatus({ s: 'error', msg: (e as Error).message });
       return;
     }
     rendererRef.current = r;
@@ -117,11 +127,16 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
     loadPanoImage(sources, msg => { if (alive) setStatus({ s: 'loading', msg }); })
       .then(({ img }) => {
         if (!alive) return;
-        r.setImage(fitTexture(img, r.maxTexture, mobile), coverage);
+        try {
+          r.setImage(img, coverage, mobile);
+        } catch (e) {
+          if (engine === 'webgl') { toSoft(e); return; }
+          throw e;
+        }
         setStatus({ s: 'ready' });
       })
       .catch(e => { if (alive) setStatus({ s: 'error', msg: (e as Error).message }); });
-    const onLost = (ev: Event) => { ev.preventDefault(); if (alive) setStatus({ s: 'error', msg: 'Máy hết bộ nhớ đồ hoạ — đóng ảnh rồi mở lại.' }); };
+    const onLost = (ev: Event) => { ev.preventDefault(); toSoft(new Error('mất WebGL (hết bộ nhớ đồ hoạ)')); };
     canvas.addEventListener('webglcontextlost', onLost);
     return () => {
       alive = false;
@@ -130,7 +145,7 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
       rendererRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcKey, coverage.haov, coverage.vaov, coverage.voffset]);
+  }, [srcKey, coverage.haov, coverage.vaov, coverage.voffset, engine]);
 
   // ── Vẽ lại khi khung nhìn / cỡ đổi ──
   useEffect(() => {
@@ -155,7 +170,7 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
     stopAnim();
     const p = local(e);
     pointers.current.set(e.pointerId, p);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* con trỏ đã nhả (chạm rất nhanh) — vẫn xử lý bình thường */ }
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       if (gesture.current.kind === 'item') propsRef.current.onItemDrag?.(gesture.current.key, ptAt(p), 'end');
@@ -276,7 +291,12 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
       onPointerLeave={e => { if (e.pointerType === 'mouse' && !pointers.current.size) propsRef.current.onHover?.(null); }}
       onContextMenu={e => e.preventDefault()}>
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
+      <canvas key={engine} ref={canvasRef} className="absolute inset-0 w-full h-full block" />
+      {engine === 'soft' && status.s === 'ready' && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[5] px-2.5 py-1 rounded-full bg-black/55 text-white/85 text-[11px] pointer-events-none whitespace-nowrap">
+          Máy chưa bật tăng tốc đồ hoạ — đang dùng chế độ xem nhẹ
+        </div>
+      )}
       {status.s === 'ready' && size.w > 0 && overlay(pv)}
       {status.s === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/80 text-[13px] pointer-events-none">

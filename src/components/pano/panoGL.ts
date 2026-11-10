@@ -66,9 +66,18 @@ void main() {
 
 type GL = WebGLRenderingContext | WebGL2RenderingContext;
 
+export class NoWebGLError extends Error {}
+
+/** Bộ vẽ chung cho PanoStage: WebGL (PanoRenderer) hoặc vẽ bằng CPU khi máy không có WebGL (panoSoft.ts). */
+export interface PanoDrawer {
+  setImage(img: HTMLImageElement, cov: Coverage, mobile: boolean): void;
+  render(v: PanoView, dpr: number): void;
+  dispose(): void;
+}
+
 export interface Coverage { haov: number; vaov: number; voffset: number }
 
-export class PanoRenderer {
+export class PanoRenderer implements PanoDrawer {
   readonly gl: GL;
   readonly webgl2: boolean;
   readonly maxTexture: number;
@@ -81,8 +90,10 @@ export class PanoRenderer {
   constructor(private canvas: HTMLCanvasElement) {
     const opts: WebGLContextAttributes = { antialias: false, alpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' };
     const gl2 = canvas.getContext('webgl2', opts);
-    const gl = gl2 ?? canvas.getContext('webgl', opts) ?? (canvas.getContext('experimental-webgl', opts) as WebGLRenderingContext | null);
-    if (!gl) throw new Error('Máy / trình duyệt này không bật được WebGL nên không xoay được ảnh 360.');
+    const gl = gl2 ?? canvas.getContext('webgl', opts) ?? canvas.getContext('webgl')
+      ?? (canvas.getContext('experimental-webgl') as WebGLRenderingContext | null);
+    // Chrome 2025+ bỏ WebGL chạy bằng phần mềm: máy tắt tăng tốc đồ hoạ / GPU bị chặn → không có WebGL → PanoStage dùng panoSoft.ts
+    if (!gl) throw new NoWebGLError('Máy / trình duyệt này không bật được WebGL (tăng tốc đồ hoạ).');
     this.gl = gl;
     this.webgl2 = !!gl2;
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
@@ -114,8 +125,12 @@ export class PanoRenderer {
     return p;
   }
 
-  /** Nạp ảnh (đã tải xong, cùng nguồn CORS). */
-  setImage(src: TexImageSource, cov: Coverage) {
+  /** Nạp ảnh (đã tải xong, cùng nguồn CORS) — ảnh quá to cho GPU / điện thoại thì thu nhỏ trước. */
+  setImage(img: HTMLImageElement, cov: Coverage, mobile: boolean) {
+    this.upload(fitTexture(img, this.maxTexture, mobile), cov);
+  }
+
+  private upload(src: TexImageSource, cov: Coverage) {
     const gl = this.gl;
     this.cov = cov;
     if (this.tex) gl.deleteTexture(this.tex);

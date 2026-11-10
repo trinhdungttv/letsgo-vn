@@ -39,7 +39,7 @@ type SaveState = { s: 'idle' } | { s: 'saving' } | { s: 'saved'; at: string } | 
 
 const SAVE_DELAY_MS = 800;
 const HISTORY_MAX = 60;
-const RADII = [500, 1000, 2000, 5000];
+const RADII = [500, 1000, 2000, 5000, 10000];
 const RADIUS_KEY = 'lgpano_radius';
 const MAX_PINS = 40;
 const PANO_COLOR = '#0A84FF';
@@ -204,8 +204,10 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
   const hasPos = p.lat != null && p.lng != null;
   const calibrated = p.heading != null;
   const heading = p.heading ?? 0;
-  const nearby = useMemo<NearbyItem[]>(() => {
+  // Mọi điểm trong 10 km; bán kính đang chọn không có gì → tự nới lên mốc gần nhất có điểm (khỏi trống trơn)
+  const nearAll = useMemo<NearbyItem[]>(() => {
     if (p.lat == null || p.lng == null) return [];
+    const radius = RADII[RADII.length - 1];
     const origin = { lat: p.lat, lng: p.lng };
     const out: NearbyItem[] = [];
     const seen = new Set<string>();
@@ -228,7 +230,12 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
       out.push({ id: `pano:${o.id}`, kind: 'pano', name: o.title || 'Ảnh 360', sub: '', color: PANO_COLOR, groupLabel: 'Ảnh 360', lat: o.lat, lng: o.lng, dist: d, bearing: bearingDeg(origin, { lat: o.lat, lng: o.lng }) });
     }
     return out.sort((a, b) => a.dist - b.dist);
-  }, [points, panos, p.id, p.lat, p.lng, radius]);
+  }, [points, panos, p.id, p.lat, p.lng]);
+  const shownRadius = useMemo(() => {
+    if (nearAll.some(n => n.dist <= radius)) return radius;
+    return RADII.find(r => r > radius && nearAll.some(n => n.dist <= r)) ?? radius;
+  }, [nearAll, radius]);
+  const nearby = useMemo(() => nearAll.filter(n => n.dist <= shownRadius), [nearAll, shownRadius]);
   const pins = useMemo(() => nearby.slice(0, MAX_PINS), [nearby]);
   const focusItem = nearby.find(n => n.id === focusPin) ?? null;
 
@@ -478,9 +485,12 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                     </div>
                   )}
                 </div>
+                {shownRadius !== radius && nearby.length > 0 && (
+                  <div className="px-3 pb-2 text-[11.5px] text-[#888]">Trong {fmtDistance(radius)} chưa có điểm nào đã ghim — đang hiện trong {fmtDistance(shownRadius)}.</div>
+                )}
                 {nearby.length === 0 ? (
                   <div className="px-4 pb-4 text-[12px] text-[#888]">
-                    Không có công ty / dự án nào đã ghim trong bán kính {fmtDistance(radius)}. Thử nới bán kính, hoặc tự khoanh các công ty chưa có ở tab <button onClick={() => startEditing('area')} className="text-[#1D4ED8] font-medium underline">Đánh dấu</button>.
+                    Không có công ty / dự án nào đã ghim trong bán kính {fmtDistance(RADII[RADII.length - 1])}. Tự khoanh các công ty chưa có trong hệ thống ở tab <button onClick={() => startEditing('area')} className="text-[#1D4ED8] font-medium underline">Đánh dấu</button>.
                   </div>
                 ) : (
                   <ul className="pb-2">
@@ -578,7 +588,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
               <PanoShapesLayer v={v} shapes={shapes} selected={selected} editing={editing} draft={draft} hover={hover} />
               {showPins && <PanoPinsLayer v={v} items={pins} heading={heading} cameraHeight={p.camera_height} calibrated={calibrated} calibrating={calibrating} focus={focusPin} dim={drawing} />}
               {hasPos && !(mobile && (calibrating || editing)) && (
-                <PanoRadar v={v} items={nearby} radius={radius} heading={heading} calibrated={calibrated} onPick={it => (it.kind === 'pano' ? onSwitch(it.id.slice(5)) : lookAtItem(it))} />
+                <PanoRadar v={v} items={nearby} radius={shownRadius} heading={heading} calibrated={calibrated} onPick={it => (it.kind === 'pano' ? onSwitch(it.id.slice(5)) : lookAtItem(it))} />
               )}
             </>
           )}

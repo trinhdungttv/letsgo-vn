@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-11-pano-no-webgl',
+    date: '2026-11-11',
+    title: 'Ảnh 360°',
+    features: [
+      'Ảnh 360 xem được cả trên máy chưa bật tăng tốc đồ hoạ (trước báo lỗi WebGL)',
+      'Không có công ty nào trong bán kính đang chọn thì tự nới ra 5–10 km',
+    ],
+  },
+  {
     id: '2026-11-11-survey-lodging-panorama',
     date: '2026-11-11',
     title: 'Khảo sát KCN — Nhà trọ & Ảnh 360°',
