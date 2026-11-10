@@ -16,6 +16,28 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-10-entity-legal-stamp-alerts',
+    date: '2026-11-10',
+    title: 'Pháp nhân, chữ ký & con dấu',
+    features: [
+      'Pháp nhân lấy thông tin từ Pháp lý — nút chọn hiện tên viết tắt, đổi tên ngay tại chỗ',
+      'Nhân viên dùng được chữ ký, con dấu khi làm giấy tờ — admin nhận popup báo ngay',
+      'Danh sách vào cổng: chỉnh cỡ và vị trí logo, chữ đầu trang, tiêu đề',
+      'Cột "Số CCCD" thay cho "CMND/CCCD"',
+    ],
+  },
+  {
+    id: '2026-11-10-roles-bdh-sales-data-guard',
+    date: '2026-11-10',
+    title: 'Phân quyền & An toàn dữ liệu',
+    features: [
+      'Ban Điều Hành chỉ xem: trang "Tổng quan" nhìn bao quát toàn bộ hoạt động',
+      'Phòng Kinh Doanh: mọi thay đổi dữ liệu đều ghi tên người làm',
+      'Lịch sử → "Nhật ký nhân viên": ai nhập / sửa / xoá gì, trước → sau, khôi phục được',
+      'Cảnh báo xoá nhiều / sửa hàng loạt: admin được báo khi đăng nhập, bấm khôi phục về trước',
+    ],
+  },
+  {
     id: '2026-11-10-cskh-meetings-gate-list',
     date: '2026-11-10',
     title: 'CSKH',

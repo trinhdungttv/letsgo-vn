@@ -100,7 +100,7 @@ describe('end-to-end: điền mẫu + ký → mô hình có ảnh nằm dưới 
     ws.mergeCells('E12:F12'); ws.getCell('E12').value = 'ĐẠI DIỆN CÔNG TY'; ws.getCell('E13').value = '(Giám đốc)';
     ws.getCell('E20').value = 'cuối';
     const data: PlanData = { settings: { ...DEFAULT_SETTINGS, taxOption: 'none' }, notes: '', lines: [newLine({ name: 'Lương cơ bản', unit: 'day', value: 250_000, paidToWorker: true, isBaseWage: true, group: 'worker' })] };
-    const ent: QuoteEntity = { id: 'e', label: 'L', layout: DEFAULT_LAYOUT, logo: null, signature: png(400, 200), seal: png(300, 300), has_signature: true, has_seal: true, sort_order: 0, updated_by_name: null, updated_at: null, data: { name: 'C' } as QuoteEntity['data'] };
+    const ent: QuoteEntity = { id: 'e', label: 'L', layout: DEFAULT_LAYOUT, logo: null, signature: png(400, 200), seal: png(300, 300), has_signature: true, has_seal: true, sort_order: 0, stamp_id: null, legal_id: null, legal: null, own: { label: '', data: {} as QuoteEntity['data'], logo: null }, logo_source: null, updated_by_name: null, updated_at: null, data: { name: 'C' } as QuoteEntity['data'] };
     const { output } = await fillExcelTemplate(await buf(wb), buildFillValues(data, computePlan(data), {}, { entity: ent, use: { signature: true, seal: true } }), { sheet: 'VN' });
     const m = await buildSheetModel(output, 'VN');
     const title = m.cells.find(c => c.text === 'ĐẠI DIỆN CÔNG TY')!;

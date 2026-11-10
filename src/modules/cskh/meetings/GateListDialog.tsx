@@ -1,17 +1,24 @@
 // Hộp "Danh sách đăng ký ra vào cổng" của 1 buổi họp: trái = tuỳ chọn (pháp nhân, người tham dự + thứ tự,
 // ngày ký, kính gửi, cột thêm, logo / chữ ký / con dấu), phải = bản xem trước A4 ngang. Xuất PDF · Excel · In.
-// Pháp nhân + chữ ký + con dấu = quote_entities (dùng chung Phương án giá); ảnh chữ ký / con dấu chỉ admin nhận được.
+// Pháp nhân = thông tin ở Pháp lý + bộ chữ ký / con dấu (dùng chung Phương án giá). Nhân viên vẫn chèn được chữ ký /
+// con dấu — xác nhận 1 lần, admin được báo ngay (useStampImages, migration 219). Đầu trang (logo, chữ, tiêu đề) chỉnh
+// được cỡ / vị trí: lưu riêng cho buổi họp, admin đặt được làm mặc định của pháp nhân.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, Download, FileSpreadsheet, Landmark, Loader2, Printer, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, Download, FileSpreadsheet, Landmark, Loader2, Printer, ShieldAlert, X } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { logActivity } from '../../../lib/audit';
 import { errorText } from '../../../lib/appVersion';
-import { DEFAULT_LAYOUT, type QuoteEntity } from '../../../lib/costPlan/entity';
+import {
+  DEFAULT_HEADER, DEFAULT_LAYOUT, HEADER_RANGE, INDENT_PX, findEntity, normalizeHeader, sameHeader, type HeaderLayout, type QuoteEntity,
+} from '../../../lib/costPlan/entity';
+import { saveEntityLayout } from '../../../lib/costPlan/api';
 import { downloadBlob, printCss, renderElementToPdf } from '../../../lib/costPlan/pdf';
 import { useInk } from '../../../components/workspace/costplan/useInk';
+import { useStampConsent, useStampImages } from '../../../components/workspace/costplan/useStampImages';
+import { Slider } from '../../../components/workspace/costplan/EntityManager';
 import {
-  buildGateDoc, EXTRA_COL_LABEL, GATE_TITLE, gateFileName, gateIssues, resolvePlace,
+  buildGateDoc, EXTRA_COL_LABEL, GATE_TITLE, gateFileName, gateIssues, isoToVn, resolvePlace,
 } from '../../../lib/meetings/gateList';
 import type { Attendee, GateExtraCol, GateOptions, Meeting, MeetingMember } from '../../../lib/meetings/types';
 import { todayVN } from '../../../lib/cskh/dates';
@@ -23,19 +30,22 @@ import { isLetsGoEntity, letsGoLogoUrl, toPngDataUrl } from './gateImages';
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 const sectionCls = 'px-4 md:px-5 py-3.5 border-b border-black/[0.06]';
 
-export function GateListDialog({ meeting, members, entities, canSign, canEdit, onOpenEntities, onSave, onClose }: {
+export function GateListDialog({ meeting, members, entities, canSign, canStamp, canEdit, onOpenEntities, onEntitiesChanged, onSave, onClose }: {
   meeting: Meeting;
   members: readonly MeetingMember[];
   entities: readonly QuoteEntity[];
-  /** Admin: nhận được ảnh chữ ký / con dấu */
+  /** Admin: nhận được ảnh chữ ký / con dấu ngay trong danh sách pháp nhân */
   canSign: boolean;
+  /** Nhân viên: lấy được chữ ký / con dấu (có báo admin) — cần migration 219 */
+  canStamp: boolean;
   canEdit: boolean;
   onOpenEntities: () => void;
+  onEntitiesChanged: () => Promise<void> | void;
   /** Lưu tuỳ chọn bản in + người tham dự + pháp nhân vào buổi họp. Trả câu lỗi hoặc null. */
   onSave: (patch: { gate: GateOptions; attendees: Attendee[]; entity_id: string | null }) => Promise<string | null>;
   onClose: () => void;
 }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [opts, setOpts] = useState<GateOptions>(meeting.gate);
   const [attendees, setAttendees] = useState<Attendee[]>(meeting.attendees);
   const [entityId, setEntityId] = useState<string | null>(meeting.entity_id ?? entities[0]?.id ?? null);
@@ -47,12 +57,22 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
   const [saved, setSaved] = useState(false);
   const today = todayVN();
 
-  const entity = entities.find(e => e.id === entityId) ?? null;
+  // Giấy tờ cũ lưu id bộ ký/dấu → findEntity khớp cả id cũ lẫn id Pháp lý
+  const entity = findEntity(entities, entityId);
   // Pháp nhân bị xoá sau khi chọn → về pháp nhân đầu tiên
-  useEffect(() => { if (entityId && !entities.some(e => e.id === entityId)) setEntityId(entities[0]?.id ?? null); }, [entities, entityId]);
+  useEffect(() => { if (entities.length && entityId && !findEntity(entities, entityId)) setEntityId(entities[0]?.id ?? null); }, [entities, entityId]);
   const layout = entity?.layout ?? DEFAULT_LAYOUT;
-  const signature = useInk(canSign && showSig ? entity?.signature : null, 'sig', layout.sigInk);
-  const seal = useInk(canSign && showSeal ? entity?.seal : null, 'seal', layout.sealInk);
+  const consent = useStampConsent(canSign);
+  const stamp = useStampImages({
+    token, entity, canSign, canStamp, wantSig: showSig, wantSeal: showSeal, purpose: 'gate_list',
+    context: `Danh sách vào cổng ${meeting.company_name || ''} · ${isoToVn(meeting.meet_date)}`.replace(/\s+/g, ' '),
+  });
+  const signature = useInk(stamp.signature, 'sig', layout.sigInk);
+  const seal = useInk(stamp.seal, 'seal', layout.sealInk);
+  const toggleStamp = (kind: 'sig' | 'seal', on: boolean) => {
+    if (on && !consent('danh sách vào cổng', entity?.label ?? '')) return;
+    if (kind === 'sig') setShowSig(on); else setShowSeal(on);
+  };
   const [fallbackLogo, setFallbackLogo] = useState<string | null>(null);
   const wantsFallback = showLogo && !entity?.logo && isLetsGoEntity(entity);
   useEffect(() => { if (wantsFallback && !fallbackLogo) void letsGoLogoUrl().then(setFallbackLogo); }, [wantsFallback, fallbackLogo]);
@@ -60,11 +80,31 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
   const images = { logo, signature, seal, layout };
 
   const membersById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
-  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: opts, today }),
+  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: opts, today, entityHeader: entity?.layout.header }),
     [meeting, attendees, members, entity, opts, today]);
   const issues = gateIssues(doc.rows, { entityMissing: !entity });
+  const savedEntityId = findEntity(entities, meeting.entity_id)?.id ?? meeting.entity_id ?? null;
   const dirty = JSON.stringify(opts) !== JSON.stringify(meeting.gate) || JSON.stringify(attendees) !== JSON.stringify(meeting.attendees)
-    || (entityId ?? null) !== (meeting.entity_id ?? null);
+    || (entity?.id ?? entityId ?? null) !== savedEntityId;
+
+  // ── Đầu trang: cỡ / vị trí logo, chữ đầu trang, tiêu đề ──
+  const [headOpen, setHeadOpen] = useState(!!opts.header);
+  const header = doc.header;
+  const entityHeader = normalizeHeader(entity?.layout.header) ?? DEFAULT_HEADER;
+  const setHeader = (p: Partial<HeaderLayout>) => set({ header: normalizeHeader({ ...header, ...p }) ?? DEFAULT_HEADER });
+  const pageW = doc.columns.reduce((a, c) => a + c.width * 7 + 5, 0);           // bề ngang trang theo px Excel
+  const logoPreset = (where: 'left' | 'center' | 'right') => {
+    const w = 143 * header.logoScale;
+    setHeader({ logoDx: where === 'left' ? 0 : Math.round(where === 'center' ? (pageW - w) / 2 - 12 : pageW - w - 24) });
+  };
+  const [headBusy, setHeadBusy] = useState(false);
+  const saveHeaderDefault = async () => {
+    if (!token || !entity) return;
+    setHeadBusy(true); setErr(null);
+    try { await saveEntityLayout(token, entity, { ...entity.layout, header }); await onEntitiesChanged(); }
+    catch (e) { setErr(errorText(e, 'Không lưu được mặc định: ')); }
+    setHeadBusy(false);
+  };
 
   const set = (p: Partial<GateOptions>) => { setOpts(o => ({ ...o, ...p })); setSaved(false); };
   const move = (i: number, d: -1 | 1) => setAttendees(a => {
@@ -104,13 +144,14 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
   const hostRef = useRef<HTMLDivElement>(null);
   const persist = async (): Promise<boolean> => {
     if (!canEdit || !dirty) return true;
-    const e = await onSave({ gate: opts, attendees, entity_id: entityId });
+    const e = await onSave({ gate: opts, attendees, entity_id: entity?.id ?? entityId });
     if (e) { setErr(e); return false; }
     setSaved(true);
     return true;
   };
-  const audit = (how: string) => {
+  const audit = (how: string, action: 'pdf' | 'xlsx' | 'print') => {
     if (!(signature || seal)) return;
+    stamp.mark(action);
     logActivity({
       user: user ?? null, action: 'update', table: 'meetings', recordId: meeting.id,
       description: `${how} danh sách vào cổng ${meeting.company_name || ''} ${meeting.meet_date} có ${[signature && 'chữ ký', seal && 'con dấu'].filter(Boolean).join(' + ')} (${entity?.label ?? ''})`,
@@ -122,7 +163,7 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
     try {
       void persist();
       downloadBlob(await renderElementToPdf(hostRef.current, { landscape: true }), gateFileName(meeting, 'pdf'));
-      audit('Xuất PDF');
+      audit('Xuất PDF', 'pdf');
     } catch (e) { setErr(errorText(e, 'Không tạo được PDF: ')); }
     setBusy(null);
   };
@@ -136,14 +177,14 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
       ]);
       const buf = await buildGateXlsx(doc, { logo: lg, signature: sg, seal: sl, layout });
       downloadBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), gateFileName(meeting, 'xlsx'));
-      audit('Xuất Excel');
+      audit('Xuất Excel', 'xlsx');
     } catch (e) { setErr(errorText(e, 'Không tạo được file Excel: ')); }
     setBusy(null);
   };
   const print = () => {
     setBusy('print'); setErr(null);
     void persist();
-    audit('In');
+    audit('In', 'print');
     setTimeout(() => { window.print(); setBusy(null); }, 80);
   };
   const saveOnly = async () => { setBusy('save'); setErr(null); await persist(); setBusy(null); };
@@ -208,26 +249,97 @@ export function GateListDialog({ meeting, members, entities, canSign, canEdit, o
                 <button type="button" onClick={onOpenEntities} className="inline-flex items-center gap-1 text-[12px] font-medium text-[#0066CC] hover:opacity-70"><Landmark size={13} />Sửa pháp nhân, chữ ký</button>
               </div>
               {entities.length ? (
-                <select value={entityId ?? ''} onChange={e => { setEntityId(e.target.value || null); setSaved(false); }} className={inputCls}>
-                  {entities.map(e => <option key={e.id} value={e.id}>{e.label}{e.data.name ? ` — ${e.data.name}` : ''}</option>)}
+                <select value={entity?.id ?? ''} onChange={e => { setEntityId(e.target.value || null); setSaved(false); }} className={inputCls}>
+                  {entities.map(e => <option key={e.id} value={e.id}>{e.label}{e.data.name && e.data.name !== e.label ? ` — ${e.data.name}` : ''}</option>)}
                 </select>
               ) : (
-                <p className="text-[12.5px] text-[#B25000]">Chưa có pháp nhân — bấm “Sửa pháp nhân, chữ ký” để tạo (dùng chung với Phương án giá).</p>
+                <p className="text-[12.5px] text-[#B25000]">Chưa có pháp nhân — thêm ở Workspace → Pháp lý (thông tin lấy từ đó).</p>
               )}
               <div className="mt-2.5 space-y-1">
                 <div className="flex flex-wrap gap-x-5">
                   <Switch checked={showLogo} onChange={setShowLogo} label={<span className="text-[13px]">Logo</span>} />
-                  {canSign && (
+                  {(canSign || canStamp) && (
                     <>
-                      <Switch checked={showSig} onChange={setShowSig} label={<span className="text-[13px]">Chữ ký{entity && !entity.has_signature ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
-                      <Switch checked={showSeal} onChange={setShowSeal} label={<span className="text-[13px]">Con dấu{entity && !entity.has_seal ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
+                      <Switch checked={showSig} onChange={v => toggleStamp('sig', v)} label={<span className="text-[13px]">Chữ ký{entity && !entity.has_signature ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
+                      <Switch checked={showSeal} onChange={v => toggleStamp('seal', v)} label={<span className="text-[13px]">Con dấu{entity && !entity.has_seal ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
                     </>
                   )}
+                  {stamp.busy && <Loader2 size={14} className="animate-spin text-[#86868B] self-center" />}
                 </div>
-                {!canSign && <p className="text-[11.5px] text-[#86868B]">Chữ ký và con dấu chỉ admin chèn được — in ra rồi ký, đóng dấu tay.</p>}
+                {!canSign && canStamp && (
+                  <p className="flex items-start gap-1.5 text-[11.5px] text-[#8A5A00]"><ShieldAlert size={13} className="shrink-0 mt-px" />Dùng chữ ký / con dấu sẽ báo ngay cho quản trị viên.</p>
+                )}
+                {!canSign && !canStamp && <p className="text-[11.5px] text-[#86868B]">Chữ ký và con dấu chỉ admin chèn được — in ra rồi ký, đóng dấu tay.</p>}
+                {stamp.err && <p className="text-[11.5px] text-[#D70015]">{stamp.err}</p>}
                 <Switch checked={opts.showSigner !== false} onChange={v => set({ showSigner: v })}
                   label={<span className="text-[13px]">In tên người đại diện{entity?.data.signerName ? <span className="text-[#86868B]"> ({entity.data.signerName})</span> : ''}</span>} />
               </div>
+            </div>
+
+            <div className={sectionCls}>
+              <button type="button" onClick={() => setHeadOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
+                <span>
+                  <span className="block text-[12px] font-medium text-[#6E6E73]">Logo & chữ đầu trang</span>
+                  <span className="block text-[11.5px] text-[#AEAEB2]">{sameHeader(header, DEFAULT_HEADER) ? 'Như mẫu — bấm để chỉnh cỡ, vị trí' : opts.header ? 'Đã chỉnh riêng cho buổi này' : `Theo mặc định của ${entity?.label ?? 'pháp nhân'}`}</span>
+                </span>
+                <ChevronDown size={16} className={`text-[#86868B] transition-transform ${headOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {headOpen && (
+                <div className="mt-2.5 space-y-2.5">
+                  <div className="rounded-[12px] bg-[#F5F5F7] p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-semibold">Logo</span>
+                      <span className="flex gap-1">
+                        {(['left', 'center', 'right'] as const).map(w => (
+                          <button key={w} type="button" onClick={() => logoPreset(w)} className="h-6 px-2 rounded-full text-[11.5px] font-medium bg-white text-[#1D1D1F] ring-1 ring-black/[0.08] hover:bg-black/[0.03]">
+                            {w === 'left' ? 'Trái' : w === 'center' ? 'Giữa' : 'Phải'}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                    <Slider label="Kích thước" value={header.logoScale} min={HEADER_RANGE.logoScale.min} max={HEADER_RANGE.logoScale.max} step={0.05} unit="%" onChange={v => setHeader({ logoScale: v })} />
+                    <Slider label="Sang ngang" value={header.logoDx} min={HEADER_RANGE.logoDx.min} max={Math.max(HEADER_RANGE.logoDx.min + 10, Math.min(HEADER_RANGE.logoDx.max, pageW - 24))} step={2} unit="px" onChange={v => setHeader({ logoDx: v })} />
+                    <Slider label="Lên / xuống" value={header.logoDy} min={HEADER_RANGE.logoDy.min} max={HEADER_RANGE.logoDy.max} step={2} unit="px" onChange={v => setHeader({ logoDy: v })} />
+                  </div>
+                  <div className="rounded-[12px] bg-[#F5F5F7] p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-semibold">Tên công ty · địa chỉ · điện thoại</span>
+                      <span className="flex rounded-full bg-white ring-1 ring-black/[0.08] p-0.5">
+                        {(['left', 'center', 'right'] as const).map(a => (
+                          <button key={a} type="button" onClick={() => setHeader({ headAlign: a })}
+                            className={`h-5 px-2 rounded-full text-[11px] font-medium ${header.headAlign === a ? 'bg-[#1D1D1F] text-white' : 'text-[#6E6E73]'}`}>
+                            {a === 'left' ? 'Trái' : a === 'center' ? 'Giữa' : 'Phải'}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                    <Slider label="Cỡ chữ" value={header.headScale} min={HEADER_RANGE.headScale.min} max={HEADER_RANGE.headScale.max} step={0.05} unit="%" onChange={v => setHeader({ headScale: v })} />
+                    {header.headAlign !== 'center' && (
+                      <Slider label={header.headAlign === 'right' ? 'Cách lề phải' : 'Thụt vào'} value={header.headDx} min={HEADER_RANGE.headDx.min} max={HEADER_RANGE.headDx.max} step={INDENT_PX} unit="px" onChange={v => setHeader({ headDx: v })} />
+                    )}
+                    <Slider label="Xuống dưới" value={header.headDy} min={HEADER_RANGE.headDy.min} max={HEADER_RANGE.headDy.max} step={2} unit="px" onChange={v => setHeader({ headDy: v })} />
+                  </div>
+                  <div className="rounded-[12px] bg-[#F5F5F7] p-3 space-y-1.5">
+                    <span className="text-[12px] font-semibold">Tiêu đề “{doc.title}”</span>
+                    <Slider label="Cỡ chữ" value={header.titleScale} min={HEADER_RANGE.titleScale.min} max={HEADER_RANGE.titleScale.max} step={0.05} unit="%" onChange={v => setHeader({ titleScale: v })} />
+                    <Slider label="Cách phía trên" value={header.titleDy} min={HEADER_RANGE.titleDy.min} max={HEADER_RANGE.titleDy.max} step={2} unit="px" onChange={v => setHeader({ titleDy: v })} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {opts.header && entity?.layout.header && !sameHeader(header, entityHeader) && (
+                      <button type="button" onClick={() => set({ header: undefined })} className="text-[12px] font-medium text-[#0066CC] hover:opacity-70">Theo mặc định của {entity.label}</button>
+                    )}
+                    {!sameHeader(header, DEFAULT_HEADER) && (
+                      <button type="button" onClick={() => set({ header: entity?.layout.header ? { ...DEFAULT_HEADER } : undefined })} className="text-[12px] font-medium text-[#0066CC] hover:opacity-70">Về như mẫu gốc</button>
+                    )}
+                    {canSign && entity && !sameHeader(header, entityHeader) && (
+                      <button type="button" disabled={headBusy} onClick={() => void saveHeaderDefault()} className="inline-flex items-center gap-1 text-[12px] font-medium text-[#0066CC] hover:opacity-70 disabled:opacity-40">
+                        {headBusy && <Loader2 size={12} className="animate-spin" />}Đặt làm mặc định cho {entity.label}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[#AEAEB2] leading-snug">Chỉnh ở đây chỉ áp dụng cho buổi họp này (lưu cùng tuỳ chọn). PDF, Excel và bản In ra giống hệt bản xem trước.</p>
+                </div>
+              )}
             </div>
 
             <div className={sectionCls}>

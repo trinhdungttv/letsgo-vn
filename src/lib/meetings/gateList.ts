@@ -2,6 +2,7 @@
 // Bố cục theo đúng mẫu của công ty (file Excel "Danh_sach_dang_ky_ra_vao_cong_logo.xlsx"): đầu trang logo + tên
 // pháp nhân + địa chỉ + điện thoại, tiêu đề lớn, bảng 9 cột, dòng "<nơi>, ngày … tháng … năm …", khối ký đóng dấu.
 import type { CompanyProfileData } from '../costPlan/quoteDoc';
+import { DEFAULT_HEADER, INDENT_PX, normalizeHeader, type HeaderLayout } from '../costPlan/entity';
 import { foldVn } from '../companyMatch';
 import type { GateExtraCol, GateOptions, Meeting, MeetingMember } from './types';
 
@@ -38,7 +39,7 @@ export const BASE_COLUMNS: readonly GateColumn[] = [
   { key: 'name', label: 'Họ và Tên', width: 28, align: 'left', bold: true },
   { key: 'gender', label: 'Giới tính', width: 11, align: 'center' },
   { key: 'birth', label: 'Năm sinh', width: 13, align: 'center' },
-  { key: 'idNumber', label: 'Số CMND/CCCD', width: 19, align: 'center', bold: true },
+  { key: 'idNumber', label: 'Số CCCD', width: 19, align: 'center', bold: true },
   { key: 'issuedOn', label: 'Ngày cấp', width: 14, align: 'center' },
   { key: 'issuedBy', label: 'Nơi cấp', width: 16, align: 'center' },
   { key: 'address', label: 'Địa chỉ thường trú', width: 50, align: 'left' },
@@ -181,6 +182,41 @@ export interface GateDoc {
   signCompany: string;
   /** "" = không in tên dưới chỗ ký */
   signerName: string;
+  /** Cỡ / vị trí logo, chữ đầu trang, tiêu đề */
+  header: HeaderLayout;
+}
+
+/**
+ * Kích thước đầu trang — DÙNG CHUNG cho bản xem trước / PDF và file Excel để 2 bản giống nhau.
+ * Chiều cao dòng & cỡ chữ theo pt (như Excel), vị trí logo theo px của Excel (gốc = góc trên-trái ô A1).
+ * Mẫu gốc: 4 dòng 30 / 24 / 24 / 24 pt (tên công ty 16pt đậm, địa chỉ 12pt, điện thoại 12pt đậm), logo 143×100 px
+ * cách trái 12 px, trên 6 px; tiêu đề 24pt đậm cao 45,75 pt, cách khung đầu trang 9,75 pt.
+ * Logo phóng to quá khung → dòng cuối đầu trang tự cao thêm cho đủ chỗ (không đè lên tiêu đề).
+ */
+export interface GateHeaderGeom {
+  /** đệm phía trên khối chữ (pt) — 0 = không có dòng đệm */
+  padTop: number;
+  nameH: number; lineH: number; tail: number;
+  nameSize: number; lineSize: number;
+  logo: { x: number; y: number; w: number; h: number };
+  align: 'left' | 'center' | 'right';
+  /** số nấc thụt lề Excel (căn giữa = 0) */
+  indent: number;
+  titleGap: number; titleH: number; titleSize: number;
+}
+export function gateHeaderGeom(h: HeaderLayout): GateHeaderGeom {
+  const hs = h.headScale;
+  const padTop = h.headDy * 0.75;
+  const nameH = 30 * hs, lineH = 24 * hs;
+  const logo = { x: 12 + h.logoDx, y: 6 + h.logoDy, w: 143 * h.logoScale, h: 100 * h.logoScale };
+  const logoBottomPt = (logo.y + logo.h) * 0.75;
+  const tail = Math.max(6, Math.max(102, logoBottomPt + 4) - (padTop + nameH + 2 * lineH));
+  return {
+    // cỡ chữ làm tròn số nguyên (Excel / ExcelJS chỉ giữ số nguyên) để bản xem trước khớp file Excel
+    padTop, nameH, lineH, tail, nameSize: Math.round(16 * hs), lineSize: Math.round(12 * hs), logo,
+    align: h.headAlign, indent: h.headAlign === 'center' ? 0 : 1 + Math.round(h.headDx / INDENT_PX),
+    titleGap: Math.max(1, 9.75 + h.titleDy * 0.75), titleH: 45.75 * h.titleScale, titleSize: Math.round(24 * h.titleScale),
+  };
 }
 
 export function buildGateDoc(a: {
@@ -190,6 +226,8 @@ export function buildGateDoc(a: {
   options: GateOptions;
   /** yyyy-mm-dd — ngày ký mặc định */
   today: string;
+  /** Đầu trang mặc định của pháp nhân — dùng khi buổi họp chưa chỉnh riêng (options.header) */
+  entityHeader?: HeaderLayout | null;
 }): GateDoc {
   const { meeting, profile, options } = a;
   const rows = buildGateRows(meeting, a.members);
@@ -212,6 +250,7 @@ export function buildGateDoc(a: {
     dateLine: gateDateLine(resolvePlace(options, profile), options.docDate || a.today),
     signCompany: name,
     signerName: options.showSigner === false ? '' : (profile?.signerName ?? '').trim(),
+    header: normalizeHeader(options.header) ?? normalizeHeader(a.entityHeader) ?? DEFAULT_HEADER,
   };
 }
 
@@ -226,7 +265,7 @@ export function gateIssues(rows: readonly GateRow[], ctx: { entityMissing: boole
     if (!r.idNumber) miss.push('số CCCD');
     else {
       const digits = r.idNumber.replace(/\D/g, '');
-      if (digits.length !== 12 && digits.length !== 9) bad.push(`số CCCD có ${digits.length} chữ số (CCCD 12 số, CMND 9 số)`);
+      if (digits.length !== 12) bad.push(`số CCCD có ${digits.length} chữ số (CCCD phải đủ 12 số)`);
     }
     if (!r.issuedOn) miss.push('ngày cấp');
     if (!r.gender) miss.push('giới tính');

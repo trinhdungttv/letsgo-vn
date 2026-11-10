@@ -4,7 +4,8 @@ import MobileNav from './components/MobileNav';
 import MobileBackBar from './components/MobileBackBar';
 import { useAppData } from './hooks/useAppData';
 import { useCRMData } from './hooks/useCRMData';
-import { useAuth, AuthProvider, canAccess } from './lib/auth';
+import { useAuth, AuthProvider, canAccess, isReadOnlyRole } from './lib/auth';
+import { READONLY_EVENT, READONLY_MESSAGE } from './lib/writeGuard';
 import type { Page, Client, LaborHistoryEntry, ClientManagerHistory, MarketZone, FinanceRecord, CRMProduct, CRMDeal as CRMDealType, CRMActivity } from './lib/types';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useKeepPopoversOnScreen } from './hooks/useKeepPopoversOnScreen';
@@ -20,7 +21,10 @@ import Finance from './pages/Finance';
 import Market from './pages/Market';
 import Reports from './pages/Reports';
 import UserManagement from './pages/UserManagement';
-import History from './pages/History';
+import History, { type HistoryTab } from './pages/History';
+import ExecOverview from './pages/ExecOverview';
+import DataGuardLoginAlert from './components/DataGuardLoginAlert';
+import StampAlertWatcher from './components/StampAlertWatcher';
 import CRMDash from './pages/CRMDash';
 import CRMBoard from './pages/CRMBoard';
 import CRMLeads from './pages/CRMLeads';
@@ -60,7 +64,7 @@ const LEGACY_SALE_PAGE = 'crm-sales';
 /** Tuyển dụng đang tắt (featureFlags.ts): link cũ #/recruit/… và form ứng tuyển #/apply/… quay về Dashboard. */
 const readApplyLink = (hash: string) => (RECRUIT_ENABLED ? parseApplyHash(hash) : null);
 
-const PAGES: Page[] = ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'legal', ...(RECRUIT_ENABLED ? ['recruit' as Page] : []), ...OFFICE_PAGES];
+const PAGES: Page[] = ['dashboard', 'overview', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal', 'crm-pipeline', 'admin-settings', 'workspace', 'loans', 'legal', ...(RECRUIT_ENABLED ? ['recruit' as Page] : []), ...OFFICE_PAGES];
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -217,7 +221,10 @@ function AppInner() {
 
   // Guard against a restored page the current user no longer has access to
   useEffect(() => {
-    if (user && rolePermissions.length && !canAccess(user.role, page, rolePermissions)) setPage('dashboard', true);
+    if (user && rolePermissions.length && !canAccess(user.role, page, rolePermissions)) {
+      // Ban Điều Hành (chỉ xem) → về trang Tổng quan; vai trò khác → Dashboard như cũ
+      setPage(isReadOnlyRole(user.role) && canAccess(user.role, 'overview', rolePermissions) ? 'overview' : 'dashboard', true);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, rolePermissions]);
   const [toastMsg, setToastMsg] = useState('');
@@ -229,6 +236,17 @@ function AppInner() {
     const t = setTimeout(() => setToastMsg(''), 2500);
     setToastTimer(t);
   }, [toastTimer]);
+
+  // Vai trò chỉ xem bấm Lưu / Xoá ở đâu đó → lớp chặn ghi (lib/writeGuard.ts) báo 1 câu chung
+  useEffect(() => {
+    const onBlocked = () => toast(READONLY_MESSAGE);
+    window.addEventListener(READONLY_EVENT, onBlocked);
+    return () => window.removeEventListener(READONLY_EVENT, onBlocked);
+  }, [toast]);
+
+  // Popup cảnh báo dữ liệu (admin) → "Xem & khôi phục" mở Lịch sử ở tab Cảnh báo
+  const [historyTab, setHistoryTab] = useState<HistoryTab | null>(null);
+  const clearHistoryTab = useCallback(() => setHistoryTab(null), []);
 
   // Chặn mở thẳng URL #/office… khi không có quyền (chỉ admin) → về trang chính + báo.
   // (Tệp Sale trong CSKH tự chặn trong trang CSKH — xem pages/CRMLeads.tsx)
@@ -409,6 +427,13 @@ function AppInner() {
       <MobileNav currentPage={page} onNavigate={navigateTop} />
       <div className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F7] pt-[env(safe-area-inset-top)] pb-[calc(52px+max(6px,env(safe-area-inset-bottom)))] md:pt-0 md:pb-0">
         {backCtx && backCtx.to === page && <MobileBackBar from={backCtx.from} onBack={() => window.history.back()} />}
+        {isReadOnlyRole(user.role) && (
+          <div className="shrink-0 px-3 md:px-5 py-1.5 bg-[#5856D6]/[0.08] text-[#3634A3] text-[12px] flex items-center gap-1.5">
+            <span className="font-semibold">Chế độ chỉ xem</span>
+            <span className="text-[#3634A3]/80 truncate">· Ban Điều Hành xem số liệu tổng thể, không thêm / sửa / xoá dữ liệu</span>
+          </div>
+        )}
+        {page === 'overview' && <ExecOverview clients={clients} pipeline={pipeline} />}
         {page === 'dashboard' && <Dashboard clients={clients} laborHistory={laborHistory} managerHistory={managerHistory} onOpenBranch={openBranch} onOpenClient={handleSelectClient} onOpenPipelineEntry={openPipelineEntry} onOpenWorkspace={() => navigate('workspace')} onClientUpdate={handleClientUpdate} />}
         {page === 'clients' && (
           <Clients
@@ -457,7 +482,7 @@ function AppInner() {
         )}
         {page === 'reports' && <Reports clients={clients} laborHistory={laborHistory} />}
         {page === 'users' && <UserManagement toast={toast} />}
-        {page === 'history' && <History toast={toast} onReload={loadClients} />}
+        {page === 'history' && <History toast={toast} onReload={loadClients} initialTab={historyTab} onInitialTabConsumed={clearHistoryTab} />}
         {page === 'admin-settings' && <AdminPage toast={toast} />}
         {page === 'loans' && <Loans toast={toast} />}
         {page === 'recruit' && user && canAccess(user.role, page, rolePermissions) && <Recruit clients={clients} toast={toast} />}
@@ -525,6 +550,12 @@ function AppInner() {
       {user && <LaborReminderRunner toast={toast} />}
       {/* Ghi chú nhanh: dải thẻ dính mép phải trên mọi trang (ghi chú riêng từng người + ghi âm cuộc họp) */}
       {user && <QuickNotesDock userId={user.id} />}
+      {/* Admin: cảnh báo nhân viên xoá nhiều / sửa hàng loạt (migration 218) — hiện khi đăng nhập */}
+      {user.role === 'admin' && canAccess(user.role, 'history', rolePermissions) && (
+        <DataGuardLoginAlert onOpenAlerts={() => { setHistoryTab('alerts'); navigateTop('history'); }} />
+      )}
+      {/* Admin: popup ngay khi nhân viên dùng chữ ký / con dấu làm giấy tờ (migration 219) */}
+      {user.role === 'admin' && <StampAlertWatcher />}
     </div>
   );
 }

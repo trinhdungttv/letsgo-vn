@@ -5,6 +5,9 @@ import { OFFICE_PAGES, OFFICE_PERMISSION_MODULE, isOfficePage } from '../modules
 import { startGoogleLogin, completeGoogleLogin, hasGoogleRedirect } from './googleLogin';
 import { SESSION_TOKEN_KEY } from './sessionToken';
 import { RECRUIT_ENABLED } from './featureFlags';
+import { setWriteGuardRole, isReadOnlyRole } from './writeGuard';
+
+export { isReadOnlyRole };
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -44,6 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [googlePending, setGooglePending] = useState(hasGoogleRedirect);
   const [googleError, setGoogleError] = useState<string | null>(null);
 
+  // Vai trò chỉ xem (Ban Điều Hành) → lớp chặn ghi của client Supabase biết ngay (lib/writeGuard.ts)
+  useEffect(() => { setWriteGuardRole(user?.role ?? null); }, [user]);
+
   const refreshRolePermissions = useCallback(async () => {
     const { data, error } = await supabase.from('role_permissions').select('*');
     if (!error && data) setRolePermissions(data as RolePermission[]);
@@ -52,7 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      try { setUser(JSON.parse(stored)); } catch { localStorage.removeItem(STORAGE_KEY); }
+      try {
+        const u = JSON.parse(stored) as AppUser;
+        setWriteGuardRole(u?.role ?? null); // ngay lúc mở app, trước khi trang nào kịp ghi
+        setUser(u);
+      } catch { localStorage.removeItem(STORAGE_KEY); }
     }
     const storedToken = localStorage.getItem(TOKEN_KEY);
     if (storedToken) setToken(storedToken);
@@ -126,12 +136,17 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+/** Tên module trang Tổng quan điều hành trong ma trận phân quyền (migration 218). */
+export const OVERVIEW_MODULE = 'Tổng quan';
+
 /** Tên module Pháp lý trong ma trận phân quyền (migration 201). */
 export const LEGAL_MODULE = 'Pháp lý';
 
 // Maps each app `Page` to the module name shown in the editable "Ma trận phân quyền" (role_permissions table)
 export const PAGE_MODULE: Record<string, string> = {
   dashboard: 'Dashboard',
+  // Tổng quan điều hành (migration 218) — trang nhìn tổng thể cho Ban Điều Hành
+  overview: OVERVIEW_MODULE,
   workspace: 'Workspace',
   clients: 'Khách hàng',
   'client-detail': 'Khách hàng',
@@ -159,10 +174,11 @@ export const PAGE_MODULE: Record<string, string> = {
 
 const crm = ['crm-dash', 'crm-board', 'crm-leads', 'crm-prods', 'crm-deal'];
 const FALLBACK_RULES: Record<string, string[]> = {
-  admin:      ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', 'recruit', 'legal', ...crm, ...OFFICE_PAGES],
+  admin:      ['dashboard', 'overview', 'clients', 'client-detail', 'branches', 'finance', 'market', 'reports', 'users', 'history', 'admin-settings', 'workspace', 'loans', 'recruit', 'legal', ...crm, ...OFFICE_PAGES],
   ketoan:     ['dashboard', 'clients', 'client-detail', 'finance', 'reports', 'workspace', 'recruit', 'legal'],
   kinhdoanh:  ['dashboard', 'clients', 'client-detail', 'market', 'reports', 'workspace', 'recruit', 'legal', ...crm],
-  bdh:        ['dashboard', 'clients', 'client-detail', 'branches', 'finance', 'reports', 'workspace', 'recruit', 'legal', ...crm],
+  // Ban Điều Hành: chỉ xem tổng thể (migration 218) — trang chi tiết không mở
+  bdh:        ['dashboard', 'overview', 'reports'],
 };
 
 /**
@@ -171,6 +187,16 @@ const FALLBACK_RULES: Record<string, string[]> = {
  */
 export function legalLevel(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
   if (role === 'admin') return 'full';
+  if (isReadOnlyRole(role)) return capReadOnly(legalLevelRaw(role, rolePermissions));
+  return legalLevelRaw(role, rolePermissions);
+}
+
+/** Vai trò chỉ xem (Ban Điều Hành) không bao giờ có mức 'full' dù ma trận ghi gì. */
+function capReadOnly(level: 'full' | 'view' | 'none'): 'full' | 'view' | 'none' {
+  return level === 'full' ? 'view' : level;
+}
+
+function legalLevelRaw(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
   const perm = rolePermissions?.find(p => p.role === role && p.module === LEGAL_MODULE);
   if (perm) return perm.level;
   if (rolePermissions?.length && rolePermissions.some(p => p.module === LEGAL_MODULE)) return 'none';
@@ -186,6 +212,11 @@ export const MEETING_MODULE = 'Đi họp';
  */
 export function meetingLevel(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
   if (role === 'admin') return 'full';
+  if (isReadOnlyRole(role)) return capReadOnly(meetingLevelRaw(role, rolePermissions));
+  return meetingLevelRaw(role, rolePermissions);
+}
+
+function meetingLevelRaw(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
   const perm = rolePermissions?.find(p => p.role === role && p.module === MEETING_MODULE);
   if (perm) return perm.level;
   if (rolePermissions?.length && rolePermissions.some(p => p.module === MEETING_MODULE)) return 'none';
@@ -199,6 +230,10 @@ export function meetingLevel(role: string, rolePermissions?: RolePermission[]): 
 export const SALE_PAGE = 'crm-sales';
 
 export function canAccess(role: string, page: string, rolePermissions?: RolePermission[]): boolean {
+  // Tổng quan: chưa chạy migration 218 (chưa có dòng quyền) → admin + Ban Điều Hành vẫn vào được
+  if (page === 'overview' && !rolePermissions?.some(p => p.module === OVERVIEW_MODULE)) {
+    return (FALLBACK_RULES[role] || []).includes('overview');
+  }
   // Muốn mở cho phòng kinh doanh sau này: bỏ dòng này + thêm 'crm-sales' vào PAGE_MODULE / FALLBACK_RULES
   if (page === SALE_PAGE) return role === 'admin';
   // Văn phòng Orient: chốt cứng chỉ admin (RLS bds_* cũng chỉ mở cho admin). Muốn cấp quyền hẹp sau này:

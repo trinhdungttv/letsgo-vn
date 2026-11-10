@@ -25,7 +25,7 @@ export function MemberForm({ existing, readOnly, onSave, onDelete, onClose }: {
   const set = (p: Partial<MemberDraft>) => setD(x => ({ ...x, ...p }));
 
   const digits = d.id_number.replace(/\D/g, '');
-  const idWarn = digits && digits.length !== 12 && digits.length !== 9 ? `Số CCCD đang có ${digits.length} chữ số (CCCD 12 số, CMND 9 số)` : '';
+  const idWarn = digits && digits.length !== 12 ? `Số CCCD đang có ${digits.length} chữ số (CCCD phải đủ 12 số)` : '';
 
   const save = async () => {
     if (!d.full_name.trim()) { setError('Nhập họ tên'); return; }
@@ -68,7 +68,7 @@ export function MemberForm({ existing, readOnly, onSave, onDelete, onClose }: {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className={labelCls}>Số CMND / CCCD</label>
+            <label className={labelCls}>Số CCCD</label>
             <input value={d.id_number} onChange={e => set({ id_number: e.target.value })} className={`${inputCls} tabular-nums`} placeholder="0301…" inputMode="numeric" maxLength={20} />
           </div>
           <div>

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { emptyProfile } from '../costPlan/quoteDoc';
-import { DEFAULT_LAYOUT } from '../costPlan/entity';
+import { DEFAULT_HEADER, DEFAULT_LAYOUT } from '../costPlan/entity';
 import {
-  buildGateDoc, buildGateRows, gateColumns, gateDateLine, gateFileName, gateIssues, guessPlace, isoToVn, resolvePlace, shortWeekday, visitWhen,
+  buildGateDoc, buildGateRows, gateColumns, gateDateLine, gateFileName, gateHeaderGeom, gateIssues, guessPlace, isoToVn, resolvePlace, shortWeekday, visitWhen,
 } from './gateList';
 import { normalizeIdNumber, parseGender, parseMemberTable, parseVnDate, readXlsxTable } from './importMembers';
 import { buildGateXlsx, signStartCol } from './gateXlsx';
@@ -60,7 +60,7 @@ describe('Danh sách vào cổng — dữ liệu', () => {
   it('cột: 9 cột như mẫu, cột thêm đặt cuối; "Ngày sinh" khi có người ghi đủ ngày', () => {
     const rows = buildGateRows(MEETING, [TAM, DUNG]);
     expect(gateColumns(rows).map(c => c.label)).toEqual(
-      ['STT', 'Họ và Tên', 'Giới tính', 'Năm sinh', 'Số CMND/CCCD', 'Ngày cấp', 'Nơi cấp', 'Địa chỉ thường trú', 'Chức vụ']);
+      ['STT', 'Họ và Tên', 'Giới tính', 'Năm sinh', 'Số CCCD', 'Ngày cấp', 'Nơi cấp', 'Địa chỉ thường trú', 'Chức vụ']);
     expect(gateColumns(rows, ['vehicle_plate', 'phone']).slice(-2).map(c => c.label)).toEqual(['Số điện thoại', 'Biển số xe']);
     const full = buildGateRows(MEETING, [member({ birth: '12/03/1983' }), DUNG]);
     expect(gateColumns(full)[3].label).toBe('Ngày sinh');
@@ -88,9 +88,28 @@ describe('Danh sách vào cổng — dữ liệu', () => {
     const rows = buildGateRows(MEETING, [member({ id_number: '30183011915', id_issued_on: null, gender: '' }), DUNG]);
     expect(gateIssues(rows, { entityMissing: true })).toEqual([
       'Chưa chọn pháp nhân đứng tên danh sách',
-      'Nguyễn Thị Tâm: thiếu ngày cấp, giới tính; số CCCD có 11 chữ số (CCCD 12 số, CMND 9 số)',
+      'Nguyễn Thị Tâm: thiếu ngày cấp, giới tính; số CCCD có 11 chữ số (CCCD phải đủ 12 số)',
     ]);
+    // CMND 9 số không còn dùng → cũng nhắc
+    expect(gateIssues(buildGateRows(MEETING, [member({ id_number: '271234567' })]), { entityMissing: false })[0]).toContain('9 chữ số');
     expect(gateIssues(buildGateRows(MEETING, [TAM, DUNG]), { entityMissing: false })).toEqual([]);
+  });
+  it('đầu trang: mặc định đúng mẫu (4 dòng 30/24/24/24pt, logo 143×100 cách 12/6px); logo to thì dòng cuối cao thêm', () => {
+    const doc = buildGateDoc({ meeting: MEETING, members: [TAM], profile: PROFILE, options: {}, today: '2026-11-09' });
+    expect(doc.header).toEqual(DEFAULT_HEADER);
+    const g = gateHeaderGeom(doc.header);
+    expect([g.padTop, g.nameH, g.lineH, g.tail, g.titleGap, g.titleH, g.indent]).toEqual([0, 30, 24, 24, 9.75, 45.75, 1]);
+    expect(g.logo).toEqual({ x: 12, y: 6, w: 143, h: 100 });
+    const big = gateHeaderGeom({ ...DEFAULT_HEADER, logoScale: 2, logoDy: 10 });
+    expect(big.logo.h).toBe(200);
+    expect(big.tail).toBeCloseTo((10 + 6 + 200) * 0.75 + 4 - 78);        // đủ chỗ cho logo, không đè tiêu đề
+    expect(gateHeaderGeom({ ...DEFAULT_HEADER, headAlign: 'center', headDx: 90 }).indent).toBe(0);
+    expect(gateHeaderGeom({ ...DEFAULT_HEADER, headDx: 90 }).indent).toBe(11);
+    // buổi họp chỉnh riêng thắng mặc định của pháp nhân
+    const own = buildGateDoc({ meeting: MEETING, members: [], profile: PROFILE, options: { header: { ...DEFAULT_HEADER, titleScale: 1.2 } }, today: '2026-11-09', entityHeader: { ...DEFAULT_HEADER, titleScale: 0.8 } });
+    expect(own.header.titleScale).toBe(1.2);
+    const ent = buildGateDoc({ meeting: MEETING, members: [], profile: PROFILE, options: {}, today: '2026-11-09', entityHeader: { ...DEFAULT_HEADER, titleScale: 0.8 } });
+    expect(ent.header.titleScale).toBe(0.8);
   });
   it('tiện ích ngày / giờ', () => {
     expect(isoToVn('2026-11-11')).toBe('11/11/2026');
@@ -172,5 +191,24 @@ describe('File Excel', () => {
     let cccd: unknown = null;
     ws.eachRow(row => row.eachCell(cell => { if (cell.value === '030183011915') cccd = cell.value; }));
     expect(cccd).toBe('030183011915');
+  });
+  it('đầu trang chỉnh cỡ / vị trí: dòng đệm, căn giữa, cỡ chữ, logo phóng to neo đúng chỗ', async () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const header = { ...DEFAULT_HEADER, headDy: 20, headAlign: 'center' as const, headScale: 1.2, logoScale: 2, titleScale: 0.8 };
+    const doc = buildGateDoc({ meeting: MEETING, members: [TAM], profile: PROFILE, options: { header }, today: '2026-11-10' });
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await buildGateXlsx(doc, { logo: PNG, signature: null, seal: null, layout: DEFAULT_LAYOUT }));
+    const ws = wb.worksheets[0];
+    expect(ws.getRow(1).height).toBe(15);                                // 20px đệm = 15pt
+    expect(ws.getCell(2, 3).value).toBe("CÔNG TY CỔ PHẦN LET'S GO VN");
+    expect(ws.getCell(2, 3).alignment.horizontal).toBe('center');
+    expect(ws.getCell(2, 3).font.size).toBe(19);
+    const title = ws.getRow(7);
+    expect(title.getCell(1).value).toBe('DANH SÁCH ĐĂNG KÝ RA VÀO CỔNG');
+    expect(title.getCell(1).font.size).toBe(19);
+    const imgs = ws.getImages();
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].range.tl.nativeCol).toBe(0);                          // cách trái 12px → vẫn trong cột A
   });
 });

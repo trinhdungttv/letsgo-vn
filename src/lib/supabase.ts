@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { mirroringFetch } from './mirrorImages';
+import { withWriteGuard } from './writeGuard';
 
 export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 export const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -13,7 +14,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // lọt vào đây — nếu lọt, request sẽ chạy role `authenticated` thay vì `anon` và RLS hiện có bị lệch.
 // Mọi lệnh ghi có cột ảnh với link ngoài (Facebook…) được tự tải về kho Cloudflare R2 trước khi lưu (lib/mirrorImages.ts);
 // chưa cài R2 hoặc lỗi thì giữ link gốc như cũ.
+// withWriteGuard (migration 218): gắn token người dùng vào mọi request /rest/v1 để lịch sử biết AI sửa; vai trò
+// chỉ xem (Ban Điều Hành) bị chặn mọi lệnh ghi ngay tại đây.
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  global: { fetch: mirroringFetch },
+  global: { fetch: withWriteGuard(mirroringFetch) },
 });

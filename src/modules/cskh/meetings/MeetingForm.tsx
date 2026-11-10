@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Check, Landmark, Plus, Trash2 } from 'lucide-react';
 import { foldVn } from '../../../lib/companyMatch';
-import type { QuoteEntity } from '../../../lib/costPlan/entity';
+import { findEntity, type QuoteEntity } from '../../../lib/costPlan/entity';
 import type { CskhContact } from '../../../lib/cskh/types';
 import { MEETING_STATUS_LABEL, type Meeting, type MeetingDraft, type MeetingMember, type MeetingStatus } from '../../../lib/meetings/types';
 import type { Client } from '../../../lib/types';
@@ -77,11 +77,11 @@ export function MeetingForm({ existing, members, entities, clients, contacts, to
 }) {
   const [d, setD] = useState<MeetingDraft>(() => existing ? {
     meet_date: existing.meet_date, meet_time: existing.meet_time, client_id: existing.client_id, company_name: existing.company_name,
-    location: existing.location, purpose: existing.purpose, entity_id: existing.entity_id, attendees: existing.attendees,
+    location: existing.location, purpose: existing.purpose, entity_id: findEntity(entities, existing.entity_id)?.id ?? existing.entity_id, attendees: existing.attendees,
     contact_ids: existing.contact_ids, status: existing.status, note: existing.note, result: existing.result,
   } : {
     meet_date: today, meet_time: '', client_id: null, company_name: '', location: '', purpose: '',
-    entity_id: entities.find(e => e.id === lastEntity())?.id ?? entities[0]?.id ?? null,
+    entity_id: findEntity(entities, lastEntity())?.id ?? entities[0]?.id ?? null,
     attendees: [], contact_ids: [], status: 'planned', note: '', result: '',
   });
   const [saving, setSaving] = useState(false);
@@ -92,7 +92,7 @@ export function MeetingForm({ existing, members, entities, clients, contacts, to
   }, [addAttendee]);
   // Pháp nhân tải xong sau khi mở form (lần đầu) → chọn sẵn
   useEffect(() => {
-    if (!existing && !d.entity_id && entities.length) set({ entity_id: entities.find(e => e.id === lastEntity())?.id ?? entities[0].id });
+    if (!existing && !d.entity_id && entities.length) set({ entity_id: findEntity(entities, lastEntity())?.id ?? entities[0].id });
   }, [entities]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const live = members.filter(m => !m.deleted_at);

@@ -21,7 +21,7 @@ const data: PlanData = {
   ],
 };
 const entity = (over: Partial<QuoteEntity> = {}): QuoteEntity => ({
-  id: 'e1', label: 'Let\'s Go', layout: DEFAULT_LAYOUT, logo: LOGO, signature: SIG, seal: SEAL, has_signature: true, has_seal: true, sort_order: 0, updated_by_name: null, updated_at: null,
+  id: 'e1', label: 'Let\'s Go', layout: DEFAULT_LAYOUT, logo: LOGO, signature: SIG, seal: SEAL, has_signature: true, has_seal: true, sort_order: 0, stamp_id: null, legal_id: null, legal: null, own: { label: '', data: {} as QuoteEntity['data'], logo: null }, logo_source: null, updated_by_name: null, updated_at: null,
   data: { name: 'CÔNG TY LET\'S GO', address: '1 Nguyễn Huệ', taxCode: '0312345678', signerName: 'Nguyễn Văn A', signerTitle: 'Giám đốc', place: 'TP.HCM' } as QuoteEntity['data'],
   ...over,
 });

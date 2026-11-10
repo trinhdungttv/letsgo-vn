@@ -4,7 +4,7 @@
 // Style nội tuyến (không Tailwind) để html2canvas chụp đúng.
 import type { CSSProperties } from 'react';
 import { stampBoxes, type StampLayout } from '../../../lib/costPlan/entity';
-import { SIGN_HINT, SIGN_ROW_PT, SIGN_ROWS, STAMP_BOX, signStartCol, type GateDoc } from '../../../lib/meetings/gateList';
+import { SIGN_HINT, SIGN_ROW_PT, SIGN_ROWS, STAMP_BOX, gateHeaderGeom, signStartCol, type GateDoc } from '../../../lib/meetings/gateList';
 
 export const PAGE_W = 1123;
 export const PAGE_H = 794;
@@ -27,6 +27,8 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
   const pt = (v: number) => (v * 4 * k) / 3;
   const colW = colRaw.map(w => w * k);
   const logoW = (colW[0] ?? 0) + (colW[1] ?? 0);
+  const g = gateHeaderGeom(doc.header);
+  const indentPx = g.indent * 9 * k;
   const s = signStartCol(doc);
   const signLeft = colW.slice(0, s - 1).reduce((a, b) => a + b, 0);
   const signW = cw - signLeft;
@@ -47,7 +49,7 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
   const stampOrder = images.layout.sealOnTop === false ? ['seal', 'sig'] : ['sig', 'seal'];
 
   const cell = (i: number, last: boolean, head: boolean): CSSProperties => ({
-    // Lề ô sát như Excel (cột giữa chỉ ~1px) — rộng hơn là "Số CMND/CCCD" bị xuống dòng, khác bản Excel
+    // Lề ô sát như Excel (cột giữa chỉ ~1px) — rộng hơn là tiêu đề cột dài bị xuống dòng, khác bản Excel
     width: colW[i], padding: `0 ${doc.columns[i].align === 'left' && !head ? 9 * k : 1}px`, whiteSpace: head ? 'nowrap' : 'normal',
     borderTop: '1px solid #000', borderBottom: '1px solid #000',
     borderLeft: i === 0 ? 'none' : '1px solid #000', borderRight: last ? 'none' : '1px solid #000',
@@ -57,21 +59,23 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
   return (
     <div style={{ width: PAGE_W, minHeight: PAGE_H, padding: `${PAD_T}px ${PAD_X}px`, boxSizing: 'border-box', background: '#fff', color: '#000', fontFamily: FONT }}>
       <div style={{ border: `${THICK}px solid #000`, boxSizing: 'border-box', width: cw }}>
-        {/* Đầu trang: logo · tên pháp nhân · địa chỉ · điện thoại */}
-        <div data-pdf-block style={{ position: 'relative', display: 'flex', borderBottom: `${MEDIUM}px solid #000`, height: pt(30 + 24 + 24 + 24) }}>
-          <div style={{ width: logoW, flexShrink: 0, position: 'relative' }}>
-            {images.logo && (
-              <img src={images.logo} alt="" style={{ position: 'absolute', left: 12 * k, top: 6 * k, width: 143 * k, height: 100 * k, objectFit: 'contain', objectPosition: 'left top' }} />
-            )}
+        {/* Đầu trang: logo · tên pháp nhân · địa chỉ · điện thoại (cỡ / vị trí theo doc.header — giống hệt file Excel) */}
+        <div data-pdf-block style={{ position: 'relative', display: 'flex', borderBottom: `${MEDIUM}px solid #000`, height: pt(g.padTop + g.nameH + 2 * g.lineH + g.tail) }}>
+          <div style={{ width: logoW, flexShrink: 0 }} />
+          <div style={{
+            flex: 1, minWidth: 0, paddingTop: pt(g.padTop), textAlign: g.align,
+            paddingLeft: g.align === 'left' ? indentPx : 0, paddingRight: g.align === 'right' ? indentPx : 0,
+          }}>
+            {([[doc.companyName, g.nameH, g.nameSize, true], [doc.address, g.lineH, g.lineSize, false], [doc.phone, g.lineH, g.lineSize, true]] as const).map(([t, h, sz, bold], i) => (
+              <div key={i} style={{ ...line(h, text(sz, { bold })), justifyContent: g.align === 'center' ? 'center' : g.align === 'right' ? 'flex-end' : 'flex-start' }}>{t}</div>
+            ))}
           </div>
-          <div style={{ paddingLeft: 9 * k, minWidth: 0 }}>
-            <div style={line(30, text(16, { bold: true }))}>{doc.companyName}</div>
-            <div style={line(24, text(12))}>{doc.address}</div>
-            <div style={line(24, text(12, { bold: true }))}>{doc.phone}</div>
-          </div>
+          {images.logo && (
+            <img src={images.logo} alt="" style={{ position: 'absolute', left: g.logo.x * k, top: g.logo.y * k, width: g.logo.w * k, height: g.logo.h * k, objectFit: 'contain', objectPosition: 'left top' }} />
+          )}
         </div>
-        <div style={{ height: pt(9.75) }} />
-        <div style={line(45.75, { ...text(24, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.title}</div>
+        <div style={{ height: pt(g.titleGap) }} />
+        <div style={line(g.titleH, { ...text(g.titleSize, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.title}</div>
         {doc.recipient && <div style={line(22, { ...text(13, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.recipient}</div>}
         {doc.visit && <div style={{ ...text(12, { italic: true }), minHeight: pt(22), display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: `0 ${12 * k}px` }}>{doc.visit}</div>}
         <div style={{ height: pt(7.5) }} />

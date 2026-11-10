@@ -1,5 +1,7 @@
 // Đi họp (CSKH → tab "Đi họp", migration 217): thành viên hay đi họp + lịch họp + tuỳ chọn bản
-// "Danh sách đăng ký ra vào cổng". Pháp nhân đứng tên danh sách = quote_entities (dùng chung Phương án giá).
+// "Danh sách đăng ký ra vào cổng". Pháp nhân đứng tên danh sách = pháp nhân ở Pháp lý + bộ chữ ký / con dấu
+// (dùng chung Phương án giá — lib/costPlan/legalLink.ts).
+import { normalizeHeader, type HeaderLayout } from '../costPlan/entity';
 
 export type MemberGender = '' | 'Nam' | 'Nữ';
 
@@ -69,6 +71,8 @@ export interface GateOptions {
   extraCols?: GateExtraCol[];
   /** In tên người đại diện (pháp nhân) dưới chỗ ký — mặc định có. */
   showSigner?: boolean;
+  /** Cỡ / vị trí logo, chữ đầu trang, tiêu đề riêng cho buổi này — thiếu = theo mặc định của pháp nhân. */
+  header?: HeaderLayout;
 }
 
 export interface Meeting {
@@ -125,6 +129,8 @@ export function normalizeGate(raw: unknown): GateOptions {
   if (typeof r.showVisit === 'boolean') out.showVisit = r.showVisit;
   if (typeof r.showSigner === 'boolean') out.showSigner = r.showSigner;
   if (Array.isArray(r.extraCols)) out.extraCols = r.extraCols.filter((c): c is GateExtraCol => c === 'phone' || c === 'vehicle_plate');
+  const h = normalizeHeader(r.header);
+  if (h) out.header = h;
   return out;
 }
 

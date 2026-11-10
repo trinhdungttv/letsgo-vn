@@ -681,7 +681,7 @@ export interface Quote {
   referral_terms?: { minDays: number; guaranteeDays: number } | null;
 }
 
-export type Page = 'dashboard' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans'
+export type Page = 'dashboard' | 'overview' | 'clients' | 'client-detail' | 'branches' | 'finance' | 'market' | 'reports' | 'users' | 'history' | 'crm-dash' | 'crm-board' | 'crm-leads' | 'crm-prods' | 'crm-deal' | 'crm-pipeline' | 'admin-settings' | 'workspace' | 'loans'
   // Tuyển dụng (module recruit — migration 180)
   | 'recruit'
   // Pháp lý (Workspace → nút "Pháp lý" — migration 201)
@@ -716,6 +716,12 @@ export interface DataHistoryEntry {
   old_data: Record<string, any> | null;
   new_data: Record<string, any> | null;
   changed_fields: string[] | null;
+  /** Người sửa (migration 218) — null với lịch sử cũ / thay đổi từ SQL Editor, script, /api. */
+  actor_id?: string | null;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  /** Mã giao dịch — các dòng cùng 1 lần bấm Lưu có cùng tx_id. */
+  tx_id?: number | null;
 }
 
 export type PermissionAction = 'view' | 'edit' | 'delete' | 'export';

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Home, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark, UserPlus } from 'lucide-react';
+import { Home, Gauge, Briefcase, Building2, Building, DollarSign, MapPin, BarChart3, Users, LogOut, LayoutDashboard, UserCircle2, Package, ChevronRight, ChevronsLeft, ChevronsRight, Network, History, Settings, Landmark, UserPlus } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
@@ -13,6 +13,7 @@ interface SidebarProps {
 
 const NAV_ITEMS: { page: Page; label: string; icon: React.ReactNode }[] = [
   { page: 'dashboard', label: 'Dashboard', icon: <Home size={16} /> },
+  { page: 'overview', label: 'Tổng quan', icon: <Gauge size={16} /> },
   { page: 'workspace', label: 'Workspace', icon: <Briefcase size={16} /> },
   { page: 'clients', label: 'Khách hàng', icon: <Building2 size={16} /> },
   { page: 'recruit', label: 'Tuyển dụng', icon: <UserPlus size={16} /> },

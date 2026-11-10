@@ -6,7 +6,7 @@
 // • Thành viên đi họp (Ban điều hành…): họ tên, giới tính, năm sinh, CCCD, ngày cấp, nơi cấp, địa chỉ thường trú,
 //   chức vụ, SĐT, biển số xe — nhập tay hoặc từ file Excel danh sách vào cổng cũ.
 // • "Danh sách vào cổng" của từng buổi: dựng đúng mẫu công ty, xuất PDF / Excel / In, chèn logo + chữ ký + con dấu.
-// • Pháp nhân + chữ ký + con dấu = quote_entities — DÙNG CHUNG với Phương án giá (sửa ở đây hay ở đó đều như nhau).
+// • Pháp nhân: THÔNG TIN lấy từ Pháp lý (Workspace → Pháp lý); chữ ký + con dấu = quote_entities, DÙNG CHUNG với Phương án giá.
 // Dữ liệu khoá qua meeting_rpc (migration 217) vì có số CCCD; quyền module 'Đi họp' (view = chỉ xem).
 // ============================================================================
 import { useMemo, useState } from 'react';
@@ -16,6 +16,7 @@ import {
 import { ICON_TILE } from '../../components/workspace/wsTheme';
 import EntityManager from '../../components/workspace/costplan/EntityManager';
 import { useEntities } from '../../components/workspace/costplan/useEntities';
+import { entityIndex } from '../../lib/costPlan/legalLink';
 import { meetingLevel, useAuth } from '../../lib/auth';
 import { todayVN } from '../../lib/cskh/dates';
 import { diffDays } from '../../lib/cskh/lunar';
@@ -43,7 +44,7 @@ export default function CskhMeetings() {
   const { token, user, rolePermissions } = useAuth();
   const level = user ? meetingLevel(user.role, rolePermissions) : 'none';
   const { data, loading, error, missing, reload } = useMeetingsData();
-  const { entities, canSign, reload: reloadEntities, err: entityErr } = useEntities(token);
+  const { entities, canSign, canStamp, reload: reloadEntities, err: entityErr } = useEntities(token);
   const canEdit = level === 'full' && data?.me.level === 'full';
   const today = todayVN();
 
@@ -64,7 +65,7 @@ export default function CskhMeetings() {
   const activeMembers = live.filter(m => m.active);
   const inactiveMembers = live.filter(m => !m.active);
   const memberById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
-  const entityById = useMemo(() => new Map(entities.map(e => [e.id, e])), [entities]);
+  const entityById = useMemo(() => entityIndex(entities), [entities]);           // khớp cả id cũ (bộ ký/dấu) lẫn id Pháp lý
 
   const meetings = useMemo(() => data?.meetings ?? [], [data]);
   const isUpcoming = (m: Meeting) => m.status === 'planned' && m.meet_date >= today;
@@ -219,10 +220,10 @@ export default function CskhMeetings() {
           {/* ── Pháp nhân (dùng chung Phương án giá) ── */}
           <Panel title="Pháp nhân · chữ ký · con dấu" count={entities.length}
             icon={<span className={`w-7 h-7 rounded-[8px] ${ICON_TILE.orange} text-white flex items-center justify-center`}><Landmark size={15} /></span>}
-            meta="Dùng chung với Phương án giá — sửa ở đâu cũng là một"
+            meta="Thông tin lấy từ Pháp lý · chữ ký, con dấu dùng chung với Phương án giá"
             action={<button type="button" onClick={() => setEntityDlg(true)} className="text-[13px] font-medium text-[#0066CC] hover:opacity-70 min-h-[36px] md:min-h-0 shrink-0">{canSign ? 'Quản lý' : 'Xem'}</button>}>
             {entityErr ? <p className="text-[12.5px] text-[#B25000] pb-2">{entityErr}</p>
-              : entities.length === 0 ? <Quiet icon={<Landmark size={18} />}>Chưa có pháp nhân{canSign ? ' — bấm “Quản lý” để tạo' : ' — nhờ admin tạo'}.</Quiet>
+              : entities.length === 0 ? <Quiet icon={<Landmark size={18} />}>Chưa có pháp nhân — thêm ở Workspace → Pháp lý.</Quiet>
               : (
                 <div>
                   {entities.map((e, idx) => (
@@ -283,8 +284,10 @@ export default function CskhMeetings() {
           members={members}
           entities={entities}
           canSign={canSign}
+          canStamp={canStamp}
           canEdit={canEdit}
           onOpenEntities={() => setEntityDlg(true)}
+          onEntitiesChanged={reloadEntities}
           onSave={async patch => {
             try { await saveMeeting(gateMeeting.id, patch); } catch (e) { return errMsg(e); }
             void reload();

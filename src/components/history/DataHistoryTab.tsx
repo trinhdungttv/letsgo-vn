@@ -135,16 +135,16 @@ export default function DataHistoryTab({ toast, onReload }: Props) {
           <table className="w-full text-[12.5px]">
             <thead>
               <tr>
-                {['', 'Thời gian', 'Hành động', 'Bảng', 'Bản ghi', 'Cột thay đổi', ''].map((h, i) => (
+                {['', 'Thời gian', 'Người sửa', 'Hành động', 'Bảng', 'Bản ghi', 'Cột thay đổi', ''].map((h, i) => (
                   <th key={i} className="text-left px-3 py-2 text-[11.5px] text-[#888] font-medium bg-[#F9F9F7] whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="text-center py-8 text-[#aaa]">Đang tải...</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-[#aaa]">Đang tải...</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-8 text-[#aaa]">Chưa có thay đổi nào được ghi nhận (nhật ký bắt đầu ghi từ khi chạy migration)</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-[#aaa]">Chưa có thay đổi nào được ghi nhận (nhật ký bắt đầu ghi từ khi chạy migration)</td></tr>
               ) : rows.map(row => {
                 const a = ACTION_UI[row.action];
                 const name = recordName(row.new_data || row.old_data);
@@ -205,6 +205,7 @@ function FragmentRow({ row, a, name, isOpen, onToggle, canRestore, restoring, on
       <tr className="border-b border-[#F0EEE9] align-top cursor-pointer hover:bg-[#FAFAF8]" onClick={onToggle}>
         <td className="px-3 py-2 text-[#aaa]">{isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
         <td className="px-3 py-2 text-[#888] whitespace-nowrap">{new Date(row.happened_at).toLocaleString('vi-VN')}</td>
+        <td className="px-3 py-2 whitespace-nowrap">{row.actor_name ? <span className="font-medium text-[#333]">{row.actor_name}</span> : <span className="text-[#bbb]" title="Thay đổi trước khi bật ghi người sửa (migration 218), hoặc từ SQL Editor / script">Không rõ</span>}</td>
         <td className="px-3 py-2"><span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${a.cls}`}>{a.label}</span></td>
         <td className="px-3 py-2 whitespace-nowrap">{tableLabel(row.table_name)}</td>
         <td className="px-3 py-2">{name || <span className="text-[#aaa] font-mono text-[11px]">{row.record_id.slice(0, 8)}</span>}</td>
@@ -219,7 +220,7 @@ function FragmentRow({ row, a, name, isOpen, onToggle, canRestore, restoring, on
       </tr>
       {isOpen && (
         <tr className="border-b border-[#F0EEE9] bg-[#FAFAF8]">
-          <td colSpan={7} className="px-4 py-3">
+          <td colSpan={8} className="px-4 py-3">
             {row.action === 'UPDATE' && row.changed_fields ? (
               <table className="text-[12px] w-full max-w-2xl">
                 <thead>

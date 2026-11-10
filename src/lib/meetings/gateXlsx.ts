@@ -3,7 +3,7 @@
 // độ rộng cột / chiều cao dòng / cỡ chữ y như mẫu. Logo, chữ ký, con dấu lấy từ PHÁP NHÂN (dùng chung Phương án giá).
 import { containIn, pngSize, stampBoxes, type StampLayout } from '../costPlan/entity';
 import { anchorAt, colPx, rowPx } from '../costPlan/excelFill';
-import { SIGN_HINT, SIGN_ROW_PT, SIGN_ROWS, STAMP_BOX, signStartCol, type GateDoc } from './gateList';
+import { SIGN_HINT, SIGN_ROW_PT, SIGN_ROWS, STAMP_BOX, gateHeaderGeom, signStartCol, type GateDoc } from './gateList';
 
 export { signStartCol };
 
@@ -62,14 +62,18 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
     cell.alignment = { vertical: 'middle', ...align };
   };
 
-  // ── Đầu trang: tên pháp nhân · địa chỉ · điện thoại (cột C → hết), logo ở A1:B3 ──
+  // ── Đầu trang: tên pháp nhân · địa chỉ · điện thoại (cột C → hết), logo neo từ ô A1 — cỡ / vị trí theo doc.header ──
   const head = Math.min(3, N);
-  next(30); put(r, head, N, doc.companyName, { bold: true, size: 16 }, { horizontal: 'left', indent: 1 }); frame(r, { top: 'thick' });
-  next(24); put(r, head, N, doc.address, { size: 12 }, { horizontal: 'left', indent: 1 }); frame(r);
-  next(24); put(r, head, N, doc.phone, { bold: true, size: 12 }, { horizontal: 'left', indent: 1 }); frame(r);
-  next(24); frame(r, { bottom: 'medium' });
-  next(9.75); frame(r);
-  next(45.75); put(r, 1, N, doc.title, { bold: true, size: 24 }, { horizontal: 'center' }); frame(r);
+  const g = gateHeaderGeom(doc.header);
+  const hAlign: Partial<import('exceljs').Alignment> = g.align === 'center' ? { horizontal: 'center' } : { horizontal: g.align, indent: g.indent };
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  if (g.padTop > 0) { next(r2(g.padTop)); frame(r, { top: 'thick' }); }
+  next(r2(g.nameH)); put(r, head, N, doc.companyName, { bold: true, size: r2(g.nameSize) }, hAlign); frame(r, g.padTop > 0 ? {} : { top: 'thick' });
+  next(r2(g.lineH)); put(r, head, N, doc.address, { size: r2(g.lineSize) }, hAlign); frame(r);
+  next(r2(g.lineH)); put(r, head, N, doc.phone, { bold: true, size: r2(g.lineSize) }, hAlign); frame(r);
+  next(r2(g.tail)); frame(r, { bottom: 'medium' });
+  next(r2(g.titleGap)); frame(r);
+  next(r2(g.titleH)); put(r, 1, N, doc.title, { bold: true, size: r2(g.titleSize) }, { horizontal: 'center' }); frame(r);
   if (doc.recipient) { next(22); put(r, 1, N, doc.recipient, { bold: true, size: 13 }, { horizontal: 'center' }); frame(r); }
   if (doc.visit) { next(22); put(r, 1, N, doc.visit, { italic: true, size: 12 }, { horizontal: 'center', wrapText: true }); frame(r); }
   next(7.5); frame(r);
@@ -121,9 +125,9 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
     });
   };
   if (img.logo) {
-    // Mẫu: logo 143×100px cách mép trái 12px, mép trên 6px
-    const box = containIn({ x: 12, y: 6, w: 143, h: 100 }, pngSize(img.logo));
-    pic(img.logo, { c: 1, r: 1, ...box });
+    // Mẫu: logo 143×100px cách mép trái 12px, mép trên 6px — phóng / dời theo doc.header. Ảnh giữ tỉ lệ, sát góc trên-trái khung.
+    const box = containIn(g.logo, pngSize(img.logo));
+    pic(img.logo, { c: 1, r: 1, x: g.logo.x, y: g.logo.y, w: box.w, h: box.h });
   }
   if (img.signature || img.seal) {
     let blockW = 0;

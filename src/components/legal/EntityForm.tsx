@@ -75,14 +75,15 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
     const token = getStoredSessionToken();
     if (!token) { toast('Phiên đăng nhập hết hạn — đăng nhập lại'); return; }
     try {
-      const r = await listEntities(token);
-      if (!r.entities.length) toast('Phương án giá chưa có pháp nhân nào');
-      setQuotes(r.entities);
+      // Chỉ những pháp nhân báo giá CHƯA có trong Pháp lý (đã có thì giấy tờ tự lấy thông tin từ đây rồi)
+      const left = (await listEntities(token)).entities.filter(e => !e.legal_id);
+      if (!left.length) toast('Không còn pháp nhân báo giá nào chưa có trong Pháp lý');
+      setQuotes(left);
     } catch (e) { toast((e as Error).message); }
   };
   const pickQuote = (q: QuoteEntity) => {
     setD(x => ({
-      ...x, quote_entity_id: q.id,
+      ...x, quote_entity_id: q.stamp_id ?? q.id,
       name: x.name || q.data.name || q.label, short_name: x.short_name || q.label, address: x.address || q.data.address,
       tax_code: x.tax_code || q.data.taxCode, phone: x.phone || q.data.phone, email: x.email || q.data.email,
       website: x.website || q.data.website, legal_rep: x.legal_rep || q.data.signerName, legal_rep_title: x.legal_rep_title || q.data.signerTitle,

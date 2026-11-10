@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, X, Shield, Check, Lock, Unlock, Inbox, Image, Upl
 import PageHeader from '../components/PageHeader';
 import type { AppUser, PermissionRequest, PermissionAction, RolePermissionLevel } from '../lib/types';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../lib/auth';
+import { useAuth, isReadOnlyRole } from '../lib/auth';
 import { logActivity } from '../lib/audit';
 import { ROLE_LABELS, ROLE_COLORS } from '../lib/constants';
 import { getAppLogoUrl, setAppLogoUrl } from '../lib/appSettings';
@@ -33,9 +33,11 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
 };
 
 // 'Tuyển dụng' ẩn khi module tắt (featureFlags.ts) — dòng quyền trong DB vẫn giữ nguyên
-const MODULES = ['Dashboard', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Đi họp', ...(RECRUIT_ENABLED ? ['Tuyển dụng'] : []), 'Pháp lý', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
+const MODULES = ['Dashboard', 'Tổng quan', 'Workspace', 'Khách hàng', 'Chi nhánh', 'Tài chính', 'Thị trường', 'Báo giá', 'CRM', 'Đi họp', ...(RECRUIT_ENABLED ? ['Tuyển dụng'] : []), 'Pháp lý', 'Báo cáo', 'Quản lý Users', 'Lịch sử', 'Bảng KD', 'Admin'];
 
 const LEVEL_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'view', view: 'none', none: 'full' };
+// Vai trò chỉ xem (Ban Điều Hành) không bao giờ được ghi → chỉ đổi qua lại Chỉ xem ⇄ Không có quyền
+const READONLY_CYCLE: Record<RolePermissionLevel, RolePermissionLevel> = { full: 'none', view: 'none', none: 'view' };
 
 // Modules an admin must keep at least "view" access to, so they can't lock themselves out of user/permission management.
 const LOCKED_FOR_ADMIN = ['Admin', 'Quản lý Users'];
@@ -52,7 +54,7 @@ export default function AdminPage({ toast }: AdminPageProps) {
 
   const handleToggleLevel = async (role: string, mod: string) => {
     const current = matrixLevel(role, mod);
-    let next = LEVEL_CYCLE[current];
+    let next = (isReadOnlyRole(role) ? READONLY_CYCLE : LEVEL_CYCLE)[current];
     if (role === 'admin' && LOCKED_FOR_ADMIN.includes(mod) && next === 'none') next = LEVEL_CYCLE[next];
     const key = `${role}-${mod}`;
     if (!token) { toast('Phiên đăng nhập hết hạn, vui lòng đăng nhập lại'); return; }
@@ -431,6 +433,7 @@ export default function AdminPage({ toast }: AdminPageProps) {
           <div className="bg-white border border-[#E8E7E2] rounded-[10px] overflow-hidden">
             <div className="px-4 py-2.5 border-b border-[#E8E7E2] text-[12.5px] font-semibold text-[#111]">Ma trận phân quyền theo vai trò</div>
             <div className="px-4 pt-2.5 text-[11px] text-[#888]">✓ Toàn quyền &nbsp;·&nbsp; 👁 Chỉ xem &nbsp;·&nbsp; ✗ Không có quyền — bấm vào ô để thay đổi</div>
+            <div className="px-4 pt-1 text-[11px] text-[#5856D6]">Ban Điều Hành luôn ở chế độ <b>chỉ xem toàn app</b> (database chặn mọi thêm / sửa / xoá) — ô ở cột này chỉ quyết định thấy trang nào. Nên giữ các trang tổng thể: Dashboard · Tổng quan · Báo cáo.</div>
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">
                 <thead>
@@ -448,7 +451,8 @@ export default function AdminPage({ toast }: AdminPageProps) {
                     <tr key={mod} className="border-b border-[#F0EEE9] last:border-0">
                       <td className="px-3 py-2 text-[#555] font-medium">{mod}</td>
                       {Object.keys(ROLE_LABELS).map(role => {
-                        const level = matrixLevel(role, mod);
+                        const raw = matrixLevel(role, mod);
+                        const level = isReadOnlyRole(role) && raw === 'full' ? 'view' : raw;
                         const key = `${role}-${mod}`;
                         return (
                           <td key={role} className="px-3 py-2 text-center">

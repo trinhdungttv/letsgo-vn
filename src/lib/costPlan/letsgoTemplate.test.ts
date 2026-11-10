@@ -23,7 +23,7 @@ const data: PlanData = {
   ],
 };
 const entity = (over: Partial<QuoteEntity> = {}): QuoteEntity => ({
-  id: 'e', label: 'LG', layout: DEFAULT_LAYOUT, logo: null, signature: png(400, 160), seal: png(300, 300), has_signature: true, has_seal: true, sort_order: 0, updated_by_name: null, updated_at: null,
+  id: 'e', label: 'LG', layout: DEFAULT_LAYOUT, logo: null, signature: png(400, 160), seal: png(300, 300), has_signature: true, has_seal: true, sort_order: 0, stamp_id: null, legal_id: null, legal: null, own: { label: '', data: {} as QuoteEntity['data'], logo: null }, logo_source: null, updated_by_name: null, updated_at: null,
   data: { name: "CÔNG TY CỔ PHẦN LET'S GO VN", address: '', taxCode: '', phone: '', email: '', website: '', signerName: 'Nguyễn Văn Tuấn', signerTitle: 'Tổng giám đốc', place: 'Đồng Nai' },
   ...over,
 });

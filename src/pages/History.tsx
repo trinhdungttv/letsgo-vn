@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RotateCcw, Archive, Database, Clock, HardDriveDownload, ListChecks, Trash2, AlertTriangle } from 'lucide-react';
+import { RotateCcw, Archive, Database, Clock, HardDriveDownload, ListChecks, Trash2, AlertTriangle, UserRoundSearch, ShieldAlert } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
@@ -9,12 +9,17 @@ import { countClientImpact, purgeClient, type ClientImpact } from '../lib/client
 import DataHistoryTab from '../components/history/DataHistoryTab';
 import TimeMachineTab from '../components/history/TimeMachineTab';
 import BackupTab from '../components/history/BackupTab';
+import StaffActivityTab from '../components/history/StaffActivityTab';
+import DataAlertsTab from '../components/history/DataAlertsTab';
 import type { AuditLogEntry, AuditAction, Client } from '../lib/types';
 import { useBranchLookup } from '../hooks/useBranchLookup';
 
 interface Props {
   toast: (msg: string) => void;
   onReload: () => void;
+  /** Mở thẳng 1 tab (VD popup cảnh báo khi admin đăng nhập → 'alerts'). */
+  initialTab?: HistoryTab | null;
+  onInitialTabConsumed?: () => void;
 }
 
 const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {
@@ -25,12 +30,19 @@ const ACTION_LABELS: Record<AuditAction, { label: string; cls: string }> = {
 
 const PAGE_SIZE = 50;
 
-type Tab = 'activity' | 'db' | 'timemachine' | 'backup' | 'archive';
+export type HistoryTab = 'alerts' | 'staff' | 'activity' | 'db' | 'timemachine' | 'backup' | 'archive';
+type Tab = HistoryTab;
 
-export default function History({ toast, onReload }: Props) {
+export default function History({ toast, onReload, initialTab, onInitialTabConsumed }: Props) {
   const { labelOf } = useBranchLookup();
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>('activity');
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'activity');
+  const [openAlerts, setOpenAlerts] = useState<number | null>(null);
+  useEffect(() => {
+    if (!initialTab) return;
+    setTab(initialTab);
+    onInitialTabConsumed?.();
+  }, [initialTab, onInitialTabConsumed]);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -144,6 +156,8 @@ export default function History({ toast, onReload }: Props) {
   };
 
   const TABS: { key: Tab; label: string; icon: any }[] = [
+    { key: 'alerts', label: `Cảnh báo${openAlerts ? ` (${openAlerts})` : ''}`, icon: ShieldAlert },
+    { key: 'staff', label: 'Nhật ký nhân viên', icon: UserRoundSearch },
     { key: 'activity', label: 'Lịch sử thao tác', icon: ListChecks },
     { key: 'db', label: 'Nhật ký Database', icon: Database },
     { key: 'timemachine', label: 'Cỗ máy thời gian', icon: Clock },
@@ -163,6 +177,8 @@ export default function History({ toast, onReload }: Props) {
           ))}
         </div>
 
+        {tab === 'alerts' && <DataAlertsTab toast={toast} onReload={onReload} onOpenCount={setOpenAlerts} />}
+        {tab === 'staff' && <StaffActivityTab toast={toast} onReload={onReload} />}
         {tab === 'db' && <DataHistoryTab toast={toast} onReload={onReload} />}
         {tab === 'timemachine' && <TimeMachineTab toast={toast} onReload={onReload} />}
         {tab === 'backup' && <BackupTab toast={toast} />}

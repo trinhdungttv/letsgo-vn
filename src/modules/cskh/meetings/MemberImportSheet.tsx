@@ -55,7 +55,7 @@ export function MemberImportSheet({ members, onImport, onClose }: {
     <Sheet label="Nhập thành viên từ Excel" onClose={onClose} wide="xl">
       <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F]">Nhập từ file Excel</h2>
       <p className="text-[12.5px] text-[#86868B] mt-0.5 mb-3 leading-snug">
-        Chọn file danh sách đăng ký ra vào cổng đã gửi trước đây (hoặc bảng có các cột Họ và Tên · Giới tính · Năm sinh · Số CMND/CCCD · Ngày cấp · Nơi cấp · Địa chỉ thường trú · Chức vụ).
+        Chọn file danh sách đăng ký ra vào cổng đã gửi trước đây (hoặc bảng có các cột Họ và Tên · Giới tính · Năm sinh · Số CCCD · Ngày cấp · Nơi cấp · Địa chỉ thường trú · Chức vụ).
         Trùng số CCCD → cập nhật người đó, ô trống trong file không xoá dữ liệu đang có.
       </p>
       <input ref={fileRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden"

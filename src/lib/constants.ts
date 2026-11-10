@@ -31,8 +31,8 @@ export const LABOR_AVAILABILITY: Record<string, { label: string; color: string }
 export const ROLE_LABELS: Record<string, string> = {
   admin: 'Quản trị viên',
   ketoan: 'Kế Toán',
-  kinhdoanh: 'Kinh Doanh BD',
-  bdh: 'Ban Điều Hành',
+  kinhdoanh: 'Phòng Kinh Doanh',
+  bdh: 'Ban Điều Hành (chỉ xem)',
 };
 
 export const ROLE_COLORS: Record<string, string> = {

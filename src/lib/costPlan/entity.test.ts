@@ -52,7 +52,7 @@ describe('kích thước ảnh', () => {
 });
 
 describe('chọn pháp nhân', () => {
-  const mk = (id: string): QuoteEntity => ({ id, label: id, data: emptyProfile(), layout: DEFAULT_LAYOUT, logo: null, signature: null, seal: null, has_signature: false, has_seal: false, sort_order: 0, updated_by_name: null, updated_at: null });
+  const mk = (id: string): QuoteEntity => ({ id, label: id, data: emptyProfile(), layout: DEFAULT_LAYOUT, logo: null, signature: null, seal: null, has_signature: false, has_seal: false, sort_order: 0, stamp_id: null, legal_id: null, legal: null, own: { label: '', data: {} as QuoteEntity['data'], logo: null }, logo_source: null, updated_by_name: null, updated_at: null });
   const list = [mk('a'), mk('b'), mk('c')];
   it('ưu tiên cái đã chọn cho báo giá, rồi cái dùng lần trước, rồi cái đầu', () => {
     expect(pickEntity(list, 'b', 'c')!.id).toBe('b');

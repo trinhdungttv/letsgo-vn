@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3, Home, Building2, Building, Briefcase, DollarSign, MapPin, Landmark, History,
-  LayoutDashboard, Network, UserCircle2, UserPlus, Package, Settings, Users,
+  LayoutDashboard, Network, UserCircle2, Gauge, UserPlus, Package, Settings, Users,
   LogOut, MoreHorizontal, X, SlidersHorizontal, ChevronRight, ChevronLeft, GripVertical, Minus, Pin, Check, Scale,
 } from 'lucide-react';
 import type { Page } from '../lib/types';
-import { useAuth, canAccess } from '../lib/auth';
+import { useAuth, canAccess, isReadOnlyRole } from '../lib/auth';
 import { OFFICE_ICON, OFFICE_NAV, isOfficePage } from '../modules/office-rental/pages';
 import { BTN_PRIMARY, BTN_TINTED, ICON_TILE } from './workspace/wsTheme';
 
@@ -19,6 +19,7 @@ interface MobileNavProps {
 const MOBILE_MENU: { page: Page; label: string; icon: React.ReactNode; tile: keyof typeof ICON_TILE }[] = [
   { page: 'reports',        label: 'Báo cáo',    icon: <BarChart3 size={21} />,       tile: 'indigo' },
   { page: 'dashboard',      label: 'Dashboard',  icon: <Home size={21} />,            tile: 'blue' },
+  { page: 'overview',       label: 'Tổng quan',  icon: <Gauge size={21} />,           tile: 'indigo' },
   { page: 'clients',        label: 'Khách hàng', icon: <Building2 size={21} />,       tile: 'teal' },
   { page: 'recruit',        label: 'Tuyển dụng', icon: <UserPlus size={21} />,        tile: 'teal' },
   { page: 'workspace',      label: 'Workspace',  icon: <Briefcase size={21} />,       tile: 'blue' },
@@ -45,6 +46,8 @@ const LIST_TILE = 'w-8 h-8 rounded-[8px] text-white flex items-center justify-ce
 const GROUP = 'bg-white rounded-[12px] overflow-hidden';
 
 const DEFAULT_PINS: Page[] = ['reports', 'dashboard', 'clients', 'workspace'];
+/** Ban Điều Hành (chỉ xem) chỉ mở được vài trang tổng thể → ghim sẵn đúng các trang đó. */
+const READONLY_PINS: Page[] = ['overview', 'dashboard', 'reports'];
 const MAX_PINS = 4;
 
 // Trang con quy về mục nav cha để highlight đúng tab.
@@ -73,6 +76,7 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(pinsKey(user?.username));
+      if (!raw && isReadOnlyRole(user?.role)) setPins(READONLY_PINS);
       if (raw) {
         // Ghim cũ của từng trang Văn phòng Orient → quy về mục gộp 'office' (bỏ trùng);
         // ghim "CRM" cũ (Dashboard CRM) → nay "CRM" là Leads nên chuyển sang 'crm-leads';
@@ -82,7 +86,7 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
         if (parsed.length) setPins(parsed.slice(0, MAX_PINS));
       }
     } catch { /* giữ mặc định */ }
-  }, [user?.username]);
+  }, [user?.username, user?.role]);
 
   const savePins = (next: Page[]) => {
     setPins(next);

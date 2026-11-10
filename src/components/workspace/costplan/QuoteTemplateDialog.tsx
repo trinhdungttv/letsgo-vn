@@ -8,7 +8,7 @@ import { STALE_BUILD_MSG, errorText, reloadApp } from '../../../lib/appVersion';
 import { useAuth } from '../../../lib/auth';
 import { logActivity } from '../../../lib/audit';
 import {
-  QUOTE_TEMPLATE_MAX_BYTES, deleteQuoteTemplate, getQuoteTemplateFile, listQuoteTemplates, saveEntity, saveQuoteTemplate, type QuoteTemplateRow,
+  QUOTE_TEMPLATE_MAX_BYTES, deleteQuoteTemplate, getQuoteTemplateFile, listQuoteTemplates, saveEntityLayout, saveQuoteTemplate, type QuoteTemplateRow,
 } from '../../../lib/costPlan/api';
 import {
   FILL_TOKENS, LANG_LABEL, applyEditsToTemplate, buildFillValues, fillExcelTemplate, inspectTemplate, type FillReport, type TemplateLang, type TemplateVersion,
@@ -26,6 +26,7 @@ import EntityManager, { Slider } from './EntityManager';
 import { F, Section } from './QuoteDocDialog';
 import SheetPreview, { SHEET_PAGE, sheetScale } from './SheetPreview';
 import { lastEntityId, rememberEntity, useEntities } from './useEntities';
+import { useStampConsent, useStampImages } from './useStampImages';
 import { FONT, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, field, labelCls } from './ui';
 
 const NO_VERSIONS: TemplateVersion[] = [];
@@ -96,20 +97,34 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
 
 
   // ── Pháp nhân + chữ ký / con dấu / logo (mặc định TẮT; chỉ admin có ảnh chữ ký & con dấu) ──
-  const { entities, canSign: isAdmin, loading: entLoading, err: entErr, reload: reloadEntities } = useEntities(token);
+  const { entities, canSign: isAdmin, canStamp, loading: entLoading, err: entErr, reload: reloadEntities } = useEntities(token);
   const entity = useMemo(() => pickEntity(entities, doc.entityId, lastEntityId()), [entities, doc.entityId]);
   const [entityDlg, setEntityDlg] = useState(false);
   const chooseEntity = (id: string) => { rememberEntity(id); setDoc({ entityId: id }); };
   const [signOn, setSignOn] = useState(false);
   const [sealOn, setSealOn] = useState(false);
   const [logoOn, setLogoOn] = useState(false);
-  const sigAvail = isAdmin && !!entity?.signature, sealAvail = isAdmin && !!entity?.seal, logoAvail = !!entity?.logo;
+  // Admin có ảnh sẵn; nhân viên bật thì xác nhận + admin được báo ngay (useStampImages, migration 219)
+  const canUse = isAdmin || canStamp;
+  const sigAvail = canUse && !!entity?.has_signature, sealAvail = canUse && !!entity?.has_seal, logoAvail = !!entity?.logo;
+  const consent = useStampConsent(isAdmin);
+  const stamp = useStampImages({
+    token, entity, canSign: isAdmin, canStamp, wantSig: signOn && sigAvail, wantSeal: sealOn && sealAvail, purpose: 'quote_excel',
+    context: `Báo giá theo mẫu Excel ${doc.number || ''} gửi ${doc.customer.name || meta?.company || '—'}`.replace(/\s+/g, ' '),
+  });
+  const toggleStamp = (kind: 'sig' | 'seal', on: boolean) => {
+    if (on && !consent('báo giá', entity?.label ?? '')) return;
+    if (kind === 'sig') setSignOn(on); else setSealOn(on);
+  };
   const [layoutEdit, setLayoutEdit] = useState<StampLayout | null>(null);     // chỉnh vị trí RIÊNG cho lần xuất này
   useEffect(() => { setLayoutEdit(null); }, [entity?.id]);
   const layout = layoutEdit ?? entity?.layout ?? DEFAULT_LAYOUT;
   const editLayout = (p: Partial<StampLayout>) => setLayoutEdit({ ...layout, ...p });
-  const stampWanted = (signOn && sigAvail) || (sealOn && sealAvail);
-  const signHint = !token ? 'Đăng nhập để dùng chữ ký / con dấu.' : entLoading ? '' : !entity ? 'Chưa có pháp nhân — bấm “Quản lý pháp nhân” để tạo.' : !isAdmin ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.signature && !entity.seal) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.' : '';
+  const sigOn = signOn && sigAvail && !!stamp.signature, sealUse = sealOn && sealAvail && !!stamp.seal;
+  const stampWanted = sigOn || sealUse;
+  const signHint = !token ? 'Đăng nhập để dùng chữ ký / con dấu.' : entLoading ? '' : !entity ? 'Chưa có pháp nhân — thêm ở Workspace → Pháp lý.'
+    : !canUse ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.has_signature && !entity.has_seal) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.'
+    : stamp.err ? stamp.err : !isAdmin ? 'Dùng chữ ký / con dấu sẽ báo ngay cho quản trị viên.' : '';
 
   // ── Sửa chữ trực tiếp trên bản xem trước (vd bản dịch song ngữ sai) ──
   const [editMode, setEditMode] = useState(false);
@@ -154,10 +169,10 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     try {
       const buf = await sourceBuf();
       // ảnh chữ ký / con dấu được làm rõ + đậm màu theo mức đã chọn (scan nhạt, mờ → giống bản ký, đóng dấu thật)
-      const ent = entity && (signOn || sealOn)
-        ? { ...entity, signature: await enhanceInk(entity.signature, 'sig', layout.sigInk), seal: await enhanceInk(entity.seal, 'seal', layout.sealInk) }
+      const ent = entity && (sigOn || sealUse)
+        ? { ...entity, signature: await enhanceInk(stamp.signature, 'sig', layout.sigInk), seal: await enhanceInk(stamp.seal, 'seal', layout.sealInk) }
         : entity;
-      const vals = buildFillValues(data, result, meta ?? {}, { entity: ent, doc, use: { signature: signOn && sigAvail, seal: sealOn && sealAvail, logo: logoOn && logoAvail } });
+      const vals = buildFillValues(data, result, meta ?? {}, { entity: ent, doc, use: { signature: sigOn, seal: sealUse, logo: logoOn && logoAvail } });
       const res = await fillExcelTemplate(buf, { ...vals, layout, edits: sheetEdits }, { sheet: chosen.sheet });
       const m = await buildSheetModel(res.output, chosen.sheet);
       if (my !== seq.current) return null;                               // đã có lần tính mới hơn
@@ -165,7 +180,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       return res;
     } catch (e) { if (my === seq.current) { setPvErr(errorText(e)); setModel(null); out.current = null; } return null; }
     finally { if (my === seq.current) setPvBusy(false); }
-  }, [chosen, sourceBuf, data, result, meta, entity, doc, signOn, sealOn, logoOn, sigAvail, sealAvail, logoAvail, layout, sheetEdits]);
+  }, [chosen, sourceBuf, data, result, meta, entity, doc, sigOn, sealUse, stamp.signature, stamp.seal, logoOn, logoAvail, layout, sheetEdits]);
 
   useEffect(() => {
     if (pending || editing || !chosen) return;
@@ -199,13 +214,14 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     const name = oneOff ? oneOff.name : current?.name ?? 'Bao gia';
     return `${name} - ${chosen?.label ?? ''} - ${doc.customer.name || meta?.company || planTitle || 'bao-gia'}${stampWanted ? ' (đã ký)' : ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
   };
-  const afterExport = (how: string) => {
+  const afterExport = (how: string, action: 'pdf' | 'xlsx' | 'print') => {
     if (canEdit && !data.doc) onChange!({ ...data, doc: { ...doc } });          // chốt số báo giá / ngày
     if (chosen) writeLang(chosen.lang);
     if (stampWanted) {
+      stamp.mark(action);
       logActivity({
         user: user ?? null, action: 'update', table: 'cost_plans', recordId: planId ?? '',
-        description: `${how} báo giá theo mẫu Excel ${doc.number} gửi ${doc.customer.name || '—'} có ${[signOn && sigAvail && 'chữ ký', sealOn && sealAvail && 'con dấu'].filter(Boolean).join(' + ')}`,
+        description: `${how} báo giá theo mẫu Excel ${doc.number} gửi ${doc.customer.name || '—'} có ${[sigOn && 'chữ ký', sealUse && 'con dấu'].filter(Boolean).join(' + ')}`,
       });
     }
   };
@@ -220,7 +236,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     setBusy('xlsx'); setError(null);
     try {
       const r = await fresh();
-      if (r) { downloadBlob(new Blob([r.output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${fileBase()}.xlsx`); afterExport('Xuất Excel'); }
+      if (r) { downloadBlob(new Blob([r.output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${fileBase()}.xlsx`); afterExport('Xuất Excel', 'xlsx'); }
     } catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
@@ -236,14 +252,14 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       if (r && hostRef.current) {
         await waitPaint();
         downloadBlob(await renderElementToPdf(hostRef.current, { landscape: !!model?.landscape }), `${fileBase()}.pdf`);
-        afterExport('Xuất PDF');
+        afterExport('Xuất PDF', 'pdf');
       }
     } catch (e) { setError(errorText(e, 'Không tạo được PDF: ')); }
     setBusy(null);
   };
   const doPrint = async () => {
     setBusy('print'); setError(null);
-    try { const r = await fresh(); if (r) { await waitPaint(); afterExport('In'); setTimeout(() => { window.print(); setBusy(null); }, 80); return; } }
+    try { const r = await fresh(); if (r) { await waitPaint(); afterExport('In', 'print'); setTimeout(() => { window.print(); setBusy(null); }, 80); return; } }
     catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
@@ -357,7 +373,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
   const saveLayoutDefault = async () => {
     if (!token || !entity || !layoutEdit) return;
     setBusy('Đang lưu…'); setError(null);
-    try { await saveEntity(token, { id: entity.id, label: entity.label, data: entity.data, layout: layoutEdit }); await reloadEntities(); setLayoutEdit(null); }
+    try { await saveEntityLayout(token, entity, layoutEdit); await reloadEntities(); setLayoutEdit(null); }
     catch (e) { setError(errorText(e)); }
     setBusy(null);
   };
@@ -504,8 +520,9 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
           </F>
           {entity && <div className="text-[11.5px] text-[#86868b] leading-snug">{entity.data.name || '(chưa có tên công ty)'}{entity.data.taxCode ? ` · MST ${entity.data.taxCode}` : ''}{entity.has_signature ? ' · có chữ ký' : ''}{entity.has_seal ? ' · có con dấu' : ''}</div>}
           <div className="space-y-2.5 pt-1">
-            <label className={`flex items-center gap-2 text-[13px] ${sigAvail ? '' : 'opacity-50'}`}><Switch on={signOn && sigAvail} disabled={!sigAvail} onChange={setSignOn} />Chèn chữ ký</label>
-            <label className={`flex items-center gap-2 text-[13px] ${sealAvail ? '' : 'opacity-50'}`}><Switch on={sealOn && sealAvail} disabled={!sealAvail} onChange={setSealOn} />Chèn con dấu</label>
+            <label className={`flex items-center gap-2 text-[13px] ${sigAvail ? '' : 'opacity-50'}`}><Switch on={signOn && sigAvail} disabled={!sigAvail} onChange={v => toggleStamp('sig', v)} />Chèn chữ ký</label>
+            <label className={`flex items-center gap-2 text-[13px] ${sealAvail ? '' : 'opacity-50'}`}><Switch on={sealOn && sealAvail} disabled={!sealAvail} onChange={v => toggleStamp('seal', v)} />Chèn con dấu</label>
+            {stamp.busy && <Loader2 size={13} className="animate-spin text-[#86868b]" />}
             <label className={`flex items-center gap-2 text-[13px] ${logoAvail ? '' : 'opacity-50'}`}><Switch on={logoOn && logoAvail} disabled={!logoAvail} onChange={setLogoOn} />Chèn logo <span className="text-[11.5px] text-[#86868b]">(vào ô {'{{logo}}'})</span></label>
             {signHint && <div className="text-[11.5px] text-[#86868b]">{signHint}</div>}
           </div>
@@ -526,7 +543,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
               </>)}
               {layoutEdit && (
                 <div className="flex gap-4 pt-1">
-                  <button type="button" onClick={saveLayoutDefault} disabled={!!busy} className={btnLink + ' !text-[12px]'}>Lưu làm vị trí mặc định của pháp nhân</button>
+                  {isAdmin && <button type="button" onClick={saveLayoutDefault} disabled={!!busy} className={btnLink + ' !text-[12px]'}>Lưu làm vị trí mặc định của pháp nhân</button>}
                   <button type="button" onClick={() => setLayoutEdit(null)} className="text-[12px] font-medium text-[#6e6e73]">Hoàn tác</button>
                 </div>
               )}
