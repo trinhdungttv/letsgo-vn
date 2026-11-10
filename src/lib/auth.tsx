@@ -177,6 +177,21 @@ export function legalLevel(role: string, rolePermissions?: RolePermission[]): 'f
   return role === 'bdh' ? 'full' : (FALLBACK_RULES[role] || []).includes('legal') ? 'view' : 'none';
 }
 
+/** Tên module Đi họp (CSKH → tab "Đi họp") trong ma trận phân quyền (migration 217). */
+export const MEETING_MODULE = 'Đi họp';
+
+/**
+ * Mức quyền tab Đi họp (danh sách thành viên có số CCCD): 'full' = thêm / sửa / xoá, 'view' = chỉ xem. Admin luôn 'full'.
+ * Chưa có dòng quyền (chưa chạy migration 217) → bdh / kinhdoanh sửa, vai trò khác không thấy — DB (meeting_rpc) vẫn là chốt chặn cuối.
+ */
+export function meetingLevel(role: string, rolePermissions?: RolePermission[]): 'full' | 'view' | 'none' {
+  if (role === 'admin') return 'full';
+  const perm = rolePermissions?.find(p => p.role === role && p.module === MEETING_MODULE);
+  if (perm) return perm.level;
+  if (rolePermissions?.length && rolePermissions.some(p => p.module === MEETING_MODULE)) return 'none';
+  return role === 'bdh' || role === 'kinhdoanh' ? 'full' : 'none';
+}
+
 /**
  * Quyền xem tệp Sale / CTV (Mạng lưới Sale, migration 178) bên trong trang CSKH — không còn là trang riêng
  * (gộp 31/10/2026) nhưng giữ khoá này làm quyền. Chốt chỉ admin — danh sách Sale muốn chiêu mộ là thông tin nhạy cảm.

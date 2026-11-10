@@ -5,7 +5,7 @@ import type { CskhSpace } from '../../lib/cskh/space';
 import type { Client } from '../../lib/types';
 import type { CskhData } from './data/api';
 
-export type CskhTabKey = 'dashboard' | 'matrix' | 'map' | 'cadence' | 'log' | 'events';
+export type CskhTabKey = 'dashboard' | 'matrix' | 'map' | 'cadence' | 'log' | 'events' | 'meetings';
 
 export interface CskhContextValue {
   /** Khu vực đang mở: khách hàng (CSKH) / Mạng lưới Sale. */

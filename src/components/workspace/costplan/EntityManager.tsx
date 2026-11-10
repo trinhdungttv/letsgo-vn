@@ -1,4 +1,4 @@
-// Quản lý PHÁP NHÂN gửi báo giá (tối đa 5): mỗi pháp nhân có tên gọi, thông tin công ty, logo, chữ ký, con dấu và cách căn chữ ký/con dấu.
+// Quản lý PHÁP NHÂN (tối đa 5) — DÙNG CHUNG: báo giá ở Phương án giá + danh sách vào cổng ở CSKH → Đi họp: mỗi pháp nhân có tên gọi, thông tin công ty, logo, chữ ký, con dấu và cách căn chữ ký/con dấu.
 // Chỉ admin sửa được; người khác chỉ xem danh sách.
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, Plus, X } from 'lucide-react';
@@ -100,8 +100,8 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
       <div className="bg-white rounded-2xl shadow-[0_24px_80px_rgba(0,0,0,0.28)] w-full max-w-2xl max-h-[92vh] flex flex-col text-[#1d1d1f]">
         <div className="flex items-start justify-between px-6 pt-5 pb-3 shrink-0">
           <div>
-            <div className="text-[19px] font-semibold tracking-tight">Pháp nhân gửi báo giá</div>
-            <div className="text-[12.5px] text-[#86868b] mt-0.5">Mỗi pháp nhân có thông tin, logo, chữ ký, con dấu riêng — chọn khi xuất báo giá (tối đa {MAX_ENTITIES})</div>
+            <div className="text-[19px] font-semibold tracking-tight">Pháp nhân · chữ ký · con dấu</div>
+            <div className="text-[12.5px] text-[#86868b] mt-0.5">Mỗi pháp nhân có thông tin, logo, chữ ký, con dấu riêng (tối đa {MAX_ENTITIES}) — dùng chung cho báo giá ở Phương án giá và danh sách vào cổng ở CSKH → Đi họp</div>
           </div>
           <button onClick={onClose} className="w-8 h-8 -mr-2 rounded-full flex items-center justify-center text-[#6e6e73] hover:bg-[#f5f5f7]"><X size={17} /></button>
         </div>
@@ -124,7 +124,7 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
           {draft && (
             <>
               <F label="Tên gọi (để chọn nhanh)"><input disabled={dis} value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} className={`${field} w-full`} placeholder="vd: Let’s Go VN – TP.HCM" /></F>
-              <F label="Tên công ty (in đầu báo giá)"><input disabled={dis} value={data.name} onChange={e => editData({ name: e.target.value })} className={`${field} w-full`} placeholder="CÔNG TY TNHH …" /></F>
+              <F label="Tên công ty (in đầu báo giá, danh sách vào cổng)"><input disabled={dis} value={data.name} onChange={e => editData({ name: e.target.value })} className={`${field} w-full`} placeholder="CÔNG TY TNHH …" /></F>
               <F label="Địa chỉ"><input disabled={dis} value={data.address} onChange={e => editData({ address: e.target.value })} className={`${field} w-full`} /></F>
               <div className="grid grid-cols-2 gap-3">
                 <F label="Mã số thuế"><input disabled={dis} value={data.taxCode} onChange={e => editData({ taxCode: e.target.value })} className={`${field} w-full`} /></F>

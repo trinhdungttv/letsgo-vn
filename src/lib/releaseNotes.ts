@@ -16,6 +16,17 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-10-cskh-meetings-gate-list',
+    date: '2026-11-10',
+    title: 'CSKH',
+    features: [
+      'Tab mới "Đi họp": lịch họp tại công ty nào, ai tham dự, gặp ai bên khách',
+      'Danh sách Ban điều hành đi họp (CCCD, ngày cấp, chức vụ…) — nhập tay hoặc từ file Excel',
+      'In "Danh sách đăng ký ra vào cổng" đúng mẫu: PDF, Excel, In — có logo, chữ ký, con dấu',
+      'Pháp nhân, chữ ký, con dấu dùng chung với Phương án giá',
+    ],
+  },
+  {
     id: '2026-11-09-profit-split-presets',
     date: '2026-11-09',
     title: 'Phương án giá',

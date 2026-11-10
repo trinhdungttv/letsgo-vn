@@ -33,6 +33,7 @@ import CskhMap from './MapView';
 import CskhCadence from './Cadence';
 import CskhInteractionLog from './InteractionLog';
 import CskhEvents from './Events';
+import CskhMeetings from './Meetings';
 import QuickLogHost from './components/QuickLogHost';
 import { SaleMigrationBanner } from './components/Card';
 import { CarePickerModal } from './components/CarePickerModal';
@@ -180,6 +181,8 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
       {tab === 'cadence' && <CskhCadence />}
       {tab === 'log' && <CskhInteractionLog />}
       {tab === 'events' && <CskhEvents />}
+      {/* Đi họp: chỉ ở tệp Khách hàng (dữ liệu riêng, khoá qua meeting_rpc — migration 217) */}
+      {tab === 'meetings' && space === 'client' && <CskhMeetings />}
 
       {data && profileId && data.rawContacts.has(profileId) && data.contacts.some(c => c.id === profileId) && (
         <ContactProfileModal
