@@ -21,6 +21,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: 'Ảnh 360°',
     features: [
       'Ảnh 360 xem được cả trên máy chưa bật tăng tốc đồ hoạ (trước báo lỗi WebGL)',
+      'Có hướng dẫn bật tăng tốc đồ hoạ ngay trong ảnh để xem mượt như Google Photos',
       'Không có công ty nào trong bán kính đang chọn thì tự nới ra 5–10 km',
     ],
   },

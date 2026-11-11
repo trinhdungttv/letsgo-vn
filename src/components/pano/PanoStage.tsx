@@ -292,12 +292,8 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
       onPointerLeave={e => { if (e.pointerType === 'mouse' && !pointers.current.size) propsRef.current.onHover?.(null); }}
       onContextMenu={e => e.preventDefault()}>
       <canvas key={engine} ref={canvasRef} className="absolute inset-0 w-full h-full block" />
-      {engine === 'soft' && status.s === 'ready' && (
-        <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[5] px-2.5 py-1 rounded-full bg-black/55 text-white/85 text-[11px] pointer-events-none whitespace-nowrap">
-          Máy chưa bật tăng tốc đồ hoạ — đang dùng chế độ xem nhẹ
-        </div>
-      )}
       {status.s === 'ready' && size.w > 0 && overlay(pv)}
+      {engine === 'soft' && status.s === 'ready' && <SoftModeNotice />}
       {status.s === 'loading' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/80 text-[13px] pointer-events-none">
           <Loader2 size={22} className="animate-spin" /> {status.msg}
@@ -316,3 +312,31 @@ const PanoStage = forwardRef<PanoStageHandle, PanoStageProps>(function PanoStage
 });
 
 export default PanoStage;
+
+/** Đang vẽ bằng CPU (máy không có WebGL): dòng báo nhỏ + cách bật tăng tốc đồ hoạ để xem mượt như Google Photos. */
+function SoftModeNotice() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div data-ui className="absolute left-1/2 -translate-x-1/2 bottom-3 z-[6] flex flex-col items-center gap-2 max-w-[calc(100%-24px)]">
+      {open && (
+        <div className="w-[min(440px,calc(100vw-24px))] rounded-2xl bg-white/95 backdrop-blur shadow-2xl p-3.5 text-[12.5px] text-[#333] space-y-2">
+          <div className="flex items-start gap-2">
+            <div className="flex-1 text-[13.5px] font-semibold text-[#111]">Xem mượt như Google Photos</div>
+            <button onClick={() => setOpen(false)} aria-label="Đóng" className="text-[#999] hover:text-[#444] text-[16px] leading-none">×</button>
+          </div>
+          <div>Trình duyệt đang <b>tắt tăng tốc đồ hoạ (WebGL)</b> nên ảnh được vẽ bằng bộ xử lý — xem được nhưng hơi mờ khi kéo. Bật lại 1 lần là mượt:</div>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><b>Chrome / Cốc Cốc / Edge:</b> Cài đặt → Hệ thống → bật <i>“Sử dụng tăng tốc đồ hoạ khi có thể”</i> (Use graphics acceleration when available) → bấm <b>Chạy lại</b>.</li>
+            <li>Vẫn chưa được: gõ <code className="px-1 rounded bg-[#F2F2F7]">chrome://flags/#ignore-gpu-blocklist</code> → chọn <b>Enabled</b> → Chạy lại.</li>
+            <li>Máy Mac: mở app bằng <b>Safari</b> cũng xem mượt ngay.</li>
+          </ol>
+          <div className="text-[11.5px] text-[#888]">Kiểm tra: mở <code className="px-1 rounded bg-[#F2F2F7]">chrome://gpu</code>, dòng “WebGL” ghi <i>Hardware accelerated</i> là đã bật.</div>
+        </div>
+      )}
+      <button onClick={() => setOpen(o => !o)}
+        className="px-3 py-1.5 rounded-full bg-black/60 hover:bg-black/75 text-white/90 text-[11.5px] whitespace-nowrap max-w-full truncate">
+        Máy chưa bật tăng tốc đồ hoạ — đang xem chế độ nhẹ · <span className="underline">Cách xem mượt</span>
+      </button>
+    </div>
+  );
+}
