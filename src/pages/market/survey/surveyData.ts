@@ -149,8 +149,8 @@ export type NavSound = 'off' | 'beep' | 'voice';
 export type NavStrategy = 'tour' | 'nearest';
 export type CompactMode = 'auto' | 'always' | 'never';
 /** Chức năng gắn được lên mép phải ở giao diện gọn */
-export type QuickActionId = 'photo' | 'voice' | 'library' | 'lodging' | 'pano' | 'pause' | 'finish' | 'nav' | 'todo' | 'zoom' | 'fit' | 'satellite' | 'legend' | 'history' | 'settings';
-export const QUICK_ACTION_IDS: QuickActionId[] = ['photo', 'voice', 'library', 'lodging', 'pano', 'pause', 'finish', 'nav', 'todo', 'zoom', 'fit', 'satellite', 'legend', 'history', 'settings'];
+export type QuickActionId = 'photo' | 'voice' | 'library' | 'lodging' | 'pano' | 'pause' | 'finish' | 'nav' | 'plan' | 'todo' | 'zoom' | 'fit' | 'satellite' | 'legend' | 'history' | 'settings';
+export const QUICK_ACTION_IDS: QuickActionId[] = ['photo', 'voice', 'library', 'lodging', 'pano', 'pause', 'finish', 'nav', 'plan', 'todo', 'zoom', 'fit', 'satellite', 'legend', 'history', 'settings'];
 export const NAV_SOUND_LABEL: Record<NavSound, string> = { off: 'Tắt hẳn', beep: 'Chỉ tiếng bíp', voice: 'Giọng đọc' };
 /** Nút loa trên băng dẫn đường: bấm lần lượt Tắt → Bíp → Giọng đọc → Tắt */
 export const nextNavSound = (s: NavSound): NavSound => (s === 'off' ? 'beep' : s === 'beep' ? 'voice' : 'off');

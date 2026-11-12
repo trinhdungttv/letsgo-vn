@@ -13,7 +13,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   Camera, ChevronLeft, ChevronRight, ExternalLink, Factory, History, ImagePlus, Info, Layers, Loader2, LocateFixed, Maximize, Mic, Minus, Navigation, NavigationOff, Pause, PenLine, Play, Plus, RefreshCw, Settings, Square, X, AlertTriangle, MapPin,
-  Star, Home, Orbit, MoreHorizontal,
+  Star, Home, Orbit, MoreHorizontal, ListChecks,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../lib/auth';
@@ -71,6 +71,9 @@ import AddPanoModal from '../../../components/pano/AddPanoModal';
 import { listPanoramas, PanoMissingTable, PANO_MIGRATION_HINT, type MapPanorama } from '../../../lib/pano/panoramas';
 import { listLodgings, LodgingMissingTable, LODGING_MIGRATION_HINT } from '../../../lib/kcnSurvey/lodgings';
 import { lodgingTitle, fmtRent, type Lodging } from '../../../lib/kcnSurvey/lodgingCore';
+import SurveyPlanDialog from './SurveyPlanDialog';
+import { listPlanStops, markStopVisited, PlanMissingTable } from '../../../lib/kcnSurvey/planStopsApi';
+import { stopTitle, type PlanStop } from '../../../lib/kcnSurvey/planStops';
 
 interface Props {
   marketZones: MarketZone[];
@@ -98,7 +101,7 @@ const VOICE_MAX_MS = 15 * 60 * 1000;
 const toLatLngs = (seg: TrackSegment) => seg.map(p => [p[0], p[1]] as [number, number]);
 
 export default function KcnSurveyMode({ marketZones, marketLeads, branches, laborHistory, goTab, onClose, startWith }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [prefs, setPrefs] = useState<SurveyPrefs>(() => loadSurveyPrefs());
   const setPref = useCallback((p: Partial<SurveyPrefs>) => setPrefs(prev => { const next = { ...prev, ...p }; saveSurveyPrefs(next); return next; }), []);
 
@@ -404,6 +407,24 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   }, [fix]);
   const movingCourse = (motion.speed ?? 0) >= 2 ? motion.course : null;
 
+  // ── Kế hoạch ghé công ty (migration 223) ──────────────────────────────────
+  const [planStops, setPlanStops] = useState<PlanStop[]>([]);
+  const [planMissing, setPlanMissing] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  useEffect(() => {
+    listPlanStops().then(setPlanStops).catch(e => { if (e instanceof PlanMissingTable) setPlanMissing(true); });
+  }, []);
+  const tripIdNow = recorder.trip?.id ?? null;
+  const zoneStops = useMemo(() => (zone ? planStops.filter(s => s.zone_id === zone.id) : []), [planStops, zone]);
+  const stopDone = useCallback((s: PlanStop) => !!tripIdNow && s.visited_trip_id === tripIdNow, [tripIdNow]);
+  const planLeft = zoneStops.filter(s => !stopDone(s)).length;
+  /** Tới / đi ngang 1 công ty trong kế hoạch → "đã ghé" trong chuyến đang đi */
+  const markVisited = useCallback((id: string) => {
+    const at = new Date().toISOString();
+    setPlanStops(list => list.map(s => (s.id === id ? { ...s, visited_at: at, visited_trip_id: tripIdNow } : s)));
+    void markStopVisited(id, tripIdNow).catch(() => { /* mất mạng — đánh dấu trong máy, lần sau đi ngang ghi lại */ });
+  }, [tripIdNow]);
+
   // ── Dẫn đường ─────────────────────────────────────────────────────────────
   const graph = useMemo(() => (area && allPieces.length ? buildRoadGraph(allPieces, area.roads) : null), [area, allPieces]);
   const navTargets = useMemo(() => (coverage ? zoneIdx.filter((_, j) => !coverage.covered[j]) : []), [coverage, zoneIdx]);
@@ -415,7 +436,20 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const nav = useSurveyNavigation({
     graph, fix, course: movingCourse, targets: navTargets, scores: navScores,
     preferFactories: prefs.navPreferFactories, strategy: prefs.navStrategy, sound: prefs.navSound, say,
+    onArrive: markVisited,
   });
+  // Đi ngang công ty trong kế hoạch (≤ 50 m) khi đang ghi chuyến → tự đánh dấu đã ghé (công ty đang dẫn tới để dẫn đường tự xử lý)
+  useEffect(() => {
+    if (!fix || recorder.status !== 'recording' || !tripIdNow) return;
+    const navFirst = nav.mode.kind === 'stops' ? nav.mode.stops[0]?.id : null;
+    for (const s of zoneStops) {
+      if (stopDone(s) || s.id === navFirst || distM(fix, s) > 50) continue;
+      markVisited(s.id);
+      nav.dropStop(s.id);
+      say(`✓ Đã ghé ${stopTitle(s)}${planLeft > 1 ? ` — còn ${planLeft - 1} công ty trong kế hoạch` : ' — xong kế hoạch'}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fix]);
 
   // ── Công ty trong KCN chưa đi ngang ───────────────────────────────────────
   const zoneCompanies = useMemo(() => {
@@ -465,6 +499,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     roads: L.LayerGroup; outline: L.LayerGroup; old: L.LayerGroup; highlight: L.LayerGroup; companies: L.LayerGroup; photos: L.LayerGroup; voice: L.LayerGroup;
     /** Nhà trọ 🏠 + ảnh 360° 🌐 (migration 220 / 221) */
     extras: L.LayerGroup;
+    /** Công ty trong kế hoạch ghé (migration 223) — ghim tím có số thứ tự */
+    plan: L.LayerGroup;
     route: L.LayerGroup; curCasing: L.Polyline; curLine: L.Polyline; pos: L.Marker | null;
   } | null>(null);
   const [follow, setFollow] = useState(true);
@@ -496,7 +532,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     const photosLayer = L.layerGroup().addTo(map);
     const voiceLayer = L.layerGroup().addTo(map);
     const extrasLayer = L.layerGroup().addTo(map);
-    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, voice: voiceLayer, extras: extrasLayer, route, curCasing, curLine, pos: null };
+    const planLayer = L.layerGroup().addTo(map);
+    layersRef.current = { street, sat, satLabels, renderer, roads, outline, old, highlight, companies, photos: photosLayer, voice: voiceLayer, extras: extrasLayer, plan: planLayer, route, curCasing, curLine, pos: null };
     map.on('zoomend', () => setZoom(map.getZoom()));
     // Bám theo GPS là bản đồ dịch liên tục → chỉ vẽ lại ghim công ty khi đã dịch quá 1/4 khung nhìn hoặc đổi zoom
     let viewKey = '';
@@ -905,6 +942,29 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     }
   }, [lodgings, panos, prefs.showPhotos]);
 
+  // Ghim kế hoạch ghé: số = thứ tự đang dẫn (hoặc thứ tự trong danh sách), đã ghé ✓ xanh, công ty đang dẫn tới to + viền vàng
+  const openPlanRef = useRef<() => void>(() => {});
+  openPlanRef.current = () => setPlanOpen(true);
+  useEffect(() => {
+    const ly = layersRef.current;
+    if (!ly) return;
+    ly.plan.clearLayers();
+    const navMode = nav.mode.kind === 'stops' ? nav.mode : null;
+    const orderIds = navMode ? navMode.stops.map(x => x.id) : zoneStops.filter(x => !stopDone(x)).map(x => x.id);
+    const base = navMode ? navMode.total - navMode.stops.length : 0;
+    for (const st of zoneStops) {
+      const done = stopDone(st);
+      const k = orderIds.indexOf(st.id);
+      const label = done ? '✓' : k >= 0 ? String(base + k + 1) : '·';
+      const cls = done ? 'kcs-plan-done' : navMode && k === 0 ? 'kcs-plan-next' : '';
+      const size = cls === 'kcs-plan-next' ? 36 : 30;
+      const m = L.marker([st.lat, st.lng], { icon: L.divIcon({ className: `kcs-voice kcs-plan ${cls}`, html: `<span>${label}</span>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: done ? 470 : 520 });
+      m.bindTooltip(escapeMapHtml(`${done ? 'Đã ghé · ' : 'Kế hoạch · '}${stopTitle(st)}`), { direction: 'top', offset: [0, -14], className: 'lgmap-tooltip' });
+      m.on('click', () => openPlanRef.current());
+      m.addTo(ly.plan);
+    }
+  }, [zoneStops, stopDone, nav.mode]);
+
   // Chuyến đang xem lại từ Lịch sử
   const [highlightTrip, setHighlightTrip] = useState<SurveyTrip | null>(null);
   const showTripOnMap = (trip: SurveyTrip, segs: TrackSegment[]) => {
@@ -1264,6 +1324,18 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     if (fix) followNow(Math.max(prefs.followZoom, 16)); else setFollow(true);
     nav.start({ kind: 'point', name: c.name, point: p });
   };
+  /** Dẫn lần lượt các công ty trong kế hoạch theo thứ tự đã tối ưu (hộp Kế hoạch ghé) */
+  const startNavPlan = (ordered: PlanStop[]) => {
+    if (!ordered.length) return;
+    setPlanOpen(false);
+    setPanel('none');
+    if (prefs.compass && compass.status === 'need-permission') void compass.request();
+    clearHighlight();
+    setPinnedKey(null);
+    if (fix) followNow(Math.max(prefs.followZoom, 16)); else setFollow(true);
+    nav.start({ kind: 'stops', stops: ordered.map(s => ({ id: s.id, name: stopTitle(s), point: { lat: s.lat, lng: s.lng } })), total: ordered.length });
+    if (!allPieces.length) say('Chưa có bản đồ đường của KCN — dùng nút “Google Maps” trên băng dẫn đường');
+  };
 
   const tryClose = async () => {
     if (audio.active) {
@@ -1390,7 +1462,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     <SurveyNavBanner mode={nav.mode} status={nav.status} route={nav.route} next={nav.next} after={nav.after}
       distToNext={nav.distToNext} remaining={nav.remaining} toApproach={nav.toApproach} compact={compact}
       sound={prefs.navSound} onSound={v => { setPref({ navSound: v }); nav.previewSound(v); say(`Âm thanh dẫn đường: ${NAV_SOUND_LABEL[v]}`); }}
-      onReplan={nav.replan} onStop={nav.stop} />
+      onReplan={nav.replan} onStop={nav.stop} onSkipStop={nav.skipStop} />
   );
   const companyCard = cardItem && panel === 'none' && (
     <div className={compact ? 'max-h-[46vh] overflow-y-auto overscroll-contain rounded-2xl pointer-events-auto' : ''}>
@@ -1505,6 +1577,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
       case 'nav': return !allPieces.length ? [] : nav.mode.kind === 'off'
         ? [{ id, label: 'Dẫn đường', short: 'Dẫn', icon: <Navigation size={22} fill="currentColor" />, tone: 'green', onClick: startNavAuto }]
         : [{ id, label: 'Tắt dẫn', icon: <NavigationOff size={22} />, onClick: nav.stop }];
+      case 'plan': return zone ? [{ id, label: zoneStops.length ? `Kế hoạch ${zoneStops.length - planLeft}/${zoneStops.length}` : 'Kế hoạch', short: 'K.hoạch', icon: <ListChecks size={22} />, onClick: () => setPlanOpen(true) }] : [];
       case 'todo': return zoneCompanies.length ? [{ id, label: `${todo.never.length} chưa qua`, icon: <Factory size={22} />, onClick: () => setPanel('todo') }] : [];
       case 'zoom': return [
         { id: 'zoom-in', label: 'Phóng to', icon: <Plus size={22} />, onClick: () => setMapZoom(zoom + 1), keepOpen: true },
@@ -1520,7 +1593,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
   const railItems = compact ? prefs.pinned.filter(id => id !== 'legend').flatMap(quick) : [];
   const menuItems: QuickItem[] = compact ? [
     ...(hasTrip ? quick('pause') : [{ id: 'start', label: 'Bắt đầu', icon: <Play size={22} fill="currentColor" />, tone: 'primary' as const, disabled: busy || !!pending, onClick: requestStart }]),
-    ...(['photo', 'voice', 'library', 'lodging', 'pano', 'nav', 'todo', 'fit', 'satellite'] as QuickActionId[]).flatMap(quick),
+    ...(['photo', 'voice', 'library', 'lodging', 'pano', 'nav', 'plan', 'todo', 'fit', 'satellite'] as QuickActionId[]).flatMap(quick),
     { id: 'orientation', label: prefs.mapOrientation === 'heading' ? 'Bắc lên trên' : 'Xoay theo hướng', icon: <Navigation size={21} />, onClick: toggleOrientation },
     ...(prefs.pinned.includes('legend') ? [] : quick('legend')),
     ...(['zoom', 'history', 'settings', 'finish'] as QuickActionId[]).flatMap(quick),
@@ -1581,8 +1654,14 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
           {/* ── Thanh dưới ── */}
           <div className="absolute inset-x-0 bottom-0 z-[1100] pointer-events-none pb-[env(safe-area-inset-bottom)]">
             {audioBar && <div className="pl-3 pb-1.5 pr-[72px] md:pr-3"><div className="md:mx-auto md:w-[560px]">{audioBar}</div></div>}
-            {(zoneCompanies.length > 0 || (allPieces.length > 0 && nav.mode.kind === 'off')) && (
+            {(zoneCompanies.length > 0 || zoneStops.length > 0 || (allPieces.length > 0 && nav.mode.kind === 'off')) && (
               <div className="px-3 pb-1.5 flex items-center gap-2 pr-[72px] md:pr-3">
+                {zoneStops.length > 0 && (
+                  <button onClick={() => setPlanOpen(true)} title="Kế hoạch ghé công ty — dẫn đường lần lượt"
+                    className="pointer-events-auto shrink-0 inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-[#5E5CE6] text-white shadow text-[12.5px] font-semibold">
+                    <ListChecks size={14} /> {planLeft ? `Kế hoạch · còn ${planLeft}` : 'Xong kế hoạch ✓'}
+                  </button>
+                )}
                 {zoneCompanies.length > 0 && <button onClick={() => setPanel('todo')}
                   className="pointer-events-auto inline-flex items-center gap-1.5 h-9 pl-3 pr-3.5 rounded-full bg-white/95 backdrop-blur shadow text-[12.5px] font-medium text-[#1D1D1F] min-w-0">
                   <Factory size={14} className="text-[#D97706] shrink-0" />
@@ -1911,9 +1990,17 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
             <MoreRow icon={<Home size={20} />} tint="#FF9500" title="Nhà trọ" sub="Ảnh nhà trọ + cơ sở vật chất, SĐT chủ nhà, số phòng, giá — tự đo đường xe máy / đi bộ tới công ty" onClick={startLodging} />
             <MoreRow icon={<Orbit size={20} />} tint="#0A84FF" title="Ảnh 360°" sub="Link Google Photos / Google Drive hoặc ảnh 360 trong máy — xoay xem, thấy công ty xung quanh, vẽ đánh dấu" onClick={startPano} />
             <MoreRow icon={<ImagePlus size={20} />} tint="#34C759" title="Ảnh chỉ tiêu có sẵn" sub="Chọn ảnh bảng tuyển dụng đã chụp trong máy" onClick={() => { setMoreOpen(false); beginCapture(null, true); }} />
+            <MoreRow icon={<ListChecks size={20} />} tint="#5E5CE6" title={zoneStops.length ? `Kế hoạch ghé công ty (${zoneStops.length - planLeft}/${zoneStops.length})` : 'Kế hoạch ghé công ty'}
+              sub="Danh sách công ty cần đi qua (dán link Google Maps / gõ tên) — app sắp thứ tự ngắn nhất và dẫn đường lần lượt" onClick={() => { setMoreOpen(false); setPlanOpen(true); }} />
           </div>
           <div className="mt-3 text-[11.5px] text-[#8E8E93]">{fix ? 'Vị trí lấy theo GPS chỗ đang đứng.' : 'Chưa có GPS — sẽ chọn vị trí trên bản đồ.'}{zone ? ` Gắn vào ${zone.name}.` : ''}</div>
         </Sheet>
+      )}
+
+      {planOpen && (
+        <SurveyPlanDialog zones={allZones} initialZoneId={zone?.id ?? null} companies={allCompanies} stops={planStops} setStops={setPlanStops}
+          missing={planMissing} token={token} userName={user?.full_name ?? ''} here={fix ? { lat: fix.lat, lng: fix.lng } : null} tripId={tripIdNow}
+          onNavigate={startNavPlan} onClose={() => setPlanOpen(false)} say={say} zIndex={1400} />
       )}
 
       {lodgingSheet && (

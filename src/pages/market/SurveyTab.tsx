@@ -6,10 +6,10 @@
 //  - Xoá → Lưu trữ 30 ngày (khôi phục được), quá hạn tự xoá hẳn (hàm SQL migration 195, giờ máy chủ).
 //  - Nút Toàn màn hình (điện thoại xem rõ hơn) + phóng to bản đồ kín màn hình.
 //  - Nhà trọ (migration 221) + Ảnh 360° (migration 220) ghi khi đi khảo sát: tab con riêng, ghim trên bản đồ.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, Globe, RotateCcw, Route, Search, Share2, Star, Trash2, X,
+  Archive, Camera, ChevronDown, ChevronRight, Download, FileText, ImagePlus, ListChecks, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, Globe, RotateCcw, Route, Search, Share2, Star, Trash2, X,
   Home, Orbit, Phone, Bike,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -42,7 +42,12 @@ import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
 import { nearestSources, shortName, useLaborLite } from './sources/useLaborLite';
 import { requestOpenSource } from './sources/context';
-import { fold } from './survey/surveyData';
+import { fold, useSurveyData } from './survey/surveyData';
+import SurveyPlanDialog from './survey/SurveyPlanDialog';
+import TripPhotoImportDialog from './survey/TripPhotoImportDialog';
+import { listPlanStops, PlanMissingTable } from '../../lib/kcnSurvey/planStopsApi';
+import type { PlanStop } from '../../lib/kcnSurvey/planStops';
+import type { MarketLead } from '../../lib/types';
 import LodgingSheet from './survey/LodgingSheet';
 import { loadMapCandidates } from './survey/surveyExtras';
 import PanoModal, { type PanoMapPoint } from '../../components/pano/PanoModal';
@@ -163,6 +168,20 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       .catch(e => { if (e instanceof PanoMissingTable) setExtrasMissing(m => ({ ...m, pano: true })); });
   }, []);
   useEffect(() => { void loadExtras(); }, [loadExtras]);
+  // Kế hoạch ghé công ty theo KCN (migration 223) + bổ sung ảnh vào chuyến đã đi
+  const [planStops, setPlanStops] = useState<PlanStop[]>([]);
+  const [planMissing, setPlanMissing] = useState(false);
+  const [planFor, setPlanFor] = useState<{ zoneId: string | null } | null>(null);
+  const [importTrip, setImportTrip] = useState<SurveyTrip | null>(null);
+  useEffect(() => {
+    listPlanStops().then(l => { setPlanStops(l); setPlanMissing(false); })
+      .catch(e => { if (e instanceof PlanMissingTable) setPlanMissing(true); });
+  }, [surveyOpen]);
+  const planCount = useMemo(() => {
+    const m = new Map<string, number>();
+    planStops.forEach(st => { if (st.zone_id) m.set(st.zone_id, (m.get(st.zone_id) ?? 0) + 1); });
+    return m;
+  }, [planStops]);
   // Điểm công ty / KCN để đo đường từ nhà trọ + hiện "gần ảnh 360" — chỉ nạp khi mở 1 trong 2 thứ đó
   const needPts = !!lodgingSheet || !!openPano;
   useEffect(() => {
@@ -268,13 +287,16 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     .sort((a, b) => Number(usedZones.has(b.id)) - Number(usedZones.has(a.id)) || a.name.localeCompare(b.name, 'vi'))
     .map(z => ({ id: z.id, name: z.name, used: usedZones.has(z.id) })), [marketZones, usedZones, province, zoneProv]);
 
-  // KCN có dữ liệu để chia sẻ cho người ngoài (ảnh hoặc chuyến), kèm số ảnh / chuyến
+  // KCN có dữ liệu để chia sẻ cho người ngoài (ảnh, chuyến hoặc nhà trọ), kèm số ảnh / chuyến / nhà trọ
   const shareZones = useMemo<ShareZone[]>(() => {
-    const ph = new Map<string, number>(), tr = new Map<string, number>();
+    const ph = new Map<string, number>(), tr = new Map<string, number>(), lo = new Map<string, number>();
     photos.forEach(p => { if (p.zone_id) ph.set(p.zone_id, (ph.get(p.zone_id) ?? 0) + 1); });
     trips.forEach(t => { if (t.zone_id) tr.set(t.zone_id, (tr.get(t.zone_id) ?? 0) + 1); });
-    return marketZones.filter(z => ph.has(z.id) || tr.has(z.id)).map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0 }));
-  }, [marketZones, photos, trips]);
+    lodgings.forEach(l => { if (l.zone_id) lo.set(l.zone_id, (lo.get(l.zone_id) ?? 0) + 1); });
+    return marketZones.filter(z => ph.has(z.id) || tr.has(z.id) || lo.has(z.id))
+      .map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0, lodgings: lo.get(z.id) ?? 0 }));
+  }, [marketZones, photos, trips, lodgings]);
+  const unzonedLodgings = useMemo(() => lodgings.filter(l => !l.zone_id).length, [lodgings]);
 
   // ── Vết: chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc ──────
   const trackIds = useMemo(() => (sub !== 'trips' ? [] : selected ? [selected] : fTrips.slice(0, 40).map(t => t.id)), [sub, selected, fTrips]);
@@ -437,6 +459,10 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
             <Globe size={15} /> Ảnh online
           </button>
+          <button onClick={() => setPlanFor({ zoneId: zoneId !== 'all' && zoneId !== 'none' ? zoneId : null })} title="Lên trước danh sách công ty cần ghé ở 1 KCN — lúc đi app sắp thứ tự ngắn nhất và dẫn đường"
+            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
+            <ListChecks size={15} /> Kế hoạch<span className="hidden lg:inline"> ghé</span>
+          </button>
           <button onClick={() => setShareOpen(true)} title="Gửi link + mã 4 số cho người ngoài xem khảo sát"
             className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
             <Share2 size={15} /> Chia sẻ
@@ -552,6 +578,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                 <th className="text-right font-medium px-2 py-2" title="Công ty gắn sao (cần chú trọng)">★</th>
                 <th className="text-right font-medium px-2 py-2">Ghi âm</th>
                 <th className="text-right font-medium px-2 py-2">Lần gần nhất</th>
+                <th className="text-right font-medium px-2 py-2" title="Công ty cần ghé đã lên kế hoạch">Cần ghé</th>
                 {labor.sources.length > 0 && <th className="text-left font-medium px-2 py-2" title="Trường / nguồn LĐ gần nhất theo giờ xe khách (≈ = ước tính, mở Nguồn LĐ để tính đường thật)">Nguồn LĐ gần</th>}
                 <th className="px-3 py-2" />
               </tr>
@@ -568,6 +595,14 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                   <td className="px-2 py-2 text-right tabular-nums text-[#B7791F]">{r.starCos.size || '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.voice || '—'}</td>
                   <td className="px-2 py-2 text-right text-[#666] whitespace-nowrap">{r.last ? new Date(r.last).toLocaleDateString('vi-VN') : '—'}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {r.id !== 'none' && (
+                      <button onClick={e => { e.stopPropagation(); setPlanFor({ zoneId: r.id }); }} title="Kế hoạch ghé công ty ở KCN này"
+                        className="h-7 px-2 rounded-md border border-[#E8E7E2] bg-white text-[11.5px] text-[#3634A3] inline-flex items-center gap-1 hover:bg-[#F4F3FF] tabular-nums">
+                        <ListChecks size={12} /> {planCount.get(r.id) ?? 0}
+                      </button>
+                    )}
+                  </td>
                   {labor.sources.length > 0 && (() => {
                     const n = r.id !== 'none' ? nearOf(r.id, 1)[0] : undefined;
                     return (
@@ -589,7 +624,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                   </td>
                 </tr>
               ))}
-              {!zoneRows.length && <tr><td colSpan={11} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
+              {!zoneRows.length && <tr><td colSpan={12} className="px-3 py-8 text-center text-[#aaa]">Chưa có dữ liệu khảo sát trong khoảng thời gian này</td></tr>}
             </tbody>
           </table>
         </div>
@@ -669,6 +704,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                                         title="PDF riêng chuyến này để đưa AI phân tích"
                                         className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><FileText size={12} /> PDF chuyến này</button>
                                     )}
+                                    <button onClick={() => setImportTrip(t)} title="Thêm ảnh đã chụp sẵn trong máy — tự ghim đúng chỗ chụp (vị trí trong ảnh / giờ chụp trên đường đã đi)"
+                                      className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><ImagePlus size={12} /> Bổ sung ảnh</button>
                                     <button onClick={() => setRenaming({ id: t.id, value: t.title || surveyTitle(t.zone_name, new Date(t.started_at)) })}
                                       className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><Pencil size={12} /> Đổi tên</button>
                                     <button onClick={() => void deleteTrip(t)} className="h-8 px-2.5 rounded-lg border border-red-200 bg-red-50 text-[12px] text-red-600 inline-flex items-center gap-1"><Trash2 size={12} /> Xoá</button>
@@ -909,7 +946,19 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
       {onlineOpen && <OnlinePhotoDialog zones={marketZones} leads={marketLeads} user={user ? { id: user.id, full_name: user.full_name } : null} defaultZoneId={zoneId !== 'all' && zoneId !== 'none' ? zoneId : null}
         say={say} isStarred={c => !!findStar(stars, c)} onToggleStar={(c, on) => void toggleStar(c, on)} onClose={() => setOnlineOpen(false)} onSaved={ps => setPhotos(list => [...ps, ...list])} />}
       {pinReq && <SurveyPinGate req={pinReq} onClose={() => setPinReq(null)} onDone={() => setPinReq(null)} />}
-      {shareOpen && <SurveyShareDialog zones={shareZones} token={token} say={say} onClose={() => setShareOpen(false)} />}
+      {planFor && (
+        <PlanDialogWithData marketLeads={marketLeads} zones={marketZones} initialZoneId={planFor.zoneId} stops={planStops} setStops={setPlanStops}
+          missing={planMissing} token={token} userName={user?.full_name || user?.username || ''} say={say} onClose={() => setPlanFor(null)} />
+      )}
+      {importTrip && (() => {
+        const z = importTrip.zone_id ? marketZones.find(x => x.id === importTrip.zone_id) : null;
+        return (
+          <TripPhotoImportDialog trip={importTrip} zoneCenter={z?.lat != null && z.lng != null ? { lat: z.lat, lng: z.lng } : null}
+            user={user ? { id: user.id, full_name: user.full_name } : null} say={say} onClose={() => setImportTrip(null)}
+            onSaved={ps => setPhotos(list => [...ps, ...list])} />
+        );
+      })()}
+      {shareOpen && <SurveyShareDialog zones={shareZones} unzonedLodgings={unzonedLodgings} token={token} say={say} onClose={() => setShareOpen(false)} />}
       {surveyOpen && (
         <KcnSurveyMode marketZones={marketZones} marketLeads={marketLeads} branches={branches} laborHistory={laborHistory} goTab={goTab}
           startWith={surveyOpen === 'area' ? 'area' : undefined}
@@ -1152,4 +1201,10 @@ function groupPassed(passed: SurveyTrip['passed']) {
     if (list) list.push(p); else by.set(st, [p]);
   }
   return [...by.entries()].sort((a, b) => STATUS_META[a[0]].rank - STATUS_META[b[0]].rank).map(([status, items]) => ({ status, items }));
+}
+
+/** Kế hoạch ghé — nạp công ty trong hệ thống (khách hàng / Pipeline) chỉ khi mở hộp thoại, để tìm theo tên */
+function PlanDialogWithData({ marketLeads, ...rest }: { marketLeads: readonly MarketLead[] } & Omit<ComponentProps<typeof SurveyPlanDialog>, 'companies'>) {
+  const data = useSurveyData(marketLeads);
+  return <SurveyPlanDialog {...rest} companies={data.companies} />;
 }

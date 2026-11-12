@@ -1,8 +1,9 @@
 // Trang xem Khảo sát KCN dành cho NGƯỜI NGOÀI — mở bằng link ngắn #/ks/<mã>, không cần đăng nhập, chỉ cần mã 4 số
-// (kiểu mở khoá iPhone). Chỉ xem: ảnh chỉ tiêu tuyển dụng + các chuyến của những KCN người gửi cho phép, trong hạn xem.
+// (kiểu mở khoá iPhone). Chỉ xem: ảnh chỉ tiêu tuyển dụng + các chuyến (+ nhà trọ nếu link có kèm — migration 222)
+// của những KCN người gửi cho phép, trong hạn xem.
 // Mã được kiểm tra ở server (hàm survey_share_open, migration 209): sai 5 lần thì khoá tạm.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Camera, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
+import { AlertTriangle, Camera, Home, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
 import { loadSharedTracks, openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
 import { lockMessage } from '../lib/costPlan/api';
 import { provinceKey, provinceLabel } from '../lib/kcnSurvey/province';
@@ -12,10 +13,14 @@ import PinPad from '../components/workspace/costplan/PinPad';
 import { FONT } from '../components/workspace/costplan/ui';
 import { MarksSvg } from './market/survey/PhotoMarks';
 import { UNVERIFIED_TAG } from '../lib/kcnSurvey/online';
+import { lodgingTitle, normLodging, type Lodging } from '../lib/kcnSurvey/lodgingCore';
+import { SharedLodgingDetail, SharedLodgingRow } from './market/survey/SharedLodgingView';
 
 // Bản đồ Leaflet nặng → chỉ nạp khi mở trang xem (dùng đúng bản đồ trong app của người gửi)
 const SurveyTripMap = lazy(() => import('./market/survey/SurveyTripMap'));
 const NO_VOICE: never[] = [];
+const NO_PHOTOS: never[] = [];
+const NO_TRACKS = new Map<string, TrackSegment[]>();
 
 const isOnline = (p: SharedPhoto) => p.survey_kind === 'online';
 
@@ -54,7 +59,7 @@ export default function SharedSurvey({ code }: { code: string }) {
   const [deadMsg, setDeadMsg] = useState('');
   const [data, setData] = useState<SharedSurvey | null>(null);
 
-  const [tab, setTab] = useState<'photos' | 'trips'>('trips');
+  const [tab, setTab] = useState<'photos' | 'trips' | 'lodgings'>('trips');
   const [pin, setPin] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tracks, setTracks] = useState<Map<string, TrackSegment[]>>(new Map());
@@ -63,6 +68,8 @@ export default function SharedSurvey({ code }: { code: string }) {
   const [zoneId, setZoneId] = useState('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<SharedPhoto | null>(null);
+  const [openLodging, setOpenLodging] = useState<Lodging | null>(null);
+  const [lodgingFocus, setLodgingFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
 
   const tryOpen = useCallback(async (pin: string, remember: boolean) => {
     setPhase('opening'); setErr(null);
@@ -72,6 +79,8 @@ export default function SharedSurvey({ code }: { code: string }) {
         if (remember) writeStore(pinKey(code), pin);
         setPin(pin);
         setData(r); setPhase('ready');
+        // link chỉ có nhà trọ (chưa có chuyến) → mở thẳng tab Nhà trọ
+        if (!r.trips.length && (r.lodgings?.length ?? 0) > 0) setTab('lodgings');
         return;
       }
       if (r.reason === 'not_found' || r.reason === 'expired') { setDeadMsg(FAIL_TEXT[r.reason] ?? ''); setPhase('dead'); return; }
@@ -114,6 +123,17 @@ export default function SharedSurvey({ code }: { code: string }) {
     && (!needle || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(needle))), [data, okZone, needle]);
   const trips = useMemo(() => (data?.trips ?? []).filter(t => okZone(t.zone_id)
     && (!needle || fold([t.title ?? '', t.zone_name].join(' ')).includes(needle))), [data, okZone, needle]);
+  // Nhà trọ: null = link không kèm nhà trọ (hoặc chưa chạy migration 222)
+  const hasLodgings = Array.isArray(data?.lodgings);
+  // Phần lớn nhà trọ không ghi tên / địa chỉ, chủ nhà lại có thể bị ẩn → đánh số theo thứ tự khảo sát ("Nhà trọ số 12")
+  // để danh sách, ghim bản đồ và bảng chi tiết khớp nhau và người xem gọi tên được.
+  const allLodgings = useMemo(() => {
+    const list = (data?.lodgings ?? []).map(r => normLodging(r));
+    const num = new Map([...list].sort((a, b) => a.created_at.localeCompare(b.created_at)).map((l, i) => [l.id, i + 1]));
+    return list.map(l => (lodgingTitle(l) === 'Nhà trọ' ? { ...l, name: `Nhà trọ số ${num.get(l.id)}` } : l));
+  }, [data]);
+  const lodgings = useMemo(() => allLodgings.filter(l => okZone(l.zone_id)
+    && (!needle || fold([lodgingTitle(l), l.address, l.note, l.zone_name, l.facilities.join(' ')].join(' ')).includes(needle))), [allLodgings, okZone, needle]);
   const photoCountByTrip = useMemo(() => {
     const m = new Map<string, number>();
     (data?.photos ?? []).forEach(p => { if (p.trip_id) m.set(p.trip_id, (m.get(p.trip_id) ?? 0) + 1); });
@@ -133,6 +153,8 @@ export default function SharedSurvey({ code }: { code: string }) {
   }, [trackKey, phase]);
   const selTrip = selected ? trips.find(t => t.id === selected) ?? null : null;
   const mapPhotos = useMemo(() => (selTrip ? photos.filter(p => p.trip_id === selTrip.id) : photos), [photos, selTrip]);
+  // như trong app: chọn 1 chuyến thì hiện cả nhà trọ ghi trong chuyến đó
+  const tripLodgings = useMemo(() => (selTrip ? lodgings.filter(l => l.trip_id === selTrip.id) : []), [lodgings, selTrip]);
   const tripDays = useMemo(() => {
     const m = new Map<string, typeof trips>();
     for (const t of trips) { const d = new Date(t.started_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); m.set(d, [...(m.get(d) ?? []), t]); }
@@ -179,7 +201,7 @@ export default function SharedSurvey({ code }: { code: string }) {
         <div className="bg-white rounded-2xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] p-5">
           <h1 className="text-[22px] font-semibold tracking-tight leading-tight">Khảo sát {data.zones.length} KCN</h1>
           <div className="text-[13px] text-[#6e6e73] mt-0.5">
-            {data.provinces.length ? `${data.provinces.join(', ')} · ` : ''}{data.photos.length} ảnh chỉ tiêu · {data.trips.length} chuyến khảo sát
+            {data.provinces.length ? `${data.provinces.join(', ')} · ` : ''}{data.photos.length} ảnh chỉ tiêu · {data.trips.length} chuyến khảo sát{hasLodgings ? ` · ${allLodgings.length} nhà trọ` : ''}
           </div>
           <div className="text-[12px] text-[#86868b] mt-1.5">
             {data.expires_at ? `Link xem được đến hết ngày ${fmtDate(data.expires_at)}` : 'Link không giới hạn thời gian'} · Chỉ xem
@@ -201,18 +223,46 @@ export default function SharedSurvey({ code }: { code: string }) {
           )}
           <div className="relative flex-1 min-w-[180px]">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#a1a1a6]" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm công ty, vị trí tuyển, lương…" className={`${chip} w-full pl-8`} />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder={hasLodgings ? 'Tìm công ty, vị trí tuyển, lương, nhà trọ…' : 'Tìm công ty, vị trí tuyển, lương…'} className={`${chip} w-full pl-8`} />
           </div>
         </div>
 
-        <div className="flex gap-1.5">
-          {([['photos', `Ảnh chỉ tiêu · ${photos.length}`, <Camera key="c" size={13} />], ['trips', `Chuyến khảo sát · ${trips.length}`, <Route key="r" size={13} />]] as const).map(([id, label, icon]) => (
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            ['photos', `Ảnh chỉ tiêu · ${photos.length}`, <Camera key="c" size={13} />],
+            ['trips', `Chuyến khảo sát · ${trips.length}`, <Route key="r" size={13} />],
+            ...(hasLodgings ? [['lodgings', `Nhà trọ · ${lodgings.length}`, <Home key="h" size={13} />] as const] : []),
+          ] as const).map(([id, label, icon]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full text-[12.5px] font-medium transition ${tab === id ? 'bg-[#1d1d1f] text-white' : 'bg-white text-[#6e6e73] shadow-[0_0_0_1px_rgba(0,0,0,0.06)]'}`}>{icon}{label}</button>
           ))}
         </div>
 
-        {tab === 'photos' ? (
+        {tab === 'lodgings' ? (
+          <div className="grid md:grid-cols-[340px_1fr] gap-3">
+            <div className="order-2 md:order-1 md:max-h-[72vh] overflow-y-auto">
+              {lodgings.length ? (
+                <div className="bg-white rounded-xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] divide-y divide-black/[0.06] overflow-hidden">
+                  {lodgings.map(l => (
+                    <SharedLodgingRow key={l.id} l={l} active={openLodging?.id === l.id} onOpen={() => setOpenLodging(l)}
+                      onMap={() => { if (l.lat != null && l.lng != null) setLodgingFocus({ lat: l.lat, lng: l.lng, key: Date.now() }); }} />
+                  ))}
+                </div>
+              ) : <Empty text={allLodgings.length ? 'Không có nhà trọ nào khớp bộ lọc.' : 'Chưa có nhà trọ nào được khảo sát ở các KCN này.'} />}
+            </div>
+            <div className="order-1 md:order-2 relative rounded-2xl overflow-hidden shadow-[0_0_0_1px_rgba(0,0,0,0.05)] bg-[#E5E3DF] h-[48vh] md:h-[72vh]">
+              <Suspense fallback={<div className="h-full flex items-center justify-center text-[#86868b]"><Loader2 className="animate-spin" size={20} /></div>}>
+                <SurveyTripMap className="w-full h-full" tracks={NO_TRACKS} selectedId={null} photos={NO_PHOTOS} voiceNotes={NO_VOICE}
+                  lodgings={lodgings} onLodging={l => setOpenLodging(l)} focus={lodgingFocus}
+                  fitKey={`lodgings|${province}|${zoneId}|${q}|${lodgings.length}`}
+                  onPhoto={() => undefined} onVoice={() => undefined} />
+              </Suspense>
+              <div className="absolute left-2 top-2 text-[11px] bg-white/90 backdrop-blur rounded-lg px-2 py-1 text-[#444] leading-tight pointer-events-none">
+                {lodgings.filter(l => l.lat != null).length} nhà trọ trên bản đồ · chạm 🏠 để xem chi tiết
+              </div>
+            </div>
+          </div>
+        ) : tab === 'photos' ? (
           photos.length ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {photos.map(p => (
@@ -269,7 +319,8 @@ export default function SharedSurvey({ code }: { code: string }) {
             <div className="order-1 md:order-2 relative rounded-2xl overflow-hidden shadow-[0_0_0_1px_rgba(0,0,0,0.05)] bg-[#E5E3DF] h-[56vh] md:h-[72vh]">
               <Suspense fallback={<div className="h-full flex items-center justify-center text-[#86868b]"><Loader2 className="animate-spin" size={20} /></div>}>
                 <SurveyTripMap className="w-full h-full" tracks={tracks} selectedId={selected} photos={mapPhotos as unknown as SurveyPhoto[]} voiceNotes={NO_VOICE}
-                  fitKey={`${province}|${zoneId}|${q}|${selected ?? ''}|${trackKey}|${mapPhotos.length}`}
+                  lodgings={tripLodgings} onLodging={l => setOpenLodging(l)}
+                  fitKey={`${province}|${zoneId}|${q}|${selected ?? ''}|${trackKey}|${mapPhotos.length}|${tripLodgings.length}`}
                   onPhoto={p => { const hit = photos.find(x => x.id === p.id); if (hit) setOpen(hit); }} onVoice={() => undefined} onTrip={id => setSelected(id)} />
               </Suspense>
               {tracksErr && <div className="absolute left-2 bottom-2 right-2 text-[11.5px] bg-white/95 text-[#b3140a] rounded-lg px-2.5 py-1.5">{tracksErr}</div>}
@@ -284,6 +335,7 @@ export default function SharedSurvey({ code }: { code: string }) {
       </div>
 
       {open && <Lightbox photo={open} onClose={() => setOpen(null)} />}
+      {openLodging && <SharedLodgingDetail lodging={openLodging} showLandlord={!!data.show_landlord} onClose={() => setOpenLodging(null)} />}
     </Shell>
   );
 }

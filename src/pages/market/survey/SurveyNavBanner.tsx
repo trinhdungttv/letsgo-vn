@@ -1,9 +1,10 @@
 // Băng dẫn đường trên cùng màn khảo sát (kiểu Google Maps): mũi tên rẽ to, còn bao xa, rẽ vào đường nào, chỗ rẽ sau đó.
 import type { ReactNode } from 'react';
-import { ArrowUp, ArrowUpLeft, ArrowUpRight, Bell, CornerUpLeft, CornerUpRight, Flag, Loader2, RefreshCw, Route, Undo2, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowUp, ArrowUpLeft, ArrowUpRight, Bell, CornerUpLeft, CornerUpRight, ExternalLink, Flag, Loader2, RefreshCw, Route, SkipForward, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import type { Maneuver, ManeuverKind, NavRoute } from '../../../lib/kcnSurvey/navigate';
 import { fmtDistance } from '../../../lib/kcnSurvey/track';
 import type { NavMode, NavStatus } from './useSurveyNavigation';
+import { googleDirectionsLinks } from '../../../lib/kcnSurvey/planStops';
 import { NAV_SOUND_LABEL, nextNavSound, type NavSound } from './surveyData';
 
 const ICON: Record<ManeuverKind, (size: number) => ReactNode> = {
@@ -35,10 +36,16 @@ interface Props {
   onStop: () => void;
   /** Giao diện gọn (màn ngang): băng thấp hơn, chữ nhỏ hơn để chừa chỗ cho bản đồ */
   compact?: boolean;
+  /** Kế hoạch ghé: bỏ qua công ty đang dẫn tới */
+  onSkipStop?: () => void;
 }
 
-export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop, compact }: Props) {
+export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop, compact, onSkipStop }: Props) {
   if (mode.kind === 'off') return null;
+  const stop = mode.kind === 'stops' ? mode.stops[0] ?? null : null;
+  const stopNo = mode.kind === 'stops' ? `${mode.total - mode.stops.length + 1}/${mode.total}` : '';
+  // Google Maps chỉ đường qua các công ty còn lại (từ vị trí điện thoại) — dùng khi công ty nằm ngoài bản đồ đường KCN
+  const gmaps = mode.kind === 'stops' ? googleDirectionsLinks(null, mode.stops.map(x => x.point))[0] ?? null : null;
   const target = route?.target;
   const onRun = target?.kind === 'run' && toApproach != null && toApproach <= 0;
   // Chỗ "tới nơi" là mốc kế tiếp → đang đi trong đoạn / đoạn cuối: hiện quãng còn lại thay cho câu "Hết đoạn…"
@@ -46,20 +53,20 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
   const headline = !route
     ? status === 'waiting-gps' ? 'Đang chờ tín hiệu GPS…'
       : status === 'no-target' ? 'Đã đi hết đường trong KCN'
-      : mode.kind === 'auto' ? 'Chưa tìm được đoạn chưa đi để dẫn tới' : 'Không tìm được đường tới công ty'
+      : mode.kind === 'auto' ? 'Chưa tìm được đoạn chưa đi để dẫn tới' : stop ? `Tới ${stop.name}` : 'Không tìm được đường tới công ty'
     : arriving
       ? target?.kind === 'run' ? `Đi hết đoạn chưa đi${target.name ? ` trên ${target.name}` : ''}`
         : target?.kind === 'tour' ? 'Đi tiếp tới hết lộ trình' : `Đến ${target?.kind === 'point' ? target.name : ''}`
       : next?.text ?? 'Đi thẳng';
   const bigDist = !route ? null : arriving ? remaining : next ? distToNext : null;
   const sub = !route
-    ? status === 'no-road' ? 'Đứng gần đường hơn, hoặc tải lại mạng đường trong Cài đặt' : status === 'waiting-gps' ? '' : 'Bấm ✕ để tắt dẫn đường'
+    ? stop ? `Công ty ${stopNo} · ngoài bản đồ đường KCN — đi bằng Google Maps` : status === 'no-road' ? 'Đứng gần đường hơn, hoặc tải lại mạng đường trong Cài đặt' : status === 'waiting-gps' ? '' : 'Bấm ✕ để tắt dẫn đường'
     : target?.kind === 'run'
       ? onRun
         ? `Đang đi đoạn chưa đi · còn ${navDist(remaining ?? 0)}`
         : `Tới đoạn chưa đi ${navDist(toApproach ?? 0)}${target.name ? ` · ${target.name}` : ''} · đoạn dài ${navDist(target.len)}${target.factory ? ' · có nhà máy' : ''}`
       : target?.kind === 'tour' ? `Lộ trình 1 lượt · còn ${navDist(remaining ?? 0)} · qua ${navDist(target.len)} đường chưa đi`
-      : target?.kind === 'point' ? `Tới ${target.name} · còn ${navDist(remaining ?? 0)}` : '';
+      : target?.kind === 'point' ? `${stop ? `Công ty ${stopNo} · ` : ''}Tới ${target.name} · còn ${navDist(remaining ?? 0)}` : '';
   const iconSize = compact ? 24 : 30;
 
   return (
@@ -82,6 +89,14 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
             ? <>Sau đó: <b>{after.text}</b>{sub ? ` · ${sub}` : ''}</>
             : sub}
         </div>
+        {gmaps && (
+          <a href={gmaps} target="_blank" rel="noopener noreferrer" title="Mở Google Maps chỉ đường qua các công ty còn lại"
+            className={`${compact ? 'h-7' : 'h-8'} px-2 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}><ExternalLink size={13} /> Google Maps</a>
+        )}
+        {stop && onSkipStop && (
+          <button onClick={onSkipStop} title={`Bỏ qua ${stop.name}, đi công ty kế tiếp`}
+            className={`${compact ? 'h-7' : 'h-8'} px-2 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}><SkipForward size={13} /> Bỏ qua</button>
+        )}
         <button onClick={onReplan} className={`${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full flex items-center justify-center hover:bg-white/10 shrink-0`} aria-label="Tìm đường khác" title="Tìm đường khác"><RefreshCw size={15} /></button>
         <button onClick={() => onSound(nextNavSound(sound))}
           className={`${compact ? 'h-7' : 'h-8'} pl-2 pr-2.5 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}

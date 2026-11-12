@@ -15,6 +15,8 @@ export const PHOTO_BUCKET = 'kcn-survey';
 /** Lỗi do chưa có bảng / bucket của migration 190 → câu nhắc chạy migration; lỗi khác giữ nguyên. */
 export function surveyErrorText(e: unknown): string {
   const msg = (e as { message?: string })?.message ?? String(e);
+  // Vi phạm điều kiện cột (VD position_source 'track' khi chưa chạy 223) — giữ nguyên để nơi gọi tự lùi, đừng báo nhầm "chưa chạy 190"
+  if ((e as { code?: string })?.code === '23514' || /violates check constraint/i.test(msg)) return msg;
   if (/kcn_survey|kcn-survey|bucket not found|schema cache|does not exist|PGRST20[45]/i.test(msg)) return SURVEY_MIGRATION_HINT;
   return msg;
 }
@@ -48,7 +50,8 @@ export interface SurveyPhoto {
   lat: number;
   lng: number;
   accuracy_m: number | null;
-  position_source: 'gps' | 'exif' | 'manual';
+  /** track = ảnh bổ sung sau chuyến, ghim theo giờ chụp trên vết GPS (migration 223) */
+  position_source: 'gps' | 'exif' | 'manual' | 'track';
   taken_at: string;
   storage_path: string;
   url: string;

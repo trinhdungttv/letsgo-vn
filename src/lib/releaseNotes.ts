@@ -16,6 +16,28 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-12-survey-plan-stops',
+    date: '2026-11-12',
+    title: 'Khảo sát KCN',
+    features: [
+      'Kế hoạch ghé công ty: lên trước danh sách công ty cần đi qua ở từng KCN',
+      'Thêm công ty bằng link Google Maps (dán nhiều link một lúc) hoặc gõ tên để app tự tìm vị trí',
+      'App tự sắp thứ tự ghé ngắn nhất theo đường xe máy và dẫn đường lần lượt từng công ty',
+      'Tới gần công ty trong kế hoạch là tự đánh dấu đã ghé; mở Google Maps chỉ đường cả lộ trình',
+      'Bổ sung ảnh chụp sẵn vào chuyến đã đi, tự ghim theo vị trí trong ảnh hoặc giờ chụp',
+    ],
+  },
+  {
+    id: '2026-11-12-survey-share-lodgings',
+    date: '2026-11-12',
+    title: 'Chia sẻ khảo sát',
+    features: [
+      'Link chia sẻ khảo sát KCN kèm được nhà trọ: ảnh, số phòng, giá, tiện ích, khoảng cách tới công ty',
+      'Tự chọn có cho người xem thấy tên + SĐT chủ nhà hay không (mặc định ẩn)',
+      'Trang người xem có tab Nhà trọ với bản đồ 🏠, bấm xem chi tiết và đường đi xe máy / đi bộ',
+    ],
+  },
+  {
     id: '2026-11-11-pano-no-webgl',
     date: '2026-11-11',
     title: 'Ảnh 360°',

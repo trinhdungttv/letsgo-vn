@@ -350,6 +350,11 @@ body {
 /* Khảo sát KCN: nhà trọ (cam) + ảnh 360° (xanh) — cùng khuôn tròn với ghi âm */
 .kcs-voice.kcs-lodging span { background: #FF9500; }
 .kcs-voice.kcs-pano span { background: #0A84FF; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: -0.3px; }
+/* Kế hoạch ghé công ty (migration 223): ghim tím có số thứ tự, đã ghé → xanh lá, đang dẫn tới → to + viền vàng */
+.kcs-voice.kcs-plan span { background: #5E5CE6; color: #fff; font-size: 13px; font-weight: 800; border-radius: 9px; }
+.kcs-voice.kcs-plan.kcs-plan-done span { background: #34C759; }
+.kcs-voice.kcs-plan.kcs-plan-next span { width: 36px; height: 36px; font-size: 15px; border-color: #FFD60A; border-width: 3px; }
+.kcs-voice.kcs-plan.kcs-plan-start span { background: #0A84FF; font-size: 11px; border-radius: 50%; }
 .kcs-photo.kcs-online img,
 .kcs-photo.kcs-online span { border: 2px dashed #FF9F0A; }
 .kcs-photo.kcs-online-ok img,

@@ -2,7 +2,7 @@
 //  - Nút gắn mép phải (RailBtn): chức năng người dùng chọn "luôn hiện" trong Cài đặt.
 //  - Nút nổi kiểu AssistiveTouch của iPhone: kéo tới chỗ tiện tay (tự dính mép trái / phải), bấm để mở bảng mọi chức năng.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Camera, Factory, History, Home, ImagePlus, Info, Layers, Maximize, Mic, Navigation, Orbit, Pause, Settings, Square, ZoomIn } from 'lucide-react';
+import { Camera, Factory, History, Home, ImagePlus, Info, Layers, ListChecks, Maximize, Mic, Navigation, Orbit, Pause, Settings, Square, ZoomIn } from 'lucide-react';
 import type { QuickActionId } from './surveyData';
 
 /** Tên + biểu tượng từng chức năng gắn được (dùng ở Cài đặt → Nút luôn hiện). */
@@ -15,6 +15,7 @@ export const QUICK_META: Record<QuickActionId, { label: string; icon: (size: num
   pause: { label: 'Tạm dừng / đi tiếp', icon: s => <Pause size={s} /> },
   finish: { label: 'Kết thúc', icon: s => <Square size={s - 3} fill="currentColor" /> },
   nav: { label: 'Dẫn đường', icon: s => <Navigation size={s} /> },
+  plan: { label: 'Kế hoạch ghé công ty', icon: s => <ListChecks size={s} /> },
   todo: { label: 'Công ty chưa qua', icon: s => <Factory size={s} /> },
   zoom: { label: 'Phóng to / thu nhỏ', icon: s => <ZoomIn size={s} /> },
   fit: { label: 'Xem cả KCN', icon: s => <Maximize size={s} /> },

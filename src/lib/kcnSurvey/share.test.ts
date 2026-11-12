@@ -82,4 +82,8 @@ describe('tin nhắn Zalo', () => {
     expect(m).toContain('và 3 KCN khác');
     expect(m).not.toContain('KCN 9');
   });
+  it('nhắc tới nhà trọ khi link có kèm nhà trọ', () => {
+    expect(buildShareMessage(base)).not.toContain('nhà trọ');
+    expect(buildShareMessage({ ...base, lodgings: true })).toContain('nhà trọ quanh KCN');
+  });
 });

@@ -7,11 +7,14 @@ import {
   nextManeuvers, planNextRun, planToPoint, routeProgress, spokenInstruction, type NavRoute, type RoadGraph,
 } from '../../../lib/kcnSurvey/navigate';
 import { planCoverTour, tourOverhead } from '../../../lib/kcnSurvey/coverTour';
-import { fmtDistance } from '../../../lib/kcnSurvey/track';
+import { distM, fmtDistance } from '../../../lib/kcnSurvey/track';
 import type { GpsFix } from './useSurveyRecorder';
 import type { NavSound, NavStrategy } from './surveyData';
 
-export type NavMode = { kind: 'off' } | { kind: 'auto' } | { kind: 'point'; name: string; point: LatLng };
+/** 1 công ty trong kế hoạch ghé (migration 223) */
+export interface NavStop { id: string; name: string; point: LatLng }
+/** stops = đi lần lượt các công ty trong kế hoạch theo thứ tự đã tối ưu; tới nơi (≤ 40 m) thì tự chuyển công ty kế */
+export type NavMode = { kind: 'off' } | { kind: 'auto' } | { kind: 'point'; name: string; point: LatLng } | { kind: 'stops'; stops: NavStop[]; total: number };
 export type NavStatus = 'off' | 'waiting-gps' | 'no-road' | 'no-target' | 'routing';
 
 interface Inputs {
@@ -27,6 +30,8 @@ interface Inputs {
   strategy: NavStrategy;
   sound: NavSound;
   say: (msg: string) => void;
+  /** Tới 1 công ty trong kế hoạch ghé (chế độ stops) */
+  onArrive?: (stopId: string) => void;
 }
 
 type Chime = 'soon' | 'now' | 'done' | 'reroute';
@@ -109,7 +114,10 @@ function useSpeech(enabled: boolean) {
   }, [enabled]);
 }
 
-export function useSurveyNavigation({ graph, fix, course, targets, scores, preferFactories, strategy, sound, say }: Inputs) {
+/** Cách công ty trong kế hoạch bấy nhiêu mét là coi như tới nơi */
+export const STOP_ARRIVE_M = 40;
+
+export function useSurveyNavigation({ graph, fix, course, targets, scores, preferFactories, strategy, sound, say, onArrive }: Inputs) {
   const [mode, setMode] = useState<NavMode>({ kind: 'off' });
   const [route, setRoute] = useState<NavRoute | null>(null);
   const [progress, setProgress] = useState<{ s: number; off: number }>({ s: 0, off: 0 });
@@ -122,8 +130,8 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     else if (sound === 'beep') chime.play(kind, side);
   }, [sound, speak, chime]);
 
-  const inputsRef = useRef({ graph, targets, scores, preferFactories, course, strategy });
-  inputsRef.current = { graph, targets, scores, preferFactories, course, strategy };
+  const inputsRef = useRef({ graph, targets, scores, preferFactories, course, strategy, onArrive });
+  inputsRef.current = { graph, targets, scores, preferFactories, course, strategy, onArrive };
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const routeRef = useRef(route);
@@ -143,11 +151,13 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     if (m.kind === 'off') return;
     lastPlanAt.current = Date.now();
     if (!g || !g.edges.length) { setRoute(null); setStatus('no-road'); return; }
+    const stop = m.kind === 'stops' ? m.stops[0] : null;
     const r = m.kind === 'auto'
       // 1 lượt: không lập được (quá nhiều khúc / chỉ còn khúc lẻ) thì dẫn từng đoạn như cũ
       ? (st === 'tour' ? planCoverTour(g, p, { heading: h, targets: t, skip: skipRef.current }) : null)
         ?? planNextRun(g, p, { heading: h, targets: t, scores: sc, preferFactories: pf, skip: skipRef.current })
-      : planToPoint(g, p, m.point, m.name, h);
+      : m.kind === 'point' ? planToPoint(g, p, m.point, m.name, h)
+      : stop ? planToPoint(g, p, stop.point, stop.name, h, 150) : null;
     routeId.current += 1;
     spoken.current = new Set();
     sRef.current = 0;
@@ -159,6 +169,7 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
       setStatus(m.kind === 'auto' && !t.length ? 'no-target' : 'no-road');
       if (why !== 'coverage') {
         if (m.kind === 'auto') say(t.length ? 'Chưa dẫn được: đang ở xa đường, hoặc chỉ còn vài khúc lẻ chưa đi' : 'Đã đi hết đường trong KCN 🎉');
+        else if (stop) say(`${stop.name} nằm ngoài bản đồ đường KCN — bấm “Google Maps” trên băng dẫn đường, hoặc “Bỏ qua”`);
         else say('Không tìm được đường tới công ty này trên bản đồ đường đã tải');
       }
       return;
@@ -167,6 +178,11 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     const first = r.maneuvers[0];
     if (r.target.kind === 'tour' && (why === 'start' || why === 'next')) {
       say(`Lộ trình 1 lượt ${fmtDistance(r.total)} — qua ${fmtDistance(r.target.len)} đường chưa đi, đi lặp / nối ${fmtDistance(tourOverhead(r))}`);
+    }
+    if (stop && m.kind === 'stops' && (why === 'start' || why === 'next')) {
+      const k = m.total - m.stops.length + 1;
+      say(`Công ty ${k}/${m.total}: ${stop.name} — ${fmtDistance(r.total)}`);
+      if (why === 'next') { announce(`Tiếp theo: ${stop.name}`, 'soon'); return; }
     }
     if (why === 'reroute') announce('Đã tính lại đường', 'reroute');
     else if (why === 'next') announce(r.target.kind === 'tour' ? 'Còn vài khúc chưa đi, dẫn tiếp' : `Đoạn tiếp theo cách ${Math.max(50, Math.round(r.approach / 50) * 50)} mét`, 'soon');
@@ -179,7 +195,7 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     modeRef.current = m;
     // iPhone chỉ cho phát tiếng khi lần đầu nằm trong 1 lần bấm → đọc / bíp ngay 1 tiếng ngắn
     chime.unlock();
-    if (sound === 'voice') speak(m.kind === 'auto' ? 'Bắt đầu dẫn đường tới đoạn chưa đi' : `Dẫn đường tới ${m.name}`, true);
+    if (sound === 'voice') speak(m.kind === 'auto' ? 'Bắt đầu dẫn đường tới đoạn chưa đi' : m.kind === 'stops' ? `Dẫn đường qua ${m.stops.length} công ty, đầu tiên là ${m.stops[0]?.name ?? ''}` : `Dẫn đường tới ${m.name}`, true);
     else if (sound === 'beep') chime.play('now', 0, true);
     if (fix) plan(fix, 'start');
     else { setStatus('waiting-gps'); setRoute(null); }
@@ -193,10 +209,36 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch { /* bỏ qua */ }
   }, []);
 
+  /** Xong công ty đầu danh sách (tới nơi / bỏ qua) → dẫn tới công ty kế, hết thì tắt */
+  const advanceStop = useCallback((p: LatLng | null, arrived: boolean) => {
+    const m = modeRef.current;
+    if (m.kind !== 'stops' || !m.stops.length) return;
+    const [done, ...rest] = m.stops;
+    if (arrived) {
+      inputsRef.current.onArrive?.(done.id);
+      announce(`Đã đến ${done.name}`, 'done');
+    }
+    if (!rest.length) {
+      say(arrived ? `Đã đến ${done.name} — xong ${m.total} công ty trong kế hoạch 🎉` : 'Hết công ty trong kế hoạch');
+      stop();
+      return;
+    }
+    const next: NavMode = { kind: 'stops', stops: rest, total: m.total };
+    setMode(next);
+    modeRef.current = next;
+    if (p) plan(p, 'next');
+    else { setRoute(null); setStatus('waiting-gps'); }
+  }, [announce, say, stop, plan]);
+
   // Mỗi điểm GPS: vị trí trên lộ trình, lạc đường, tới nơi, đọc chỗ rẽ
   useEffect(() => {
     if (mode.kind === 'off' || !fix) return;
     const p = { lat: fix.lat, lng: fix.lng };
+    // Kế hoạch ghé: tới gần công ty (kể cả khi không có lộ trình — công ty ngoài bản đồ đường) → công ty kế tiếp
+    if (mode.kind === 'stops' && mode.stops[0] && distM(p, mode.stops[0].point) <= Math.max(STOP_ARRIVE_M, Math.min(60, fix.acc))) {
+      advanceStop(p, true);
+      return;
+    }
     const r = routeRef.current;
     if (!r) {
       if (Date.now() - lastPlanAt.current > 6000) plan(p, 'start');
@@ -231,7 +273,7 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
         announce(`Đã đến ${mode.name}`, 'done');
         say(`Đã đến ${mode.name}`);
         stop();
-      }
+      } else if (mode.kind === 'stops') advanceStop(p, true);
       return;
     }
     // Đọc chỗ rẽ: báo trước (xa) + báo ngay tại chỗ (gần), mỗi chỗ 1 lần
@@ -276,6 +318,16 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     toApproach: route ? Math.max(0, route.approach - progress.s) : null,
     start, stop,
     replan: () => { if (fix) plan({ lat: fix.lat, lng: fix.lng }, 'reroute'); },
+    /** Kế hoạch ghé: bỏ qua công ty đang dẫn tới */
+    skipStop: () => advanceStop(fix ? { lat: fix.lat, lng: fix.lng } : null, false),
+    /** Kế hoạch ghé: công ty phía sau đã tình cờ đi qua (tự đánh dấu đã ghé) → bỏ khỏi danh sách còn lại */
+    dropStop: (id: string) => {
+      const m = modeRef.current;
+      if (m.kind !== 'stops' || m.stops[0]?.id === id || !m.stops.some(x => x.id === id)) return;
+      const next: NavMode = { ...m, stops: m.stops.filter(x => x.id !== id) };
+      setMode(next);
+      modeRef.current = next;
+    },
     /** Gọi trong lần bấm đổi chế độ âm thanh (iPhone) + phát thử 1 tiếng của chế độ mới */
     previewSound: (next: NavSound) => {
       chime.unlock();

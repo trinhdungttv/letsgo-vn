@@ -10,7 +10,7 @@ import { HEADCOUNT_BUCKETS, UNVERIFIED_TAG, headcountText } from '../../../lib/k
 import { fmtDateTime } from './surveyFormat';
 import PositionPicker, { WagePicker } from './PositionPicker';
 
-const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ' };
+const POS_SOURCE: Record<SurveyPhoto['position_source'], string> = { gps: 'GPS lúc chụp', exif: 'Vị trí lưu trong ảnh', manual: 'Chọn trên bản đồ', track: 'Theo giờ chụp trên đường đã đi' };
 const posText = (p: SurveyPhoto) => (p.survey_kind === 'online' ? 'Vị trí từ link Google Maps (khảo sát online)' : POS_SOURCE[p.position_source]);
 
 /** Ô ảnh nhỏ trong lưới (cắt vuông) + lớp ghi chú cắt cùng kiểu. */

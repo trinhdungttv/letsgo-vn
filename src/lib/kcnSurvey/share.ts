@@ -6,16 +6,17 @@ import { groupChunks, type TrackChunk } from './api';
 import type { TrackSegment } from './track';
 
 export const SURVEY_SHARE_HINT = 'Chưa chạy migration 209 (Chia sẻ khảo sát) trên Supabase — chạy file 20261106100000_209_kcn_survey_shares.sql rồi thử lại';
+export const SURVEY_SHARE_LODGING_HINT = 'Chưa chạy migration 222 (Chia sẻ kèm nhà trọ) trên Supabase — chạy file 20261112100000_222_kcn_survey_share_lodgings.sql rồi thử lại, hoặc bỏ chọn "Nhà trọ"';
 
-function fail(err: { message?: string; code?: string } | null): never {
+function fail(err: { message?: string; code?: string } | null, hint = SURVEY_SHARE_HINT): never {
   const msg = err?.message ?? 'Lỗi không xác định';
-  if (err?.code === 'PGRST202' || err?.code === '42883' || /could not find the function|schema cache/i.test(msg)) throw new Error(SURVEY_SHARE_HINT);
+  if (err?.code === 'PGRST202' || err?.code === '42883' || /could not find the function|schema cache/i.test(msg)) throw new Error(hint);
   throw new Error(msg);
 }
 
-async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+async function rpc<T>(fn: string, args: Record<string, unknown>, hint?: string): Promise<T> {
   const { data, error } = await supabase.rpc(fn, args);
-  if (error) fail(error);
+  if (error) fail(error, hint);
   return data as T;
 }
 
@@ -73,7 +74,11 @@ export function shareState(s: { revoked: boolean; expires_at: string | null }, n
 }
 
 // ── Nhóm KCN theo tỉnh (để chọn nhanh cả tỉnh) ───────────────────────────────
-export interface ShareZone { id: string; name: string; location: string | null; photos: number; trips: number }
+export interface ShareZone {
+  id: string; name: string; location: string | null; photos: number; trips: number;
+  /** số nhà trọ đã khảo sát trong KCN (migration 221) */
+  lodgings?: number;
+}
 export interface ProvinceGroup { key: string; label: string; zones: ShareZone[] }
 
 /** Gộp KCN theo tỉnh; tỉnh nhiều KCN lên trước, "Chưa ghi tỉnh" xuống cuối. */
@@ -108,6 +113,8 @@ export interface ShareMessageInput {
   expiresAt: string | null;
   /** Lời chào riêng, vd tên người nhận ("anh Nam"); trống = "anh/chị" */
   recipient?: string;
+  /** Link có kèm nhà trọ đã khảo sát */
+  lodgings?: boolean;
 }
 
 const joinNames = (names: readonly string[], max = 6) =>
@@ -125,7 +132,7 @@ export function buildShareMessage(i: ShareMessageInput): string {
     `🔑 Mã xem: ${i.pin}`,
     i.expiresAt ? `⏳ Xem được đến hết ngày ${fmtVnDate(new Date(i.expiresAt))}` : '⏳ Link không giới hạn thời gian',
     '',
-    `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ảnh chỉ tiêu tuyển dụng và các chuyến khảo sát. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
+    `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ảnh chỉ tiêu tuyển dụng${i.lodgings ? ', các chuyến khảo sát và nhà trọ quanh KCN (giá, số phòng, khoảng cách tới công ty)' : ' và các chuyến khảo sát'}. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
   ];
   return lines.join('\n');
 }
@@ -135,16 +142,26 @@ export interface SurveyShareRow {
   id: string; code: string; label: string; zone_ids: string[]; provinces: string[];
   expires_at: string | null; revoked: boolean; open_count: number; last_opened_at: string | null;
   locked_until: string | null; created_by_name: string; created_at: string;
+  /** Migration 222 — chưa chạy thì không có (coi như false) */
+  include_lodgings?: boolean;
+  show_landlord?: boolean;
 }
 
 export async function listSurveyShares(token: string): Promise<SurveyShareRow[]> {
   return (await rpc<SurveyShareRow[] | null>('survey_share_list', { p_token: token })) ?? [];
 }
 
-export async function createSurveyShare(token: string, a: { label: string; zoneIds: string[]; provinces: string[]; pin: string; days: number | null }) {
-  return rpc<{ ok: true; id: string; code: string; expires_at: string | null }>('survey_share_create', {
+export async function createSurveyShare(token: string, a: {
+  label: string; zoneIds: string[]; provinces: string[]; pin: string; days: number | null;
+  /** kèm nhà trọ (migration 222) + có hiện tên / SĐT chủ nhà */
+  lodgings?: boolean; showLandlord?: boolean;
+}) {
+  const args: Record<string, unknown> = {
     p_token: token, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces, p_pin: a.pin, p_days: a.days,
-  });
+  };
+  // Chỉ gửi 2 tham số mới khi có chọn nhà trọ → chưa chạy 222 thì link thường vẫn tạo được như cũ
+  if (a.lodgings) { args.p_include_lodgings = true; args.p_show_landlord = !!a.showLandlord; }
+  return rpc<{ ok: true; id: string; code: string; expires_at: string | null }>('survey_share_create', args, a.lodgings ? SURVEY_SHARE_LODGING_HINT : undefined);
 }
 
 /** Đặt mã mới (và gia hạn nếu setExpiry) — mở lại được cả link đã hết hạn / thu hồi. */
@@ -178,6 +195,10 @@ export interface SharedPhoto {
 export interface SharedSurvey {
   label: string; provinces: string[]; expires_at: string | null;
   zones: SharedZone[]; trips: SharedTrip[]; photos: SharedPhoto[];
+  /** Nhà trọ (migration 222): null / không có = link không kèm nhà trọ. Dòng thô → đọc bằng normLodging. */
+  lodgings?: Record<string, unknown>[] | null;
+  /** Link có cho xem tên + SĐT chủ nhà không */
+  show_landlord?: boolean;
 }
 
 export type OpenSurveyShareResult =
