@@ -21,6 +21,7 @@ import {
 } from '../../../lib/kcnSurvey/areaSearch';
 import { createMarketZoneQuick, saveSurveyArea, type SurveyArea } from '../../../lib/kcnSurvey/api';
 import { zoneNameMatch } from '../../../lib/kcnSurvey/zones';
+import { aliasZoneId, loadZoneAliases, type ZoneAlias } from '../../../lib/zoneAliases';
 import { fmtDistance, distM } from '../../../lib/kcnSurvey/track';
 
 export interface AreaSaved {
@@ -253,7 +254,17 @@ export default function SurveyAreaFinder({ zones, target, existing, fix, viewCen
   };
 
   // ── Lưu ───────────────────────────────────────────────────────────────────
-  const matches = useMemo(() => (target || !name.trim() ? [] : zones.filter(z => zoneNameMatch(z.name, name)).slice(0, 4)), [zones, name, target]);
+  // Tên đã gộp (VD "Khu công nghiệp Nhơn Trạch 3" → KCN Nhơn Trạch, migration 224): chỉ cho gắn vào KCN đã gộp, không tạo mới
+  const [aliases, setAliases] = useState<ZoneAlias[]>([]);
+  useEffect(() => { void loadZoneAliases().then(setAliases); }, []);
+  const aliasZone = useMemo(() => {
+    if (target || !name.trim()) return null;
+    const id = aliasZoneId(name, aliases);
+    return id ? zones.find(z => z.id === id) ?? null : null;
+  }, [aliases, name, zones, target]);
+  const matches = useMemo(() => (target || !name.trim() ? []
+    : aliasZone ? [aliasZone]
+    : zones.filter(z => zoneNameMatch(z.name, name)).slice(0, 4)), [zones, name, target, aliasZone]);
   useEffect(() => { setLinkTo(matches[0]?.id ?? 'new'); }, [matches]);
 
   const save = async () => {
@@ -418,9 +429,10 @@ export default function SurveyAreaFinder({ zones, target, existing, fix, viewCen
                 </div>
                 <div className="rounded-xl bg-white divide-y divide-black/5 overflow-hidden">
                   {matches.map(z => (
-                    <Radio key={z.id} on={linkTo === z.id} onClick={() => setLinkTo(z.id)} title={`Gắn vào KCN có sẵn: ${z.name}`} hint={z.location ?? 'Đã có trong Thị trường → Khu vực'} />
+                    <Radio key={z.id} on={linkTo === z.id} onClick={() => setLinkTo(z.id)} title={`Gắn vào KCN có sẵn: ${z.name}`}
+                      hint={aliasZone ? `“${name.trim()}” đã được gộp vào ${z.name}` : z.location ?? 'Đã có trong Thị trường → Khu vực'} />
                   ))}
-                  <Radio on={linkTo === 'new'} onClick={() => setLinkTo('new')} title={`Tạo KCN mới${name.trim() ? `: ${name.trim()}` : ''}`} hint="Thêm vào Thị trường → Khu vực (bổ sung thông tin sau ở tab Khu vực)" />
+                  {!aliasZone && <Radio on={linkTo === 'new'} onClick={() => setLinkTo('new')} title={`Tạo KCN mới${name.trim() ? `: ${name.trim()}` : ''}`} hint="Thêm vào Thị trường → Khu vực (bổ sung thông tin sau ở tab Khu vực)" />}
                 </div>
               </>
             )}

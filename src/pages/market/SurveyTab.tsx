@@ -100,6 +100,10 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     return next;
   }), []);
   const { sub, period, province, zoneId, person, starOnly, kind } = prefs;
+  // KCN đã lưu trong bộ lọc không còn trong danh mục (VD đã gộp Nhơn Trạch 1/3/6 — migration 224) → về "Tất cả KCN"
+  useEffect(() => {
+    if (marketZones.length && zoneId !== 'all' && zoneId !== 'none' && !marketZones.some(z => z.id === zoneId)) setPrefs({ zoneId: 'all' });
+  }, [marketZones, zoneId, setPrefs]);
   const [search, setSearch] = useState('');
   /** Ảnh / ghi âm đang lọc theo 1 chuyến (nút "Xem n ảnh" ở tab Chuyến đi) */
   const [tripFilter, setTripFilter] = useState<string | null>(null);

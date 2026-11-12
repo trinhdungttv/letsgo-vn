@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-12-merge-nhon-trach',
+    date: '2026-11-12',
+    title: 'Khu vực KCN',
+    features: [
+      'Gộp KCN Nhơn Trạch 1, 3, 6 thành 1 KCN Nhơn Trạch — khách hàng, khảo sát, Pipeline… chuyển hết sang',
+      'Gõ "Nhơn Trạch 1–6" ở bất kỳ đâu đều hiểu là KCN Nhơn Trạch, không tạo trùng KCN nữa',
+    ],
+  },
+  {
     id: '2026-11-12-survey-plan-stops',
     date: '2026-11-12',
     title: 'Khảo sát KCN',
