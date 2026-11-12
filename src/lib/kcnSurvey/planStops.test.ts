@@ -35,6 +35,15 @@ describe('đọc ô nhập công ty cần ghé', () => {
     expect(r[2]).toEqual({ kind: 'name', name: '48.85, 2.35' });
   });
 
+  it('link đầy đủ thật (mở link chia sẻ trên trình duyệt): đúng tên Google Maps + ghim', () => {
+    const url = 'https://www.google.com/maps/place/C%C3%94NG+TY+TNHH+C%C3%94NG+NGH%E1%BB%86+HKC+(VI%E1%BB%86T+NAM)/@10.7206136,106.9184892,17z/data=!3m1!4b1!4m6!3m5!1s0x317519634e41fedf:0x4f500ac94480a07c!8m2!3d10.7206136!4d106.9184892!16s%2Fg%2F11v6fk9c_3?entry=ttu&g_ep=EgoyMDI2MTEwOS4wIKXMDSoASAFQAw%3D%3D';
+    expect(parseStopLines(url)[0]).toMatchObject({ kind: 'link', short: false, name: 'CÔNG TY TNHH CÔNG NGHỆ HKC (VIỆT NAM)', coords: { lat: 10.7206136, lng: 106.9184892 } });
+  });
+
+  it('link rút gọn chia sẻ từ iPhone (?g_st=ic) được nhận là link rút gọn', () => {
+    expect(parseStopLines('https://maps.app.goo.gl/MENTDu1E5nYoyocM6?g_st=ic')[0]).toMatchObject({ kind: 'link', short: true, coords: null, name: '' });
+  });
+
   it('nhiều link liền nhau, mỗi link nhận đúng dòng tên ngay trên nó', () => {
     const r = parseStopLines('Công ty A\nhttps://maps.app.goo.gl/aaa\nCông ty B\nhttps://maps.app.goo.gl/bbb\nCông ty C');
     expect(r.map(x => [x.kind, 'name' in x ? x.name : ''])).toEqual([['link', 'Công ty A'], ['link', 'Công ty B'], ['name', 'Công ty C']]);

@@ -219,12 +219,14 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
         if (l.kind !== 'link') continue;
         let coords = l.coords, url = l.url;
         if (!coords) { const r = await resolveMapLink(l.url, token); coords = r?.coords ?? null; if (r) url = r.url; }
-        if (!coords) { failed.push(l.name || l.url); continue; }
+        // Link rút gọn chia sẻ từ app Google Maps: máy chủ không mở được (Google chỉ cho trình duyệt chạy JS) →
+        // có tên đi kèm (văn bản Chia sẻ: tên + địa chỉ + link) thì tìm theo tên, không thì báo cách lấy link đầy đủ
+        if (!coords) { if (l.name) names.push(l.name); else failed.push(l.url); continue; }
         rows.push(newStop({ name: l.name || placeNameFromLink(url), address: l.address, lat: coords.lat, lng: coords.lng, source: 'maps_link', map_link: l.url }));
       }
       try { await saveRows(rows); } catch (e) { setErr((e as Error).message); setBusy(null); return; }
       setBusy(null);
-      if (failed.length) setErr(`Không đọc được vị trí ${failed.length} link (${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}). Mở link trên Google Maps, bấm vào ghim công ty rồi copy link trên thanh địa chỉ (link dài có …@vĩ độ,kinh độ…) và dán lại.`);
+      if (failed.length) setErr(`${failed.length} link rút gọn (maps.app.goo.gl) chưa đọc được: Google không cho máy chủ mở loại link này. Cách nhanh: gõ tên công ty (app tự tìm), hoặc mở link trên trình duyệt rồi copy link đầy đủ trên thanh địa chỉ (google.com/maps/place/…) và dán lại — app tự lấy đúng tên + vị trí.`);
     }
     if (names.length === 1) void runSearch(names[0]);
     else if (names.length > 1) void runBatch(names);
