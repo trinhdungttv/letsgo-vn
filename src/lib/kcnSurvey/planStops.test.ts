@@ -40,6 +40,24 @@ describe('đọc ô nhập công ty cần ghé', () => {
     expect(parseStopLines(url)[0]).toMatchObject({ kind: 'link', short: false, name: 'CÔNG TY TNHH CÔNG NGHỆ HKC (VIỆT NAM)', coords: { lat: 10.7206136, lng: 106.9184892 } });
   });
 
+  it('dán toạ độ trong ngoặc (copy từ Google Maps) không sinh tên "( )"', () => {
+    expect(parseStopLines('(10.714001, 106.9148268)')[0]).toEqual({ kind: 'coords', coords: { lat: 10.714001, lng: 106.9148268 }, name: '' });
+    expect(parseStopLines('Cty A (10.714001, 106.9148268)')[0]).toMatchObject({ name: 'Cty A' });
+  });
+
+  it('link trang kết quả tìm kiếm / chỉ đường / khung bản đồ: không ghim tâm khung nhìn', () => {
+    for (const u of [
+      'https://www.google.com/maps/search/c%C3%B4ng+ty+nh%C6%A1n+tr%E1%BA%A1ch/@10.7206136,106.9184892,14z?entry=ttu',
+      'https://www.google.com/maps/@10.7206136,106.9184892,15z',
+      'https://www.google.com/maps/dir/10.70,106.90/10.72,106.91/@10.71,106.90,14z',
+    ]) expect(parseStopLines(u)[0]).toMatchObject({ kind: 'link', coords: null, notPlace: true });
+  });
+
+  it('tìm theo toạ độ trên Google Maps: lấy toạ độ trong đường dẫn', () => {
+    expect(parseStopLines('https://www.google.com/maps/search/10.714001,+106.914827?entry=tts')[0]).toMatchObject({ coords: { lat: 10.714001, lng: 106.914827 } });
+    expect(parseStopLines('https://www.google.com/maps?q=10.714,106.9148')[0]).toMatchObject({ coords: { lat: 10.714, lng: 106.9148 } });
+  });
+
   it('link rút gọn chia sẻ từ iPhone (?g_st=ic) được nhận là link rút gọn', () => {
     expect(parseStopLines('https://maps.app.goo.gl/MENTDu1E5nYoyocM6?g_st=ic')[0]).toMatchObject({ kind: 'link', short: true, coords: null, name: '' });
   });

@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-12-plan-paste-google-link',
+    date: '2026-11-12',
+    title: 'Kế hoạch ghé công ty',
+    features: [
+      'Dán link Google Maps (copy trên thanh địa chỉ máy tính) là tự thêm công ty, đúng tên + vị trí',
+      'Link rút gọn chia sẻ từ điện thoại có nút "Mở" để lấy link đầy đủ rồi dán lại',
+      'Nút "Mở Google Maps" quanh KCN; dán toạ độ trong ngoặc không còn ra tên "( )"',
+    ],
+  },
+  {
     id: '2026-11-12-merge-nhon-trach',
     date: '2026-11-12',
     title: 'Khu vực KCN',

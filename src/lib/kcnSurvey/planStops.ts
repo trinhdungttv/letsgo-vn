@@ -59,14 +59,43 @@ export const stopTitle = (st: Pick<PlanStop, 'name' | 'lat' | 'lng'>) => st.name
 
 // ── Đọc ô nhập ───────────────────────────────────────────────────────────────
 export type StopLine =
-  | { kind: 'link'; url: string; short: boolean; coords: LatLng | null; name: string; address: string }
+  | {
+    kind: 'link'; url: string; short: boolean; coords: LatLng | null; name: string; address: string;
+    /** Link Google Maps đầy đủ nhưng KHÔNG phải trang 1 địa điểm (trang kết quả tìm kiếm / chỉ đường / chỉ là khung bản đồ)
+     *  → toạ độ trong link là tâm khung nhìn, không phải công ty → không ghim */
+    notPlace?: boolean;
+  }
   | { kind: 'coords'; coords: LatLng; name: string }
   | { kind: 'name'; name: string };
 
 const URL_RE = /https?:\/\/[^\s<>"']+/i;
 const COORD_RE = /(-?\d{1,2}\.\d{3,})\s*[,;]\s*(-?\d{2,3}\.\d{3,})/;
 // Bỏ gạch đầu dòng / số thứ tự ("1. ", "2) ", "- ", "• ") nhưng giữ tên bắt đầu bằng số ("3M Việt Nam")
-const cleanName = (t: string) => t.replace(/^\s*(?:[-–•*·]+|\d{1,2}[.)])\s+/, '').replace(/[\s|,;:–-]+$/, '').replace(/^[\s|,;:–-]+/, '').trim();
+const cleanName = (t: string) => {
+  const s = t.replace(/^\s*(?:[-–•*·]+|\d{1,2}[.)])\s+/, '')
+    .replace(/\(\s*[,;]?\s*\)|\[\s*[,;]?\s*\]/g, ' ') // ngoặc rỗng còn lại sau khi bỏ toạ độ "(10.71, 106.91)"
+    .replace(/[\s|,;:–-]+$/, '').replace(/^[\s|,;:–-]+/, '').replace(/\s{2,}/g, ' ').trim();
+  return /[\p{L}\p{N}]/u.test(s) ? s : ''; // chỉ còn dấu câu → coi như không có tên
+};
+
+/** Toạ độ của 1 link Google Maps đầy đủ — chỉ nhận khi link trỏ đúng 1 địa điểm. */
+function googleLinkCoords(url: string): { coords: LatLng | null; notPlace: boolean } {
+  let path = '';
+  try { path = decodeURIComponent(new URL(url).pathname); } catch { path = url; }
+  // Ghim của địa điểm (!3d…!4d…) — chắc chắn đúng chỗ
+  const pin = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/.exec(url);
+  if (pin) return { coords: { lat: +pin[1], lng: +pin[2] }, notPlace: false };
+  // Tìm theo toạ độ: /maps/search/10.72,+106.91 hoặc /maps/place/10.72,106.91
+  const inPath = /\/maps\/(?:search|place)\/(-?\d{1,2}\.\d+)\s*,\s*\+?(-?\d{2,3}\.\d+)/.exec(path);
+  if (inPath) return { coords: { lat: +inPath[1], lng: +inPath[2] }, notPlace: false };
+  // Trang địa điểm không kèm ghim: tâm khung nhìn (@) chính là địa điểm
+  if (/\/maps\/place\//.test(path)) return { coords: extractLatLng(url), notPlace: false };
+  // ?q=lat,lng / ?query=lat,lng / ll=
+  const q = /[?&](?:q|query|ll|destination)=(-?\d{1,2}\.\d+)\s*,\s*(-?\d{2,3}\.\d+)/.exec(url);
+  if (q) return { coords: { lat: +q[1], lng: +q[2] }, notPlace: false };
+  // /maps/search/<tên>, /maps/dir/…, /maps/@… → chỉ có tâm khung nhìn, không phải công ty
+  return { coords: null, notPlace: /google\.[a-z.]+\/maps|maps\.google\./i.test(url) };
+}
 
 /**
  * Mỗi dòng 1 công ty. Dòng chữ đứng NGAY TRƯỚC 1 link (chưa thuộc link nào) = tên (dòng đầu) + địa chỉ (các dòng sau) của link đó
@@ -82,12 +111,14 @@ export function parseStopLines(text: string): StopLine[] {
     const url = URL_RE.exec(line)?.[0];
     if (url) {
       const inline = cleanName(line.replace(url, ' '));
-      const coords = extractLatLng(url);
-      const fromUrl = placeNameFromLink(url);
+      const short = isShortMapLink(url);
+      const g = short ? { coords: null, notPlace: false } : googleLinkCoords(url);
+      const coords = g.coords && isValidVnLatLng(g.coords) ? g.coords : null;
+      const fromUrl = cleanName(placeNameFromLink(url));
       const name = inline || cleanName(pending[0] ?? '') || fromUrl;
       const address = inline ? '' : pending.slice(1).map(cleanName).filter(Boolean).join(', ');
       pending = [];
-      out.push({ kind: 'link', url, short: isShortMapLink(url), coords: coords && isValidVnLatLng(coords) ? coords : null, name, address });
+      out.push({ kind: 'link', url, short, coords, name, address, ...(g.notPlace && !coords ? { notPlace: true } : {}) });
       continue;
     }
     const m = COORD_RE.exec(line);

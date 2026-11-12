@@ -201,10 +201,14 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
   };
 
   // ── Nút Thêm / Tìm ──
-  const submit = async () => {
+  // Link rút gọn (maps.app.goo.gl) chưa đọc được → khung "Mở link rồi dán lại"; link vừa bấm Mở sẽ tự gỡ khi dán link đầy đủ
+  const [shortLinks, setShortLinks] = useState<string[]>([]);
+  const openedShort = useRef<string | null>(null);
+
+  const submit = async (raw: string = text) => {
     if (missing) { setErr(PLAN_MIGRATION_HINT); return; }
     if (!zoneId) { setErr('Chọn KCN trước'); return; }
-    const lines = parseStopLines(text);
+    const lines = parseStopLines(raw);
     if (!lines.length) return;
     setErr(null);
     const geo = lines.filter(l => l.kind !== 'name');
@@ -212,11 +216,13 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
     if (geo.length) {
       const rows: NewStop[] = [];
       const failed: string[] = [];
+      let notPlace = 0;
       for (let k = 0; k < geo.length; k++) {
         const l = geo[k];
         setBusy(`Đang đọc vị trí ${k + 1}/${geo.length}…`);
         if (l.kind === 'coords') { rows.push(newStop({ name: l.name, lat: l.coords.lat, lng: l.coords.lng, source: 'coords' })); continue; }
         if (l.kind !== 'link') continue;
+        if (l.notPlace) { notPlace++; continue; }
         let coords = l.coords, url = l.url;
         if (!coords) { const r = await resolveMapLink(l.url, token); coords = r?.coords ?? null; if (r) url = r.url; }
         // Link rút gọn chia sẻ từ app Google Maps: máy chủ không mở được (Google chỉ cho trình duyệt chạy JS) →
@@ -226,7 +232,14 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
       }
       try { await saveRows(rows); } catch (e) { setErr((e as Error).message); setBusy(null); return; }
       setBusy(null);
-      if (failed.length) setErr(`${failed.length} link rút gọn (maps.app.goo.gl) chưa đọc được: Google không cho máy chủ mở loại link này. Cách nhanh: gõ tên công ty (app tự tìm), hoặc mở link trên trình duyệt rồi copy link đầy đủ trên thanh địa chỉ (google.com/maps/place/…) và dán lại — app tự lấy đúng tên + vị trí.`);
+      // Vừa dán link đầy đủ sau khi bấm "Mở" 1 link rút gọn → gỡ link rút gọn đó khỏi danh sách chờ
+      if (rows.some(r => r.source === 'maps_link') && openedShort.current) {
+        const done = openedShort.current;
+        openedShort.current = null;
+        setShortLinks(list => list.filter(u => u !== done));
+      }
+      if (failed.length) setShortLinks(list => [...list, ...failed.filter(u => !list.includes(u))]);
+      if (notPlace) setErr(`${notPlace > 1 ? `${notPlace} link` : 'Link'} vừa dán là trang kết quả tìm kiếm / chỉ đường của Google Maps, chưa phải trang của 1 công ty. Bấm vào đúng công ty trên Google Maps (hiện bảng thông tin công ty bên trái) rồi copy lại địa chỉ trang.`);
     }
     if (names.length === 1) void runSearch(names[0]);
     else if (names.length > 1) void runBatch(names);
@@ -332,16 +345,58 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
               <span className="block text-[11px] font-medium text-[#666] mb-1">Thêm công ty <span className="text-[#aaa]">· gõ tên để tìm, hoặc dán link Google Maps / toạ độ — dán nhiều dòng một lúc được (Shift+Enter xuống dòng)</span></span>
               <textarea value={text} onChange={e => setText(e.target.value)} rows={text.includes('\n') ? 4 : 2} disabled={!zoneId || missing}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !text.includes('\n')) { e.preventDefault(); void submit(); } }}
-                placeholder={'VD: Pouchen\nhoặc dán: https://maps.app.goo.gl/…  ·  10.9512, 106.7034'}
+                onPaste={e => {
+                  // Dán link / toạ độ vào ô trống → thêm luôn, khỏi bấm nút (dán tên thì vẫn để sửa rồi bấm Tìm)
+                  const pasted = e.clipboardData.getData('text');
+                  if (text.trim() || !pasted.trim() || busy) return;
+                  const lines = parseStopLines(pasted);
+                  if (lines.length && lines.every(l => l.kind !== 'name')) { e.preventDefault(); void submit(pasted); }
+                }}
+                placeholder={'VD: Pouchen\nhoặc dán link google.com/maps/place/… (copy trên thanh địa chỉ) · 10.9512, 106.7034'}
                 className="w-full px-3 py-2 rounded-lg border border-[#E8E7E2] text-[13px] leading-snug outline-none focus:border-[#0A84FF] resize-y disabled:bg-[#F7F7F5]" />
               <div className="flex items-center gap-2 mt-1.5">
                 <button onClick={() => void submit()} disabled={!text.trim() || !!busy || !zoneId || missing}
                   className="h-9 px-3.5 rounded-full bg-[#0A84FF] text-white text-[13px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40">
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} {busy ?? (lineCount > 1 ? `Tìm / thêm ${lineCount} dòng` : 'Tìm / thêm')}
                 </button>
+                {zone && (
+                  <a href={googleSearchUrl(zone.name, center)} target="_blank" rel="noopener noreferrer" title="Mở Google Maps quanh KCN này để tìm công ty"
+                    className="h-9 px-3 rounded-full border border-[#D8D6D0] text-[12.5px] font-medium text-[#333] inline-flex items-center gap-1.5 hover:bg-[#F9F9F7]">
+                    <ExternalLink size={13} /> Mở Google Maps
+                  </a>
+                )}
                 {scanState === 'running' && <span className="text-[11.5px] text-[#888] inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Đang quét bản đồ quanh KCN…</span>}
               </div>
+              {zone && !zoneStops.length && !shortLinks.length && (
+                <div className="mt-2 text-[11.5px] text-[#777] leading-snug">
+                  Trên máy tính: bấm <b>Mở Google Maps</b> → bấm vào công ty → copy địa chỉ trang (Ctrl+L rồi Ctrl+C, máy Mac ⌘L ⌘C) → dán vào ô trên (Ctrl+V) là tự thêm, đúng tên + vị trí như Google.
+                </div>
+              )}
             </div>
+
+            {shortLinks.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 font-semibold leading-snug">{shortLinks.length} link rút gọn chia sẻ từ điện thoại — Google không cho máy chủ đọc, làm thêm 1 bước:</div>
+                  <button onClick={() => setShortLinks([])} className="text-amber-700 shrink-0" aria-label="Đóng"><X size={14} /></button>
+                </div>
+                <ol className="list-decimal pl-4 mt-1 space-y-0.5 leading-snug">
+                  <li>Bấm <b>Mở</b> → Google Maps mở ra đúng công ty (đợi 1–2 giây cho link đổi xong).</li>
+                  <li>Copy địa chỉ trang: Ctrl+L rồi Ctrl+C (máy Mac ⌘L ⌘C).</li>
+                  <li>Quay lại đây, dán vào ô trên (Ctrl+V) — tự thêm, đúng tên + vị trí.</li>
+                </ol>
+                <div className="mt-1.5 divide-y divide-amber-200/80">
+                  {shortLinks.map(u => (
+                    <div key={u} className="flex items-center gap-2 py-1.5">
+                      <span className="flex-1 min-w-0 truncate font-mono text-[11px]">{u.replace(/^https?:\/\//, '')}</span>
+                      <a href={u} target="_blank" rel="noopener noreferrer" onClick={() => { openedShort.current = u; }}
+                        className="h-7 px-3 rounded-full bg-[#0A84FF] text-white text-[12px] font-semibold inline-flex items-center gap-1 shrink-0"><ExternalLink size={12} /> Mở</a>
+                      <button onClick={() => setShortLinks(list => list.filter(x => x !== u))} className="text-[11.5px] text-amber-700 shrink-0">Bỏ</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {err && <div className="text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-lg px-3 py-2 leading-snug">{err}</div>}
 
