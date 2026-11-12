@@ -12,7 +12,8 @@ import { escapeMapHtml } from '../../../lib/mapGroups';
 import type { LatLng } from '../../../lib/geo';
 import type { MarketZone } from '../../../lib/types';
 import type { SurveyCompany } from '../../../lib/kcnSurvey/companies';
-import { placeNameFromLink } from '../../../lib/cskh/nearby';
+import { placeNameFromLink, placeQueryFromLink, splitPlaceQuery } from '../../../lib/cskh/nearby';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 import { readScanCache, scanArea, writeScanCache, type ScanPlace } from '../../../lib/kcnSurvey/marketScan';
 import { scanOverture } from '../../../lib/kcnSurvey/overtureScan';
 import { listSurveyAreas } from '../../../lib/kcnSurvey/api';
@@ -26,8 +27,10 @@ import { fold } from './surveyData';
 
 type StartMode = 'here' | 'center' | 'free';
 interface PlanResult { ids: string[]; legs: Record<string, { km: number; sec: number } | null>; engine: 'valhalla' | 'estimate'; km: number; sec: number; start: LatLng | null }
-interface SearchState { q: string; items: StopCandidate[]; loading: number; notes: string[] }
-interface BatchRow { name: string; best: StopCandidate | null; done: boolean }
+/** Link Google Maps chỉ có tên + địa chỉ, không có toạ độ (chia sẻ từ app điện thoại) → tìm theo tên, lưu kèm tên/địa chỉ/link của Google */
+interface LinkInfo { url: string; name: string; address: string }
+interface SearchState { q: string; items: StopCandidate[]; loading: number; notes: string[]; link?: LinkInfo }
+interface BatchRow { name: string; best: StopCandidate | null; done: boolean; link?: LinkInfo }
 
 const fmtMin = (sec: number) => { const m = Math.max(1, Math.round(sec / 60)); return m < 60 ? `${m} phút` : `${Math.floor(m / 60)} giờ ${m % 60 ? `${m % 60} phút` : ''}`.trim(); };
 const fmtKm = (km: number) => (km < 1 ? `${Math.round(km * 1000 / 10) * 10} m` : `${km.toFixed(1).replace('.', ',')} km`);
@@ -68,6 +71,7 @@ interface Props {
 }
 
 export default function SurveyPlanDialog({ zones, initialZoneId, companies, stops, setStops, missing, token, userName, here = null, tripId = null, onNavigate, onClose, say, zIndex = 80 }: Props) {
+  const isMobile = useIsMobile();
   const countByZone = useMemo(() => {
     const m = new Map<string, number>();
     stops.forEach(s => { if (s.zone_id) m.set(s.zone_id, (m.get(s.zone_id) ?? 0) + 1); });
@@ -149,17 +153,20 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
     return saved.length;
   };
 
-  const addCandidate = async (c: StopCandidate) => {
+  const candRow = (c: StopCandidate, link?: LinkInfo) => newStop({
+    name: link?.name || c.name, address: link?.address || c.address, lat: c.lat, lng: c.lng, source: c.source, ref_key: c.refKey, map_link: link?.url || c.mapLink,
+  });
+  const addCandidate = async (c: StopCandidate, link?: LinkInfo) => {
     setErr(null);
     try {
-      await saveRows([newStop({ name: c.name, address: c.address, lat: c.lat, lng: c.lng, source: c.source, ref_key: c.refKey, map_link: c.mapLink })]);
+      await saveRows([candRow(c, link)]);
       setAdded(s => new Set(s).add(c.key));
     } catch (e) { setErr((e as Error).message); }
   };
 
   // ── Tìm theo tên ──
   const searchCtrl = useRef<AbortController | null>(null);
-  const runSearch = async (q: string) => {
+  const runSearch = async (q: string, link?: LinkInfo) => {
     searchCtrl.current?.abort();
     const ctrl = new AbortController();
     searchCtrl.current = ctrl;
@@ -170,16 +177,16 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
     ];
     if (!scanPlaces.length && center) tasks.push({ label: 'bản đồ quanh KCN', run: async () => searchScanPlaces(q, await ensureScan(), center) });
     if (await googlePlacesEnabled()) tasks.push({ label: 'Google Maps', run: () => searchGoogle(q, center, token, ctrl.signal) });
-    setSearch({ q, items: first, loading: tasks.length, notes: [] });
+    setSearch({ q, items: first, loading: tasks.length, notes: [], ...(link ? { link } : {}) });
     await Promise.all(tasks.map(t => t.run()
       .then(res => { if (!ctrl.signal.aborted) setSearch(s => (s && s.q === q ? { ...s, items: mergeCands(s.items, res), loading: s.loading - 1 } : s)); })
       .catch(() => { if (!ctrl.signal.aborted) setSearch(s => (s && s.q === q ? { ...s, loading: s.loading - 1, notes: [...s.notes, `${t.label} không trả lời`] } : s)); })));
   };
 
   /** Nhiều tên 1 lúc: mỗi tên lấy kết quả khớp nhất (≥ 0,5) ở các nguồn */
-  const runBatch = async (names: string[]) => {
+  const runBatch = async (names: string[], links: ReadonlyMap<string, LinkInfo> = new Map()) => {
     setSearch(null);
-    const rows: BatchRow[] = names.map(name => ({ name, best: null, done: false }));
+    const rows: BatchRow[] = names.map(name => ({ name, best: null, done: false, link: links.get(name) }));
     setBatch(rows);
     const places = center ? await ensureScan() : [];
     const google = await googlePlacesEnabled();
@@ -213,6 +220,9 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
     setErr(null);
     const geo = lines.filter(l => l.kind !== 'name');
     const names = lines.filter((l): l is Extract<typeof l, { kind: 'name' }> => l.kind === 'name').map(l => l.name);
+    const linkOf = new Map<string, LinkInfo>();
+    // Đang chọn công ty cho 1 link điện thoại mà dán 1 toạ độ (copy từ ghim thả trên Google Maps) → toạ độ đó là của link này
+    const own = search?.link && geo.length === 1 && geo[0].kind === 'coords' && !geo[0].name ? search.link : null;
     if (geo.length) {
       const rows: NewStop[] = [];
       const failed: string[] = [];
@@ -220,18 +230,25 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
       for (let k = 0; k < geo.length; k++) {
         const l = geo[k];
         setBusy(`Đang đọc vị trí ${k + 1}/${geo.length}…`);
-        if (l.kind === 'coords') { rows.push(newStop({ name: l.name, lat: l.coords.lat, lng: l.coords.lng, source: 'coords' })); continue; }
+        if (l.kind === 'coords') { rows.push(newStop({ name: l.name || own?.name || '', address: own?.address ?? '', lat: l.coords.lat, lng: l.coords.lng, source: 'coords', map_link: own?.url ?? '' })); continue; }
         if (l.kind !== 'link') continue;
         if (l.notPlace) { notPlace++; continue; }
         let coords = l.coords, url = l.url;
         if (!coords) { const r = await resolveMapLink(l.url, token); coords = r?.coords ?? null; if (r) url = r.url; }
-        // Link rút gọn chia sẻ từ app Google Maps: máy chủ không mở được (Google chỉ cho trình duyệt chạy JS) →
-        // có tên đi kèm (văn bản Chia sẻ: tên + địa chỉ + link) thì tìm theo tên, không thì báo cách lấy link đầy đủ
-        if (!coords) { if (l.name) names.push(l.name); else failed.push(l.url); continue; }
-        rows.push(newStop({ name: l.name || placeNameFromLink(url), address: l.address, lat: coords.lat, lng: coords.lng, source: 'maps_link', map_link: l.url }));
+        // Link chia sẻ từ APP điện thoại: Google chỉ trả tên + địa chỉ ("?q=<tên>, <địa chỉ>"), không có toạ độ →
+        // tìm công ty theo tên, lưu kèm tên/địa chỉ/link của Google. Không đọc được gì (mất mạng…) → khung vàng.
+        const gq = splitPlaceQuery(placeQueryFromLink(url));
+        const nm = l.name || placeNameFromLink(url) || gq.name;
+        const addr = l.address || gq.address;
+        if (!coords) {
+          if (nm) { if (!linkOf.has(nm)) names.push(nm); linkOf.set(nm, { url: l.url, name: nm, address: addr }); } else failed.push(l.url);
+          continue;
+        }
+        rows.push(newStop({ name: nm, address: addr, lat: coords.lat, lng: coords.lng, source: 'maps_link', map_link: l.url }));
       }
       try { await saveRows(rows); } catch (e) { setErr((e as Error).message); setBusy(null); return; }
       setBusy(null);
+      if (own) setSearch(null);
       // Vừa dán link đầy đủ sau khi bấm "Mở" 1 link rút gọn → gỡ link rút gọn đó khỏi danh sách chờ
       if (rows.some(r => r.source === 'maps_link') && openedShort.current) {
         const done = openedShort.current;
@@ -241,8 +258,8 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
       if (failed.length) setShortLinks(list => [...list, ...failed.filter(u => !list.includes(u))]);
       if (notPlace) setErr(`${notPlace > 1 ? `${notPlace} link` : 'Link'} vừa dán là trang kết quả tìm kiếm / chỉ đường của Google Maps, chưa phải trang của 1 công ty. Bấm vào đúng công ty trên Google Maps (hiện bảng thông tin công ty bên trái) rồi copy lại địa chỉ trang.`);
     }
-    if (names.length === 1) void runSearch(names[0]);
-    else if (names.length > 1) void runBatch(names);
+    if (names.length === 1) void runSearch(names[0], linkOf.get(names[0]));
+    else if (names.length > 1) void runBatch(names, linkOf);
     setText(names.length === 1 ? names[0] : '');
   };
 
@@ -367,9 +384,11 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
                 )}
                 {scanState === 'running' && <span className="text-[11.5px] text-[#888] inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Đang quét bản đồ quanh KCN…</span>}
               </div>
-              {zone && !zoneStops.length && !shortLinks.length && (
+              {zone && !zoneStops.length && !shortLinks.length && !search && (
                 <div className="mt-2 text-[11.5px] text-[#777] leading-snug">
-                  Trên máy tính: bấm <b>Mở Google Maps</b> → bấm vào công ty → copy địa chỉ trang (Ctrl+L rồi Ctrl+C, máy Mac ⌘L ⌘C) → dán vào ô trên (Ctrl+V) là tự thêm, đúng tên + vị trí như Google.
+                  {isMobile
+                    ? <>Trên điện thoại: trong app Google Maps mở công ty → <b>Chia sẻ</b> → <b>Sao chép</b> → dán vào ô trên. App đọc tên công ty trong link rồi tự tìm — bấm <b>Thêm</b> đúng công ty.</>
+                    : <>Trên máy tính: bấm <b>Mở Google Maps</b> → bấm vào công ty → copy địa chỉ trang (Ctrl+L rồi Ctrl+C, máy Mac ⌘L ⌘C) → dán vào ô trên (Ctrl+V) là tự thêm, đúng tên + vị trí như Google.</>}
                 </div>
               )}
             </div>
@@ -377,14 +396,22 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
             {shortLinks.length > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
                 <div className="flex items-start gap-2">
-                  <div className="flex-1 font-semibold leading-snug">{shortLinks.length} link rút gọn chia sẻ từ điện thoại — Google không cho máy chủ đọc, làm thêm 1 bước:</div>
+                  <div className="flex-1 font-semibold leading-snug">{shortLinks.length} link rút gọn chưa đọc được (mạng chậm hoặc máy chủ không trả lời) — thử dán lại, hoặc:</div>
                   <button onClick={() => setShortLinks([])} className="text-amber-700 shrink-0" aria-label="Đóng"><X size={14} /></button>
                 </div>
-                <ol className="list-decimal pl-4 mt-1 space-y-0.5 leading-snug">
-                  <li>Bấm <b>Mở</b> → Google Maps mở ra đúng công ty (đợi 1–2 giây cho link đổi xong).</li>
-                  <li>Copy địa chỉ trang: Ctrl+L rồi Ctrl+C (máy Mac ⌘L ⌘C).</li>
-                  <li>Quay lại đây, dán vào ô trên (Ctrl+V) — tự thêm, đúng tên + vị trí.</li>
-                </ol>
+                {isMobile ? (
+                  <ol className="list-decimal pl-4 mt-1 space-y-0.5 leading-snug">
+                    <li>Bấm <b>Mở</b> → Google Maps mở ra đúng công ty, xem tên công ty.</li>
+                    <li>Quay lại đây, gõ tên công ty vào ô trên → bấm <b>Tìm / thêm</b>.</li>
+                    <li>Không ra đúng? Trong Google Maps bấm giữ lên toà nhà công ty (thả ghim) → chạm vào toạ độ để sao chép → dán vào ô trên.</li>
+                  </ol>
+                ) : (
+                  <ol className="list-decimal pl-4 mt-1 space-y-0.5 leading-snug">
+                    <li>Bấm <b>Mở</b> → Google Maps mở ra đúng công ty (đợi 1–2 giây cho link đổi xong).</li>
+                    <li>Copy địa chỉ trang: Ctrl+L rồi Ctrl+C (máy Mac ⌘L ⌘C).</li>
+                    <li>Quay lại đây, dán vào ô trên (Ctrl+V) — tự thêm, đúng tên + vị trí.</li>
+                  </ol>
+                )}
                 <div className="mt-1.5 divide-y divide-amber-200/80">
                   {shortLinks.map(u => (
                     <div key={u} className="flex items-center gap-2 py-1.5">
@@ -407,13 +434,22 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
                   <span className="font-medium text-[#555] truncate">Kết quả cho “{search.q}”{search.loading > 0 && <Loader2 size={11} className="inline animate-spin ml-1.5" />}</span>
                   <button onClick={() => setSearch(null)} className="text-[#888]" aria-label="Đóng kết quả"><X size={14} /></button>
                 </div>
+                {search.link && (
+                  <div className="px-3 py-2 text-[11.5px] leading-snug bg-[#F4F3FF] text-[#45448f] border-t border-[#ECEBFA]">
+                    Link chia sẻ từ điện thoại chỉ có tên + địa chỉ, không kèm vị trí — app tìm theo tên, <b>bấm Thêm đúng công ty</b>:
+                    <div className="mt-0.5 text-[#111]"><b>{search.link.name}</b>{search.link.address ? <span className="text-[#666]"> · {search.link.address}</span> : null}</div>
+                  </div>
+                )}
                 <div className="divide-y divide-[#F0EFEA] max-h-[38vh] overflow-y-auto">
-                  {search.items.map(c => <CandRow key={c.key} c={c} added={added.has(c.key)} onAdd={() => void addCandidate(c)} />)}
+                  {search.items.map(c => <CandRow key={c.key} c={c} added={added.has(c.key)} onAdd={() => void addCandidate(c, search.link)} />)}
                   {!search.items.length && search.loading === 0 && <div className="px-3 py-3 text-[12.5px] text-[#888]">Không tìm thấy công ty khớp tên.</div>}
                 </div>
                 <div className="px-3 py-2 bg-[#FAFAF8] text-[11.5px] text-[#777] leading-snug">
                   {search.notes.length > 0 && <div className="text-[#b25e00]">{search.notes.join(' · ')}</div>}
-                  Không thấy đúng công ty? <a href={googleSearchUrl(search.q, center)} target="_blank" rel="noopener noreferrer" className="text-[#0A84FF] font-medium inline-flex items-center gap-0.5">Tìm trên Google Maps <ExternalLink size={11} /></a> → bấm Chia sẻ → Sao chép đường liên kết → dán vào ô trên.
+                  Không thấy đúng công ty? <a href={search.link?.url ?? googleSearchUrl(search.q, center)} target="_blank" rel="noopener noreferrer" className="text-[#0A84FF] font-medium inline-flex items-center gap-0.5">{search.link ? 'Mở link trong Google Maps' : 'Tìm trên Google Maps'} <ExternalLink size={11} /></a>
+                  {isMobile || search.link
+                    ? <> → bấm giữ lên đúng toà nhà công ty (thả ghim) → chạm vào toạ độ (dạng 10.72…, 106.93…) để sao chép → dán vào ô trên{search.link ? ', tự lưu với tên trên' : ''}.</>
+                    : <> → bấm Chia sẻ → Sao chép đường liên kết → dán vào ô trên.</>}
                 </div>
               </div>
             )}
@@ -426,10 +462,10 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
                   <div className="flex items-center gap-2">
                     {batch.some(r => r.best && !added.has(r.best.key)) && (
                       <button onClick={async () => {
-                        const list = batch.map(r => r.best).filter((c): c is StopCandidate => !!c && !added.has(c.key));
+                        const list = batch.filter((r): r is BatchRow & { best: StopCandidate } => !!r.best && !added.has(r.best.key));
                         try {
-                          await saveRows(list.map(c => newStop({ name: c.name, address: c.address, lat: c.lat, lng: c.lng, source: c.source, ref_key: c.refKey, map_link: c.mapLink })));
-                          setAdded(s => { const n = new Set(s); list.forEach(c => n.add(c.key)); return n; });
+                          await saveRows(list.map(r => candRow(r.best, r.link)));
+                          setAdded(s => { const n = new Set(s); list.forEach(r => n.add(r.best.key)); return n; });
                         } catch (e) { setErr((e as Error).message); }
                       }} className="text-[#0A84FF] font-semibold">Thêm tất cả đã khớp</button>
                     )}
@@ -441,8 +477,8 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
                     <div key={k} className="px-3 py-2">
                       <div className="text-[11px] text-[#999] truncate">“{r.name}”</div>
                       {!r.done ? <div className="text-[12px] text-[#888] inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Đang tìm…</div>
-                        : r.best ? <CandRow c={r.best} added={added.has(r.best.key)} onAdd={() => void addCandidate(r.best!)} compact onMore={() => { setText(r.name); void runSearch(r.name); }} />
-                        : <div className="text-[12px] text-[#b25e00]">Không tìm thấy — <button onClick={() => { setText(r.name); void runSearch(r.name); }} className="text-[#0A84FF] font-medium">xem kết quả khác</button> · <a href={googleSearchUrl(r.name, center)} target="_blank" rel="noopener noreferrer" className="text-[#0A84FF] font-medium">Google Maps</a></div>}
+                        : r.best ? <CandRow c={r.best} added={added.has(r.best.key)} onAdd={() => void addCandidate(r.best!, r.link)} compact onMore={() => { setText(r.name); void runSearch(r.name, r.link); }} />
+                        : <div className="text-[12px] text-[#b25e00]">Không tìm thấy — <button onClick={() => { setText(r.name); void runSearch(r.name, r.link); }} className="text-[#0A84FF] font-medium">xem kết quả khác</button> · <a href={googleSearchUrl(r.name, center)} target="_blank" rel="noopener noreferrer" className="text-[#0A84FF] font-medium">Google Maps</a></div>}
                     </div>
                   ))}
                 </div>

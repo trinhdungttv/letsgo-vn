@@ -1,7 +1,10 @@
 // Toạ độ từ link Google Maps (port PRM hooks/useMapLink.ts): link đầy đủ đọc thẳng;
 // link rút gọn (maps.app.goo.gl) mở qua api/resolve-map (server, cần phiên đăng nhập).
 import { useEffect, useMemo, useState } from 'react';
-import { extractLatLng, isShortMapLink, placeNameFromLink, type LatLng } from '../../../lib/cskh/nearby';
+import { extractLatLng, isShortMapLink, placeNameFromLink, placeQueryFromLink, type LatLng } from '../../../lib/cskh/nearby';
+
+/** Tên nơi trong link: /maps/place/<tên>, hoặc "?q=<tên>, <địa chỉ>" (link chia sẻ từ app điện thoại — không có toạ độ) */
+const placeOf = (url: string) => placeNameFromLink(url) || placeQueryFromLink(url);
 
 export interface MapLinkInfo {
   /** empty = chưa dán; resolving = đang mở link rút gọn; ok = có toạ độ; nocoords = link không có toạ độ; fail = không mở được. */
@@ -59,8 +62,8 @@ export function useMapLink(raw: string, token: string | null): MapLinkInfo {
   const direct = useMemo((): MapLinkInfo | null => {
     if (!url) return { status: 'empty', coords: null, place: '' };
     const coords = extractLatLng(url);
-    if (coords) return { status: 'ok', coords, place: placeNameFromLink(url) };
-    if (!isShortMapLink(url)) return { status: 'nocoords', coords: null, place: placeNameFromLink(url) };
+    if (coords) return { status: 'ok', coords, place: placeOf(url) };
+    if (!isShortMapLink(url)) return { status: 'nocoords', coords: null, place: placeOf(url) };
     return null; // link rút gọn → phải mở qua server
   }, [url]);
 
@@ -73,7 +76,7 @@ export function useMapLink(raw: string, token: string | null): MapLinkInfo {
       setResolved({
         url,
         info: r
-          ? { status: r.coords ? 'ok' : 'nocoords', coords: r.coords, place: placeNameFromLink(r.url) }
+          ? { status: r.coords ? 'ok' : 'nocoords', coords: r.coords, place: placeOf(r.url) }
           : { status: 'fail', coords: null, place: '' },
       });
     });

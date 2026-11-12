@@ -3,6 +3,10 @@ import {
   distToTrack, googleDirectionsLinks, nameMatchScore, normStop, orderOpenPath, parseStopLines, pathCost, positionAtTime, stopTitle,
 } from './planStops';
 import type { TrackSegment } from './track';
+import { placeQueryFromLink, splitPlaceQuery } from '../cskh/nearby';
+
+// Link rút gọn chia sẻ từ app Google Maps trên iPhone (maps.app.goo.gl/…?g_st=ic) — máy chủ mở ra đúng dạng này (12/11/2026)
+const PHONE_SHARE_RESOLVED = 'https://maps.google.com?q=C%C3%B4ng+Ty+TNHH+Advanced+Multitech+(Minh+An),+Kcn+Nh%C6%A1n+Tr%E1%BA%A1ch+3+Ph%C3%A2n+khu+Formosa,+Nh%C6%A1n+Tr%E1%BA%A1ch,+%C4%90%E1%BB%93ng+Nai&ftid=0x3175185d68d7c8bd:0xd9bbd9f752403c71&entry=gps&shh=CAE&g_st=ic';
 
 describe('đọc ô nhập công ty cần ghé', () => {
   it('mỗi dòng tên = 1 công ty cần tìm, bỏ số thứ tự / gạch đầu dòng, giữ tên bắt đầu bằng số', () => {
@@ -60,6 +64,24 @@ describe('đọc ô nhập công ty cần ghé', () => {
 
   it('link rút gọn chia sẻ từ iPhone (?g_st=ic) được nhận là link rút gọn', () => {
     expect(parseStopLines('https://maps.app.goo.gl/MENTDu1E5nYoyocM6?g_st=ic')[0]).toMatchObject({ kind: 'link', short: true, coords: null, name: '' });
+  });
+
+  it('link chia sẻ từ app điện thoại sau khi mở (?q=tên, địa chỉ&ftid=): đúng 1 địa điểm, có tên + địa chỉ, chưa có toạ độ', () => {
+    expect(placeQueryFromLink(PHONE_SHARE_RESOLVED)).toBe('Công Ty TNHH Advanced Multitech (Minh An), Kcn Nhơn Trạch 3 Phân khu Formosa, Nhơn Trạch, Đồng Nai');
+    expect(parseStopLines(PHONE_SHARE_RESOLVED)[0]).toEqual({
+      kind: 'link', url: PHONE_SHARE_RESOLVED, short: false, coords: null,
+      name: 'Công Ty TNHH Advanced Multitech (Minh An)', address: 'Kcn Nhơn Trạch 3 Phân khu Formosa, Nhơn Trạch, Đồng Nai',
+    });
+    // Không có ftid = trang tìm kiếm, không phải 1 công ty
+    expect(parseStopLines('https://www.google.com/maps?q=pouchen')[0]).toMatchObject({ coords: null, notPlace: true });
+    // q là toạ độ / không phải Google → không coi là tên
+    expect(placeQueryFromLink('https://www.google.com/maps?q=10.714,106.9148')).toBe('');
+    expect(placeQueryFromLink('https://example.com/?q=Pouchen')).toBe('');
+  });
+
+  it('tách tên / địa chỉ ở dấu phẩy đầu tiên ngoài ngoặc', () => {
+    expect(splitPlaceQuery('Cty A (Lô 1, KCN B), Nhơn Trạch, Đồng Nai')).toEqual({ name: 'Cty A (Lô 1, KCN B)', address: 'Nhơn Trạch, Đồng Nai' });
+    expect(splitPlaceQuery('Pouchen')).toEqual({ name: 'Pouchen', address: '' });
   });
 
   it('nhiều link liền nhau, mỗi link nhận đúng dòng tên ngay trên nó', () => {

@@ -8,14 +8,21 @@
 //  - Yeu cau dang nhap: header x-letsgo-token, kiem qua api/_letsgoSession.ts (RPC bds_access_check).
 //  - Chi nhan link rut gon cua Google, chi di theo chuyen huong trong ten mien Google (toi da 5 buoc)
 //    -> khong dung duoc API nay de goi trang bat ky.
-import { extractLatLng, isGoogleMapsHost, isShortMapLink } from '../src/lib/cskh/nearby';
+//
+// 12/11: KHONG gia lam trinh duyet (truoc day gui User-Agent Safari) — gia Safari thi Google tra trang JS
+// (DurableDeepLinkUi, HTTP 200, khong co gi doc duoc); goi thang (khong UA trinh duyet) thi Google tra 302 ve:
+//   - link chia se tu MAY TINH: google.com/maps/place/<ten>/@lat,lng…!3d!4d → co toa do
+//   - link chia se tu APP DIEN THOAI (…?g_st=ic): maps.google.com/?q=<ten>, <dia chi>&ftid=0x…:0x… → co ten + dia chi,
+//     KHONG co toa do → dung lai o day (di tiep chi ra trang HTML co tam khung nhin theo IP may chu = SAI cho).
+//     Phia app doc ten trong q roi tu tim cong ty theo ten.
+import { extractLatLng, isGoogleMapsHost, isShortMapLink, placeQueryFromLink } from '../src/lib/cskh/nearby';
 import { requireSession } from './_letsgoSession';
 
 export const config = { runtime: 'edge' };
 
 const MAX_HOPS = 5;
 const TIMEOUT_MS = 8000;
-const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+const SHORT_HOSTS = new Set(['maps.app.goo.gl', 'goo.gl', 'g.co']);
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -38,7 +45,7 @@ export default async function handler(req: Request): Promise<Response> {
       const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
       let res: Response;
       try {
-        res = await fetch(current, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: ctrl.signal });
+        res = await fetch(current, { redirect: 'manual', signal: ctrl.signal });
       } finally {
         clearTimeout(timer);
       }
@@ -47,14 +54,16 @@ export default async function handler(req: Request): Promise<Response> {
         const next = new URL(location, current);
         if (next.protocol !== 'https:' || !isGoogleMapsHost(next.hostname)) break;
         current = next.toString();
-        if (extractLatLng(current)) break;
+        // Du thong tin: co toa do, hoac trang 1 dia diem (ten trong q / duong dan /maps/place/)
+        if (extractLatLng(current) || placeQueryFromLink(current) || next.pathname.startsWith('/maps/place/')) break;
         continue;
       }
-      // Mot so link tra trang HTML (khong chuyen huong) — tim link maps day du trong noi dung
-      if (res.ok) {
+      // Link rut gon tra trang HTML (khong chuyen huong) — tim link maps day du trong noi dung.
+      // Chi lam o ten mien rut gon; bo link /maps/api/ (anh staticmap = tam khung nhin theo IP, khong phai dia diem)
+      if (res.ok && SHORT_HOSTS.has(new URL(current).hostname)) {
         const html = (await res.text()).slice(0, 300_000).replace(/\\u003d/g, '=').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
-        const found = html.match(/https:\/\/(?:www\.|maps\.)?google\.[a-z.]+\/maps[^"'\s<>\\]*/);
-        if (found) current = found[0];
+        const found = [...html.matchAll(/https:\/\/(?:www\.|maps\.)?google\.[a-z.]+\/maps[^"'\s<>\\]*/g)].map(m => m[0]).find(u => !u.includes('/maps/api/'));
+        if (found) current = found;
       }
       break;
     }

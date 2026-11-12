@@ -16,6 +16,25 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-12-plan-phone-share-link',
+    date: '2026-11-12',
+    title: 'Kế hoạch ghé công ty',
+    features: [
+      'Dán link chia sẻ từ app Google Maps trên điện thoại: app tự đọc tên công ty rồi tìm, bấm Thêm là xong — không phải Ctrl+L nữa',
+      'Không tìm ra đúng công ty: thả ghim trên Google Maps, sao chép toạ độ dán vào là lưu luôn với tên công ty trong link',
+    ],
+  },
+  {
+    id: '2026-11-12-market-menu-fixed',
+    date: '2026-11-12',
+    title: 'Thị trường',
+    features: [
+      'Menu Thị trường cố định ở đầu trang — điện thoại xếp 8 mục thành 2 hàng, không phải vuốt ngang nữa',
+      'Hết lỗi cả trang trượt sang ngang khi vuốt ở Khảo sát KCN và Nguồn LĐ',
+      'Khảo sát KCN trên điện thoại: 4 nút phụ thành ô nhỏ, nút Bắt đầu nằm riêng 1 hàng',
+    ],
+  },
+  {
     id: '2026-11-12-plan-paste-google-link',
     date: '2026-11-12',
     title: 'Kế hoạch ghé công ty',

@@ -1,6 +1,7 @@
-import { lazy, Suspense, useState } from 'react';
-import { MapPin, Coins, Eye, Building2, GraduationCap, Map as MapIcon, Factory, Route } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { MapPin, Coins, Eye, Building2, GraduationCap, Map as MapIcon, Factory, Route, type LucideIcon } from 'lucide-react';
 import { useHashTab } from '../hooks/useHashSubRoute';
+import { useIsMobile } from '../hooks/useIsMobile';
 import PageHeader from '../components/PageHeader';
 import type { MarketSurvey, Competitor, MarketZone, MarketLead, Client, LaborHistoryEntry } from '../lib/types';
 import ZonesTab from './market/ZonesTab';
@@ -26,21 +27,27 @@ interface MarketProps {
   toast: (msg: string) => void;
 }
 
-const TABS: { id: MarketTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'zones', label: 'Khu vực', icon: <MapPin size={13} /> },
-  { id: 'industry', label: 'Ngành Nghề', icon: <Factory size={13} /> },
-  { id: 'wage', label: 'Lương TT', icon: <Coins size={13} /> },
-  { id: 'comp', label: 'Đối thủ', icon: <Eye size={13} /> },
-  { id: 'leads', label: 'Công ty / Dự án', icon: <Building2 size={13} /> },
-  { id: 'sources', label: 'Nguồn LĐ', icon: <GraduationCap size={13} /> },
-  { id: 'map', label: 'Bản đồ', icon: <MapIcon size={13} /> },
-  { id: 'survey', label: 'Khảo sát KCN', icon: <Route size={13} /> },
+// short = nhãn trên điện thoại (ô lưới 4 cột, ~80px)
+const TABS: { id: MarketTab; label: string; short?: string; Icon: LucideIcon }[] = [
+  { id: 'zones', label: 'Khu vực', Icon: MapPin },
+  { id: 'industry', label: 'Ngành Nghề', Icon: Factory },
+  { id: 'wage', label: 'Lương TT', Icon: Coins },
+  { id: 'comp', label: 'Đối thủ', Icon: Eye },
+  { id: 'leads', label: 'Công ty / Dự án', short: 'Cty / Dự án', Icon: Building2 },
+  { id: 'sources', label: 'Nguồn LĐ', Icon: GraduationCap },
+  { id: 'map', label: 'Bản đồ', Icon: MapIcon },
+  { id: 'survey', label: 'Khảo sát KCN', Icon: Route },
 ];
 
 export default function Market({ marketSurveys, competitors, marketZones, marketLeads, clients, laborHistory, onRefresh, toast }: MarketProps) {
   const MARKET_TAB_KEYS = ['zones', 'industry', 'wage', 'comp', 'leads', 'sources', 'map', 'survey'] as const;
   const [tab, setTabRaw] = useHashTab<MarketTab>('market', MARKET_TAB_KEYS, 'zones');
   const [zoneFilter, setZoneFilter] = useState('all');
+  const isMobile = useIsMobile();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Menu tab nay nằm cố định ngoài vùng cuộn → đổi tab lúc đang cuộn sâu thì về đầu tab mới
+  useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [tab]);
 
   const setTab = (t: MarketTab) => setTabRaw(t);
   const goTab = (t: MarketTab, zone?: string) => {
@@ -55,23 +62,36 @@ export default function Market({ marketSurveys, competitors, marketZones, market
 
   return (
     <>
-      <PageHeader title="Thị trường" subtitle="Khu vực · Lương · Đối thủ · Công ty/Dự án · Nguồn LĐ · Khảo sát KCN" />
-      <div className="flex-1 overflow-y-auto p-3 md:p-5 space-y-4">
-        {/* Điện thoại: 8 tab thành 1 dải cuộn ngang thay vì xếp 3 dòng */}
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 md:flex-wrap">
-          {TABS.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition ${
-                tab === t.id ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#E8E7E2] text-[#666] hover:bg-[#F9F9F7]'
-              }`}
-            >
-              {t.icon}{t.label}
-            </button>
-          ))}
+      {/* Điện thoại: bỏ phụ đề (trùng tên tab) để dành chỗ cho menu */}
+      <PageHeader title="Thị trường" subtitle={isMobile ? undefined : 'Khu vực · Lương · Đối thủ · Công ty/Dự án · Nguồn LĐ · Khảo sát KCN'} />
+      {/* Menu tab CỐ ĐỊNH ngoài vùng cuộn (12/11/2026). Điện thoại: lưới 4×2 thấy đủ 8 tab, không phải
+          vuốt ngang — dải cuộn ngang cũ hay kéo cả trang trượt theo. Máy tính: 1 hàng nút như cũ. */}
+      <nav aria-label="Mục Thị trường" className="shrink-0 bg-white border-b border-[#E8E7E2] px-2 py-1.5 md:px-5 md:py-2.5">
+        <div className="grid grid-cols-4 gap-1 md:flex md:flex-wrap md:gap-1.5">
+          {TABS.map(({ id, label, short, Icon }) => {
+            const on = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                aria-current={on ? 'page' : undefined}
+                className={`min-w-0 h-[44px] px-1 flex flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] leading-tight font-medium transition
+                  md:h-auto md:flex-row md:gap-1.5 md:px-3 md:py-1.5 md:rounded-lg md:text-[12px] md:border md:whitespace-nowrap ${
+                  on
+                    ? 'bg-blue-50 text-blue-700 md:border-blue-200'
+                    : 'text-[#666] active:bg-[#F2F2F0] md:bg-white md:border-[#E8E7E2] md:hover:bg-[#F9F9F7]'
+                }`}
+              >
+                <Icon className="w-4 h-4 md:w-[13px] md:h-[13px] shrink-0" />
+                <span className="max-w-full truncate md:hidden">{short ?? label}</span>
+                <span className="hidden md:inline">{label}</span>
+              </button>
+            );
+          })}
         </div>
-
+      </nav>
+      {/* overflow-x-hidden: khối nào lỡ rộng hơn màn hình cũng không kéo cả trang trượt ngang */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-5 space-y-4">
         {tab === 'zones' && <ZonesTab {...shared} />}
         {tab === 'industry' && <IndustryTab clients={clients} marketLeads={marketLeads} marketSurveys={marketSurveys} competitors={competitors} goTab={goTab} toast={toast} />}
         {tab === 'wage' && <WageTab {...shared} />}

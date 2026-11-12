@@ -6,7 +6,7 @@
 //   • link Google Maps chỉ đường qua nhiều điểm (chia chặng khi quá số điểm dừng cho phép)
 //   • ảnh bổ sung sau chuyến: vị trí theo giờ chụp trên vết GPS của chuyến
 import { isValidVnLatLng, type LatLng } from '../geo';
-import { extractLatLng, isShortMapLink, placeNameFromLink } from '../cskh/nearby';
+import { extractLatLng, hasPlaceId, isShortMapLink, placeNameFromLink, placeQueryFromLink, splitPlaceQuery } from '../cskh/nearby';
 import { distM, type TrackSegment } from './track';
 import { compareKeys, companyKey } from '../companyMatch';
 
@@ -93,6 +93,8 @@ function googleLinkCoords(url: string): { coords: LatLng | null; notPlace: boole
   // ?q=lat,lng / ?query=lat,lng / ll=
   const q = /[?&](?:q|query|ll|destination)=(-?\d{1,2}\.\d+)\s*,\s*(-?\d{2,3}\.\d+)/.exec(url);
   if (q) return { coords: { lat: +q[1], lng: +q[2] }, notPlace: false };
+  // "?q=<tên>, <địa chỉ>&ftid=0x…" (link chia sẻ từ app điện thoại sau khi mở) → đúng 1 địa điểm nhưng không có toạ độ → tìm theo tên
+  if (hasPlaceId(url) && placeQueryFromLink(url)) return { coords: null, notPlace: false };
   // /maps/search/<tên>, /maps/dir/…, /maps/@… → chỉ có tâm khung nhìn, không phải công ty
   return { coords: null, notPlace: /google\.[a-z.]+\/maps|maps\.google\./i.test(url) };
 }
@@ -114,9 +116,10 @@ export function parseStopLines(text: string): StopLine[] {
       const short = isShortMapLink(url);
       const g = short ? { coords: null, notPlace: false } : googleLinkCoords(url);
       const coords = g.coords && isValidVnLatLng(g.coords) ? g.coords : null;
-      const fromUrl = cleanName(placeNameFromLink(url));
+      const gq = hasPlaceId(url) ? splitPlaceQuery(placeQueryFromLink(url)) : null;
+      const fromUrl = cleanName(placeNameFromLink(url)) || cleanName(gq?.name ?? '');
       const name = inline || cleanName(pending[0] ?? '') || fromUrl;
-      const address = inline ? '' : pending.slice(1).map(cleanName).filter(Boolean).join(', ');
+      const address = (inline ? '' : pending.slice(1).map(cleanName).filter(Boolean).join(', ')) || (gq?.address ?? '');
       pending = [];
       out.push({ kind: 'link', url, short, coords, name, address, ...(g.notPlace && !coords ? { notPlace: true } : {}) });
       continue;

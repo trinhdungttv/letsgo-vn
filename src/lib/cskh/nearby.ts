@@ -61,6 +61,37 @@ export function placeNameFromLink(url: string): string {
   return m ? safeDecode(m[1].replace(/\+/g, ' ')).trim() : '';
 }
 
+/**
+ * Chữ tìm kiếm trong link Google Maps dạng "?q=<tên>, <địa chỉ>" — link rút gọn chia sẻ từ APP điện thoại
+ * (maps.app.goo.gl…?g_st=ic) mở ra đúng dạng này: có tên + địa chỉ + ftid (mã địa điểm) nhưng KHÔNG có toạ độ.
+ * '' nếu không phải link Google Maps, không có q, hoặc q là toạ độ.
+ */
+export function placeQueryFromLink(url: string): string {
+  let u: URL;
+  try { u = new URL(url.trim()); } catch { return ''; }
+  if (!isGoogleMapsHost(u.hostname)) return '';
+  const q = (u.searchParams.get('q') ?? u.searchParams.get('query') ?? '').replace(/\s+/g, ' ').trim();
+  if (!q || /^-?\d{1,2}\.\d+\s*,\s*\+?-?\d{1,3}\.\d+$/.test(q)) return '';
+  return q;
+}
+
+/** Link Google Maps trỏ đúng 1 địa điểm qua mã ftid (dạng "?q=…&ftid=0x…:0x…") dù không có toạ độ. */
+export function hasPlaceId(url: string): boolean {
+  return /[?&]ftid=0x[0-9a-f]+:0x[0-9a-f]+/i.test(url);
+}
+
+/** "Tên, địa chỉ…" (Google ghép bằng dấu phẩy đầu tiên ngoài ngoặc) → { name, address } */
+export function splitPlaceQuery(q: string): { name: string; address: string } {
+  let depth = 0;
+  for (let i = 0; i < q.length; i += 1) {
+    const ch = q[i];
+    if (ch === '(' || ch === '[') depth += 1;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+    else if (ch === ',' && depth === 0) return { name: q.slice(0, i).trim(), address: q.slice(i + 1).trim() };
+  }
+  return { name: q.trim(), address: '' };
+}
+
 /** Phường / xã / thị trấn — tên cũ nhiều nơi đã đổi sau sáp nhập 2025, dễ khớp nhầm nơi khác. */
 const WARD_RE = /^(phường|phuong|p\.|xã|xa|thị trấn|thi tran|tt\.)\s*/i;
 /** Số nhà / hẻm / ngõ ở đầu đoạn đầu: "220/51/2C", "Số 12", "Hẻm 45", "Ngõ 3", "Kiệt 7". */

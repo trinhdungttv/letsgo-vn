@@ -60,6 +60,8 @@ type Sub = 'trips' | 'photos' | 'online' | 'voice' | 'lodgings' | 'panos' | 'zon
 const PERIODS = [{ d: 7, label: '7 ngày' }, { d: 30, label: '30 ngày' }, { d: 90, label: '3 tháng' }, { d: 0, label: 'Tất cả' }];
 
 const card = 'bg-white border border-[#E8E7E2] rounded-[10px]';
+// Nút phụ cạnh "Bắt đầu": điện thoại = ô vuông nhỏ chữ dưới biểu tượng; từ sm = viên thuốc như cũ
+const SURVEY_SUB_BTN = 'min-w-0 h-14 sm:h-11 px-1 sm:px-4 rounded-2xl sm:rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[11.5px] sm:text-[13.5px] leading-tight font-medium inline-flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap';
 
 // ── Nhớ tab + bộ lọc theo máy (mở lại tab là thấy đúng mục lần trước) ───────
 const PREFS_KEY = 'lgvn_survey_tab_v1';
@@ -438,7 +440,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const body = (
     <div className="space-y-3">
       {/* ── Bắt đầu + tổng quan ── */}
-      <div className={`${card} p-3 md:p-4 flex flex-col md:flex-row md:items-center gap-3`}>
+      <div className={`${card} p-3 md:p-4 flex flex-col xl:flex-row xl:items-center gap-3`}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <div className="flex-1 text-[15px] font-semibold text-[#111]">Khảo sát KCN</div>
@@ -458,25 +460,27 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             </div>
           )}
         </div>
-        <div className="flex flex-row gap-2 shrink-0">
+        {/* Điện thoại: 4 nút phụ thành lưới 4 ô (biểu tượng trên, chữ dưới) + nút Bắt đầu cả hàng.
+            Trước 12/11 cả 5 nút nằm 1 hàng không xuống dòng → rộng hơn màn hình, kéo trang trượt ngang. */}
+        <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap xl:flex-nowrap xl:shrink-0">
           <button onClick={() => setOnlineOpen(true)} title="Thêm ảnh tuyển dụng lấy trên mạng + vị trí Google Maps (không đi thực địa)"
-            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
-            <Globe size={15} /> Ảnh online
+            className={SURVEY_SUB_BTN}>
+            <Globe size={15} className="shrink-0" /> Ảnh online
           </button>
           <button onClick={() => setPlanFor({ zoneId: zoneId !== 'all' && zoneId !== 'none' ? zoneId : null })} title="Lên trước danh sách công ty cần ghé ở 1 KCN — lúc đi app sắp thứ tự ngắn nhất và dẫn đường"
-            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
-            <ListChecks size={15} /> Kế hoạch<span className="hidden lg:inline"> ghé</span>
+            className={SURVEY_SUB_BTN}>
+            <ListChecks size={15} className="shrink-0" /> <span>Kế hoạch<span className="hidden lg:inline"> ghé</span></span>
           </button>
           <button onClick={() => setShareOpen(true)} title="Gửi link + mã 4 số cho người ngoài xem khảo sát"
-            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
-            <Share2 size={15} /> Chia sẻ
+            className={SURVEY_SUB_BTN}>
+            <Share2 size={15} className="shrink-0" /> Chia sẻ
           </button>
           <button onClick={() => setSurveyOpen('area')}
-            className="flex-1 sm:flex-none h-11 px-4 rounded-full bg-white border border-[#D8D6D0] text-[#111] text-[13.5px] font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[#F9F9F7] whitespace-nowrap">
-            <Plus size={16} /> Thêm KCN<span className="hidden sm:inline"> / vùng</span>
+            className={SURVEY_SUB_BTN}>
+            <Plus size={16} className="shrink-0" /> <span>Thêm KCN<span className="hidden sm:inline"> / vùng</span></span>
           </button>
           <button onClick={() => setSurveyOpen('survey')}
-            className="flex-1 sm:flex-none h-11 px-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(10,132,255,0.35)] active:scale-95 transition whitespace-nowrap">
+            className="col-span-4 sm:flex-none h-11 px-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(10,132,255,0.35)] active:scale-95 transition whitespace-nowrap">
             <Play size={16} fill="currentColor" /> {pending ? 'Mở chuyến dở' : 'Bắt đầu'}<span className="hidden sm:inline">{pending ? '' : ' khảo sát'}</span>
           </button>
         </div>

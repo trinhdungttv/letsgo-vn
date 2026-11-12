@@ -180,8 +180,9 @@ export default function LaborSourcesTab({ marketZones, marketLeads, clients, com
             : 'Trường ĐH / CĐ / Trung cấp, trung tâm, địa phương — nguồn sinh viên thực tập'}
           actions={data.ready ? (
             <>
-              <button type="button" onClick={() => setBulkOpen(true)} className={PILL_GRAY} title="Dán nhiều trường 1 lượt (từ Excel / Zalo)"><ClipboardList size={16} /> Nhập nhanh danh sách</button>
-              <button type="button" onClick={() => setEditing('new')} className={PILL_PRIMARY}><Plus size={16} strokeWidth={2.4} /> Thêm đơn vị nguồn</button>
+              {/* Điện thoại: nhãn ngắn — 2 nút nhãn dài không xuống dòng, rộng hơn màn hình 375px */}
+              <button type="button" onClick={() => setBulkOpen(true)} className={PILL_GRAY} title="Dán nhiều trường 1 lượt (từ Excel / Zalo)"><ClipboardList size={16} /> Nhập nhanh<span className="hidden sm:inline"> danh sách</span></button>
+              <button type="button" onClick={() => setEditing('new')} className={PILL_PRIMARY}><Plus size={16} strokeWidth={2.4} /> Thêm<span className="hidden sm:inline"> đơn vị</span> nguồn</button>
             </>
           ) : undefined}
         />
