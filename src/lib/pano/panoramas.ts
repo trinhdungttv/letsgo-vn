@@ -101,6 +101,10 @@ export interface PanoImageInfo {
   sourceKind: PanoSourceKind;
   sourceUrl: string;
   meta: PanoMeta;
+  /** 'failed' = máy chủ chưa đọc kịp file gốc (Google trả chậm) → GPS / hướng có thể còn thiếu, form tự đọc lại. */
+  metaRead?: 'ok' | 'failed';
+  /** Ảnh đã chọn trong album Google Photos — gửi lại khi đọc lại GPS. */
+  pick?: string;
 }
 
 export interface PanoCandidate { url: string; width: number; height: number; thumb: string }
@@ -139,10 +143,32 @@ export async function importPanoLink(url: string, pick?: string): Promise<Import
         sourceKind: (data.sourceKind as PanoSourceKind) ?? 'url',
         sourceUrl: typeof data.sourceUrl === 'string' ? data.sourceUrl : url,
         meta,
+        metaRead: data.metaRead === 'failed' ? 'failed' : 'ok',
+        pick: typeof data.pick === 'string' ? data.pick : undefined,
       },
     };
   }
   return { status: 'error', code: String(data.code ?? res.status), message: String(data.error ?? `Máy chủ báo lỗi ${res.status}`) };
+}
+
+/**
+ * Đọc lại GPS / hướng từ file gốc trên Google (lần lấy ảnh đầu Google trả file gốc chậm quá).
+ * null = vẫn chưa đọc được (chậm / lỗi mạng); meta rỗng lat/lng = file gốc thật sự không có GPS.
+ */
+export async function readPanoLinkMeta(url: string, pick?: string): Promise<PanoMeta | null> {
+  const token = getStoredSessionToken();
+  try {
+    const res = await fetch('/api/pano-import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { 'x-letsgo-token': token } : {}) },
+      body: JSON.stringify({ url, pick, metaOnly: true }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok || data.status !== 'meta' || data.metaRead !== 'ok') return null;
+    return (data.meta ?? {}) as PanoMeta;
+  } catch {
+    return null;
+  }
 }
 
 /** Cạnh ngang tối đa khi phải thu nhỏ trên máy (iPhone giới hạn khung vẽ ~16,7 triệu điểm ảnh → 5760 × 2880). */

@@ -3,8 +3,9 @@
 // Trinh duyet khong tu lam duoc vi trang chia se Google Photos / Drive chan CORS.
 //
 // POST { url, pick? }  (header x-letsgo-token)
-//   -> { status: 'ok', panoUrl, googleUrl, storagePath, width, height, bytes, sourceKind, meta }
+//   -> { status: 'ok', panoUrl, googleUrl, storagePath, width, height, bytes, sourceKind, meta, metaRead: 'ok'|'failed', pick? }
 //   -> { status: 'pick', candidates: [{ url, width, height, thumb }] }   (album nhieu anh — goi lai voi pick = url da chon)
+// POST { url, pick?, metaOnly: true } -> { status: 'meta', metaRead, meta }   (chi doc lai GPS / huong tu file goc, ~20 giay)
 //   Loi: { error, code } — code: 'badlink' | 'shortlink' | 'private' | 'notimage' | 'toobig' | 'fetch' | 'timeout'
 //   ('shortlink' = link photos.app.goo.gl: tu 2025 Google mo bang JavaScript → nguoi dung mo trong trinh duyet, dan link dai)
 //
@@ -96,18 +97,31 @@ async function fetchFollow(url: string, init: RequestInit, ms: number, googleOnl
   }
 }
 
-/** Doc ~512 KB dau file goc de lay GPS / huong / co anh (khong tai ca file). Loi thi tra rong. */
-async function readHeadMeta(url: string, ms: number): Promise<{ meta: PanoMeta; isImage: boolean }> {
+/**
+ * Doc ~512 KB dau file goc de lay GPS / huong / co anh (khong tai ca file). Loi thi tra rong.
+ * ok = da nhan duoc dau file goc (co hay khong co GPS); false = Google tra cham / loi mang → client doc lai (metaOnly).
+ * Google Photos tra file goc (=d) rat cham: do 13/11 mat 5,3–6,4 giay moi co byte dau — ban co nho (=w…) thi da bi xoa EXIF.
+ */
+async function readHeadMeta(url: string, ms: number): Promise<{ meta: PanoMeta; isImage: boolean; ok: boolean }> {
   try {
     const { res } = await fetchFollow(url, { headers: { 'User-Agent': UA, Range: `bytes=0-${META_BYTES - 1}` } }, ms, true);
-    if (!res.ok && res.status !== 206) return { meta: {}, isImage: false };
+    if (!res.ok && res.status !== 206) return { meta: {}, isImage: false, ok: false };
     const head = await readLimited(res, META_BYTES, true);
-    if (!head || !sniffImage(head)) return { meta: {}, isImage: false };
-    return { meta: readPanoMeta(head), isImage: true };
+    if (!head || !sniffImage(head)) return { meta: {}, isImage: false, ok: !!head };
+    return { meta: readPanoMeta(head), isImage: true, ok: true };
   } catch {
-    return { meta: {}, isImage: false };
+    return { meta: {}, isImage: false, ok: false };
   }
 }
+
+/** Chua lai chung nay (ms) truoc han 23 giay khi cho doc GPS song song. */
+const META_MARGIN_MS = 2500;
+
+const metaOut = (meta: PanoMeta, orig: { w: number; h: number } | null) => ({
+  lat: meta.lat, lng: meta.lng, heading: meta.heading, haov: meta.haov, vaov: meta.vaov, voffset: meta.voffset,
+  takenAt: meta.takenAt, isPano: meta.isPano, headingFrom: meta.headingFrom, heightM: meta.heightM, device: meta.device,
+  origWidth: orig?.w ?? meta.width, origHeight: orig?.h ?? meta.height,
+});
 
 async function downloadImage(urls: string[], ms: number, googleOnly: boolean): Promise<{ bytes: Uint8Array; finalUrl: string; tried: number[] }> {
   const tried: number[] = [];
@@ -139,11 +153,13 @@ export default async function handler(req: Request): Promise<Response> {
   const denied = await requireSession(req);
   if (denied) return denied;
 
-  let body: { url?: unknown; pick?: unknown } = {};
+  let body: { url?: unknown; pick?: unknown; metaOnly?: unknown } = {};
   try { body = (await req.json()) as typeof body; } catch { return json({ error: 'Body khong hop le' }, 400); }
   const link = classifyPanoLink(String(body.url ?? ''));
   if (!link) return json({ error: 'Chưa nhận ra link — dán link chia sẻ Google Photos, Google Drive hoặc link ảnh (https://…)', code: 'badlink' }, 400);
   const pick = typeof body.pick === 'string' ? body.pick : '';
+  // metaOnly: chi doc lai GPS / huong tu file goc (lan dau Google tra cham qua) — khong tai anh, khong chep R2
+  const metaOnly = body.metaOnly === true;
   const started = Date.now();
   const left = () => DEADLINE_MS - (Date.now() - started);
 
@@ -151,8 +167,14 @@ export default async function handler(req: Request): Promise<Response> {
     let imageUrls: string[] = [];
     let googleOnly = true;
     let meta: PanoMeta = {};
+    let metaOk = true;
+    // Google Photos: doc GPS tu file goc SONG SONG voi tai anh + chep R2 (truoc day doc truoc, toi da 6 giay → hay qua han, mat GPS)
+    let metaP: Promise<{ meta: PanoMeta; ok: boolean }> | null = null;
+    let pickedUrl = '';
     let orig: { w: number; h: number } | null = null;
     let privateHint = PRIVATE_PHOTOS;
+    // Doc GPS truoc khi tai anh (Drive / link lh3 can co anh goc de xin dung co): cho lau hon khi chi doc GPS
+    const seqMetaMs = () => (metaOnly ? left() - 1000 : Math.min(12_000, left() - 9000));
 
     if (link.kind === 'gphotos') {
       const { res, finalUrl } = await fetchFollow(link.url, { headers: { 'User-Agent': UA, 'Accept-Language': 'vi,en;q=0.8' } }, Math.min(9000, left()), true);
@@ -166,25 +188,27 @@ export default async function handler(req: Request): Promise<Response> {
       if (!cands.length) throw new Fail('private', PRIVATE_PHOTOS, 404);
       const chosen = pick ? cands.find(c => c.url === pick) ?? null : autoPick(cands);
       if (!chosen) {
+        if (metaOnly) throw new Fail('badlink', 'Không tìm thấy ảnh đã chọn trong album');
         return json({
           status: 'pick',
           candidates: cands.slice(0, 60).map(c => ({ url: c.url, width: c.width, height: c.height, thumb: `${c.url}=w480-h240-c` })),
         });
       }
       orig = { w: chosen.width, h: chosen.height };
-      ({ meta } = await readHeadMeta(`${chosen.url}=d`, Math.min(6000, left() - 9000)));
+      pickedUrl = chosen.url;
+      metaP = readHeadMeta(`${chosen.url}=d`, left() - (metaOnly ? 1000 : META_MARGIN_MS));
       const t = targetSize(orig.w, orig.h);
       imageUrls = [`${chosen.url}=w${t.w}-h${t.h}`];
     } else if (link.kind === 'gimage') {
       const base = googleImageBase(link.url);
-      ({ meta } = await readHeadMeta(`${base}=d`, Math.min(6000, left() - 9000)));
+      ({ meta, ok: metaOk } = await readHeadMeta(`${base}=d`, seqMetaMs()));
       if (meta.width && meta.height) orig = { w: meta.width, h: meta.height };
       const t = targetSize(orig?.w ?? 0, orig?.h ?? 0);
       imageUrls = [`${base}=w${t.w}-h${t.h}`, link.url];
     } else if (link.kind === 'gdrive') {
       privateHint = PRIVATE_DRIVE;
       const id = link.driveId!;
-      ({ meta } = await readHeadMeta(`https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t`, Math.min(6000, left() - 9000)));
+      ({ meta, ok: metaOk } = await readHeadMeta(`https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t`, seqMetaMs()));
       if (meta.width && meta.height) orig = { w: meta.width, h: meta.height };
       const w = orig ? targetSize(orig.w, orig.h).w : PANO_MAX_W;
       imageUrls = [
@@ -199,6 +223,12 @@ export default async function handler(req: Request): Promise<Response> {
       imageUrls = [safe.toString()];
       googleOnly = false;
       privateHint = 'Link không trả về ảnh (jpg / png / webp) — kiểm tra lại link hoặc tải ảnh từ máy lên.';
+    }
+
+    if (metaOnly) {
+      if (link.kind === 'url') throw new Fail('badlink', 'Link ảnh trực tiếp đã đọc GPS ngay lúc lấy ảnh');
+      const r = metaP ? await metaP : { meta, ok: metaOk };
+      return json({ status: 'meta', metaRead: r.ok ? 'ok' : 'failed', meta: metaOut(r.meta, orig) });
     }
 
     const dl = await downloadImage(imageUrls, left() - 4000, googleOnly);
@@ -237,6 +267,9 @@ export default async function handler(req: Request): Promise<Response> {
       if (stored) { panoUrl = `${publicUrl}/${key}`; storagePath = `r2:${key}`; }
     }
 
+    // GPS doc song song (Google Photos) — tu co han rieng, khong vuot 23 giay
+    if (metaP) ({ meta, ok: metaOk } = await metaP);
+
     return json({
       status: 'ok',
       panoUrl,
@@ -247,11 +280,10 @@ export default async function handler(req: Request): Promise<Response> {
       bytes: dl.bytes.byteLength,
       sourceKind: link.kind,
       sourceUrl: link.url,
-      meta: {
-        lat: meta.lat, lng: meta.lng, heading: meta.heading, haov: meta.haov, vaov: meta.vaov, voffset: meta.voffset,
-        takenAt: meta.takenAt, isPano: meta.isPano, headingFrom: meta.headingFrom, heightM: meta.heightM, device: meta.device,
-        origWidth: orig?.w ?? meta.width, origHeight: orig?.h ?? meta.height,
-      },
+      // 'failed' = chua doc duoc file goc kip (Google cham) → form tu goi lai voi metaOnly + pick
+      metaRead: metaOk ? 'ok' : 'failed',
+      pick: pickedUrl || undefined,
+      meta: metaOut(meta, orig),
     });
   } catch (e) {
     if (e instanceof Fail) return json({ error: e.message, code: e.code }, e.status);

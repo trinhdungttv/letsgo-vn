@@ -4,12 +4,12 @@
 // Ảnh có GPS mà xa chỗ đang khảo sát (> 5 km) → không gắn vào chuyến / KCN đang khảo sát, tên ảnh theo KCN gần ảnh.
 import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Camera, Check, ExternalLink, ImagePlus, Link2, Loader2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Camera, Check, ExternalLink, ImagePlus, Link2, Loader2, RefreshCw, X } from 'lucide-react';
 import PanoPositionPicker from './PanoPositionPicker';
 import { useAuth } from '../../lib/auth';
 import { classifyPanoLink, looksSpherical } from '../../lib/pano/links';
 import {
-  createPanorama, importPanoLink, panoThumb, uploadPanoFile, PanoMissingTable, PANO_MIGRATION_HINT,
+  createPanorama, importPanoLink, panoThumb, readPanoLinkMeta, uploadPanoFile, PanoMissingTable, PANO_MIGRATION_HINT,
   type MapPanorama, type PanoCandidate, type PanoImageInfo,
 } from '../../lib/pano/panoramas';
 import { distanceM } from '../../lib/pano/sphere';
@@ -43,6 +43,9 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
   const [title, setTitle] = useState('');
   const [titleTouched, setTitleTouched] = useState(false);
   const [aerial, setAerial] = useState(false);
+  // Đọc lại GPS từ file gốc khi máy chủ chưa đọc kịp (Google Photos trả file gốc chậm 5–8 giây)
+  const [metaState, setMetaState] = useState<'idle' | 'reading' | 'failed'>('idle');
+  const readSeq = useRef(0);
 
   const linkKind = classifyPanoLink(link)?.kind ?? null;
 
@@ -53,6 +56,23 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
     const gps = i.meta.lat != null && i.meta.lng != null ? { lat: i.meta.lat, lng: i.meta.lng } : null;
     setPos(gps && isValidVnLatLng(gps) ? gps : livePos && isValidVnLatLng(livePos) ? livePos : null);
     setAerial((i.meta.heightM ?? 0) >= AERIAL_MIN_M);
+    readSeq.current++;
+    setMetaState('idle');
+    if (i.metaRead === 'failed') void rereadMeta(i);
+  };
+
+  const rereadMeta = async (i: PanoImageInfo) => {
+    const seq = ++readSeq.current;
+    setMetaState('reading');
+    const m = await readPanoLinkMeta(i.sourceUrl, i.pick);
+    if (seq !== readSeq.current) return; // đã quay lại / đổi ảnh khác
+    if (!m) { setMetaState('failed'); return; }
+    setMetaState('idle');
+    setInfo({ ...i, meta: { ...i.meta, ...m }, metaRead: 'ok' });
+    // GPS trong ảnh đứng trên GPS điện thoại / tâm bản đồ (như lúc lấy ảnh)
+    const gps = m.lat != null && m.lng != null ? { lat: m.lat, lng: m.lng } : null;
+    if (gps && isValidVnLatLng(gps)) setPos(gps);
+    if ((m.heightM ?? 0) >= AERIAL_MIN_M) setAerial(true);
   };
 
   const fetchLink = async (pick?: string) => {
@@ -93,7 +113,11 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
   const photoGps = info?.meta.lat != null && info.meta.lng != null ? { lat: info.meta.lat, lng: info.meta.lng } : null;
   const farKm = photoGps && livePos ? distanceM(photoGps, livePos) / 1000 : 0;
   const farFromSurvey = farKm > FAR_FROM_SURVEY_KM;
-  const zoneForTitle = (farFromSurvey ? '' : survey?.zoneName) || nearestZone;
+  // Không GPS nào → ghim nằm ở tâm bản đồ (toạ độ KCN / mặc định 10.98, 106.67), chưa phải chỗ chụp:
+  // cảnh báo + không đặt tên ảnh theo KCN gần cái tâm đó (13/11 ảnh flycam bị đặt tên "KCN Đại Đăng" vì vậy)
+  const fallback = livePos ?? mapCenter;
+  const pinAtFallback = !photoGps && !livePos && !!pos && Math.abs(pos.lat - fallback.lat) < 2e-6 && Math.abs(pos.lng - fallback.lng) < 2e-6;
+  const zoneForTitle = (farFromSurvey ? '' : survey?.zoneName) || (pinAtFallback ? null : nearestZone);
   const autoTitle = zoneForTitle ? `Ảnh 360 — KCN ${zoneForTitle.replace(/^KCN\s+/i, '')}` : `Ảnh 360 — ${new Date().toLocaleDateString('vi-VN')}`;
   const finalTitle = titleTouched ? title : autoTitle;
   // Flycam DJI ghi độ cao bay → ghim công ty trong ảnh nằm đúng chỗ hơn so với mặc định 100 m
@@ -124,6 +148,7 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
   const preview = info ? (panoThumb({ google_url: info.googleUrl }, 960, 480) ?? info.panoUrl) : null;
   const gps = photoGps;
   const headingFrom = info?.meta.headingFrom === 'dji' ? ' · hướng flycam' : '';
+  const readingMeta = metaState === 'reading';
 
   // Gắn thẳng vào <body>: trang Khảo sát render form này trong `space-y-3` → lớp `fixed inset-0` bị margin-top 12 px (lệch, hở mép trên).
   // Điện thoại: không cao quá vùng dưới thanh trạng thái, chừa thanh home ở đáy.
@@ -131,7 +156,7 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
     <div className="fixed inset-0 z-[1300] m-0 bg-black/45 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { if (!busy) onClose(); }}>
       <div className="w-full md:max-w-xl bg-white rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-8px))] overflow-y-auto pb-[env(safe-area-inset-bottom)] md:pb-0" onClick={e => e.stopPropagation()}>
         <div className="sticky top-0 z-10 bg-white flex items-center gap-2 px-4 pt-4 pb-3 border-b border-[#F0F0F2]">
-          {info && <button onClick={() => { setInfo(null); setPos(null); }} disabled={!!busy} aria-label="Quay lại" className="w-11 h-11 -my-1.5 -ml-2.5 md:w-8 md:h-8 md:my-0 md:-ml-1 inline-flex items-center justify-center rounded-lg text-[#555] hover:bg-black/[0.05]"><ArrowLeft size={16} /></button>}
+          {info && <button onClick={() => { readSeq.current++; setMetaState('idle'); setInfo(null); setPos(null); }} disabled={!!busy} aria-label="Quay lại" className="w-11 h-11 -my-1.5 -ml-2.5 md:w-8 md:h-8 md:my-0 md:-ml-1 inline-flex items-center justify-center rounded-lg text-[#555] hover:bg-black/[0.05]"><ArrowLeft size={16} /></button>}
           <div className="w-9 h-9 rounded-xl bg-[#EAF3FF] text-[#0A84FF] flex items-center justify-center shrink-0"><Camera size={18} /></div>
           <div className="flex-1 min-w-0">
             <div className="text-[14.5px] font-semibold text-[#111]">{info ? 'Chỗ đứng chụp' : 'Thêm ảnh 360°'}</div>
@@ -221,10 +246,17 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
               )}
               <div className="flex flex-wrap gap-1.5 text-[11px]">
                 {gps ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Có GPS trong ảnh</span>
+                  : readingMeta ? <span role="status" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EAF3FF] text-[#0A64D8] border border-[#CFE3FF]"><Loader2 size={11} className="animate-spin" /> Đang đọc GPS trong ảnh gốc…</span>
+                  : metaState === 'failed' ? (
+                    <span className="inline-flex items-center gap-1.5 pl-2 pr-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                      Chưa đọc được GPS — Google trả ảnh gốc chậm
+                      <button onClick={() => void rereadMeta(info)} className="inline-flex items-center gap-1 h-8 md:h-6 px-2 rounded-full bg-white border border-amber-300 font-semibold"><RefreshCw size={11} /> Đọc lại</button>
+                    </span>
+                  )
                   : <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">Ảnh không có GPS — chọn vị trí trên bản đồ</span>}
                 {info.meta.device && <span className="px-2 py-0.5 rounded-full bg-[#EAF3FF] text-[#0A64D8] border border-[#CFE3FF]">{info.meta.device}{metaHeight ? ` · bay cao ${metaHeight} m` : ''}</span>}
                 {info.meta.heading != null ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Có hướng la bàn ({Math.round(info.meta.heading)}°{headingFrom}) — không cần căn</span>
-                  : <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">Chưa có hướng — căn 1 lần sau khi lưu</span>}
+                  : metaState === 'idle' && <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">Chưa có hướng — căn 1 lần sau khi lưu</span>}
                 {info.width && info.height && <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">{info.width}×{info.height}</span>}
               </div>
 
@@ -238,6 +270,17 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
                 <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11.5px] text-amber-900">
                   <AlertTriangle size={14} className="shrink-0 mt-px" />
                   <span>Theo GPS trong ảnh, ảnh chụp cách chỗ đang khảo sát ~{Math.round(farKm)} km — đặt ghim theo GPS ảnh{survey?.zoneName ? `, không gắn vào ${survey.zoneName}` : ''}.</span>
+                </div>
+              )}
+              {!gps && metaState === 'idle' && info.sourceKind === 'gphotos' && (
+                <div className="text-[11.5px] text-[#666]">
+                  File gốc trên Google Photos không ghi GPS. Vị trí Google Photos hiện có thể do Google tự ước tính / tự thêm tay, hoặc đang bật ẩn vị trí khi chia sẻ — nên không nằm trong ảnh.
+                </div>
+              )}
+              {pinAtFallback && !readingMeta && (
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11.5px] text-amber-900">
+                  <AlertTriangle size={14} className="shrink-0 mt-px" />
+                  <span>Ghim đang ở tâm bản đồ, chưa phải chỗ chụp — kéo ghim, bấm vào chỗ chụp, hoặc dán link Google Maps bên dưới.</span>
                 </div>
               )}
               {livePos && !gps && pos && pos.lat === livePos.lat && pos.lng === livePos.lng && (
@@ -255,9 +298,9 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
 
               {err && <div className="text-[12px] text-red-600">{err.message}</div>}
 
-              <button onClick={() => void save()} disabled={!pos || !!busy}
+              <button onClick={() => void save()} disabled={!pos || !!busy || readingMeta}
                 className="w-full h-10 rounded-xl bg-[#1D4ED8] text-white text-[13.5px] font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 hover:bg-[#1E40AF]">
-                {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Lưu & mở ảnh 360
+                {busy || readingMeta ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {readingMeta ? 'Đang đọc GPS…' : 'Lưu & mở ảnh 360'}
               </button>
             </>
           )}

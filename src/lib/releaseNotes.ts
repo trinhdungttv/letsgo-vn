@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-13-pano-gphotos-gps',
+    date: '2026-11-13',
+    title: 'Khảo sát KCN — Ảnh 360°',
+    features: [
+      'Ảnh 360 từ link Google Photos lấy đúng GPS, hướng, độ cao flycam trong ảnh gốc (trước đây hay mất, ghim rơi về chỗ mặc định)',
+      'Google trả ảnh gốc chậm thì tự đọc lại GPS (có nút "Đọc lại"); cảnh báo khi ghim còn ở tâm bản đồ, chưa phải chỗ chụp',
+    ],
+  },
+  {
     id: '2026-11-13-pano-mobile-sharp',
     date: '2026-11-13',
     title: 'Khảo sát KCN — Ảnh 360°',
