@@ -1,5 +1,7 @@
 // Thêm ảnh 360° khi khảo sát KCN: dán link Google Photos / Google Drive (hoặc tải ảnh từ máy) → máy chủ lấy ảnh + đọc GPS / hướng
 // → chỗ đứng chụp: GPS trong ảnh > GPS điện thoại đang bật (màn khảo sát) > chọn trên bản đồ nhỏ → lưu rồi mở ngay trình xem.
+// Ảnh flycam DJI: GPS + hướng + độ cao bay đọc từ XMP drone-dji → tự đặt chỗ, hướng, "Flycam" đúng độ cao, không phải căn tay.
+// Ảnh có GPS mà xa chỗ đang khảo sát (> 5 km) → không gắn vào chuyến / KCN đang khảo sát, tên ảnh theo KCN gần ảnh.
 import { useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Camera, Check, ExternalLink, ImagePlus, Link2, Loader2, X } from 'lucide-react';
 import PanoPositionPicker from './PanoPositionPicker';
@@ -11,6 +13,11 @@ import {
 } from '../../lib/pano/panoramas';
 import { distanceM } from '../../lib/pano/sphere';
 import { isValidVnLatLng, type LatLng } from '../../lib/geo';
+
+/** Độ cao bay (m) từ đó coi là ảnh chụp trên cao. */
+const AERIAL_MIN_M = 15;
+/** Ảnh cách chỗ đang khảo sát xa hơn chừng này (km) thì coi là chụp nơi khác. */
+const FAR_FROM_SURVEY_KM = 5;
 
 export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClose, onCreated }: {
   mapCenter: LatLng;
@@ -44,6 +51,7 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
     setErr(null);
     const gps = i.meta.lat != null && i.meta.lng != null ? { lat: i.meta.lat, lng: i.meta.lng } : null;
     setPos(gps && isValidVnLatLng(gps) ? gps : livePos && isValidVnLatLng(livePos) ? livePos : null);
+    setAerial((i.meta.heightM ?? 0) >= AERIAL_MIN_M);
   };
 
   const fetchLink = async (pick?: string) => {
@@ -79,9 +87,17 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
     }
     return best?.name ?? null;
   }, [pos, zones]);
-  const zoneForTitle = survey?.zoneName || nearestZone;
+  // Ảnh có GPS riêng mà cách chỗ đang khảo sát quá xa → ảnh chụp nơi khác (vd ảnh flycam cũ), không gắn vào KCN / chuyến này
+  // (chỉ so với GPS điện thoại lúc bấm thêm — tâm bản đồ ở tab có thể là toạ độ mặc định khi KCN chưa có toạ độ)
+  const photoGps = info?.meta.lat != null && info.meta.lng != null ? { lat: info.meta.lat, lng: info.meta.lng } : null;
+  const farKm = photoGps && livePos ? distanceM(photoGps, livePos) / 1000 : 0;
+  const farFromSurvey = farKm > FAR_FROM_SURVEY_KM;
+  const zoneForTitle = (farFromSurvey ? '' : survey?.zoneName) || nearestZone;
   const autoTitle = zoneForTitle ? `Ảnh 360 — KCN ${zoneForTitle.replace(/^KCN\s+/i, '')}` : `Ảnh 360 — ${new Date().toLocaleDateString('vi-VN')}`;
   const finalTitle = titleTouched ? title : autoTitle;
+  // Flycam DJI ghi độ cao bay → ghim công ty trong ảnh nằm đúng chỗ hơn so với mặc định 100 m
+  const metaHeight = info?.meta.heightM && info.meta.heightM >= AERIAL_MIN_M ? info.meta.heightM : null;
+  const aerialHeight = metaHeight ?? 100;
 
   const save = async () => {
     if (!info || !pos) return;
@@ -90,8 +106,10 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
     try {
       const row = await createPanorama({
         title: finalTitle || 'Ảnh 360', info, lat: pos.lat, lng: pos.lng,
-        heading: info.meta.heading ?? null, cameraHeight: aerial ? 100 : 2, userName,
-        tripId: survey?.tripId ?? null, zoneId: survey?.zoneId ?? null, zoneName: survey?.zoneName ?? '',
+        heading: info.meta.heading ?? null, cameraHeight: aerial ? aerialHeight : 2, userName,
+        tripId: farFromSurvey ? null : survey?.tripId ?? null,
+        zoneId: farFromSurvey ? null : survey?.zoneId ?? null,
+        zoneName: farFromSurvey ? '' : survey?.zoneName ?? '',
       });
       onCreated(row);
     } catch (e) {
@@ -103,7 +121,8 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
 
   const ratioOk = !info?.width || !info.height || looksSpherical(info.width, info.height) || !!info.meta.isPano;
   const preview = info ? (panoThumb({ google_url: info.googleUrl }, 960, 480) ?? info.panoUrl) : null;
-  const gps = info?.meta.lat != null && info.meta.lng != null ? { lat: info.meta.lat, lng: info.meta.lng } : null;
+  const gps = photoGps;
+  const headingFrom = info?.meta.headingFrom === 'dji' ? ' · hướng flycam' : '';
 
   return (
     <div className="fixed inset-0 z-[1300] bg-black/45 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { if (!busy) onClose(); }}>
@@ -200,7 +219,8 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
               <div className="flex flex-wrap gap-1.5 text-[11px]">
                 {gps ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Có GPS trong ảnh</span>
                   : <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">Ảnh không có GPS — chọn vị trí trên bản đồ</span>}
-                {info.meta.heading != null ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Có hướng la bàn ({Math.round(info.meta.heading)}°)</span>
+                {info.meta.device && <span className="px-2 py-0.5 rounded-full bg-[#EAF3FF] text-[#0A64D8] border border-[#CFE3FF]">{info.meta.device}{metaHeight ? ` · bay cao ${metaHeight} m` : ''}</span>}
+                {info.meta.heading != null ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Có hướng la bàn ({Math.round(info.meta.heading)}°{headingFrom}) — không cần căn</span>
                   : <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">Chưa có hướng — căn 1 lần sau khi lưu</span>}
                 {info.width && info.height && <span className="px-2 py-0.5 rounded-full bg-[#F2F2F5] text-[#666]">{info.width}×{info.height}</span>}
               </div>
@@ -211,6 +231,12 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
                   className="w-full h-9 px-3 rounded-lg border border-[#D5D5DC] text-[13px] outline-none focus:border-[#1D4ED8]" />
               </div>
 
+              {farFromSurvey && (
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11.5px] text-amber-900">
+                  <AlertTriangle size={14} className="shrink-0 mt-px" />
+                  <span>Theo GPS trong ảnh, ảnh chụp cách chỗ đang khảo sát ~{Math.round(farKm)} km — đặt ghim theo GPS ảnh{survey?.zoneName ? `, không gắn vào ${survey.zoneName}` : ''}.</span>
+                </div>
+              )}
               {livePos && !gps && pos && pos.lat === livePos.lat && pos.lng === livePos.lng && (
                 <div className="text-[11.5px] text-emerald-700">Đang dùng vị trí GPS điện thoại lúc bấm thêm — kéo ghim nếu chụp ở chỗ khác.</div>
               )}
@@ -218,7 +244,7 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
 
               <div className="flex items-center gap-1.5 text-[12px]">
                 <span className="text-[#666] mr-1">Chụp từ</span>
-                {[{ v: false, label: 'Dưới đất' }, { v: true, label: 'Flycam / trên cao' }].map(o => (
+                {[{ v: false, label: 'Dưới đất' }, { v: true, label: metaHeight ? `Flycam ${metaHeight} m` : 'Flycam / trên cao' }].map(o => (
                   <button key={String(o.v)} onClick={() => setAerial(o.v)}
                     className={`h-8 px-3 rounded-lg border font-medium ${aerial === o.v ? 'border-[#1D4ED8] bg-[#1D4ED8]/[0.07] text-[#1D4ED8]' : 'border-[#D8D6D0] text-[#444]'}`}>{o.label}</button>
                 ))}

@@ -164,6 +164,46 @@ describe('imageMeta', () => {
     expect(m.heading).toBeUndefined();
   });
 
+  // XMP rút từ ảnh cầu thật của Tony (DJI Mini 4 Pro, ghép trong app DJI Fly) — EXIF không có GPS, chỉ XMP drone-dji có
+  const DJI_XMP = '<x:xmpmeta><rdf:RDF><rdf:Description rdf:about="DJI Meta Data" tiff:Make="DJI" tiff:Model="FC8482" '
+    + 'drone-dji:GpsStatus="Normal" drone-dji:GpsLatitude="+10.525778067" drone-dji:GpsLongitude="+107.065199310" '
+    + 'drone-dji:AbsoluteAltitude="+177.906" drone-dji:RelativeAltitude="+121.800" drone-dji:GimbalYawDegree="-20.20" '
+    + 'drone-dji:FlightYawDegree="-35.30" drone-dji:ProductName="Mini4 Pro" GPano:ProjectionType="equirectangular" '
+    + 'GPano:CroppedAreaImageHeightPixels="6000" GPano:CroppedAreaImageWidthPixels="12000" GPano:CroppedAreaLeftPixels="0" '
+    + 'GPano:CroppedAreaTopPixels="0" GPano:FullPanoHeightPixels="6000" GPano:FullPanoWidthPixels="12000"/></rdf:RDF></x:xmpmeta>';
+
+  it('flycam DJI: GPS + hướng thân máy bay + độ cao từ XMP drone-dji', () => {
+    const m = readPanoMeta(buildJpeg({ xmp: DJI_XMP, w: 12000, h: 6000 }));
+    expect(m.isPano).toBe(true);
+    near(m.lat!, 10.5257781, 1e-7);
+    near(m.lng!, 107.0651993, 1e-7);
+    // Ảnh cầu: giữa ảnh = FlightYaw (đã kiểm bằng mặt trời: 324,9°), không phải GimbalYaw (339,8°)
+    expect(m.heading).toBe(324.7);
+    expect(m.headingFrom).toBe('dji');
+    expect(m.heightM).toBe(122);
+    expect(m.device).toBe('DJI Mini4 Pro');
+  });
+
+  it('flycam DJI: ảnh thường dùng hướng gimbal, firmware cũ viết "GpsLongtitude", dạng thẻ', () => {
+    const xmp = '<drone-dji:GpsLatitude>10.5</drone-dji:GpsLatitude><drone-dji:GpsLongtitude>106.25</drone-dji:GpsLongtitude>'
+      + '<drone-dji:GimbalYawDegree>45.5</drone-dji:GimbalYawDegree><drone-dji:FlightYawDegree>30</drone-dji:FlightYawDegree>'
+      + '<drone-dji:RelativeAltitude>-1.2</drone-dji:RelativeAltitude>';
+    const m = readPanoMeta(buildJpeg({ xmp, w: 4000, h: 3000 }));
+    expect(m.lat).toBe(10.5);
+    expect(m.lng).toBe(106.25);
+    expect(m.heading).toBe(45.5);
+    expect(m.heightM).toBeUndefined();
+  });
+
+  it('GPano PoseHeadingDegrees thắng hướng DJI; GPS EXIF thắng GPS XMP', () => {
+    const xmp = DJI_XMP.replace('GPano:ProjectionType', 'GPano:PoseHeadingDegrees="12" GPano:ProjectionType');
+    const m = readPanoMeta(buildJpeg({ xmp, gps: true, w: 12000, h: 6000 }));
+    expect(m.heading).toBe(12);
+    expect(m.headingFrom).toBe('gpano');
+    near(m.lat!, 10.975, 1e-6);
+    near(m.lng!, 106.67, 1e-6);
+  });
+
   it('file không phải ảnh / hỏng → rỗng, không lỗi', () => {
     expect(readPanoMeta(new Uint8Array([1, 2, 3]))).toEqual({});
     expect(readPanoMeta(buildJpeg({ gps: true }).slice(0, 40)).lat).toBeUndefined();

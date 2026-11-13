@@ -7,6 +7,7 @@ import type { TrackSegment } from './track';
 
 export const SURVEY_SHARE_HINT = 'Chưa chạy migration 209 (Chia sẻ khảo sát) trên Supabase — chạy file 20261106100000_209_kcn_survey_shares.sql rồi thử lại';
 export const SURVEY_SHARE_LODGING_HINT = 'Chưa chạy migration 222 (Chia sẻ kèm nhà trọ) trên Supabase — chạy file 20261112100000_222_kcn_survey_share_lodgings.sql rồi thử lại, hoặc bỏ chọn "Nhà trọ"';
+export const SURVEY_SHARE_FOLLOW_HINT = 'Chưa chạy migration 227 (Tự cập nhật / Chốt số liệu link chia sẻ) trên Supabase — chạy file 20261113140000_227_kcn_survey_share_follow.sql rồi thử lại';
 
 function fail(err: { message?: string; code?: string } | null, hint = SURVEY_SHARE_HINT): never {
   const msg = err?.message ?? 'Lỗi không xác định';
@@ -95,6 +96,44 @@ export function groupZonesByProvince(zones: readonly ShareZone[]): ProvinceGroup
   return out.sort((a, b) => Number(!a.key) - Number(!b.key) || b.zones.length - a.zones.length || a.label.localeCompare(b.label, 'vi'));
 }
 
+// ── Khảo sát sau này: tự cập nhật / chốt số liệu (migration 227) ─────────────
+/** Khoá đặc biệt trong follow_provinces: mọi KCN, kể cả KCN khảo sát sau này */
+export const FOLLOW_ALL = '*';
+
+/**
+ * Tỉnh được "theo dõi" khi link tự cập nhật: tỉnh nào chọn đủ mọi KCN trong danh sách (chạm tên tỉnh) thì KCN mới
+ * của tỉnh đó sau này cũng tự vào link. Chọn tất cả → [FOLLOW_ALL]. '' = nhóm "Chưa ghi tỉnh".
+ * Khoá giống hệt provinceKey() — server so bằng ks_province_key (migration 227).
+ */
+export function followKeys(zones: readonly ShareZone[], selected: ReadonlySet<string>): string[] {
+  if (!zones.length) return [];
+  if (zones.every(z => selected.has(z.id))) return [FOLLOW_ALL];
+  return groupZonesByProvince(zones).filter(g => g.zones.every(z => selected.has(z.id))).map(g => g.key);
+}
+
+/** Tên hiển thị của các tỉnh đang theo dõi ("Bình Dương", "KCN chưa ghi tỉnh"); FOLLOW_ALL → ['mọi KCN'] */
+export function followLabels(zones: readonly ShareZone[], keys: readonly string[]): string[] {
+  if (keys.includes(FOLLOW_ALL)) return ['mọi KCN'];
+  const groups = new Map(groupZonesByProvince(zones).map(g => [g.key, g.label]));
+  return keys.map(k => (k ? groups.get(k) ?? k : 'KCN chưa ghi tỉnh'));
+}
+
+/** Ô đã tick khi mở "Sửa phạm vi" 1 link: KCN đã lưu + mọi KCN của tỉnh đang theo dõi (chỉ KCN có trong danh sách). */
+export function scopeSelection(zones: readonly ShareZone[], s: { zone_ids: readonly string[]; follow_provinces?: readonly string[] | null; data_until?: string | null }): Set<string> {
+  const follow = s.data_until ? [] : s.follow_provinces ?? [];
+  const all = follow.includes(FOLLOW_ALL);
+  const ids = new Set(s.zone_ids);
+  return new Set(zones.filter(z => all || ids.has(z.id) || follow.includes(provinceKey(z.location))).map(z => z.id));
+}
+
+/** Mô tả ngắn chế độ của 1 link trong danh sách đã chia sẻ */
+export function scopeModeText(zones: readonly ShareZone[], s: { follow_provinces?: readonly string[] | null; data_until?: string | null }): string {
+  if (s.data_until) return `chốt số liệu đến ${fmtVnDateTime(new Date(s.data_until))}`;
+  const keys = s.follow_provinces ?? [];
+  if (!keys.length) return 'tự cập nhật KCN đã chọn';
+  return keys.includes(FOLLOW_ALL) ? 'tự cập nhật mọi KCN' : `tự cập nhật, theo cả ${followLabels(zones, keys).join(', ')}`;
+}
+
 /** Tên tỉnh (đã bỏ trùng, không có "Chưa ghi tỉnh") của các KCN được chọn */
 export function provincesOf(zones: readonly ShareZone[], selected: ReadonlySet<string>): string[] {
   const names = new Set<string>();
@@ -115,6 +154,9 @@ export interface ShareMessageInput {
   recipient?: string;
   /** Link có kèm nhà trọ đã khảo sát */
   lodgings?: boolean;
+  /** true = link tự cập nhật khi có khảo sát mới; false = số liệu chốt đến dataUntil; không truyền = không nhắc */
+  live?: boolean;
+  dataUntil?: string | null;
 }
 
 const joinNames = (names: readonly string[], max = 6) =>
@@ -131,6 +173,8 @@ export function buildShareMessage(i: ShareMessageInput): string {
     `🔗 Link xem: ${i.url}`,
     `🔑 Mã xem: ${i.pin}`,
     i.expiresAt ? `⏳ Xem được đến hết ngày ${fmtVnDate(new Date(i.expiresAt))}` : '⏳ Link không giới hạn thời gian',
+    ...(i.live === true ? ['🔄 Link tự cập nhật khi có khảo sát mới — mở lại link là thấy'] : []),
+    ...(i.live === false && i.dataUntil ? [`📌 Số liệu khảo sát tính đến ${fmtVnDate(new Date(i.dataUntil))}`] : []),
     '',
     `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ảnh chỉ tiêu tuyển dụng${i.lodgings ? ', các chuyến khảo sát và nhà trọ quanh KCN (giá, số phòng, khoảng cách tới công ty)' : ' và các chuyến khảo sát'}. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
   ];
@@ -145,6 +189,9 @@ export interface SurveyShareRow {
   /** Migration 222 — chưa chạy thì không có (coi như false) */
   include_lodgings?: boolean;
   show_landlord?: boolean;
+  /** Migration 227 — tỉnh đang theo dõi (FOLLOW_ALL = mọi KCN) + mốc chốt số liệu (null = tự cập nhật) */
+  follow_provinces?: string[];
+  data_until?: string | null;
 }
 
 export async function listSurveyShares(token: string): Promise<SurveyShareRow[]> {
@@ -155,13 +202,30 @@ export async function createSurveyShare(token: string, a: {
   label: string; zoneIds: string[]; provinces: string[]; pin: string; days: number | null;
   /** kèm nhà trọ (migration 222) + có hiện tên / SĐT chủ nhà */
   lodgings?: boolean; showLandlord?: boolean;
+  /** Migration 227: tỉnh theo dõi khi tự cập nhật (followKeys) / chốt số liệu tại lúc tạo */
+  follow?: string[]; freeze?: boolean;
 }) {
   const args: Record<string, unknown> = {
     p_token: token, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces, p_pin: a.pin, p_days: a.days,
   };
-  // Chỉ gửi 2 tham số mới khi có chọn nhà trọ → chưa chạy 222 thì link thường vẫn tạo được như cũ
+  // Chỉ gửi tham số mới khi có dùng → chưa chạy 222 / 227 thì link thường vẫn tạo được như cũ
   if (a.lodgings) { args.p_include_lodgings = true; args.p_show_landlord = !!a.showLandlord; }
-  return rpc<{ ok: true; id: string; code: string; expires_at: string | null }>('survey_share_create', args, a.lodgings ? SURVEY_SHARE_LODGING_HINT : undefined);
+  const follow = a.freeze ? [] : a.follow ?? [];
+  if (a.freeze) args.p_freeze = true;
+  if (follow.length) args.p_follow_provinces = follow;
+  const hint = a.freeze || follow.length ? SURVEY_SHARE_FOLLOW_HINT : a.lodgings ? SURVEY_SHARE_LODGING_HINT : undefined;
+  return rpc<{ ok: true; id: string; code: string; expires_at: string | null; data_until?: string | null }>('survey_share_create', args, hint);
+}
+
+/** Sửa link đã gửi: KCN, tự cập nhật / chốt số liệu, nhà trọ, tên người nhận — link và mã 4 số giữ nguyên (migration 227). */
+export async function updateSurveyShareScope(token: string, id: string, a: {
+  label: string; zoneIds: string[]; provinces: string[]; follow: string[]; freeze: boolean; lodgings: boolean; showLandlord: boolean;
+}) {
+  return rpc<{ ok: true; code: string; data_until: string | null }>('survey_share_update_scope', {
+    p_token: token, p_id: id, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces,
+    p_follow_provinces: a.freeze ? [] : a.follow, p_freeze: a.freeze,
+    p_include_lodgings: a.lodgings, p_show_landlord: a.lodgings && a.showLandlord,
+  }, SURVEY_SHARE_FOLLOW_HINT);
 }
 
 /** Đặt mã mới (và gia hạn nếu setExpiry) — mở lại được cả link đã hết hạn / thu hồi. */
@@ -199,6 +263,9 @@ export interface SharedSurvey {
   lodgings?: Record<string, unknown>[] | null;
   /** Link có cho xem tên + SĐT chủ nhà không */
   show_landlord?: boolean;
+  /** Migration 227: mốc chốt số liệu (null / không có = tự cập nhật); follows = có theo dõi cả tỉnh / mọi KCN */
+  data_until?: string | null;
+  follows?: boolean;
 }
 
 export type OpenSurveyShareResult =

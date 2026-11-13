@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildShareMessage, groupZonesByProvince, isWeakPin, parseSurveyShareHash, provincesOf, randomPin, shareState, surveyShareUrl, type ShareZone,
+  buildShareMessage, FOLLOW_ALL, followKeys, followLabels, groupZonesByProvince, isWeakPin, parseSurveyShareHash, provincesOf, randomPin, scopeModeText,
+  scopeSelection, shareState, surveyShareUrl, type ShareZone,
 } from './share';
 
 const z = (id: string, name: string, location: string | null): ShareZone => ({ id, name, location, photos: 1, trips: 1 });
@@ -85,5 +86,45 @@ describe('tin nhắn Zalo', () => {
   it('nhắc tới nhà trọ khi link có kèm nhà trọ', () => {
     expect(buildShareMessage(base)).not.toContain('nhà trọ');
     expect(buildShareMessage({ ...base, lodgings: true })).toContain('nhà trọ quanh KCN');
+  });
+});
+
+describe('khảo sát sau này (tự cập nhật / chốt số liệu)', () => {
+  const zones = [
+    z('1', 'KCN Nhơn Trạch', 'TP. Đồng Nai'),
+    z('2', 'KCN Long Thành', 'Nhơn Trạch, Đồng Nai'),
+    z('3', 'KCN VSIP 2', 'Bình Dương'),
+    z('4', 'KCN VSIP 3', 'Bình Dương'),
+    z('5', 'KCN Lạ', null),
+  ];
+  it('theo dõi tỉnh đã chọn đủ mọi KCN, chọn hết = mọi KCN', () => {
+    expect(followKeys(zones, new Set(['1', '2', '3']))).toEqual(['dong nai']);
+    expect(followKeys(zones, new Set(['3', '4', '5']))).toEqual(['binh duong', '']);
+    expect(followKeys(zones, new Set(['1', '3']))).toEqual([]);
+    expect(followKeys(zones, new Set(['1', '2', '3', '4', '5']))).toEqual([FOLLOW_ALL]);
+    expect(followKeys([], new Set())).toEqual([]);
+  });
+  it('tên tỉnh đang theo dõi', () => {
+    expect(followLabels(zones, ['dong nai', ''])).toEqual(['Đồng Nai', 'KCN chưa ghi tỉnh']);
+    expect(followLabels(zones, [FOLLOW_ALL])).toEqual(['mọi KCN']);
+  });
+  it('mở Sửa phạm vi: tick KCN đã lưu + KCN mới của tỉnh đang theo dõi', () => {
+    expect([...scopeSelection(zones, { zone_ids: ['1', '3'], follow_provinces: ['binh duong'] })].sort()).toEqual(['1', '3', '4']);
+    expect(scopeSelection(zones, { zone_ids: ['1'], follow_provinces: [FOLLOW_ALL] }).size).toBe(5);
+    // đang chốt số liệu thì không theo dõi tỉnh; KCN không còn trong danh sách thì bỏ
+    expect([...scopeSelection(zones, { zone_ids: ['3', 'gone'], follow_provinces: ['binh duong'], data_until: '2026-11-13T05:00:00Z' })]).toEqual(['3']);
+    expect([...scopeSelection(zones, { zone_ids: ['2'] })]).toEqual(['2']);
+  });
+  it('mô tả chế độ trong danh sách link', () => {
+    expect(scopeModeText(zones, {})).toBe('tự cập nhật KCN đã chọn');
+    expect(scopeModeText(zones, { follow_provinces: ['binh duong'] })).toBe('tự cập nhật, theo cả Bình Dương');
+    expect(scopeModeText(zones, { follow_provinces: [FOLLOW_ALL] })).toBe('tự cập nhật mọi KCN');
+    expect(scopeModeText(zones, { data_until: '2026-11-13T05:00:00Z' })).toMatch(/^chốt số liệu đến \d{2}:\d{2} 13\/11\/2026$/);
+  });
+  it('tin nhắn nói rõ link tự cập nhật hay số liệu chốt đến ngày nào', () => {
+    const base = { url: 'u', pin: '0420', zoneNames: ['KCN A'], provinces: [], expiresAt: null };
+    expect(buildShareMessage(base)).not.toMatch(/tự cập nhật|tính đến/);
+    expect(buildShareMessage({ ...base, live: true })).toContain('tự cập nhật khi có khảo sát mới');
+    expect(buildShareMessage({ ...base, live: false, dataUntil: '2026-11-13T05:00:00Z' })).toContain('Số liệu khảo sát tính đến 13/11/2026');
   });
 });

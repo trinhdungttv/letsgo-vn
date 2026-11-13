@@ -1,5 +1,5 @@
 // Vercel Serverless Function (Edge) — lay ANH 360° tu link Google Photos / Google Drive / link anh truc tiep,
-// doc thong tin trong anh (GPS, huong la ban GPano, goc phu), lay ban co toi da 6144 px roi chep ve Cloudflare R2.
+// doc thong tin trong anh (GPS, huong la ban GPano / flycam DJI, goc phu), lay ban co toi da 6144 px roi chep ve Cloudflare R2.
 // Trinh duyet khong tu lam duoc vi trang chia se Google Photos / Drive chan CORS.
 //
 // POST { url, pick? }  (header x-letsgo-token)
@@ -249,7 +249,7 @@ export default async function handler(req: Request): Promise<Response> {
       sourceUrl: link.url,
       meta: {
         lat: meta.lat, lng: meta.lng, heading: meta.heading, haov: meta.haov, vaov: meta.vaov, voffset: meta.voffset,
-        takenAt: meta.takenAt, isPano: meta.isPano,
+        takenAt: meta.takenAt, isPano: meta.isPano, headingFrom: meta.headingFrom, heightM: meta.heightM, device: meta.device,
         origWidth: orig?.w ?? meta.width, origHeight: orig?.h ?? meta.height,
       },
     });

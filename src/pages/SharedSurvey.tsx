@@ -2,6 +2,7 @@
 // (kiểu mở khoá iPhone). Chỉ xem: ảnh chỉ tiêu tuyển dụng + các chuyến (+ nhà trọ nếu link có kèm — migration 222)
 // của những KCN người gửi cho phép, trong hạn xem.
 // Mã được kiểm tra ở server (hàm survey_share_open, migration 209): sai 5 lần thì khoá tạm.
+// Migration 227: link "tự cập nhật" (khảo sát mới tự hiện) hoặc "chốt số liệu" đến 1 mốc — hiện rõ ở đầu trang.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Camera, Home, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
 import { loadSharedTracks, openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
@@ -115,6 +116,8 @@ export default function SharedSurvey({ code }: { code: string }) {
     (data?.zones ?? []).forEach(z => { const k = provinceKey(z.location); if (k && !m.has(k)) m.set(k, provinceLabel(z.location)); });
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'vi'));
   }, [data]);
+  // Tiêu đề: tỉnh của các KCN đang có trong link (link tự cập nhật có thể thêm tỉnh mới so với lúc gửi)
+  const headProvinces = useMemo(() => (provinces.length ? provinces.map(([, l]) => l) : data?.provinces ?? []), [provinces, data]);
   const zoneOptions = useMemo(() => (data?.zones ?? []).filter(z => province === 'all' || zoneProv.get(z.id) === province), [data, province, zoneProv]);
 
   const okZone = useCallback((z: string | null) => !!z && (province === 'all' || zoneProv.get(z) === province) && (zoneId === 'all' || z === zoneId), [province, zoneId, zoneProv]);
@@ -201,10 +204,13 @@ export default function SharedSurvey({ code }: { code: string }) {
         <div className="bg-white rounded-2xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] p-5">
           <h1 className="text-[22px] font-semibold tracking-tight leading-tight">Khảo sát {data.zones.length} KCN</h1>
           <div className="text-[13px] text-[#6e6e73] mt-0.5">
-            {data.provinces.length ? `${data.provinces.join(', ')} · ` : ''}{data.photos.length} ảnh chỉ tiêu · {data.trips.length} chuyến khảo sát{hasLodgings ? ` · ${allLodgings.length} nhà trọ` : ''}
+            {headProvinces.length ? `${headProvinces.join(', ')} · ` : ''}{data.photos.length} ảnh chỉ tiêu · {data.trips.length} chuyến khảo sát{hasLodgings ? ` · ${allLodgings.length} nhà trọ` : ''}
           </div>
           <div className="text-[12px] text-[#86868b] mt-1.5">
             {data.expires_at ? `Link xem được đến hết ngày ${fmtDate(data.expires_at)}` : 'Link không giới hạn thời gian'} · Chỉ xem
+          </div>
+          <div className={`inline-flex items-center gap-1 text-[11.5px] font-medium mt-2 px-2 py-0.5 rounded-full ${data.data_until ? 'bg-[#fff4e0] text-[#b25e00]' : 'bg-[#e8f8ed] text-[#1d8a3b]'}`}>
+            {data.data_until ? `📌 Số liệu khảo sát tính đến ${fmtDateTime(data.data_until)}` : '🔄 Tự cập nhật khi có khảo sát mới — mở lại link là thấy'}
           </div>
         </div>
 

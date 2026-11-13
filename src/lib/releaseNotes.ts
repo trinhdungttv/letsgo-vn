@@ -16,6 +16,25 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-13-pano-dji-auto-heading',
+    date: '2026-11-13',
+    title: 'Khảo sát KCN — Ảnh 360°',
+    features: [
+      'Ảnh 360 chụp bằng flycam DJI: tự biết chỗ chụp, hướng la bàn và độ cao bay — không phải căn hướng bằng tay',
+      'Ảnh chụp ở nơi khác (cách chỗ đang khảo sát trên 5 km) không bị gắn nhầm vào KCN đang khảo sát',
+    ],
+  },
+  {
+    id: '2026-11-13-survey-share-follow',
+    date: '2026-11-13',
+    title: 'Khảo sát KCN — Chia sẻ',
+    features: [
+      'Chọn «Tự cập nhật» hoặc «Chốt đến hôm nay» khi tạo link chia sẻ khảo sát',
+      'Tự cập nhật: khảo sát mới tự hiện; chọn cả tỉnh thì KCN mới của tỉnh cũng tự vào',
+      'Nút «Sửa phạm vi» cho link đã gửi — giữ nguyên link và mã 4 số',
+    ],
+  },
+  {
     id: '2026-11-13-sale-leads-draft',
     date: '2026-11-13',
     title: 'CSKH — Sale / CTV',

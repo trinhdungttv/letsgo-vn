@@ -1,6 +1,7 @@
 // Đọc thông tin nằm trong đầu file ảnh 360° — chỉ cần ~512 KB đầu file: cỡ ảnh, toạ độ GPS (EXIF), thời điểm chụp,
-// hướng la bàn + góc phủ (XMP GPano — máy 360 Insta360 / Ricoh / điện thoại ghi sẵn). Thuần hàm, chạy được cả ở
-// máy chủ (api/pano-import.ts) lẫn trình duyệt (ảnh tải từ máy). Có test (pano.test.ts).
+// hướng la bàn + góc phủ (XMP GPano — máy 360 Insta360 / Ricoh / điện thoại ghi sẵn), flycam DJI (XMP drone-dji: GPS,
+// hướng thân máy bay, độ cao bay). Thuần hàm, chạy được cả ở máy chủ (api/pano-import.ts) lẫn trình duyệt (ảnh tải từ
+// máy). Có test (pano.test.ts).
 import { wrap360 } from './sphere';
 
 export interface PanoMeta {
@@ -10,6 +11,12 @@ export interface PanoMeta {
   lng?: number;
   /** Hướng la bàn của GIỮA ảnh (độ). */
   heading?: number;
+  /** Hướng lấy từ đâu: GPano (máy 360 ghi), flycam DJI, hay EXIF GPSImgDirection. */
+  headingFrom?: 'gpano' | 'dji' | 'exif';
+  /** Độ cao máy ảnh so với chỗ cất cánh (m) — flycam DJI ghi RelativeAltitude. */
+  heightM?: number;
+  /** Tên máy chụp (vd "DJI Mini4 Pro") — chỉ để hiện cho người dùng. */
+  device?: string;
   /** Góc phủ ngang / dọc (độ) và vĩ độ của giữa ảnh — chỉ có khi ảnh ghi GPano. */
   haov?: number;
   vaov?: number;
@@ -146,18 +153,50 @@ function readExif(exif: Uint8Array, meta: PanoMeta) {
   const dir = gps.get(0x11);
   if (dir && dir.type === 5 && meta.heading == null) {
     const [h] = rationals(t, dir.at, 1);
-    if (Number.isFinite(h)) meta.heading = wrap360(h);
+    if (Number.isFinite(h)) { meta.heading = wrap360(h); meta.headingFrom = 'exif'; }
   }
 }
 
-function gpano(xmp: string, name: string): string | null {
-  const m = xmp.match(new RegExp(`GPano:${name}\\s*(?:=\\s*["']([^"']*)["']|>([^<]*)<)`));
+/** Giá trị 1 thẻ XMP dạng thuộc tính `ns:Name="…"` hoặc dạng thẻ `<ns:Name>…</ns:Name>`. */
+function xmpVal(xmp: string, ns: string, name: string): string | null {
+  const m = xmp.match(new RegExp(`${ns}:${name}\\s*(?:=\\s*["']([^"']*)["']|>([^<]*)<)`));
   return m ? (m[1] ?? m[2] ?? '').trim() : null;
+}
+const gpano = (xmp: string, name: string) => xmpVal(xmp, 'GPano', name);
+const xmpNum = (xmp: string, ns: string, name: string) => {
+  const v = xmpVal(xmp, ns, name);
+  const x = v == null || v === '' ? NaN : Number(v);
+  return Number.isFinite(x) ? x : null;
+};
+
+/** Flycam DJI ghi GPS / hướng / độ cao vào XMP drone-dji (ảnh cầu ghép trong app DJI Fly KHÔNG có GPS ở EXIF).
+ *  Hướng giữa ảnh cầu = FlightYawDegree (hướng thân máy bay): đã kiểm bằng vị trí mặt trời trên ảnh thật của Tony
+ *  (DJI Mini 4 Pro, 19/12/2025 15:35) → mặt trời cho 324,9°, FlightYaw 324,7°, còn GimbalYaw lệch 15°.
+ *  Ảnh thường (không phải ảnh cầu) thì giữa ảnh = hướng gimbal. */
+function readDji(xmp: string, meta: PanoMeta) {
+  if (!xmp.includes('drone-dji')) return;
+  const lat = xmpNum(xmp, 'drone-dji', 'GpsLatitude');
+  // Firmware cũ của DJI viết sai chính tả "GpsLongtitude"
+  const lng = xmpNum(xmp, 'drone-dji', 'GpsLongitude') ?? xmpNum(xmp, 'drone-dji', 'GpsLongtitude');
+  if (lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat !== 0 || lng !== 0)) {
+    meta.lat = Math.round(lat * 1e7) / 1e7;
+    meta.lng = Math.round(lng * 1e7) / 1e7;
+  }
+  const flight = xmpNum(xmp, 'drone-dji', 'FlightYawDegree'), gimbal = xmpNum(xmp, 'drone-dji', 'GimbalYawDegree');
+  const yaw = meta.isPano ? flight ?? gimbal : gimbal ?? flight;
+  if (meta.heading == null && yaw != null) {
+    meta.heading = Math.round(wrap360(yaw) * 10) / 10;
+    meta.headingFrom = 'dji';
+  }
+  const rel = xmpNum(xmp, 'drone-dji', 'RelativeAltitude');
+  if (rel != null && rel > 3 && rel < 2000) meta.heightM = Math.round(rel);
+  const name = xmpVal(xmp, 'drone-dji', 'ProductName');
+  meta.device = name ? `DJI ${name}` : 'Flycam DJI';
 }
 
 function readXmp(xmp: string, meta: PanoMeta) {
   if (!xmp.includes('GPano')) return;
-  const num = (n: string) => { const v = gpano(xmp, n); const x = v == null || v === '' ? NaN : Number(v); return Number.isFinite(x) ? x : null; };
+  const num = (n: string) => xmpNum(xmp, 'GPano', n);
   const proj = gpano(xmp, 'ProjectionType');
   if (proj && /equirectangular/i.test(proj)) meta.isPano = true;
   const fullW = num('FullPanoWidthPixels'), fullH = num('FullPanoHeightPixels');
@@ -172,7 +211,10 @@ function readXmp(xmp: string, meta: PanoMeta) {
     centerYawOffset = ((left + cw / 2) / fullW) * 360 - 180;
   }
   const head = num('PoseHeadingDegrees');
-  if (head != null) meta.heading = Math.round(wrap360(head + centerYawOffset) * 10) / 10;
+  if (head != null) {
+    meta.heading = Math.round(wrap360(head + centerYawOffset) * 10) / 10;
+    meta.headingFrom = 'gpano';
+  }
 }
 
 /** Đọc mọi thông tin có được từ phần đầu file ảnh (thiếu gì thì bỏ trống). */
@@ -182,7 +224,8 @@ export function readPanoMeta(b: Uint8Array): PanoMeta {
   if (isJpeg) {
     const scan = jpegSegments(b);
     if (scan.size) { meta.width = scan.size.width; meta.height = scan.size.height; }
-    if (scan.xmp) readXmp(scan.xmp, meta);
+    if (scan.xmp) { readXmp(scan.xmp, meta); readDji(scan.xmp, meta); }
+    // EXIF đọc sau: GPS ở EXIF (nếu có) thắng GPS trong XMP DJI; hướng EXIF chỉ dùng khi chưa có
     if (scan.exif) {
       try { readExif(scan.exif, meta); } catch { /* EXIF hỏng → bỏ qua */ }
     }
