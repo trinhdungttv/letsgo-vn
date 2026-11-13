@@ -16,6 +16,16 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-13-pano-mobile-sharp',
+    date: '2026-11-13',
+    title: 'Khảo sát KCN — Ảnh 360°',
+    features: [
+      'Xem ảnh 360 trên điện thoại: nút không còn nằm dưới giờ / pin, không bị mờ, to dễ bấm — cả khi xoay ngang',
+      'Ảnh 360 nét như ảnh gốc trên iPhone (trước đây bị thu nhỏ còn khoảng một nửa độ nét)',
+      'Form "Thêm ảnh 360°" trên điện thoại không còn bị lệch, nút đóng to dễ bấm, chừa thanh home',
+    ],
+  },
+  {
     id: '2026-11-13-pano-dji-auto-heading',
     date: '2026-11-13',
     title: 'Khảo sát KCN — Ảnh 360°',

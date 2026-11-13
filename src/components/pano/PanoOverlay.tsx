@@ -178,13 +178,16 @@ export function PanoPinsLayer({ v, items, heading, cameraHeight, calibrated, cal
 }
 
 /** La bàn nhỏ: các điểm gần (theo phương vị / khoảng cách) + hình quạt hướng đang nhìn. Bấm 1 chấm → quay tới đó. */
-export function PanoRadar({ v, items, radius, heading, calibrated, onPick }: {
+export function PanoRadar({ v, items, radius, heading, calibrated, onPick, left = '12px', bottom = '12px' }: {
   v: PanoView;
   items: NearbyItem[];
   radius: number;
   heading: number;
   calibrated: boolean;
   onPick: (it: NearbyItem) => void;
+  /** Vị trí (CSS) — màn cha chừa safe-area / ngăn kéo dưới. */
+  left?: string;
+  bottom?: string;
 }) {
   const R = 52;
   const facing = compassAt(v.yaw, heading);
@@ -193,7 +196,7 @@ export function PanoRadar({ v, items, radius, heading, calibrated, onPick }: {
   const pt = (bearing: number, r: number) => ({ x: R + r * Math.sin(bearing * RAD), y: R - r * Math.cos(bearing * RAD) });
   const a = pt(facing - half, R), b = pt(facing + half, R);
   return (
-    <div data-ui className="absolute left-3 bottom-3 z-10 select-none" style={{ width: R * 2 + 8 }}>
+    <div data-ui className="absolute z-10 select-none" style={{ width: R * 2 + 8, left, bottom }}>
       <svg width={R * 2} height={R * 2} className="block drop-shadow-[0_2px_6px_rgba(0,0,0,0.4)]">
         <circle cx={R} cy={R} r={R - 1} fill="rgba(20,20,22,0.62)" stroke="rgba(255,255,255,0.5)" />
         <circle cx={R} cy={R} r={(R - 1) / 2} fill="none" stroke="rgba(255,255,255,0.18)" />
@@ -203,15 +206,21 @@ export function PanoRadar({ v, items, radius, heading, calibrated, onPick }: {
         {items.map(it => {
           const p = pt(it.bearing, Math.min(1, it.dist / radius) * (R - 6));
           return (
-            <circle key={it.id} cx={p.x} cy={p.y} r={it.kind === 'pano' ? 3 : 3.5} fill={it.color} stroke="#fff" strokeWidth={1}
-              style={{ cursor: 'pointer' }} onClick={() => onPick(it)}>
+            <circle key={it.id} cx={p.x} cy={p.y} r={it.kind === 'pano' ? 3 : 3.5} fill={it.color} stroke="#fff" strokeWidth={1} pointerEvents="none" />
+          );
+        })}
+        <circle cx={R} cy={R} r={3} fill="#0A84FF" stroke="#fff" strokeWidth={1.5} />
+        {/* Vùng bấm to (chấm chỉ 7 px — ngón tay khó trúng); vẽ sau cùng nên nằm trên */}
+        {items.map(it => {
+          const p = pt(it.bearing, Math.min(1, it.dist / radius) * (R - 6));
+          return (
+            <circle key={`hit-${it.id}`} cx={p.x} cy={p.y} r={11} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onPick(it)}>
               <title>{`${it.name} · ${fmtDistance(it.dist)} ${dirName(it.bearing, true)}`}</title>
             </circle>
           );
         })}
-        <circle cx={R} cy={R} r={3} fill="#0A84FF" stroke="#fff" strokeWidth={1.5} />
       </svg>
-      <div className="mt-1 text-center text-[10.5px] font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+      <div className="mt-1 text-center whitespace-nowrap text-[10.5px] font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
         {calibrated ? `Đang nhìn ${dirName(facing)} ${Math.round(wrap360(facing))}°` : 'Chưa căn hướng'}
       </div>
     </div>

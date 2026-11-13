@@ -1,14 +1,19 @@
 // Vẽ ảnh 360° KHÔNG cần WebGL (máy tắt tăng tốc đồ hoạ / GPU bị trình duyệt chặn — Chrome 2025+ không còn WebGL chạy bằng
 // phần mềm). Tính từng điểm ảnh bằng CPU theo ĐÚNG phép chiếu của lib/pano/sphere.ts (như shader WebGL) nên nét vẽ / ghim
-// vẫn khớp. Đang kéo: vẽ nhanh ở độ phân giải thấp; dừng tay 0,15 s: vẽ lại nét (nội suy song tuyến).
+// vẫn khớp. Đang kéo: vẽ nhanh ở độ phân giải thấp; dừng tay 0,15 s: vẽ lại nét (nội suy song tuyến) ở đúng mật độ màn hình
+// (devicePixelRatio, trần SOFT_SHARP_PX) — chia thành nhiều lượt ~12 ms nên không khựng, xong mới hiện một lần.
+// Ảnh nguồn giữ cỡ gốc (trần SOFT_SRC_BUDGET; iPhone / iPad theo giới hạn khung vẽ, thu theo nấc ½ — xem lib/pano/quality.ts).
 import type { PanoView } from '../../lib/pano/sphere';
-import type { Coverage, PanoDrawer } from './panoGL';
+import { CANVAS_MAX_PX, SOFT_SHARP_PX, SOFT_SRC_BUDGET, isIOSWebKit, textureScale } from '../../lib/pano/quality';
+import { drawScaled, type Coverage, type PanoDrawer } from './panoGL';
 
 const RAD = Math.PI / 180;
 const BG = 0xff1f1c1c; // ABGR (little-endian) của #1C1C1F
 /** Đang kéo: số điểm ảnh tính / khung hình (~10 ms trên máy thường) */
 const FAST_PIXELS = 220_000;
 const IDLE_MS = 150;
+/** Mỗi lượt vẽ nét chạy tối đa ~12 ms rồi nhường cho trình duyệt. */
+const SLICE_MS = 12;
 
 export class PanoSoftRenderer implements PanoDrawer {
   private ctx: CanvasRenderingContext2D;
@@ -17,9 +22,10 @@ export class PanoSoftRenderer implements PanoDrawer {
   private sh = 0;
   private cov: Coverage = { haov: 360, vaov: 180, voffset: 0 };
   private idle: ReturnType<typeof setTimeout> | null = null;
-  private lastView: PanoView | null = null;
-  private lastDpr = 1;
-  private drawnFull = false;
+  private job: ReturnType<typeof setTimeout> | null = null;
+  /** Khung hình đã vẽ nét xong (khỏi vẽ lại khi không đổi gì). */
+  private sharpKey: string | null = null;
+  private drawnSharp = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -27,47 +33,72 @@ export class PanoSoftRenderer implements PanoDrawer {
     this.ctx = ctx;
   }
 
-  setImage(img: HTMLImageElement, cov: Coverage, mobile: boolean) {
-    // Ảnh nguồn thu về tối đa 4096 px (điện thoại 2048) — đủ nét cho cách vẽ này, đỡ tốn bộ nhớ
-    const maxW = mobile ? 2048 : 4096;
-    const k = Math.min(1, maxW / img.naturalWidth);
-    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    if (!g) throw new Error('Trình duyệt không đọc được ảnh (canvas 2D).');
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(img, 0, 0, w, h);
-    this.src = new Uint32Array(g.getImageData(0, 0, w, h).data.buffer);
-    this.sw = w; this.sh = h;
+  setImage(img: HTMLImageElement, cov: Coverage, budgetPx: number) {
+    const ios = isIOSWebKit();
+    // Ảnh nguồn phải đọc qua canvas 2D → iPhone không vượt ~16,7 MP; máy tính giữ nguyên ảnh lưu (≤ 6144 px)
+    const budget = Math.min(budgetPx, ios ? CANVAS_MAX_PX : SOFT_SRC_BUDGET);
+    const k = textureScale(img.naturalWidth, img.naturalHeight, { maxTex: 16384, budgetPx: budget, halvesOnly: ios });
+    const c = drawScaled(img, k, true);
+    const g = c?.getContext('2d', { willReadFrequently: true });
+    if (!c || !g) throw new Error('Trình duyệt không đọc được ảnh (canvas 2D).');
+    this.src = new Uint32Array(g.getImageData(0, 0, c.width, c.height).data.buffer);
+    this.sw = c.width; this.sh = c.height;
     this.cov = cov;
-    this.drawnFull = false;
+    this.sharpKey = null;
+    this.drawnSharp = false;
   }
 
   render(v: PanoView, dpr: number) {
-    this.lastView = v;
-    this.lastDpr = dpr;
-    if (!this.src) { this.paint(v, 0.25, false); return; }
-    // Lần đầu: vẽ nét luôn. Sau đó: vẽ nhanh ngay, dừng tay mới vẽ nét.
-    if (!this.drawnFull) { this.drawnFull = true; this.paint(v, this.fullScale(dpr), true); return; }
-    const fast = Math.min(1, Math.sqrt(FAST_PIXELS / Math.max(1, v.w * v.h)));
-    this.paint(v, fast, false);
-    if (this.idle) clearTimeout(this.idle);
-    this.idle = setTimeout(() => {
-      this.idle = null;
-      if (this.lastView) this.paint(this.lastView, this.fullScale(this.lastDpr), true);
-    }, IDLE_MS);
+    this.cancel();
+    if (!this.src) { this.paint(v, 0.25); return; }
+    // Mật độ vẽ nét: đúng dpr màn hình, khung quá to thì hạ cho vừa SOFT_SHARP_PX (không dưới 1)
+    const sharp = Math.min(dpr, Math.max(1, Math.sqrt(SOFT_SHARP_PX / Math.max(1, v.w * v.h))));
+    const key = `${v.yaw}|${v.pitch}|${v.hfov}|${v.w}|${v.h}|${sharp}`;
+    if (key === this.sharpKey) return;
+    this.sharpKey = null;
+    this.paint(v, Math.min(1, Math.sqrt(FAST_PIXELS / Math.max(1, v.w * v.h))));
+    // Lần đầu vẽ nét ngay; sau đó chờ dừng tay
+    this.idle = setTimeout(() => { this.idle = null; this.paintSharp(v, sharp, key); }, this.drawnSharp ? IDLE_MS : 0);
   }
 
-  private fullScale(dpr: number) { return Math.min(dpr, 1.25); }
-
-  private paint(v: PanoView, scale: number, smooth: boolean) {
+  /** Vẽ nhanh (lấy điểm gần nhất) ngay trong lượt này. */
+  private paint(v: PanoView, scale: number) {
     const bw = Math.max(1, Math.round(v.w * scale)), bh = Math.max(1, Math.round(v.h * scale));
     if (this.canvas.width !== bw || this.canvas.height !== bh) { this.canvas.width = bw; this.canvas.height = bh; }
     const out = this.ctx.createImageData(bw, bh);
     const o32 = new Uint32Array(out.data.buffer);
-    const src = this.src;
-    if (!src) { o32.fill(BG); this.ctx.putImageData(out, 0, 0); return; }
+    if (!this.src) o32.fill(BG);
+    else this.fill(o32, v, bw, bh, 0, bh, false);
+    this.ctx.putImageData(out, 0, 0);
+  }
+
+  /** Vẽ nét (nội suy song tuyến) chia nhiều lượt; xong cả khung mới đổi cỡ canvas + hiện một lần (không nháy). */
+  private paintSharp(v: PanoView, scale: number, key: string) {
+    const bw = Math.max(1, Math.round(v.w * scale)), bh = Math.max(1, Math.round(v.h * scale));
+    const out = this.ctx.createImageData(bw, bh);
+    const o32 = new Uint32Array(out.data.buffer);
+    let row = 0;
+    const step = () => {
+      this.job = null;
+      if (!this.src) return;
+      const t0 = performance.now();
+      while (row < bh && performance.now() - t0 < SLICE_MS) {
+        const end = Math.min(bh, row + 8);
+        this.fill(o32, v, bw, bh, row, end, true);
+        row = end;
+      }
+      if (row < bh) { this.job = setTimeout(step, 0); return; }
+      if (this.canvas.width !== bw || this.canvas.height !== bh) { this.canvas.width = bw; this.canvas.height = bh; }
+      this.ctx.putImageData(out, 0, 0);
+      this.sharpKey = key;
+      this.drawnSharp = true;
+    };
+    step();
+  }
+
+  /** Tính các hàng [j0, j1) của khung bw × bh. */
+  private fill(o32: Uint32Array, v: PanoView, bw: number, bh: number, j0: number, j1: number, smooth: boolean) {
+    const src = this.src!;
     const sw = this.sw, sh = this.sh;
     const f = (bw / 2) / Math.tan((v.hfov * RAD) / 2);
     const cp = Math.cos(v.pitch * RAD), sp = Math.sin(v.pitch * RAD);
@@ -76,8 +107,8 @@ export class PanoSoftRenderer implements PanoDrawer {
     const full = this.cov.haov >= 359.5;
     const uScale = sw / haov, vScale = sh / vaov;
     const uOff = sw / 2, vOff = sh / 2;
-    let k = 0;
-    for (let j = 0; j < bh; j++) {
+    let k = j0 * bw;
+    for (let j = j0; j < j1; j++) {
       // Tia camera (x phải, y lên, z trước) — xoay pitch chỉ phụ thuộc hàng
       const py = bh / 2 - j - 0.5;
       const y1 = py * cp + f * sp;
@@ -107,13 +138,15 @@ export class PanoSoftRenderer implements PanoDrawer {
         o32[k] = 0xff000000 | ((bl + 0.5) << 16) | ((gg + 0.5) << 8) | (r + 0.5);
       }
     }
-    this.ctx.putImageData(out, 0, 0);
+  }
+
+  private cancel() {
+    if (this.idle) { clearTimeout(this.idle); this.idle = null; }
+    if (this.job != null) { clearTimeout(this.job); this.job = null; }
   }
 
   dispose() {
-    if (this.idle) clearTimeout(this.idle);
-    this.idle = null;
+    this.cancel();
     this.src = null;
   }
 }
-

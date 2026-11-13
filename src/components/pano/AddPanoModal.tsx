@@ -3,6 +3,7 @@
 // Ảnh flycam DJI: GPS + hướng + độ cao bay đọc từ XMP drone-dji → tự đặt chỗ, hướng, "Flycam" đúng độ cao, không phải căn tay.
 // Ảnh có GPS mà xa chỗ đang khảo sát (> 5 km) → không gắn vào chuyến / KCN đang khảo sát, tên ảnh theo KCN gần ảnh.
 import { useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, ArrowLeft, Camera, Check, ExternalLink, ImagePlus, Link2, Loader2, X } from 'lucide-react';
 import PanoPositionPicker from './PanoPositionPicker';
 import { useAuth } from '../../lib/auth';
@@ -124,17 +125,19 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
   const gps = photoGps;
   const headingFrom = info?.meta.headingFrom === 'dji' ? ' · hướng flycam' : '';
 
-  return (
-    <div className="fixed inset-0 z-[1300] bg-black/45 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { if (!busy) onClose(); }}>
-      <div className="w-full md:max-w-xl bg-white rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[92dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+  // Gắn thẳng vào <body>: trang Khảo sát render form này trong `space-y-3` → lớp `fixed inset-0` bị margin-top 12 px (lệch, hở mép trên).
+  // Điện thoại: không cao quá vùng dưới thanh trạng thái, chừa thanh home ở đáy.
+  return createPortal(
+    <div className="fixed inset-0 z-[1300] m-0 bg-black/45 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { if (!busy) onClose(); }}>
+      <div className="w-full md:max-w-xl bg-white rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-8px))] overflow-y-auto pb-[env(safe-area-inset-bottom)] md:pb-0" onClick={e => e.stopPropagation()}>
         <div className="sticky top-0 z-10 bg-white flex items-center gap-2 px-4 pt-4 pb-3 border-b border-[#F0F0F2]">
-          {info && <button onClick={() => { setInfo(null); setPos(null); }} disabled={!!busy} aria-label="Quay lại" className="w-8 h-8 -ml-1 inline-flex items-center justify-center rounded-lg text-[#555] hover:bg-black/[0.05]"><ArrowLeft size={16} /></button>}
+          {info && <button onClick={() => { setInfo(null); setPos(null); }} disabled={!!busy} aria-label="Quay lại" className="w-11 h-11 -my-1.5 -ml-2.5 md:w-8 md:h-8 md:my-0 md:-ml-1 inline-flex items-center justify-center rounded-lg text-[#555] hover:bg-black/[0.05]"><ArrowLeft size={16} /></button>}
           <div className="w-9 h-9 rounded-xl bg-[#EAF3FF] text-[#0A84FF] flex items-center justify-center shrink-0"><Camera size={18} /></div>
           <div className="flex-1 min-w-0">
             <div className="text-[14.5px] font-semibold text-[#111]">{info ? 'Chỗ đứng chụp' : 'Thêm ảnh 360°'}</div>
             <div className="text-[11.5px] text-[#888]">{info ? 'Đặt đúng chỗ để hệ thống biết công ty nào ở gần ảnh' : 'Từ Google Photos, Google Drive hoặc tải từ máy'}</div>
           </div>
-          <button onClick={onClose} disabled={!!busy} aria-label="Đóng" className="text-[#999] hover:text-[#444]"><X size={17} /></button>
+          <button onClick={onClose} disabled={!!busy} aria-label="Đóng" className="w-11 h-11 -my-1.5 -mr-2.5 md:w-8 md:h-8 md:my-0 md:-mr-1 inline-flex items-center justify-center rounded-lg text-[#999] hover:text-[#444] hover:bg-black/[0.05]"><X size={17} /></button>
         </div>
 
         <div className="p-4 space-y-3">
@@ -260,6 +263,7 @@ export default function AddPanoModal({ mapCenter, livePos, survey, zones, onClos
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

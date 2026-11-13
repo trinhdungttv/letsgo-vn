@@ -1,7 +1,10 @@
 // Màn xem ảnh 360° (mở từ Khảo sát KCN): xoay / phóng ảnh như Google Photos, hiện các công ty / dự án / KCN ở gần
 // (ghim đặt theo hướng thật), và cho tự vẽ nhãn / đường / khoanh vùng + ghi tên, chọn màu giống "Mặt bằng" của khách hàng
 // — dùng cho công ty chưa có trong hệ thống. Tự lưu sau mỗi lần sửa (0,8 s).
+// Điện thoại (13/11): gắn thẳng vào <body> (portal — trước nằm trong `space-y-3` nên bị đẩy xuống 12 px), chừa safe-area
+// (tai thỏ / thanh trạng thái / thanh home, cả màn ngang), mọi nút ≥ 44 px, nút đáy không bị ngăn kéo dưới che.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ArrowLeft, Check, Compass, ExternalLink, Loader2, MapPin, Minus, MoreHorizontal, MousePointer2, Pencil, Plus, Route,
   Square, Tag, Trash2, Undo2, X, Bookmark, ChevronUp, ChevronDown, Camera,
@@ -45,11 +48,25 @@ const MAX_PINS = 40;
 const PANO_COLOR = '#0A84FF';
 const GROUP_LABEL = Object.fromEntries(MAP_GROUPS.map(g => [g.id, g.label])) as Record<MapGroup, string>;
 
+/** Điện thoại: dọc (< 768 px) hoặc xoay ngang (màn cảm ứng thấp) — nút to 44 px, trần bộ nhớ ảnh của điện thoại. */
+const PHONE_QUERY = '(max-width: 767px), (pointer: coarse) and (max-height: 540px)';
+function usePhone(): boolean {
+  const [on, setOn] = useState(() => typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => setOn(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return on;
+}
+
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 const errText = (e: unknown) => (e as { message?: string })?.message ?? String(e);
 const readRadius = () => { try { const n = Number(localStorage.getItem(RADIUS_KEY)); return RADII.includes(n) ? n : 2000; } catch { return 2000; } };
 
-export default function PanoModal({ pano, points, panos, onClose, onChanged, onDeleted, onSwitch, toast, startCalibrate }: {
+export default function PanoModal({ pano, points, panos, onClose, onChanged, onDeleted, onSwitch, startCalibrate }: {
   pano: MapPanorama;
   /** Công ty / dự án / KCN có toạ độ — để tìm cái nào ở gần ảnh. */
   points: PanoMapPoint[];
@@ -58,13 +75,25 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
   onChanged: (p: MapPanorama) => void;
   onDeleted: (id: string) => void;
   onSwitch: (id: string) => void;
-  toast: (msg: string) => void;
+  /** Không dùng nữa: thông báo của trang nằm DƯỚI lớp phủ 360 nên không thấy — màn này tự hiện thông báo trong khung. */
+  toast?: (msg: string) => void;
   startCalibrate?: boolean;
 }) {
   const { user } = useAuth();
   const userName = user?.full_name || user?.username || '';
+  /** Bố cục dọc: ảnh trên + ngăn kéo dưới. */
   const mobile = useIsMobile();
+  /** Điện thoại (dọc hoặc ngang): nút 44 px. */
+  const phone = usePhone() || mobile;
   const stageRef = useRef<PanoStageHandle>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 2800);
+  }, []);
+  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
 
   const [p, setP] = useState<MapPanorama>(pano);
   const pRef = useRef(p);
@@ -404,7 +433,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
     const view = { yaw: Math.round(v.yaw * 10) / 10, pitch: Math.round(v.pitch * 10) / 10, hfov: Math.round(v.hfov) };
     patchLocal({ view });
     queue({ view }, true);
-    toast('Lần sau mở ảnh này sẽ nhìn đúng hướng hiện tại');
+    say('Lần sau mở ảnh này sẽ nhìn đúng hướng hiện tại');
   };
   const remove = async () => {
     setMenuOpen(false);
@@ -414,7 +443,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
       await archivePanorama(p.id, userName);
       onDeleted(p.id);
     } catch (e) {
-      toast('Không xoá được: ' + errText(e));
+      say('Không xoá được: ' + errText(e));
     }
   };
   const savePosition = (pos: LatLng) => {
@@ -429,10 +458,21 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
   const showPins = hasPos && pins.length > 0;
   const drawing = editing && tool !== 'select';
 
+  // ── Cỡ nút: điện thoại ≥ 44 px (chuẩn vùng chạm của iOS) ──
+  /** Nút tròn trên ảnh (quay lại, vẽ, căn hướng, ⋯). */
+  const roundBtn = phone ? 'h-11 min-w-11 px-0 justify-center' : 'h-9 px-3';
+  /** Nút trong thanh công cụ / thẻ / bảng. */
+  const tapH = phone ? 'h-11' : 'h-8';
+  /** Khoảng cách các khối nổi phía dưới (la bàn, phóng to, căn hướng) tới đáy khung ảnh: dọc thì ngăn kéo đè 12 px lên ảnh. */
+  const edgeBottom = mobile ? '24px' : 'max(12px, env(safe-area-inset-bottom))';
+  const edgeLeft = 'max(12px, env(safe-area-inset-left))';
+  /** Khối nổi phía trên nằm dưới thanh trên cùng. */
+  const belowBar = phone ? 'top-[60px]' : 'top-14';
+
   const toolBtn = (t: Tool, icon: ReactNode, label: string) => (
-    <button key={t} onClick={() => pickTool(t)} title={label}
-      className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium transition ${tool === t ? 'bg-[#1D4ED8] text-white' : 'text-[#222] hover:bg-black/[0.06]'}`}>
-      {icon}<span className={mobile ? 'hidden' : ''}>{label}</span>
+    <button key={t} onClick={() => pickTool(t)} title={label} aria-label={label}
+      className={`inline-flex items-center justify-center gap-1.5 ${phone ? 'h-11 min-w-11 px-2' : 'h-8 px-2.5'} rounded-lg text-[12px] font-medium transition ${tool === t ? 'bg-[#1D4ED8] text-white' : 'text-[#222] hover:bg-black/[0.06]'}`}>
+      {icon}<span className={phone ? 'hidden' : ''}>{label}</span>
     </button>
   );
   const toolHint = tool === 'label' ? 'Chạm vào ảnh để đặt nhãn (tên công ty, lô đất…)'
@@ -443,16 +483,16 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
   // ── Giao diện ─────────────────────────────────────────────────────────────
   const panel = (
     <div className="flex flex-col min-h-0 h-full">
-      <div className="shrink-0 flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-[#EEE]">
+      <div className={`shrink-0 flex items-center gap-1 border-b border-[#EEE] ${phone ? 'px-2 py-1.5' : 'px-3 pt-2.5 pb-2'}`}>
         {([['nearby', `Gần đây (${nearby.length})`], ['marks', `Đánh dấu (${shapes.length})`]] as const).map(([k, label]) => (
           <button key={k} onClick={() => { setTab(k); if (mobile) setSheetOpen(true); }}
-            className={`h-8 px-3 rounded-lg text-[12.5px] font-semibold transition ${tab === k ? 'bg-[#111] text-white' : 'text-[#555] hover:bg-black/[0.05]'}`}>
+            className={`shrink-0 whitespace-nowrap ${phone ? 'h-11 px-3.5 rounded-xl text-[13.5px]' : 'h-8 px-3 rounded-lg text-[12.5px]'} font-semibold transition ${tab === k ? 'bg-[#111] text-white' : 'text-[#555] hover:bg-black/[0.05]'}`}>
             {label}
           </button>
         ))}
         {mobile && (
-          <button onClick={() => setSheetOpen(o => !o)} aria-label={sheetOpen ? 'Thu gọn' : 'Mở rộng'} className="ml-auto w-8 h-8 inline-flex items-center justify-center rounded-lg text-[#555]">
-            {sheetOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          <button onClick={() => setSheetOpen(o => !o)} aria-label={sheetOpen ? 'Thu gọn' : 'Mở rộng'} className="ml-auto w-11 h-11 inline-flex items-center justify-center rounded-xl text-[#555] hover:bg-black/[0.05]">
+            {sheetOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
           </button>
         )}
       </div>
@@ -462,7 +502,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
             !hasPos ? (
               <div className="p-4 text-[12.5px] text-[#666] space-y-2">
                 <div>Ảnh này chưa có vị trí chụp nên chưa biết công ty nào ở gần.</div>
-                <button onClick={() => setMoving(true)} className="h-8 px-3 rounded-lg bg-[#1D4ED8] text-white text-[12px] font-medium inline-flex items-center gap-1.5"><MapPin size={13} /> Đặt vị trí chụp</button>
+                <button onClick={() => setMoving(true)} className={`${tapH} px-3 rounded-lg bg-[#1D4ED8] text-white text-[12px] font-medium inline-flex items-center gap-1.5`}><MapPin size={13} /> Đặt vị trí chụp</button>
               </div>
             ) : (
               <>
@@ -471,7 +511,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                     <span className="text-[11.5px] text-[#888] mr-0.5">Bán kính</span>
                     {RADII.map(r => (
                       <button key={r} onClick={() => setRadiusSaved(r)}
-                        className={`h-7 px-2 rounded-full text-[11.5px] font-medium border ${radius === r ? 'bg-[#1D4ED8] border-[#1D4ED8] text-white' : 'border-[#DDD] text-[#555] hover:bg-[#F5F5F7]'}`}>
+                        className={`${phone ? 'h-11 px-2.5 text-[12.5px]' : 'h-7 px-2 text-[11.5px]'} rounded-full font-medium border ${radius === r ? 'bg-[#1D4ED8] border-[#1D4ED8] text-white' : 'border-[#DDD] text-[#555] hover:bg-[#F5F5F7]'}`}>
                         {fmtDistance(r)}
                       </button>
                     ))}
@@ -480,7 +520,8 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                     <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11.5px] text-amber-800">
                       <Compass size={14} className="shrink-0 mt-px" />
                       <div className="flex-1">Chưa căn hướng Bắc nên ghim trên ảnh có thể lệch hướng. Kéo 1 ghim công ty bạn nhận ra vào đúng toà nhà là xong.
-                        <button onClick={() => { setEditing(false); setCalibrating(true); if (mobile) setSheetOpen(false); }} className="block mt-1 font-semibold text-amber-900 underline">Căn hướng ngay</button>
+                        <button onClick={() => { setEditing(false); setCalibrating(true); if (mobile) setSheetOpen(false); }}
+                          className={phone ? 'mt-1.5 h-11 px-3 rounded-lg bg-amber-100 font-semibold text-amber-900 inline-flex items-center' : 'block mt-1 font-semibold text-amber-900 underline'}>Căn hướng ngay</button>
                       </div>
                     </div>
                   )}
@@ -496,8 +537,8 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                   <ul className="pb-2">
                     {nearby.map(it => (
                       <li key={it.id}>
-                        <div className={`flex items-center gap-2.5 px-3 py-1.5 ${it.id === focusPin ? 'bg-[#0A84FF]/[0.08]' : 'hover:bg-[#F5F5F7]'}`}>
-                          <button onClick={() => (it.kind === 'pano' ? (void flush(), onSwitch(it.id.slice(5))) : lookAtItem(it))} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
+                        <div className={`flex items-center gap-2.5 px-3 ${phone ? 'py-0.5' : 'py-1.5'} ${it.id === focusPin ? 'bg-[#0A84FF]/[0.08]' : 'hover:bg-[#F5F5F7]'}`}>
+                          <button onClick={() => (it.kind === 'pano' ? (void flush(), onSwitch(it.id.slice(5))) : lookAtItem(it))} className={`flex-1 min-w-0 flex items-center gap-2.5 text-left ${phone ? 'min-h-11 py-1' : ''}`}>
                             <span className="shrink-0 w-2.5 h-2.5 rounded-full" style={{ background: it.color }} />
                             <span className="min-w-0 flex-1">
                               <span className="block text-[12.5px] font-semibold text-[#111] truncate">{it.kind === 'pano' && <Camera size={11} className="inline -mt-0.5 mr-1" />}{it.name}</span>
@@ -509,8 +550,8 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                             </span>
                           </button>
                           {it.onOpen && (
-                            <button onClick={() => { void flush(); onClose(); it.onOpen!(); }} title="Mở hồ sơ"
-                              className="shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg text-[#888] hover:bg-black/[0.06] hover:text-[#333]"><ExternalLink size={13} /></button>
+                            <button onClick={() => { void flush(); onClose(); it.onOpen!(); }} title="Mở hồ sơ" aria-label="Mở hồ sơ"
+                              className={`shrink-0 ${phone ? 'w-11 h-11 -mr-2' : 'w-7 h-7'} inline-flex items-center justify-center rounded-lg text-[#888] hover:bg-black/[0.06] hover:text-[#333]`}><ExternalLink size={phone ? 15 : 13} /></button>
                           )}
                         </div>
                       </li>
@@ -525,7 +566,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                 {editing ? (
                   <div className="text-[11.5px] text-[#888]">Tên = công ty / lô đất · Ghi chú = ngành, số LĐ, đang xây… (chưa có trong hệ thống cũng ghi được)</div>
                 ) : (
-                  <button onClick={() => startEditing()} className="w-full h-9 rounded-xl bg-[#1D4ED8] text-white text-[12.5px] font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-[#1E40AF]">
+                  <button onClick={() => startEditing()} className={`w-full ${phone ? 'h-11' : 'h-9'} rounded-xl bg-[#1D4ED8] text-white text-[12.5px] font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-[#1E40AF]`}>
                     <Pencil size={14} /> Vẽ / đánh dấu trên ảnh
                   </button>
                 )}
@@ -547,7 +588,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                           onClose={() => setSelected(null)} />
                       ) : (
                         <button onClick={() => { setSelected(s.id); const a = shapeAnchor(s); stageRef.current?.lookAt(a.yaw, a.pitch); }}
-                          className={`w-full flex items-start gap-2.5 px-3 py-1.5 text-left transition ${s.id === selected ? 'bg-[#1D4ED8]/[0.07]' : 'hover:bg-[#F5F5F7]'}`}>
+                          className={`w-full flex items-start gap-2.5 px-3 ${phone ? 'py-3 min-h-11' : 'py-1.5'} text-left transition ${s.id === selected ? 'bg-[#1D4ED8]/[0.07]' : 'hover:bg-[#F5F5F7]'}`}>
                           <span className="shrink-0 mt-[3px] w-3 h-3 rounded-[3px]" style={{ background: s.color }} />
                           <span className="min-w-0 flex-1 text-[12.5px] leading-snug">
                             <span className="font-bold" style={{ color: s.color }}>{s.label || '(chưa đặt tên)'}</span>
@@ -569,15 +610,17 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
     </div>
   );
 
-  return (
-    <div className="fixed inset-0 z-[1300] bg-black flex flex-col md:flex-row" role="dialog" aria-modal="true" aria-label="Ảnh 360">
-      <div className="relative flex-1 min-h-0">
+  return createPortal(
+    // pt safe-area: ảnh + nút nằm DƯỚI thanh trạng thái / tai thỏ (dải đen phía trên, như màn sửa ảnh chỉ tiêu)
+    <div className="fixed inset-0 z-[1300] m-0 bg-black flex flex-col md:flex-row pt-[env(safe-area-inset-top)]" role="dialog" aria-modal="true" aria-label="Ảnh 360">
+      <div className="relative flex-1 min-h-0 min-w-0">
         <PanoStage
           ref={stageRef}
           sources={sources}
           coverage={coverage}
           initialView={p.view}
-          mobile={mobile}
+          mobile={phone}
+          noticeBottom={phone ? `calc(${edgeBottom} + 132px)` : edgeBottom}
           cursor={editing && tool !== 'select' ? 'crosshair' : undefined}
           onTap={onTap}
           onDoubleTap={onDoubleTap}
@@ -587,26 +630,27 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
             <>
               <PanoShapesLayer v={v} shapes={shapes} selected={selected} editing={editing} draft={draft} hover={hover} />
               {showPins && <PanoPinsLayer v={v} items={pins} heading={heading} cameraHeight={p.camera_height} calibrated={calibrated} calibrating={calibrating} focus={focusPin} dim={drawing} />}
-              {hasPos && !(mobile && (calibrating || editing)) && (
-                <PanoRadar v={v} items={nearby} radius={shownRadius} heading={heading} calibrated={calibrated} onPick={it => (it.kind === 'pano' ? onSwitch(it.id.slice(5)) : lookAtItem(it))} />
+              {hasPos && !(phone && (calibrating || editing)) && (
+                <PanoRadar v={v} items={nearby} radius={shownRadius} heading={heading} calibrated={calibrated} left={edgeLeft} bottom={edgeBottom}
+                  onPick={it => (it.kind === 'pano' ? onSwitch(it.id.slice(5)) : lookAtItem(it))} />
               )}
             </>
           )}
         />
 
-        {/* Thanh trên */}
-        <div className="absolute top-0 inset-x-0 z-20 px-2 md:px-3 pt-2 pb-6 bg-gradient-to-b from-black/60 to-transparent flex items-center gap-1.5 pointer-events-none">
-          <button onClick={() => { void flush(); onClose(); }} title="Đóng ảnh 360 (Esc)"
-            className="pointer-events-auto h-9 pl-2 pr-3 rounded-full bg-white/90 text-[#111] text-[12.5px] font-semibold inline-flex items-center gap-1 shadow hover:bg-white">
-            <ArrowLeft size={16} /> <span className="hidden sm:inline">Quay lại</span>
+        {/* Thanh trên — nền đặc 90% (không mờ), lề trái chừa tai thỏ khi xoay ngang */}
+        <div className="absolute top-0 inset-x-0 z-20 pt-2 pb-6 pl-[max(8px,env(safe-area-inset-left))] pr-2 md:pr-3 bg-gradient-to-b from-black/60 to-transparent flex items-center gap-1.5 pointer-events-none">
+          <button onClick={() => { void flush(); onClose(); }} title="Đóng ảnh 360 (Esc)" aria-label="Quay lại"
+            className={`pointer-events-auto shrink-0 ${phone ? 'w-11 h-11 justify-center' : 'h-9 pl-2 pr-3'} rounded-full bg-white/90 text-[#111] text-[12.5px] font-semibold inline-flex items-center gap-1 shadow hover:bg-white`}>
+            <ArrowLeft size={phone ? 20 : 16} /> <span className={phone ? 'hidden' : 'hidden sm:inline'}>Quay lại</span>
           </button>
           <div className="min-w-0 flex-1 pointer-events-auto">
             {renaming ? (
               <input autoFocus defaultValue={p.title} maxLength={120} onBlur={e => rename(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(false); }}
-                className="w-full max-w-md h-9 px-3 rounded-full bg-white text-[13px] font-semibold outline-none" />
+                className={`w-full max-w-md ${phone ? 'h-11 text-[16px]' : 'h-9 text-[13px]'} px-3 rounded-full bg-white font-semibold outline-none`} />
             ) : (
-              <button onClick={() => setRenaming(true)} title="Bấm để đổi tên" className="max-w-full text-left px-2 py-1 rounded-lg hover:bg-white/10">
+              <button onClick={() => setRenaming(true)} title="Bấm để đổi tên" className={`max-w-full text-left px-2 py-1 rounded-lg hover:bg-white/10 ${phone ? 'min-h-11' : ''}`}>
                 <div className="text-white text-[14px] font-semibold truncate drop-shadow">{p.title || 'Ảnh 360'}</div>
                 <div className="text-white/70 text-[11px] truncate">
                   {[p.taken_at && `Chụp ${new Date(p.taken_at).toLocaleDateString('vi-VN')}`, p.created_by && `Thêm bởi ${p.created_by}`].filter(Boolean).join(' · ') || 'Kéo để xoay · cuộn / chụm 2 ngón để phóng to'}
@@ -614,35 +658,41 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
               </button>
             )}
           </div>
-          <SaveBadge save={save} onRetry={() => { void flush(); }} />
+          <SaveBadge save={save} phone={phone} onRetry={() => { void flush(); }} />
           {!editing && (
-            <button onClick={() => startEditing()} className="pointer-events-auto h-9 px-3 rounded-full bg-[#1D4ED8] text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 shadow hover:bg-[#1E40AF]">
-              <Pencil size={14} /> <span className="hidden sm:inline">Vẽ / đánh dấu</span>
+            <button onClick={() => startEditing()} title="Vẽ / đánh dấu" aria-label="Vẽ / đánh dấu"
+              className={`pointer-events-auto shrink-0 ${roundBtn} rounded-full bg-[#1D4ED8] text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 shadow hover:bg-[#1E40AF]`}>
+              <Pencil size={phone ? 18 : 14} /> <span className={phone ? 'hidden' : 'hidden sm:inline'}>Vẽ / đánh dấu</span>
             </button>
           )}
           {hasPos && !calibrating && (
-            <button onClick={() => { setEditing(false); setDraft(null); setCalibrating(true); if (mobile) setSheetOpen(false); }} title="Căn hướng Bắc"
-              className={`pointer-events-auto h-9 px-3 rounded-full text-[12.5px] font-semibold inline-flex items-center gap-1.5 shadow ${calibrated ? 'bg-white/90 text-[#111] hover:bg-white' : 'bg-amber-400 text-[#111] hover:bg-amber-300'}`}>
-              <Compass size={14} /> <span className="hidden sm:inline">Căn hướng</span>
+            <button onClick={() => { setEditing(false); setDraft(null); setCalibrating(true); if (mobile) setSheetOpen(false); }} title="Căn hướng Bắc" aria-label="Căn hướng Bắc"
+              className={`pointer-events-auto shrink-0 ${roundBtn} rounded-full text-[12.5px] font-semibold inline-flex items-center gap-1.5 shadow ${calibrated ? 'bg-white/90 text-[#111] hover:bg-white' : 'bg-amber-400 text-[#111] hover:bg-amber-300'}`}>
+              <Compass size={phone ? 19 : 14} /> <span className={phone ? 'hidden' : 'hidden sm:inline'}>Căn hướng</span>
             </button>
           )}
-          <div className="relative pointer-events-auto">
-            <button onClick={() => setMenuOpen(o => !o)} title="Thêm thao tác" className="w-9 h-9 rounded-full bg-white/90 text-[#111] inline-flex items-center justify-center shadow hover:bg-white">
-              <MoreHorizontal size={17} />
+          <div className="relative pointer-events-auto shrink-0">
+            <button onClick={() => setMenuOpen(o => !o)} title="Thêm thao tác" aria-label="Thêm thao tác" aria-expanded={menuOpen}
+              className={`${phone ? 'w-11 h-11' : 'w-9 h-9'} rounded-full bg-white/90 text-[#111] inline-flex items-center justify-center shadow hover:bg-white`}>
+              <MoreHorizontal size={phone ? 20 : 17} />
             </button>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-11 z-50 w-60 rounded-xl border border-[#E8E7E2] bg-white shadow-xl py-1 text-[12.5px] text-[#222]">
-                  <button onClick={() => { setMenuOpen(false); setRenaming(true); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><Pencil size={13} /> Đổi tên</button>
-                  <button onClick={() => { setMenuOpen(false); setMoving(true); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><MapPin size={13} /> Đổi vị trí chụp</button>
-                  <button onClick={() => { setMenuOpen(false); saveStartView(); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]"><Bookmark size={13} /> Mở ảnh ở góc nhìn này</button>
+                <div className={`absolute right-0 ${phone ? 'top-[52px] text-[14px]' : 'top-11 text-[12.5px]'} z-50 w-64 rounded-xl border border-[#E8E7E2] bg-white shadow-xl py-1 text-[#222]`}>
+                  {([
+                    [() => setRenaming(true), <Pencil size={14} />, 'Đổi tên'],
+                    [() => setMoving(true), <MapPin size={14} />, 'Đổi vị trí chụp'],
+                    [saveStartView, <Bookmark size={14} />, 'Mở ảnh ở góc nhìn này'],
+                  ] as const).map(([act, icon, label]) => (
+                    <button key={label} onClick={() => { setMenuOpen(false); act(); }} className={`w-full flex items-center gap-2.5 px-3 ${phone ? 'min-h-11' : 'py-2'} hover:bg-[#F5F5F7]`}>{icon} {label}</button>
+                  ))}
                   {/^https:\/\//.test(p.source_url) && (
-                    <a href={p.source_url} target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5F5F7]">
-                      <ExternalLink size={13} /> Mở link gốc ({p.source_kind === 'gdrive' ? 'Google Drive' : p.source_kind === 'gphotos' ? 'Google Photos' : 'nguồn'})
+                    <a href={p.source_url} target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)} className={`w-full flex items-center gap-2.5 px-3 ${phone ? 'min-h-11' : 'py-2'} hover:bg-[#F5F5F7]`}>
+                      <ExternalLink size={14} /> Mở link gốc ({p.source_kind === 'gdrive' ? 'Google Drive' : p.source_kind === 'gphotos' ? 'Google Photos' : 'nguồn'})
                     </a>
                   )}
-                  <button onClick={remove} className="w-full flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50"><Trash2 size={13} /> Xoá ảnh 360 này</button>
+                  <button onClick={remove} className={`w-full flex items-center gap-2.5 px-3 ${phone ? 'min-h-11' : 'py-2'} text-red-600 hover:bg-red-50`}><Trash2 size={14} /> Xoá ảnh 360 này</button>
                 </div>
               </>
             )}
@@ -651,26 +701,27 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
 
         {/* Công cụ vẽ */}
         {editing && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 w-[calc(100%-16px)] md:w-auto max-w-[720px]">
+          <div className={`absolute ${belowBar} left-1/2 -translate-x-1/2 z-20 w-[calc(100%-16px)] md:w-auto max-w-[720px]`}>
             <div className="flex items-center gap-1 p-1 rounded-2xl bg-white/95 backdrop-blur shadow-xl">
-              {toolBtn('select', <MousePointer2 size={14} />, 'Chọn')}
-              {toolBtn('area', <Square size={14} />, 'Vùng')}
-              {toolBtn('line', <Route size={14} />, 'Đường')}
-              {toolBtn('label', <Tag size={14} />, 'Nhãn')}
+              {toolBtn('select', <MousePointer2 size={phone ? 18 : 14} />, 'Chọn')}
+              {toolBtn('area', <Square size={phone ? 18 : 14} />, 'Vùng')}
+              {toolBtn('line', <Route size={phone ? 18 : 14} />, 'Đường')}
+              {toolBtn('label', <Tag size={phone ? 18 : 14} />, 'Nhãn')}
               <div className="w-px h-5 bg-[#E3E3E8] mx-0.5" />
-              <button onClick={undo} disabled={!canUndo} title="Hoàn tác (⌘Z)" className="inline-flex items-center gap-1 h-8 px-2 rounded-lg text-[12px] text-[#222] hover:bg-black/[0.06] disabled:opacity-30">
-                <Undo2 size={14} /><span className={mobile ? 'hidden' : ''}>Hoàn tác</span>
+              <button onClick={undo} disabled={!canUndo} title="Hoàn tác (⌘Z)" aria-label="Hoàn tác"
+                className={`inline-flex items-center justify-center gap-1 ${phone ? 'h-11 min-w-11 px-2' : 'h-8 px-2'} rounded-lg text-[12px] text-[#222] hover:bg-black/[0.06] disabled:opacity-30`}>
+                <Undo2 size={phone ? 18 : 14} /><span className={phone ? 'hidden' : ''}>Hoàn tác</span>
               </button>
-              <button onClick={stopEditing} className="ml-auto inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700">
-                <Check size={14} /> Xong
+              <button onClick={stopEditing} className={`ml-auto inline-flex items-center gap-1 ${phone ? 'h-11 px-3.5 text-[13.5px]' : 'h-8 px-3 text-[12px]'} rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700`}>
+                <Check size={phone ? 16 : 14} /> Xong
               </button>
             </div>
             {draft ? (
-              <div className="mt-1.5 mx-auto w-fit flex items-center gap-1.5 px-2 py-1.5 rounded-xl bg-[#1D4ED8] text-white text-[12px] shadow-lg">
+              <div className={`mt-1.5 mx-auto w-fit max-w-full flex flex-wrap items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl bg-[#1D4ED8] text-white shadow-lg ${phone ? 'text-[13px]' : 'text-[12px]'}`}>
                 <span className="px-1">{draft.kind === 'area' ? 'Vùng' : 'Đường'}: {draft.pts.length} điểm</span>
-                <button onClick={() => setDraft(d => (d && d.pts.length > 1 ? { ...d, pts: d.pts.slice(0, -1) } : null))} className="h-7 px-2 rounded-lg bg-white/15 hover:bg-white/25">Bỏ điểm cuối</button>
-                <button onClick={() => { setDraft(null); setHover(null); }} className="h-7 px-2 rounded-lg bg-white/15 hover:bg-white/25">Huỷ</button>
-                <button onClick={finishDraft} disabled={draft.pts.length < MIN_PTS[draft.kind]} className="h-7 px-2.5 rounded-lg bg-white text-[#1D4ED8] font-semibold disabled:opacity-50">Xong nét này</button>
+                <button onClick={() => setDraft(d => (d && d.pts.length > 1 ? { ...d, pts: d.pts.slice(0, -1) } : null))} className={`${phone ? 'h-11 px-2.5' : 'h-7 px-2'} rounded-lg bg-white/15 hover:bg-white/25`}>Bỏ điểm cuối</button>
+                <button onClick={() => { setDraft(null); setHover(null); }} className={`${phone ? 'h-11 px-2.5' : 'h-7 px-2'} rounded-lg bg-white/15 hover:bg-white/25`}>Huỷ</button>
+                <button onClick={finishDraft} disabled={draft.pts.length < MIN_PTS[draft.kind]} className={`${phone ? 'h-11 px-3' : 'h-7 px-2.5'} rounded-lg bg-white text-[#1D4ED8] font-semibold disabled:opacity-50`}>Xong nét này</button>
               </div>
             ) : (
               <div className="mt-1.5 mx-auto w-fit max-w-full px-2.5 py-1 rounded-lg bg-black/55 text-white text-[11.5px] text-center pointer-events-none">{toolHint}</div>
@@ -680,7 +731,7 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
 
         {/* Thẻ công ty đang chọn */}
         {focusItem && !editing && !calibrating && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[min(380px,calc(100%-16px))] rounded-2xl bg-white/95 backdrop-blur shadow-xl p-3">
+          <div className={`absolute ${belowBar} left-1/2 -translate-x-1/2 z-20 w-[min(380px,calc(100%-16px))] rounded-2xl bg-white/95 backdrop-blur shadow-xl p-3`}>
             <div className="flex items-start gap-2.5">
               <span className="mt-1 w-3 h-3 rounded-full shrink-0" style={{ background: focusItem.color }} />
               <div className="min-w-0 flex-1">
@@ -688,20 +739,22 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                 <div className="text-[11.5px] text-[#777] truncate">{focusItem.groupLabel}{focusItem.sub ? ` · ${focusItem.sub}` : ''}</div>
                 <div className="text-[11.5px] text-[#333] mt-0.5">{fmtDistance(focusItem.dist)} về hướng {dirName(focusItem.bearing)}{!calibrated && ' (chưa căn hướng)'}</div>
               </div>
-              <button onClick={() => setFocusPin(null)} aria-label="Đóng" className="text-[#999] hover:text-[#444]"><X size={15} /></button>
+              <button onClick={() => setFocusPin(null)} aria-label="Đóng"
+                className={`shrink-0 inline-flex items-center justify-center rounded-lg text-[#999] hover:text-[#444] hover:bg-black/[0.05] ${phone ? 'w-11 h-11 -mt-2.5 -mr-2.5' : 'w-6 h-6 -mt-0.5 -mr-1'}`}><X size={phone ? 18 : 15} /></button>
             </div>
             {focusItem.onOpen && (
               <button onClick={() => { void flush(); onClose(); focusItem.onOpen!(); }}
-                className="mt-2 w-full h-8 rounded-lg bg-[#F2F2F7] text-[12px] font-semibold text-[#1D4ED8] inline-flex items-center justify-center gap-1.5 hover:bg-[#E8E8EE]">
+                className={`mt-2 w-full ${tapH} rounded-lg bg-[#F2F2F7] text-[12px] font-semibold text-[#1D4ED8] inline-flex items-center justify-center gap-1.5 hover:bg-[#E8E8EE]`}>
                 <ExternalLink size={13} /> Mở hồ sơ
               </button>
             )}
           </div>
         )}
 
-        {/* Căn hướng */}
+        {/* Căn hướng — neo trái / phải (chừa tai thỏ khi xoay ngang), căn giữa bằng mx-auto */}
         {calibrating && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 w-[min(600px,calc(100%-16px))] rounded-2xl bg-white/95 backdrop-blur shadow-2xl p-3 space-y-2.5">
+          <div className="absolute z-20 mx-auto max-w-[600px] rounded-2xl bg-white/95 backdrop-blur shadow-2xl p-3 space-y-2.5 max-h-[calc(100%-72px)] overflow-y-auto"
+            style={{ left: 'max(8px, env(safe-area-inset-left))', right: 8, bottom: edgeBottom }}>
             <div className="flex items-start gap-2">
               <Compass size={18} className="text-[#1D4ED8] shrink-0 mt-0.5" />
               <div className="flex-1 text-[12px] text-[#444]">
@@ -709,45 +762,53 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
                 {pins.length ? 'Kéo ghim của 1 công ty bạn nhận ra sang ngang tới đúng toà nhà của nó — các ghim khác tự xoay theo.'
                   : 'Chưa có công ty nào đã ghim gần đây. Xoay ảnh cho giữa màn hình nhìn đúng hướng Bắc rồi bấm "Hướng đang nhìn là Bắc".'}
               </div>
-              <button onClick={() => setCalibrating(false)} className="h-8 px-3 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold inline-flex items-center gap-1 hover:bg-emerald-700"><Check size={14} /> Xong</button>
+              <button onClick={() => setCalibrating(false)} className={`shrink-0 ${phone ? 'h-11 px-3.5 text-[13.5px]' : 'h-8 px-3 text-[12px]'} rounded-lg bg-emerald-600 text-white font-semibold inline-flex items-center gap-1 hover:bg-emerald-700`}><Check size={14} /> Xong</button>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="w-24 text-[11.5px] text-[#666]">Giữa ảnh nhìn về</span>
-              <input type="range" min={0} max={359} step={1} value={Math.round(heading)} onChange={e => setHeading(Number(e.target.value))} className="flex-1 min-w-[140px] accent-[#1D4ED8]" />
+              <input type="range" min={0} max={359} step={1} value={Math.round(heading)} onChange={e => setHeading(Number(e.target.value))} className={`flex-1 min-w-[140px] accent-[#1D4ED8] ${phone ? 'h-8' : ''}`} />
               <span className="w-24 text-[12px] font-semibold tabular-nums text-[#111]">{calibrated ? `${Math.round(heading)}° ${dirName(heading, true)}` : '—'}</span>
-              <button onClick={() => { const v = stageRef.current?.getView(); if (v) setHeading(-v.yaw); }} className="h-7 px-2 rounded-lg border border-[#D8D6D0] text-[11.5px] font-medium text-[#333] hover:bg-[#F5F5F7]">Hướng đang nhìn là Bắc</button>
+              <button onClick={() => { const v = stageRef.current?.getView(); if (v) setHeading(-v.yaw); }} className={`${phone ? 'h-11 px-3 text-[12.5px]' : 'h-7 px-2 text-[11.5px]'} rounded-lg border border-[#D8D6D0] font-medium text-[#333] hover:bg-[#F5F5F7]`}>Hướng đang nhìn là Bắc</button>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="w-24 text-[11.5px] text-[#666]">Độ cao chụp</span>
-              <input type="range" min={0} max={300} step={1} value={Math.min(300, p.camera_height)} onChange={e => setCameraHeight(Number(e.target.value))} className="flex-1 min-w-[140px] accent-[#1D4ED8]" />
+              <input type="range" min={0} max={300} step={1} value={Math.min(300, p.camera_height)} onChange={e => setCameraHeight(Number(e.target.value))} className={`flex-1 min-w-[140px] accent-[#1D4ED8] ${phone ? 'h-8' : ''}`} />
               <span className="w-24 text-[12px] font-semibold tabular-nums text-[#111]">{p.camera_height} m</span>
-              <button onClick={() => setCameraHeight(2)} className={`h-7 px-2 rounded-lg border text-[11.5px] font-medium ${p.camera_height <= 3 ? 'border-[#1D4ED8] text-[#1D4ED8] bg-[#1D4ED8]/[0.06]' : 'border-[#D8D6D0] text-[#333]'}`}>Mặt đất</button>
-              <button onClick={() => setCameraHeight(100)} className={`h-7 px-2 rounded-lg border text-[11.5px] font-medium ${p.camera_height >= 60 ? 'border-[#1D4ED8] text-[#1D4ED8] bg-[#1D4ED8]/[0.06]' : 'border-[#D8D6D0] text-[#333]'}`}>Flycam 100 m</button>
+              <button onClick={() => setCameraHeight(2)} className={`${phone ? 'h-11 px-3 text-[12.5px]' : 'h-7 px-2 text-[11.5px]'} rounded-lg border font-medium ${p.camera_height <= 3 ? 'border-[#1D4ED8] text-[#1D4ED8] bg-[#1D4ED8]/[0.06]' : 'border-[#D8D6D0] text-[#333]'}`}>Mặt đất</button>
+              <button onClick={() => setCameraHeight(100)} className={`${phone ? 'h-11 px-3 text-[12.5px]' : 'h-7 px-2 text-[11.5px]'} rounded-lg border font-medium ${p.camera_height >= 60 ? 'border-[#1D4ED8] text-[#1D4ED8] bg-[#1D4ED8]/[0.06]' : 'border-[#D8D6D0] text-[#333]'}`}>Flycam 100 m</button>
             </div>
             {calibrated && <div className="text-[11px] text-[#888]">Đang nhìn: {dirName(compassAt(stageRef.current?.getView().yaw ?? 0, heading))}. Ảnh chụp từ trên cao: tăng "Độ cao chụp" để ghim hạ xuống đúng chân toà nhà.</div>}
           </div>
         )}
 
-        {/* Phóng to / thu nhỏ */}
+        {/* Phóng to / thu nhỏ — trên ngăn kéo dưới (không bị mép bo che) */}
         {!calibrating && (
-          <div className="absolute right-3 bottom-3 z-10 flex flex-col rounded-xl overflow-hidden shadow-lg">
-            <button onClick={() => stageRef.current?.zoomBy(0.75)} aria-label="Phóng to" className="w-9 h-9 bg-white/90 text-[#111] inline-flex items-center justify-center hover:bg-white border-b border-black/10"><Plus size={16} /></button>
-            <button onClick={() => stageRef.current?.zoomBy(1.33)} aria-label="Thu nhỏ" className="w-9 h-9 bg-white/90 text-[#111] inline-flex items-center justify-center hover:bg-white"><Minus size={16} /></button>
+          <div className="absolute right-3 z-10 flex flex-col rounded-xl overflow-hidden shadow-lg" style={{ bottom: edgeBottom }}>
+            <button onClick={() => stageRef.current?.zoomBy(0.75)} aria-label="Phóng to" className={`${phone ? 'w-11 h-11' : 'w-9 h-9'} bg-white/90 text-[#111] inline-flex items-center justify-center hover:bg-white border-b border-black/10`}><Plus size={phone ? 19 : 16} /></button>
+            <button onClick={() => stageRef.current?.zoomBy(1.33)} aria-label="Thu nhỏ" className={`${phone ? 'w-11 h-11' : 'w-9 h-9'} bg-white/90 text-[#111] inline-flex items-center justify-center hover:bg-white`}><Minus size={phone ? 19 : 16} /></button>
+          </div>
+        )}
+
+        {/* Thông báo của màn này (toast của trang nằm dưới lớp phủ nên không thấy) */}
+        {notice && (
+          <div role="status" className={`absolute ${belowBar} left-1/2 -translate-x-1/2 z-40 w-max max-w-[calc(100%-32px)] rounded-xl bg-[#1D1D1F]/90 text-white text-[13px] px-4 py-2.5 shadow-lg text-center pointer-events-none`}>
+            {notice}
           </div>
         )}
       </div>
 
-      {/* Bảng bên: công ty gần + đánh dấu */}
+      {/* Bảng bên: công ty gần + đánh dấu. Dọc: ngăn kéo dưới, chừa thanh home. Ngang: cột phải, chừa tai thỏ. */}
       <aside className={mobile
-        ? `shrink-0 bg-white rounded-t-2xl -mt-3 relative z-30 ${sheetOpen ? 'h-[46dvh]' : 'h-auto'}`
-        : 'w-80 shrink-0 bg-white border-l border-[#222]'}>
+        ? `shrink-0 bg-white rounded-t-2xl -mt-3 relative z-30 pb-[env(safe-area-inset-bottom)] ${sheetOpen ? 'h-[46dvh]' : 'h-auto'}`
+        : `${phone ? 'w-[calc(18rem+env(safe-area-inset-right))]' : 'w-[calc(20rem+env(safe-area-inset-right))]'} shrink-0 bg-white border-l border-[#222] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]`}>
         {panel}
       </aside>
 
       {moving && (
-        <PositionDialog initial={hasPos ? { lat: p.lat!, lng: p.lng! } : null} onCancel={() => setMoving(false)} onSave={savePosition} />
+        <PositionDialog phone={phone} initial={hasPos ? { lat: p.lat!, lng: p.lng! } : null} onCancel={() => setMoving(false)} onSave={savePosition} />
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -763,31 +824,32 @@ function NoteBox({ value, onSave }: { value: string; onSave: (v: string) => void
   );
 }
 
-function PositionDialog({ initial, onCancel, onSave }: { initial: LatLng | null; onCancel: () => void; onSave: (p: LatLng) => void }) {
+function PositionDialog({ phone, initial, onCancel, onSave }: { phone: boolean; initial: LatLng | null; onCancel: () => void; onSave: (p: LatLng) => void }) {
   const [pos, setPos] = useState<LatLng | null>(initial);
+  const btnH = phone ? 'h-11' : 'h-9';
   return (
     <div className="fixed inset-0 z-[1400] bg-black/50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={onCancel}>
-      <div className="w-full md:max-w-lg bg-white rounded-t-2xl md:rounded-2xl shadow-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+      <div className="w-full md:max-w-lg bg-white rounded-t-2xl md:rounded-2xl shadow-2xl p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:pb-4 space-y-3" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <div className="text-[14px] font-semibold text-[#111]">Vị trí đứng chụp</div>
-          <button onClick={onCancel} aria-label="Đóng" className="text-[#999]"><X size={16} /></button>
+          <button onClick={onCancel} aria-label="Đóng" className={`inline-flex items-center justify-center rounded-lg text-[#999] hover:bg-black/[0.05] ${phone ? 'w-11 h-11 -m-2.5' : 'w-7 h-7 -m-1'}`}><X size={phone ? 18 : 16} /></button>
         </div>
         <PanoPositionPicker value={pos} onChange={setPos} fallbackCenter={initial ?? { lat: 10.98, lng: 106.67 }} />
         <div className="flex justify-end gap-2">
-          <button onClick={onCancel} className="h-9 px-4 rounded-lg border border-[#D8D6D0] text-[12.5px] font-medium">Huỷ</button>
-          <button onClick={() => pos && onSave(pos)} disabled={!pos} className="h-9 px-4 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-semibold disabled:opacity-40">Lưu vị trí</button>
+          <button onClick={onCancel} className={`${btnH} px-4 rounded-lg border border-[#D8D6D0] text-[12.5px] font-medium`}>Huỷ</button>
+          <button onClick={() => pos && onSave(pos)} disabled={!pos} className={`${btnH} px-4 rounded-lg bg-[#1D4ED8] text-white text-[12.5px] font-semibold disabled:opacity-40`}>Lưu vị trí</button>
         </div>
       </div>
     </div>
   );
 }
 
-function SaveBadge({ save, onRetry }: { save: SaveState; onRetry: () => void }) {
-  if (save.s === 'saving') return <span className="pointer-events-auto text-[11.5px] text-white/85 inline-flex items-center gap-1 px-2"><Loader2 size={12} className="animate-spin" /> Đang lưu…</span>;
+function SaveBadge({ save, phone, onRetry }: { save: SaveState; phone: boolean; onRetry: () => void }) {
+  if (save.s === 'saving') return <span className="pointer-events-auto shrink-0 text-[11.5px] text-white/85 inline-flex items-center gap-1 px-2"><Loader2 size={12} className="animate-spin" /> <span className={phone ? 'hidden' : ''}>Đang lưu…</span></span>;
   if (save.s === 'error') {
     return (
-      <button onClick={onRetry} title={save.msg} className="pointer-events-auto h-8 px-2.5 rounded-full bg-red-600 text-white text-[11.5px] font-medium inline-flex items-center gap-1">
-        <AlertTriangle size={12} /> Chưa lưu — thử lại
+      <button onClick={onRetry} title={save.msg} className={`pointer-events-auto shrink-0 ${phone ? 'h-11 px-3' : 'h-8 px-2.5'} rounded-full bg-red-600 text-white text-[11.5px] font-medium inline-flex items-center gap-1`}>
+        <AlertTriangle size={12} /> {phone ? 'Lưu lại' : 'Chưa lưu — thử lại'}
       </button>
     );
   }

@@ -3,7 +3,9 @@
 // và ghim công ty nằm khít trên ảnh.
 //   • WebGL2: có mipmap + lọc dị hướng, tính gradient chống đường nối ở mép −180/180 → xa / gần đều mịn.
 //   • WebGL1 (máy cũ): không mipmap, vẫn xem được.
+//   • Độ nét: nạp ảnh GỐC (chỉ thu nhỏ khi vượt GPU / trần bộ nhớ) và PanoStage vẽ theo đúng devicePixelRatio — lib/pano/quality.ts.
 import type { PanoView } from '../../lib/pano/sphere';
+import { isIOSWebKit, textureScale } from '../../lib/pano/quality';
 
 const VERT2 = `#version 300 es
 in vec2 aPos;
@@ -70,10 +72,15 @@ export class NoWebGLError extends Error {}
 
 /** Bộ vẽ chung cho PanoStage: WebGL (PanoRenderer) hoặc vẽ bằng CPU khi máy không có WebGL (panoSoft.ts). */
 export interface PanoDrawer {
-  setImage(img: HTMLImageElement, cov: Coverage, mobile: boolean): void;
+  /** budgetPx = số điểm ảnh tối đa được nạp (lib/pano/quality.ts) — ảnh nhỏ hơn thì giữ nguyên bản gốc. */
+  setImage(img: HTMLImageElement, cov: Coverage, budgetPx: number): void;
+  /** dpr = mật độ vẽ (điểm ảnh thật / 1 px CSS), xem renderDpr(). */
   render(v: PanoView, dpr: number): void;
   dispose(): void;
 }
+
+/** Bộ nhớ đồ hoạ không đủ cho ảnh — PanoStage thử lại với ảnh nhỏ hơn. */
+export class GpuMemoryError extends Error {}
 
 export interface Coverage { haov: number; vaov: number; voffset: number }
 
@@ -125,9 +132,9 @@ export class PanoRenderer implements PanoDrawer {
     return p;
   }
 
-  /** Nạp ảnh (đã tải xong, cùng nguồn CORS) — ảnh quá to cho GPU / điện thoại thì thu nhỏ trước. */
-  setImage(img: HTMLImageElement, cov: Coverage, mobile: boolean) {
-    this.upload(fitTexture(img, this.maxTexture, mobile), cov);
+  /** Nạp ảnh (đã tải xong, cùng nguồn CORS) — giữ ảnh gốc; chỉ thu nhỏ khi vượt giới hạn GPU / trần bộ nhớ. */
+  setImage(img: HTMLImageElement, cov: Coverage, budgetPx: number) {
+    this.upload(fitTexture(img, this.maxTexture, budgetPx), cov);
   }
 
   private upload(src: TexImageSource, cov: Coverage) {
@@ -138,7 +145,13 @@ export class PanoRenderer implements PanoDrawer {
     this.tex = tex;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    for (let i = 0; i < 8 && gl.getError() !== gl.NO_ERROR; i++) { /* xoá cờ lỗi cũ để đọc đúng lỗi của lần nạp này */ }
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    if (gl.getError() === gl.OUT_OF_MEMORY || gl.isContextLost()) {
+      gl.deleteTexture(tex);
+      this.tex = null;
+      throw new GpuMemoryError('Máy không đủ bộ nhớ đồ hoạ cho ảnh 360 cỡ gốc');
+    }
     const full = cov.haov >= 359.5;
     if (this.webgl2) {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, full ? gl.REPEAT : gl.CLAMP_TO_EDGE);
@@ -199,7 +212,8 @@ export function loadPanoImage(urls: readonly string[], onProgress?: (msg: string
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.decoding = 'async';
-      img.onload = () => resolve({ img, url });
+      // Giải mã trước ở luồng nền (cỡ gốc) → lúc nạp vào GPU không khựng màn hình
+      img.onload = () => { void (img.decode ? img.decode() : Promise.resolve()).catch(() => undefined).then(() => resolve({ img, url })); };
       img.onerror = next;
       // Ảnh R2 có thể đã nằm trong bộ nhớ đệm từ lần xem thường (không CORS) → thêm tham số để trình duyệt tải lại kèm CORS
       img.src = !/^https?:/.test(url) || /googleusercontent\.com\//.test(url) ? url : `${url}${url.includes('?') ? '&' : '?'}cors=1`;
@@ -208,18 +222,25 @@ export function loadPanoImage(urls: readonly string[], onProgress?: (msg: string
   });
 }
 
-/** Ảnh quá to cho GPU / điện thoại → thu nhỏ trên khung vẽ (giữ tỉ lệ). */
-export function fitTexture(img: HTMLImageElement, maxTexture: number, mobile: boolean): TexImageSource {
-  const limitW = Math.min(maxTexture, mobile ? 4096 : 8192);
+/**
+ * Ảnh vừa sức GPU + trần bộ nhớ → nạp THẲNG ảnh gốc (nét nhất). Quá to → thu nhỏ trên khung vẽ (giữ tỉ lệ); trên iPhone / iPad
+ * chỉ thu theo nấc ½, ¼… (xem textureScale) để WebKit không giải mã nhỏ rồi phóng lại.
+ */
+export function fitTexture(img: HTMLImageElement, maxTexture: number, budgetPx: number): TexImageSource {
   const w = img.naturalWidth, h = img.naturalHeight;
-  // iPhone giới hạn khung vẽ ~16,7 triệu điểm ảnh
-  const k = Math.min(1, limitW / w, maxTexture / h, Math.sqrt(16_000_000 / (w * h)));
+  const k = textureScale(w, h, { maxTex: maxTexture, budgetPx, halvesOnly: isIOSWebKit() });
   if (k >= 1) return img;
+  return drawScaled(img, k) ?? img;
+}
+
+/** Vẽ ảnh thu nhỏ theo hệ số k lên canvas 2D (null nếu trình duyệt không cho). */
+export function drawScaled(img: HTMLImageElement, k: number, readBack = false): HTMLCanvasElement | null {
   const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.floor(w * k));
-  c.height = Math.max(1, Math.floor(h * k));
-  const ctx = c.getContext('2d');
-  if (!ctx) return img;
+  c.width = Math.max(1, Math.round(img.naturalWidth * k));
+  c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  const ctx = c.getContext('2d', readBack ? { willReadFrequently: true } : undefined);
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, c.width, c.height);
   return c;
