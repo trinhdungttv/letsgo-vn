@@ -25,7 +25,7 @@ import type { CskhData } from './data/api';
 import { useCskhSpaces } from './data/useCskhData';
 import { useCareScope } from './useCareScope';
 import { CSKH_OPEN_KEY } from '../../lib/laborSources/api';
-import { CskhContext, type CskhContextValue, type CskhTabKey } from './context';
+import { CskhContext, type CskhContextValue, type CskhTabKey, type NewContactInit } from './context';
 import { SpaceContext } from './space';
 import CskhDashboard from './Dashboard';
 import CskhMatrix from './Matrix';
@@ -34,6 +34,7 @@ import CskhCadence from './Cadence';
 import CskhInteractionLog from './InteractionLog';
 import CskhEvents from './Events';
 import CskhMeetings from './Meetings';
+import CskhSaleLeads from './SaleLeads';
 import QuickLogHost from './components/QuickLogHost';
 import { SaleMigrationBanner } from './components/Card';
 import { CarePickerModal } from './components/CarePickerModal';
@@ -122,7 +123,8 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
   const { user } = useAuth();
   const { branches } = useBranchLookup();
   const [profileId, setProfileId] = useState<string | null>(null);
-  const [creatingContact, setCreatingContact] = useState(false);
+  /** null = đóng; {} = form trống; có prefill = điền sẵn (Bảng nháp đầu mối → Sale / CTV). */
+  const [creating, setCreating] = useState<Partial<NewContactInit> | null>(null);
   /** '' = form chưa chọn người; id = chọn sẵn; null = đóng. */
   const [logFor, setLogFor] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
@@ -154,7 +156,8 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
     clients,
     toast,
     openProfile: setProfileId,
-    openNewContact: () => setCreatingContact(true),
+    openNewContact: () => setCreating({}),
+    openNewContactWith: (init: NewContactInit) => { setProfileId(null); setCreating(init); },
     openLog,
     openPicker: () => setPicking(true),
     openGroups,
@@ -177,6 +180,8 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
       {space === 'sale' && data && data.migrationReady && !data.saleReady && <SaleMigrationBanner />}
       {tab === 'dashboard' && <CskhDashboard />}
       {tab === 'matrix' && <CskhMatrix />}
+      {/* Đầu mối: bảng nháp Sale / CTV chưa gặp (migration 226) — chỉ tệp Sale */}
+      {tab === 'leads' && space === 'sale' && <CskhSaleLeads />}
       {tab === 'map' && <CskhMap />}
       {tab === 'cadence' && <CskhCadence />}
       {tab === 'log' && <CskhInteractionLog />}
@@ -197,13 +202,15 @@ function SpaceView({ space, data, loading, tab, onTab, clients, toast, onOpenWor
           onManageGroups={openGroups}
         />
       )}
-      {data && creatingContact && (
+      {data && creating && (
         <ContactProfileModal
           contactId={null}
           data={data}
           clients={clients}
           toast={toast}
-          onClose={() => setCreatingContact(false)}
+          prefill={creating.prefill}
+          onCreated={creating.onCreated}
+          onClose={() => setCreating(null)}
           onLog={openLog}
           onManageGroups={openGroups}
         />

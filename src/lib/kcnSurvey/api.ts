@@ -8,6 +8,7 @@ import { r2PutFiles, r2Status, R2_PATH_PREFIX } from '../r2Upload';
 import { getStoredSessionToken } from '../sessionToken';
 import { LockError } from '../quickNotes/api';
 import { ARCHIVE_DAYS, starKey, type StarRef, type SurveyStar } from './stars';
+import { sanitizeNeeds, type LaborNeed } from './needs';
 
 export const SURVEY_MIGRATION_HINT = 'Chưa chạy migration 190 (Khảo sát KCN) trên Supabase — chạy file 20261102100000_190_kcn_survey_trips.sql rồi thử lại';
 export const PHOTO_BUCKET = 'kcn-survey';
@@ -73,6 +74,8 @@ export interface SurveyPhoto {
   survey_kind: SurveyKind;
   /** Thời điểm xác thực ảnh online (null = "Chưa xác thực"); ảnh thực địa không dùng */
   verified_at: string | null;
+  /** Công ty cần: cung ứng / giới thiệu, thời vụ / chính thức (migration 225; [] = chưa ghi / chưa có cột) */
+  labor_needs: LaborNeed[];
   user_id: string | null;
   user_name: string;
   created_at: string;
@@ -255,28 +258,37 @@ const PHOTO_COLS_BASE = 'id, trip_id, zone_id, zone_name, lat, lng, accuracy_m, 
 
 export const MARKUP_MIGRATION_HINT = 'Chưa chạy migration 193 nên chưa lưu được nét vẽ trên ảnh — chạy 193 rồi vẽ lại';
 export const ONLINE_MIGRATION_HINT = 'Chưa chạy migration 210 (khảo sát online) trên Supabase — chạy file 20261106140000_210_kcn_survey_online_photos.sql rồi thử lại';
+export const NEEDS_MIGRATION_HINT = 'Chưa chạy migration 225 nên chưa lưu được nhu cầu Cung ứng / Giới thiệu — chạy file 20261113100000_225_kcn_survey_positions_labor_needs.sql (các ô khác vẫn đã lưu)';
+/** Đã lưu các ô khác, riêng nhu cầu chưa lưu được vì thiếu cột (migration 225) */
+export class NeedsColumnMissing extends Error {}
 
 // Cột annotations (migration 193) và survey_kind / verified_at (migration 210) có thể chưa có → biết thiếu 1 lần thì
 // đọc / ghi không kèm các cột đó, ảnh vẫn hiện bình thường. null = chưa biết.
 let annotColumn: boolean | null = null;
 let kindColumn: boolean | null = null;
+let needsColumn: boolean | null = null;
 const isAnnotColError = (e: unknown) => /annotations/i.test((e as { message?: string })?.message ?? '');
 const isKindColError = (e: unknown) => /survey_kind|verified_at/i.test((e as { message?: string })?.message ?? '');
+const isNeedsColError = (e: unknown) => /labor_needs/i.test((e as { message?: string })?.message ?? '');
 export const markupColumnMissing = () => annotColumn === false;
 export const onlineColumnMissing = () => kindColumn === false;
-const photoCols = () => PHOTO_COLS_BASE + (annotColumn === false ? '' : ', annotations') + (kindColumn === false ? '' : ', survey_kind, verified_at');
+/** Chưa chạy migration 225 (cột labor_needs) — biết được sau lần đọc ảnh đầu tiên */
+export const needsColumnMissing = () => needsColumn === false;
+const photoCols = () => PHOTO_COLS_BASE + (annotColumn === false ? '' : ', annotations') + (kindColumn === false ? '' : ', survey_kind, verified_at') + (needsColumn === false ? '' : ', labor_needs');
 
 async function withAnnotFallback<T>(run: (cols: string, withAnnot: boolean, withKind: boolean) => PromiseLike<{ data: T; error: unknown }>): Promise<T> {
   let res = await run(photoCols(), annotColumn !== false, kindColumn !== false);
-  for (let i = 0; i < 2 && res.error; i++) {
+  for (let i = 0; i < 3 && res.error; i++) {
     if (annotColumn !== false && isAnnotColError(res.error)) annotColumn = false;
     else if (kindColumn !== false && isKindColError(res.error)) kindColumn = false;
+    else if (needsColumn !== false && isNeedsColError(res.error)) needsColumn = false;
     else break;
     res = await run(photoCols(), annotColumn !== false, kindColumn !== false);
   }
   if (!res.error) {
     if (annotColumn === null) annotColumn = true;
     if (kindColumn === null) kindColumn = true;
+    if (needsColumn === null) needsColumn = true;
   }
   if (res.error) throw new Error(surveyErrorText(res.error));
   return res.data;
@@ -287,6 +299,7 @@ const normPhoto = (r: SurveyPhoto): SurveyPhoto => ({
   annotations: sanitizeMarks((r as { annotations?: unknown }).annotations),
   survey_kind: r.survey_kind === 'online' ? 'online' : 'field',
   verified_at: r.verified_at ?? null,
+  labor_needs: sanitizeNeeds((r as { labor_needs?: unknown }).labor_needs),
 });
 
 export async function listPhotos(opts: { zoneId?: string | null; tripId?: string | null; bounds?: Bounds | null; limit?: number } = {}): Promise<SurveyPhoto[]> {
@@ -321,7 +334,7 @@ async function putOnR2(files: { key: string; blob: Blob; contentType?: string }[
   }
 }
 
-export type PhotoMeta = Omit<SurveyPhoto, 'id' | 'storage_path' | 'url' | 'thumb_url' | 'width' | 'height' | 'size_bytes' | 'created_at' | 'survey_kind' | 'verified_at'> & { survey_kind?: SurveyKind };
+export type PhotoMeta = Omit<SurveyPhoto, 'id' | 'storage_path' | 'url' | 'thumb_url' | 'width' | 'height' | 'size_bytes' | 'created_at' | 'survey_kind' | 'verified_at' | 'labor_needs'> & { survey_kind?: SurveyKind };
 
 /** Ảnh lớn nén xong vẫn nặng hơn mức này (ảnh nhiều chi tiết / máy chỉ nén được JPEG) → nén lại mạnh hơn. */
 const PHOTO_TARGET_BYTES = 380_000;
@@ -376,7 +389,25 @@ export async function uploadPhoto(id: string, file: Blob, meta: PhotoMeta): Prom
   return normPhoto({ ...(data as unknown as SurveyPhoto), annotations: (data as unknown as SurveyPhoto).annotations ?? annotations });
 }
 
-export async function updatePhoto(id: string, patch: Partial<Pick<SurveyPhoto, 'company_name' | 'client_id' | 'lead_id' | 'crm_id' | 'positions' | 'headcount' | 'wage_text' | 'note' | 'lat' | 'lng' | 'position_source' | 'annotations' | 'verified_at' | 'zone_id' | 'zone_name'>>) {
+export async function updatePhoto(id: string, patch: Partial<Pick<SurveyPhoto, 'company_name' | 'client_id' | 'lead_id' | 'crm_id' | 'positions' | 'headcount' | 'wage_text' | 'note' | 'lat' | 'lng' | 'position_source' | 'annotations' | 'verified_at' | 'zone_id' | 'zone_name' | 'labor_needs'>>) {
+  // Thiếu cột nhu cầu (migration 225) → vẫn lưu các ô khác, rồi báo riêng NeedsColumnMissing
+  if (patch.labor_needs !== undefined && needsColumn !== true) {
+    const { labor_needs, ...others } = patch;
+    if (needsColumn === false) {
+      if (Object.keys(others).length) await updatePhoto(id, others);
+      throw new NeedsColumnMissing(NEEDS_MIGRATION_HINT);
+    }
+    const r = await supabase.from('kcn_survey_photos').update({ labor_needs }).eq('id', id);
+    if (r.error && isNeedsColError(r.error)) {
+      needsColumn = false;
+      if (Object.keys(others).length) await updatePhoto(id, others);
+      throw new NeedsColumnMissing(NEEDS_MIGRATION_HINT);
+    }
+    if (r.error) throw new Error(surveyErrorText(r.error));
+    needsColumn = true;
+    if (Object.keys(others).length) await updatePhoto(id, others);
+    return;
+  }
   const { annotations, verified_at, ...rest } = patch;
   if (verified_at !== undefined && kindColumn === false) throw new Error(ONLINE_MIGRATION_HINT);
   if (annotations !== undefined && annotColumn === false) throw new Error(MARKUP_MIGRATION_HINT);

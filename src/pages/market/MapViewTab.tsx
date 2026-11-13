@@ -26,6 +26,10 @@ import { useLaborLite } from './sources/useLaborLite';
 import { requestOpenSource } from './sources/context';
 import { KIND_LABEL as LABOR_KIND_LABEL } from '../../lib/laborSources/types';
 import { provinceKey, provinceLabel } from '../../lib/kcnSurvey/province';
+import { googleDirectionsLinks, orderOpenPath, pathCost } from '../../lib/kcnSurvey/planStops';
+import { routeMatrix } from '../../lib/kcnSurvey/planStopsApi';
+import MeasurePanel, { type StopRow } from './MeasurePanel';
+import { MAX_STOPS, MY_LOCATION, fmtDuration, fmtKm, getMyLocation, multiRoute, stopColor, stopLetter, type MultiRoute } from './measureRoute';
 import { sourceInProvinceFilter } from '../../lib/laborSources/provinces';
 
 // Nhóm/màu/icon dùng chung với bản đồ nhỏ trong hồ sơ công ty (src/lib/mapGroups.ts).
@@ -147,11 +151,15 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   const [communeRows, setCommuneRows] = useState<CommuneRow[] | null>(null);
   const [communeLoading, setCommuneLoading] = useState(false);
   const [showPopulationPanel, setShowPopulationPanel] = useState(false);
-  const [fromId, setFromId] = useState('');
-  const [toId, setToId] = useState('');
+  // Đo khoảng cách qua nhiều điểm (A → B → C …) — mỗi dòng 1 điểm dừng, kéo để đổi thứ tự (MeasurePanel)
+  const stopSeq = useRef(2);
+  const [stops, setStops] = useState<StopRow[]>([{ key: 1, id: '' }, { key: 2, id: '' }]);
+  const [myPos, setMyPos] = useState<{ lat: number; lng: number; acc: number; at: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [linkInputs, setLinkInputs] = useState<Record<string, string>>({});
   const [savingLink, setSavingLink] = useState<string | null>(null);
-  const [routeInfo, setRouteInfo] = useState<{ km: number; geometry: [number, number][] } | null>(null);
+  const [routeInfo, setRouteInfo] = useState<MultiRoute | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapWrapperRef = useRef<HTMLDivElement>(null);
@@ -160,8 +168,6 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
   const osmLayerRef = useRef<L.LayerGroup | null>(null);
   const satLayerRef = useRef<L.TileLayer | null>(null);
   const boundaryLayerRef = useRef<L.TileLayer | null>(null);
-  const measureLineRef = useRef<L.Polyline | null>(null);
-  const routeLineRef = useRef<L.Polyline | null>(null);
   const densityLayerRef = useRef<L.Layer | null>(null);
   const densityLegendRef = useRef<L.Control | null>(null);
 
@@ -560,70 +566,172 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
     };
   }, [densityOn, communeRows, communeLoading]);
 
-  // Đo khoảng cách: đường đi thực tế (OSRM, driving) là chính, đường chim bay là phụ.
-  const measureFrom = useMemo(() => points.find(p => p.id === fromId) ?? null, [points, fromId]);
-  const measureTo = useMemo(() => points.find(p => p.id === toId) ?? null, [points, toId]);
-  const straightKm = measureOn && measureFrom && measureTo && measureFrom.id !== measureTo.id
-    ? haversineKm(measureFrom, measureTo) : null;
+  // ── Đo khoảng cách qua nhiều điểm ──────────────────────────────────────────
+  // Đường xe máy thật (Valhalla) là chính, ô tô (OSRM) dự phòng, đường chim bay là phụ.
+  const newStop = (id = ''): StopRow => ({ key: ++stopSeq.current, id });
+  const freshStops = () => [newStop(), newStop()];
+
+  // Vị trí hiện tại lấy 1 lần (không bám theo); lỗi khi chưa có vị trí nào → bỏ «Vị trí hiện tại» khỏi lộ trình
+  const locateMe = async () => {
+    if (locating) return;
+    setLocating(true);
+    try {
+      const p = await getMyLocation();
+      setMyPos({ ...p, at: Date.now() });
+    } catch (e) {
+      toast('Không lấy được vị trí: ' + (e as Error).message);
+      if (!myPos) setStops(rs => rs.map(r => (r.id === MY_LOCATION ? { key: r.key, id: '' } : r)));
+    } finally {
+      setLocating(false);
+    }
+  };
+  // Đổi danh sách điểm: vừa thêm «Vị trí hiện tại» mà chưa có / đã cũ (> 2 phút) → lấy lại
+  const changeStops = (next: StopRow[]) => {
+    setStops(next);
+    const addedMe = next.some(r => r.id === MY_LOCATION) && !stops.some(r => r.id === MY_LOCATION);
+    if (addedMe && (!myPos || Date.now() - myPos.at > 120_000)) void locateMe();
+  };
+  const pickStop = (i: number, id: string) => {
+    const pt = points.find(p => p.id === id);
+    const row: StopRow = pt
+      ? { key: stops[i].key, id, label: stopOptLabel(pt), name: pt.name, lat: pt.lat, lng: pt.lng }
+      : { key: stops[i].key, id };
+    changeStops(stops.map((r, k) => (k === i ? row : r)));
+  };
+  const startFromMe = () => {
+    if (!stops[0].id) changeStops([{ key: stops[0].key, id: MY_LOCATION }, ...stops.slice(1)]);
+    else if (stops.length < MAX_STOPS) changeStops([newStop(MY_LOCATION), ...stops]);
+    else toast(`Tối đa ${MAX_STOPS} điểm — bỏ bớt 1 điểm trước`);
+  };
+  const addStop = () => { if (stops.length < MAX_STOPS) setStops([...stops, newStop()]); };
+
+  // Điểm đã có toạ độ (bỏ dòng trống / vị trí chưa lấy được), giữ chỉ số dòng để ghép chữ cái A, B, C…
+  const resolvedStops = useMemo(() => stops.map((r, idx) => {
+    if (!measureOn || !r.id) return null;
+    if (r.id === MY_LOCATION) return myPos ? { idx, id: r.id, name: 'Vị trí của bạn', lat: myPos.lat, lng: myPos.lng } : null;
+    const live = points.find(p => p.id === r.id);
+    if (live) return { idx, id: r.id, name: live.name, lat: live.lat, lng: live.lng };
+    return r.lat != null && r.lng != null ? { idx, id: r.id, name: r.name ?? '', lat: r.lat, lng: r.lng } : null;
+  }), [measureOn, stops, myPos, points]);
+  const filledStops = useMemo(() => resolvedStops.filter((x): x is NonNullable<typeof x> => !!x), [resolvedStops]);
+  const routeKey = filledStops.length >= 2 ? filledStops.map(f => `${f.lat.toFixed(6)},${f.lng.toFixed(6)}`).join(';') : '';
+  const straightKm = filledStops.length >= 2
+    ? filledStops.slice(1).reduce((s, f, k) => s + haversineKm(filledStops[k], f), 0) : null;
 
   useEffect(() => {
-    let cancelled = false;
     setRouteInfo(null);
-    if (straightKm == null || !measureFrom || !measureTo) return;
+    if (!routeKey) { setRouteLoading(false); return; }
+    const pts = routeKey.split(';').map(s => { const [lat, lng] = s.split(',').map(Number); return { lat, lng }; });
+    const ctrl = new AbortController();
     setRouteLoading(true);
-    const url = `https://router.project-osrm.org/route/v1/driving/${measureFrom.lng},${measureFrom.lat};${measureTo.lng},${measureTo.lat}?overview=full&geometries=geojson`;
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        if (cancelled) return;
-        const route = data?.routes?.[0];
-        if (route?.geometry?.coordinates?.length) {
-          setRouteInfo({
-            km: route.distance / 1000,
-            geometry: route.geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]),
-          });
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setRouteLoading(false); });
-    return () => { cancelled = true; };
-  }, [straightKm, measureFrom, measureTo]);
+    multiRoute(pts, ctrl.signal)
+      .then(r => { if (!ctrl.signal.aborted) setRouteInfo(r); })
+      .finally(() => { if (!ctrl.signal.aborted) setRouteLoading(false); });
+    return () => ctrl.abort();
+  }, [routeKey]);
 
+  // Chặng giữa 2 điểm liền nhau — hiện dưới dòng điểm đi (đường thật nếu có, không thì chim bay)
+  const legsByRow = useMemo(() => {
+    const m = new Map<number, { km: number; sec: number | null }>();
+    if (routeLoading) return m;
+    for (let k = 0; k < filledStops.length - 1; k++) {
+      const leg = routeInfo?.legs[k];
+      m.set(filledStops[k].idx, leg ? { km: leg.km, sec: leg.sec } : { km: haversineKm(filledStops[k], filledStops[k + 1]), sec: null });
+    }
+    return m;
+  }, [filledStops, routeInfo, routeLoading]);
+
+  // Vẽ: đường chim bay (nét đứt) + đường đi thật (xanh) + ghim chữ cái A, B, C…
+  const drawSig = filledStops.map(f => `${f.idx}:${f.lat},${f.lng}:${f.name}`).join('|') + `#${stops.length}`;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    if (measureLineRef.current) { measureLineRef.current.remove(); measureLineRef.current = null; }
-    if (routeLineRef.current) { routeLineRef.current.remove(); routeLineRef.current = null; }
-    if (straightKm == null || !measureFrom || !measureTo) return;
-
-    const straightLine = L.polyline(
-      [[measureFrom.lat, measureFrom.lng], [measureTo.lat, measureTo.lng]],
-      { color: '#DC2626', weight: 2, dashArray: '6 6', opacity: routeInfo ? 0.55 : 1 },
-    ).addTo(map);
-    measureLineRef.current = straightLine;
-
-    let bounds = straightLine.getBounds();
+    if (!map || !filledStops.length) return;
+    const group = L.layerGroup().addTo(map);
+    if (filledStops.length >= 2) {
+      const straight = L.polyline(filledStops.map(f => [f.lat, f.lng] as [number, number]),
+        { color: '#DC2626', weight: 2, dashArray: '6 6', opacity: routeInfo ? 0.45 : 1 }).addTo(group);
+      if (!routeInfo && !routeLoading && straightKm != null) {
+        straight.bindTooltip(`≈ ${fmtKm(straightKm)} km (chim bay)`, { permanent: true, direction: 'center', className: 'lgmap-distance lgmap-distance-alt' });
+      }
+    }
     if (routeInfo) {
-      const routeLine = L.polyline(routeInfo.geometry, { color: '#1D4ED8', weight: 4, opacity: 0.85 }).addTo(map);
-      routeLine.bindTooltip(`${fmtKm(routeInfo.km)} km · đi đường bộ`, {
-        permanent: true, direction: 'center', className: 'lgmap-distance',
-      });
-      routeLineRef.current = routeLine;
-      bounds = routeLine.getBounds();
-    } else if (!routeLoading) {
-      straightLine.bindTooltip(`≈ ${fmtKm(straightKm)} km (chim bay)`, {
-        permanent: true, direction: 'center', className: 'lgmap-distance lgmap-distance-alt',
+      const perLeg = routeInfo.lines.length === routeInfo.legs.length && routeInfo.legs.length > 1;
+      routeInfo.lines.forEach((ln, k) => {
+        const line = L.polyline(ln, { color: '#1D4ED8', weight: 5, opacity: 0.85 }).addTo(group);
+        const text = perLeg
+          ? `${fmtKm(routeInfo.legs[k].km)} km`
+          : `${fmtKm(routeInfo.km)} km · ${fmtDuration(routeInfo.sec)} ${routeInfo.mode === 'car' ? 'ô tô' : 'xe máy'}`;
+        line.bindTooltip(text, { permanent: true, direction: 'center', className: 'lgmap-distance' });
       });
     }
-    map.fitBounds(bounds.pad(0.3), { maxZoom: 13 });
-    return () => {
-      straightLine.remove();
-      if (routeLineRef.current) routeLineRef.current.remove();
-      measureLineRef.current = null;
-      routeLineRef.current = null;
-    };
+    filledStops.forEach(f => {
+      const letter = stopLetter(f.idx);
+      L.marker([f.lat, f.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:26px;height:26px;border-radius:50%;background:${stopColor(f.idx, stops.length)};color:#fff;font:700 12px/22px system-ui,sans-serif;text-align:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)">${letter}</div>`,
+          iconSize: [26, 26], iconAnchor: [13, 13],
+        }),
+        zIndexOffset: 1500, keyboard: false,
+      }).bindTooltip(escapeHtml(`${letter} · ${f.name}`), { direction: 'top', offset: [0, -12] }).addTo(group);
+    });
+    return () => { group.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [straightKm, measureFrom, measureTo, routeInfo, routeLoading]);
+  }, [drawSig, routeInfo, routeLoading]);
+
+  // Phóng vừa lộ trình khi đổi điểm / có đường đi thật
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !routeKey) return;
+    const pts: [number, number][] = routeInfo ? routeInfo.lines.flat() : filledStops.map(f => [f.lat, f.lng]);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 14 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, routeInfo]);
+
+  // Sắp thứ tự đi nhanh nhất: giữ điểm A, các điểm sau xếp theo ma trận thời gian xe máy thật (Valhalla)
+  const optimizeStops = async () => {
+    const withPts = stops.map((r, i) => ({ r, p: resolvedStops[i] })).filter(x => !!x.p);
+    if (withPts.length < 3 || optimizing) return;
+    setOptimizing(true);
+    try {
+      const m = await routeMatrix(withPts.map(x => ({ lat: x.p!.lat, lng: x.p!.lng })));
+      const order = orderOpenPath(withPts.length, (i, j) => m.sec[i][j], 0);
+      const same = order.every((k, i) => k === i);
+      if (same) { toast('Thứ tự hiện tại đã là nhanh nhất'); return; }
+      const kmCost = (i: number, j: number) => m.km[i][j];
+      const before = pathCost(withPts.map((_, i) => i), kmCost), after = pathCost(order, kmCost);
+      const rest = stops.filter((_, i) => !resolvedStops[i]);
+      setStops([...order.map(k => withPts[k].r), ...rest]);
+      toast(`Đã sắp lại, giữ điểm xuất phát: ${fmtKm(before)} → ${fmtKm(after)} km${m.engine === 'estimate' ? ' (ước tính theo chim bay)' : ''}`);
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  // Mở chỉ đường Google Maps theo đúng thứ tự (xuất phát từ vị trí hiện tại → để Google tự lấy GPS)
+  const googleLink = useMemo(() => {
+    if (filledStops.length < 2) return null;
+    const [first, ...rest] = filledStops;
+    const origin = first.id === MY_LOCATION ? null : { lat: first.lat, lng: first.lng };
+    return googleDirectionsLinks(origin, rest.map(f => ({ lat: f.lat, lng: f.lng })))[0] ?? null;
+  }, [filledStops]);
+
+  const pointOptions = useMemo(
+    () => points.map(p => ({ value: p.id, label: stopOptLabel(p) })),
+    [points],
+  );
+  // Nhãn ngắn — ô chọn trên điện thoại chỉ rộng ~100px
+  const meLabel = locating ? '📍 Đang lấy GPS…'
+    : myPos ? `📍 Vị trí của tôi ±${Math.max(1, Math.round(myPos.acc))}m` : '📍 Vị trí hiện tại của tôi';
+  const optionsFor = (i: number) => {
+    const cur = stops[i];
+    const neighbors = new Set([stops[i - 1]?.id, stops[i + 1]?.id].filter(id => id && id !== cur.id));
+    const opts = neighbors.size ? pointOptions.filter(o => !neighbors.has(o.value)) : pointOptions.slice();
+    // Điểm đã chọn nhưng đang bị bộ lọc tỉnh / ngành ẩn → vẫn hiện đúng tên
+    if (cur.id && cur.id !== MY_LOCATION && cur.label && !opts.some(o => o.value === cur.id)) opts.unshift({ value: cur.id, label: cur.label });
+    const meElsewhere = stops.some((r, j) => j !== i && r.id === MY_LOCATION);
+    return meElsewhere ? opts : [{ value: MY_LOCATION, label: meLabel }, ...opts];
+  };
 
   // Dán link Google Maps: parse được toạ độ thì lưu link + lat/lng; link ngắn (goo.gl)
   // không chứa toạ độ thì vẫn lưu link nếu bản ghi đã có toạ độ sẵn.
@@ -823,49 +931,13 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
           }`}>
           <DollarSign size={12} /> Lương công ty
         </button>
-        <button onClick={() => { setMeasureOn(v => !v); if (measureOn) { setFromId(''); setToId(''); } }}
+        <button onClick={() => { setMeasureOn(v => !v); if (measureOn) setStops(freshStops()); }}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-medium border transition ${
             measureOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-[#D8D6D0] text-[#666]'
           }`}>
           <Ruler size={12} /> Đo khoảng cách
+          {measureOn && routeInfo && !routeLoading && <span className="font-semibold">· {fmtKm(routeInfo.km)} km</span>}
         </button>
-        {measureOn && (
-          <>
-            <SearchSelect
-              value={fromId}
-              onChange={setFromId}
-              options={points.map(p => ({ value: p.id, label: `${GROUPS.find(g => g.id === p.group)?.label} — ${p.name}` }))}
-              placeholder="Từ điểm… (gõ để tìm)"
-              className="w-52"
-            />
-            <span className="text-[12px] text-[#888]">→</span>
-            <SearchSelect
-              value={toId}
-              onChange={setToId}
-              options={points.filter(p => p.id !== fromId).map(p => ({ value: p.id, label: `${GROUPS.find(g => g.id === p.group)?.label} — ${p.name}` }))}
-              placeholder="Đến điểm… (gõ để tìm)"
-              className="w-52"
-            />
-            {routeLoading && straightKm != null && (
-              <span className="text-[12px] text-[#888] inline-flex items-center gap-1.5">
-                <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                Đang tính đường đi…
-              </span>
-            )}
-            {!routeLoading && routeInfo && (
-              <span className="text-[12px] font-semibold text-blue-700">
-                ≈ {fmtKm(routeInfo.km)} km <span className="font-normal text-[#888]">đường bộ</span>
-                <span className="font-normal text-[#aaa]"> · {fmtKm(straightKm!)} km chim bay</span>
-              </span>
-            )}
-            {!routeLoading && !routeInfo && straightKm != null && (
-              <span className="text-[12px] font-semibold text-red-600">
-                ≈ {fmtKm(straightKm)} km
-                <span className="font-normal text-[#888]"> (chim bay — không lấy được đường đi)</span>
-              </span>
-            )}
-          </>
-        )}
 
         <div className="flex-1" />
         <button onClick={() => { setShowToolsMenu(v => !v); setShowIconSettings(false); }}
@@ -961,6 +1033,30 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
           </div>
         )}
       </div>
+
+      {measureOn && (
+        <div data-measure-panel>
+        <MeasurePanel
+          rows={stops}
+          onRows={changeStops}
+          onPick={pickStop}
+          optionsFor={optionsFor}
+          legs={legsByRow}
+          route={routeInfo}
+          loading={routeLoading}
+          straightKm={straightKm}
+          filledCount={filledStops.length}
+          locating={locating}
+          onRefreshMe={() => void locateMe()}
+          onAdd={addStop}
+          onStartFromMe={startFromMe}
+          onOptimize={filledStops.length >= 3 ? () => void optimizeStops() : null}
+          optimizing={optimizing}
+          googleLink={googleLink}
+          onClear={() => setStops(freshStops())}
+        />
+        </div>
+      )}
     </>
   );
 
@@ -971,6 +1067,20 @@ export default function MapViewTab({ marketZones, marketLeads, laborHistory, goT
       <div ref={mapWrapperRef} className={`bg-white border border-[#E8E7E2] overflow-hidden ${cssFs ? 'fixed inset-0 z-[1250]' : 'relative'} ${isFullscreen ? '' : 'rounded-[10px]'}`}>
         <div ref={mapDivRef} style={{ height: isFullscreen ? '100dvh' : 'calc(100dvh - 260px)', minHeight: 420 }} />
         {isFullscreen && <FullscreenControlsOverlay open={panelOpen} onClose={() => setPanelOpen(false)}>{controls}</FullscreenControlsOverlay>}
+        {isFullscreen && !panelOpen && measureOn && filledStops.length >= 2 && (
+          <button onClick={() => {
+            setPanelOpen(true);
+            // Bảng điểm dừng nằm cuối bảng bộ lọc → cuộn tới luôn (điện thoại phải cuộn qua cả bộ lọc)
+            setTimeout(() => document.querySelector('[data-measure-panel]')?.scrollIntoView({ block: 'nearest' }), 50);
+          }}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] h-10 px-4 rounded-full bg-white/95 backdrop-blur border border-[#D8D6D0] shadow-lg text-[13px] text-[#222] inline-flex items-center gap-2 whitespace-nowrap max-w-[calc(100%-2rem)]">
+            <Route size={15} className="text-blue-700 flex-none" />
+            <span className="font-semibold">{filledStops.map(f => stopLetter(f.idx)).join(' → ')}</span>
+            {routeLoading ? <Loader2 size={13} className="animate-spin text-blue-500" />
+              : routeInfo ? <span className="truncate">{fmtKm(routeInfo.km)} km · {fmtDuration(routeInfo.sec)}</span>
+              : straightKm != null ? <span className="truncate text-red-600">≈ {fmtKm(straightKm)} km chim bay</span> : null}
+          </button>
+        )}
         {!isFullscreen && (
           <button onClick={() => setSurveyOpen(true)}
             className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] h-11 pl-4 pr-5 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold shadow-[0_6px_20px_rgba(10,132,255,0.45)] inline-flex items-center gap-2 active:scale-95 transition whitespace-nowrap">
@@ -1092,12 +1202,13 @@ function FullscreenControlsOverlay({ open, onClose, children }: { open: boolean;
   );
 }
 
-function hasPendingSurvey() {
-  try { return !!localStorage.getItem('lgvn_kcn_survey_active_v1'); } catch { return false; }
+/** Tên trước, loại sau — ô chọn điểm hẹp trên điện thoại vẫn đọc được tên */
+function stopOptLabel(p: Pick<MapPoint, 'name' | 'group'>) {
+  return `${p.name} · ${GROUPS.find(g => g.id === p.group)?.label ?? ''}`;
 }
 
-function fmtKm(km: number) {
-  return km < 10 ? km.toFixed(1) : Math.round(km).toString();
+function hasPendingSurvey() {
+  try { return !!localStorage.getItem('lgvn_kcn_survey_active_v1'); } catch { return false; }
 }
 
 function wageFmt(min: number | null | undefined, max: number | null | undefined) {

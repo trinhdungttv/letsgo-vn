@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Activity, Briefcase, Check, Gift, Grid3x3, HeartHandshake, LayoutGrid, List, Map as MapIcon, NotebookText, Settings2, UsersRound } from 'lucide-react';
+import { Activity, Briefcase, Check, Gift, Grid3x3, HeartHandshake, LayoutGrid, List, Map as MapIcon, NotebookPen, NotebookText, Settings2, UsersRound } from 'lucide-react';
 import { ICON_TILE } from '../components/workspace/wsTheme';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { canAccess, meetingLevel, SALE_PAGE, useAuth } from '../lib/auth';
@@ -38,7 +38,7 @@ const VIEW_OPTIONS: { key: SpaceView; label: string; hint: string }[] = [
 ];
 
 const SALE_SEGMENT = 'sale';
-const TAB_KEYS = ['dashboard', 'matrix', 'map', 'cadence', 'log', 'events', 'meetings'] as const;
+const TAB_KEYS = ['dashboard', 'matrix', 'leads', 'map', 'cadence', 'log', 'events', 'meetings'] as const;
 // 'contacts' = đường dẫn cũ của "Danh sách liên hệ" (nay là Ma trận);
 // 'radar' = Relationship Radar cũ (thay bằng Dashboard + khối "Sức khỏe CSKH" ở hồ sơ Khách hàng)
 const LEGACY_TAB: Record<string, CskhTabKey> = { contacts: 'matrix', radar: 'dashboard' };
@@ -51,12 +51,14 @@ const SPACE_LOOK: Record<CskhSpace, { Icon: LucideIcon; tile: string; accent: st
 
 // short = nhãn khi màn hẹp hơn 1280px (thanh tab cuộn ngang, cần gọn)
 // meetings = "Đi họp" (lịch đi họp + danh sách đăng ký ra vào cổng) — chỉ tệp Khách hàng, chỉ người có quyền 'Đi họp'
+// leads = "Đầu mối" (bảng nháp Sale / CTV mới tìm được, chưa gặp — chưa chăm sóc) — chỉ tệp Sale
 function tabsOf(space: CskhSpace, canMeet: boolean): { key: CskhTabKey; label: string; short: string; Icon: LucideIcon }[] {
   const info = SPACE_INFO[space];
   const sale = space === 'sale';
   return [
     { key: 'dashboard', label: 'Tổng quan', short: 'Tổng quan', Icon: LayoutGrid },
     { key: 'matrix', label: info.listTitle, short: info.listShort, Icon: sale ? List : Grid3x3 },
+    ...(sale ? [{ key: 'leads' as const, label: 'Đầu mối (nháp)', short: 'Đầu mối', Icon: NotebookPen }] : []),
     { key: 'map', label: 'Bản đồ', short: 'Bản đồ', Icon: MapIcon },
     { key: 'cadence', label: sale ? 'Nhịp độ' : 'Nhịp độ Chăm sóc', short: 'Nhịp độ', Icon: Activity },
     { key: 'log', label: 'Nhật ký', short: 'Nhật ký', Icon: NotebookText },
@@ -98,8 +100,9 @@ const CRMLeads: React.FC<Props> = ({ clients, onSelectClient, onNavigate, toast 
   }, []);
   const space: CskhSpace = route.space && visible.includes(route.space) ? route.space : visible[0];
   const canMeet = !!user && meetingLevel(user.role, rolePermissions) !== 'none';
-  // "Đi họp" chỉ có ở tệp Khách hàng (và người có quyền) — link/F5 ở chỗ khác thì về Tổng quan
-  const tab: CskhTabKey = route.tab === 'meetings' && (space !== 'client' || !canMeet) ? 'dashboard' : route.tab;
+  // "Đi họp" chỉ có ở tệp Khách hàng (và người có quyền), "Đầu mối" chỉ ở tệp Sale — link/F5 ở chỗ khác thì về Tổng quan
+  const tab: CskhTabKey = (route.tab === 'meetings' && (space !== 'client' || !canMeet)) || (route.tab === 'leads' && space !== 'sale')
+    ? 'dashboard' : route.tab;
 
   // Link mở tệp đang bị ẩn / không có quyền → về tệp đang hiện + nói rõ lý do (không im lặng đổi tệp)
   const wanted = route.space;

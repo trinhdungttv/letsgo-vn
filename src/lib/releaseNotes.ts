@@ -16,6 +16,38 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-13-sale-leads-draft',
+    date: '2026-11-13',
+    title: 'CSKH — Sale / CTV',
+    features: [
+      'Tab mới «Đầu mối (nháp)»: danh sách Sale / CTV mới tìm được, chưa gặp — chưa chăm sóc, không nhắc việc',
+      'Dán thẳng bảng từ Google Sheets (hoặc file Excel) — giữ link kênh / bài đăng, tự ghép KCN, xem trước rồi mới lưu',
+      'Dò trùng SĐT khi nhập và khi dán số vào ô tìm: biết ngay số đã gọi chưa, đã là Sale / CTV hay là người của khách',
+      'Ghi từng lần gọi / nhắn (Chưa bắt máy, Đang trao đổi, Hẹn gặp, Từ chối); gặp được thì «Chuyển sang Sale / CTV» với form điền sẵn',
+    ],
+  },
+  {
+    id: '2026-11-13-map-multi-stop-route',
+    date: '2026-11-13',
+    title: 'Bản đồ Thị trường',
+    features: [
+      'Đo khoảng cách: chọn «Vị trí hiện tại của tôi» làm điểm đi hoặc điểm đến, đo đường xe máy thật',
+      'Thêm điểm dừng thứ 2, 3… (tối đa 10), kéo ⠿ để đổi thứ tự như Google Maps — mỗi chặng ghi km + phút',
+      'Nút Sắp thứ tự nhanh nhất (giữ điểm xuất phát), Đảo chiều và Mở Google Maps để đi theo đúng lộ trình',
+    ],
+  },
+  {
+    id: '2026-11-13-survey-photo-quick-entry',
+    date: '2026-11-13',
+    title: 'Khảo sát KCN — Ảnh chỉ tiêu',
+    features: [
+      'Xem lại ảnh: ô nhập nhanh hiện sẵn dưới ảnh, vuốt trái / phải là tự lưu rồi sang ảnh khác',
+      'Ngành nghề chọn bằng ô xổ xuống, ảnh không bị thu nhỏ; chạm vào ảnh để ẩn ô nhập, xem ảnh to',
+      'Ghi công ty cần Cung ứng / Giới thiệu, Thời vụ / Chính thức — lọc nhanh ở tab Khảo sát KCN',
+      'Sửa danh mục ngành nghề: đổi tên, gộp, bỏ ngành — chọn lại ngành cho từng công ty trước khi lưu',
+    ],
+  },
+  {
     id: '2026-11-12-plan-phone-share-link',
     date: '2026-11-12',
     title: 'Kế hoạch ghé công ty',

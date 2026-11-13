@@ -19,7 +19,8 @@ describe('release notes thật của app', () => {
     for (const n of RELEASE_NOTES) {
       expect(n.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(n.id.startsWith(n.date)).toBe(true);
-      expect(n.features.every(f => f.trim().length > 0 && f.length <= 100)).toBe(true);
+      // Tối đa 130 ký tự/dòng (nới từ 100 ngày 13/11/2026 — 13 dòng cũ dài 101–128 ký tự; popup tự xuống dòng, không cắt chữ)
+      expect(n.features.every(f => f.trim().length > 0 && f.length <= 130)).toBe(true);
     }
     const dates = RELEASE_NOTES.map(n => n.date);
     expect([...dates].sort().reverse()).toEqual(dates);

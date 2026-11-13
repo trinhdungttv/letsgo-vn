@@ -4,8 +4,16 @@ import { createContext, useContext } from 'react';
 import type { CskhSpace } from '../../lib/cskh/space';
 import type { Client } from '../../lib/types';
 import type { CskhData } from './data/api';
+import type { NewContactPrefill } from './components/ContactProfileModal';
 
-export type CskhTabKey = 'dashboard' | 'matrix' | 'map' | 'cadence' | 'log' | 'events' | 'meetings';
+/** leads = "Đầu mối" (bảng nháp Sale / CTV chưa gặp) — chỉ tệp Sale. */
+export type CskhTabKey = 'dashboard' | 'matrix' | 'leads' | 'map' | 'cadence' | 'log' | 'events' | 'meetings';
+
+/** Mở form "Thêm" có điền sẵn + việc làm tiếp khi lưu xong (VD đánh dấu đầu mối đã chuyển). */
+export interface NewContactInit {
+  prefill: NewContactPrefill;
+  onCreated?: (contactId: string) => void | Promise<void>;
+}
 
 export interface CskhContextValue {
   /** Khu vực đang mở: khách hàng (CSKH) / Mạng lưới Sale. */
@@ -18,6 +26,8 @@ export interface CskhContextValue {
   openProfile: (contactId: string) => void;
   /** Mở hồ sơ trống để thêm liên hệ mới (cùng form với hồ sơ). */
   openNewContact: () => void;
+  /** Như openNewContact nhưng điền sẵn form (Bảng nháp đầu mối → Chuyển sang Sale / CTV). */
+  openNewContactWith: (init: NewContactInit) => void;
   /** Mở form Ghi tương tác (chọn sẵn người nếu có). */
   openLog: (contactId?: string) => void;
   openPicker: () => void;

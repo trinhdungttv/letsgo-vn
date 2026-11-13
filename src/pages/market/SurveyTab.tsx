@@ -37,6 +37,9 @@ import SurveyPinGate from './survey/SurveyPinGate';
 import type { PinRequest } from '../../components/quickNotes/PinDialog';
 import OnlinePhotoDialog from './survey/OnlinePhotoDialog';
 import { KIND_FILTERS, headcountText, matchesKind, type KindFilter } from '../../lib/kcnSurvey/online';
+import { NEED_GROUPS, matchesNeeds, needsText, sanitizeNeeds, toggleNeed, type LaborNeed } from '../../lib/kcnSurvey/needs';
+import { hasPosition, positionKey, splitPositions } from '../../lib/kcnSurvey/positions';
+import { usePositionCatalog } from './survey/usePositionCatalog';
 import type { ShareZone } from '../../lib/kcnSurvey/share';
 import { fmtClock, fmtDateTime } from './survey/surveyFormat';
 import { pendingActiveTrip } from './survey/useSurveyRecorder';
@@ -65,8 +68,12 @@ const SURVEY_SUB_BTN = 'min-w-0 h-14 sm:h-11 px-1 sm:px-4 rounded-2xl sm:rounded
 
 // ── Nhớ tab + bộ lọc theo máy (mở lại tab là thấy đúng mục lần trước) ───────
 const PREFS_KEY = 'lgvn_survey_tab_v1';
-interface TabPrefs { sub: Sub; period: number; province: string; zoneId: string; person: string; starOnly: boolean; kind: KindFilter }
-const DEFAULT_PREFS: TabPrefs = { sub: 'trips', period: 30, province: 'all', zoneId: 'all', person: 'all', starOnly: false, kind: 'all' };
+interface TabPrefs {
+  sub: Sub; period: number; province: string; zoneId: string; person: string; starOnly: boolean; kind: KindFilter;
+  /** Lọc ảnh theo nhu cầu Cung ứng / Giới thiệu · Thời vụ / Chính thức (phải có đủ) và theo 1 ngành ('' = mọi ngành) */
+  needs: LaborNeed[]; position: string;
+}
+const DEFAULT_PREFS: TabPrefs = { sub: 'trips', period: 30, province: 'all', zoneId: 'all', person: 'all', starOnly: false, kind: 'all', needs: [], position: '' };
 function readPrefs(): TabPrefs {
   try {
     const o = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') as Partial<TabPrefs>;
@@ -74,6 +81,8 @@ function readPrefs(): TabPrefs {
     if (!['trips', 'photos', 'voice', 'lodgings', 'panos', 'zones', 'archive'].includes(p.sub)) p.sub = 'trips';
     if (!PERIODS.some(x => x.d === p.period)) p.period = 30;
     if (!KIND_FILTERS.some(x => x.id === p.kind)) p.kind = 'all';
+    p.needs = sanitizeNeeds(p.needs);
+    if (typeof p.position !== 'string') p.position = '';
     p.province = normalizeSavedProvince(p.province); // bản cũ lưu nguyên văn "TP. Đồng Nai"
     return p;
   } catch { return { ...DEFAULT_PREFS }; }
@@ -101,7 +110,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* chế độ riêng tư */ }
     return next;
   }), []);
-  const { sub, period, province, zoneId, person, starOnly, kind } = prefs;
+  const { sub, period, province, zoneId, person, starOnly, kind, needs, position } = prefs;
+  const { items: positionItems } = usePositionCatalog();
   // KCN đã lưu trong bộ lọc không còn trong danh mục (VD đã gộp Nhơn Trạch 1/3/6 — migration 224) → về "Tất cả KCN"
   useEffect(() => {
     if (marketZones.length && zoneId !== 'all' && zoneId !== 'none' && !marketZones.some(z => z.id === zoneId)) setPrefs({ zoneId: 'all' });
@@ -261,7 +271,25 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     && (!q || fold([t.title, t.zone_name, t.note, t.user_name, ...t.passed.map(p => p.name)].join(' ')).includes(q))), [trips, okTime, okZone, okPerson, q]);
   const fPhotosAll = useMemo(() => photos.filter(p => okTime(p.taken_at) && okZone(p.zone_id) && okPerson(p.user_name) && matchesKind(p, kind)
     && (!q || fold([p.company_name, p.positions, p.wage_text, p.note, p.zone_name].join(' ')).includes(q))), [photos, okTime, okZone, okPerson, q, kind]);
-  const fPhotosBoth = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))), [fPhotosAll, tripFilter, starOnly, starOf]);
+  const fPhotosBoth = useMemo(() => fPhotosAll.filter(p => (!tripFilter || p.trip_id === tripFilter) && (!starOnly || starOf(p))
+    && matchesNeeds(p.labor_needs, needs) && (!position || hasPosition(p.positions, position))), [fPhotosAll, tripFilter, starOnly, starOf, needs, position]);
+  // Ngành để lọc: danh mục + ngành gõ tay đang có trên ảnh
+  const positionOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const n of [...positionItems.map(i => i.name), ...photos.flatMap(p => splitPositions(p.positions))]) {
+      const k = positionKey(n);
+      if (k && !seen.has(k)) { seen.add(k); out.push(n); }
+    }
+    if (position && !seen.has(positionKey(position))) out.push(position);
+    return out;
+  }, [positionItems, photos, position]);
+  const categoryFiltered = needs.length > 0 || !!position;
+  const patchPhotoPositions = (changes: { id: string; positions: string }[]) => {
+    const m = new Map(changes.map(c => [c.id, c.positions]));
+    setPhotos(list => list.map(x => (m.has(x.id) ? { ...x, positions: m.get(x.id)! } : x)));
+    setViewer(v => (v && m.has(v.id) ? { ...v, positions: m.get(v.id)! } : v));
+  };
   // Ảnh ONLINE tách thành mục riêng (tab "Ảnh online"); tab "Ảnh chỉ tiêu" chỉ còn ảnh đi thực địa
   const fPhotos = useMemo(() => fPhotosBoth.filter(p => sub === 'online' ? p.survey_kind === 'online' : sub === 'photos' ? p.survey_kind !== 'online' : true), [fPhotosBoth, sub]);
   const [onlineSel, setOnlineSel] = useState<Set<string>>(new Set());
@@ -413,9 +441,9 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     } catch (e) { say((e as Error).message); }
   };
   const exportPhotos = () => {
-    const head = ['Ngày chụp', 'Loại', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
+    const head = ['Ngày chụp', 'Loại', 'Tỉnh/TP', 'KCN', 'Công ty', 'Gắn sao', 'Vị trí tuyển', 'Nhu cầu', 'Số lượng', 'Lương', 'Ghi chú', 'Người chụp', 'Vĩ độ', 'Kinh độ', 'Link ảnh', 'Google Maps'];
     const esc = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.survey_kind === 'online' ? (p.verified_at ? 'Online - đã xác thực' : 'Online - chưa xác thực') : 'Đi thực địa', p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, headcountText(p) ?? '', p.wage_text, p.note, p.user_name,
+    const rows = fPhotos.map(p => [fmtDateTime(p.taken_at), p.survey_kind === 'online' ? (p.verified_at ? 'Online - đã xác thực' : 'Online - chưa xác thực') : 'Đi thực địa', p.zone_id ? zoneProvLabel.get(p.zone_id) ?? '' : '', p.zone_name, p.company_name, starOf(p) ? '★' : '', p.positions, needsText(p.labor_needs), headcountText(p) ?? '', p.wage_text, p.note, p.user_name,
       p.lat.toFixed(6), p.lng.toFixed(6), p.url, `https://www.google.com/maps?q=${p.lat},${p.lng}`]);
     const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(',')).join('\n');
     const d = new Date();
@@ -648,7 +676,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
               lodgings={mapLodgings} panos={mapPanos}
               onLodging={l => setLodgingSheet({ lodging: l })} onPano={p => setOpenPano({ id: p.id, calibrate: false })}
               onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
-              fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${mapBig}`} focus={focus} />
+              fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${needs.join('+')}:${position}:${mapBig}`} focus={focus} />
             <button onClick={() => setMapBig(v => !v)} title={mapBig ? 'Thu nhỏ bản đồ (Esc)' : 'Phóng bản đồ kín màn hình'}
               className={`absolute z-[1000] h-9 px-3 rounded-full bg-white/95 shadow-md text-[12.5px] font-medium text-[#111] inline-flex items-center gap-1.5 ${mapBig ? 'right-3 top-[calc(12px+env(safe-area-inset-top))]' : 'right-2 top-2'}`}>
               {mapBig ? <><Minimize2 size={14} /> Thu nhỏ</> : <Maximize2 size={14} />}
@@ -788,7 +816,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                     </button>
                   )}
                 </div>
-                {fPhotos.length === 0 ? <Empty icon={<Camera size={22} />} text={starOnly ? 'Chưa có ảnh của công ty gắn sao trong bộ lọc' : 'Chưa có ảnh chỉ tiêu nào trong bộ lọc'} /> : (
+                <CategoryFilter needs={needs} position={position} options={positionOptions} onChange={p => setPrefs(p)} />
+                {fPhotos.length === 0 ? <Empty icon={<Camera size={22} />} text={starOnly ? 'Chưa có ảnh của công ty gắn sao trong bộ lọc' : categoryFiltered ? 'Không có ảnh khớp Nhu cầu / Ngành đang lọc' : 'Chưa có ảnh chỉ tiêu nào trong bộ lọc'} /> : (
                   <div className={`grid gap-1.5 ${full ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-3'}`}>
                     {fPhotos.map(p => {
                       const st = starOf(p);
@@ -824,7 +853,8 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
                     <button onClick={exportPhotos} className="h-8 px-2.5 rounded-lg border border-[#E8E7E2] bg-white text-[12px] text-[#333] inline-flex items-center gap-1"><Download size={12} /> CSV / Excel</button>
                   )}
                 </div>
-                {fPhotos.length === 0 ? <Empty icon={<Globe size={22} />} text="Chưa có ảnh khảo sát online nào trong bộ lọc" /> : (
+                <CategoryFilter needs={needs} position={position} options={positionOptions} onChange={p => setPrefs(p)} />
+                {fPhotos.length === 0 ? <Empty icon={<Globe size={22} />} text={categoryFiltered ? 'Không có ảnh khớp Nhu cầu / Ngành đang lọc' : 'Chưa có ảnh khảo sát online nào trong bộ lọc'} /> : (
                   <div className={`grid gap-1.5 ${full ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-3'}`}>
                     {fPhotos.map(p => {
                       const sel = onlineSel.has(p.id);
@@ -907,6 +937,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
             onNext: fPhotosBoth.findIndex(x => x.id === viewer.id) < fPhotosBoth.length - 1 ? () => setViewer(fPhotosBoth[fPhotosBoth.findIndex(x => x.id === viewer.id) + 1]) : null }}
           onShowOnMap={() => { const p = viewer; setViewer(null); setFocus({ lat: p.lat, lng: p.lng, key: Date.now() }); }}
           onSaved={p => { setPhotos(list => list.map(x => (x.id === p.id ? p : x))); setViewer(p); }}
+          onPhotosPatched={patchPhotoPositions}
           onDeleted={id => { setPhotos(list => list.filter(x => x.id !== id)); setViewer(null); void loadArchive(); }} />
       )}
       {lodgingSheet && (
@@ -1215,4 +1246,34 @@ function groupPassed(passed: SurveyTrip['passed']) {
 function PlanDialogWithData({ marketLeads, ...rest }: { marketLeads: readonly MarketLead[] } & Omit<ComponentProps<typeof SurveyPlanDialog>, 'companies'>) {
   const data = useSurveyData(marketLeads);
   return <SurveyPlanDialog {...rest} companies={data.companies} />;
+}
+
+/** Lọc ảnh theo nhu cầu (Cung ứng / Giới thiệu · Thời vụ / Chính thức — phải có đủ các mục đang bật) và theo 1 ngành */
+function CategoryFilter({ needs, position, options, onChange }: {
+  needs: LaborNeed[];
+  position: string;
+  options: string[];
+  onChange: (p: { needs?: LaborNeed[]; position?: string }) => void;
+}) {
+  const chip = (on: boolean) => `h-8 px-2.5 rounded-lg border text-[12px] font-medium whitespace-nowrap ${on ? 'bg-[#0A84FF] border-[#0A84FF] text-white' : 'bg-white border-[#E8E7E2] text-[#555] hover:bg-[#F9F9F7]'}`;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {NEED_GROUPS.map((g, gi) => (
+        <div key={g.id} className="flex items-center gap-1.5">
+          {gi > 0 && <span className="w-px h-5 bg-[#E8E7E2]" aria-hidden />}
+          {g.items.map(i => (
+            <button key={i.id} onClick={() => onChange({ needs: toggleNeed(needs, i.id) })} className={chip(needs.includes(i.id))} aria-pressed={needs.includes(i.id)}>{i.label}</button>
+          ))}
+        </div>
+      ))}
+      <select value={position} onChange={e => onChange({ position: e.target.value })} aria-label="Lọc theo ngành nghề"
+        className={`h-8 pl-2 pr-6 rounded-lg border text-[12px] max-w-[200px] ${position ? 'bg-[#EAF3FF] border-[#0A84FF]/50 text-[#0A5BD8] font-medium' : 'bg-white border-[#E8E7E2] text-[#555]'}`}>
+        <option value="">Mọi ngành nghề</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+      {(needs.length > 0 || position) && (
+        <button onClick={() => onChange({ needs: [], position: '' })} className="h-8 px-2 rounded-lg text-[12px] text-[#0A84FF] hover:bg-[#EAF3FF]">Bỏ lọc</button>
+      )}
+    </div>
+  );
 }

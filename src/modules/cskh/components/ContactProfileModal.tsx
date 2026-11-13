@@ -175,23 +175,54 @@ const AddRow = ({ onClick, children }: { onClick: () => void; children: ReactNod
   </button>
 );
 
+/**
+ * Điền sẵn form "Thêm" (VD chuyển 1 đầu mối ở Bảng nháp sang Sale / CTV): tên, SĐT, link, ghi chú,
+ * kênh quen biết + phần Sale (nơi làm, đối thủ, KCN mạnh).
+ */
+export interface NewContactPrefill {
+  name?: string;
+  phone?: string;
+  socialLink?: string;
+  notes?: string;
+  channel?: string;
+  saleCompany?: string;
+  competitorId?: string | null;
+  saleZoneIds?: string[];
+}
+
 /** Hồ sơ trống để dựng form "Thêm liên hệ" — cùng form với sửa hồ sơ, chỉ khác lúc lưu (tạo mới rồi lưu phần CSKH). */
-function blankContactRaw(): Contact {
+function blankContactRaw(prefill?: NewContactPrefill): Contact {
   const f = emptyContactForm();
   const now = new Date().toISOString();
-  return {
+  const base: Contact = {
     id: '', client_id: null, name: '', phone: null, email: null, role: f.role, start_date: f.start_date, end_date: null,
     is_active: true, is_primary: false, notes: null, address: null, birthday: null, hobbies: null, social_link: null,
     channel: null, rich_notes: null, map_link: null, avatar_url: null, created_at: now, updated_at: now, contact_clients: [],
   };
+  if (!prefill) return base;
+  // Cột Sale (migration 178/179) không nằm trong kiểu Contact — mapContactRow đọc từ cùng dòng
+  return Object.assign(base, {
+    name: prefill.name ?? '',
+    phone: prefill.phone || null,
+    social_link: prefill.socialLink || null,
+    notes: prefill.notes || null,
+    channel: prefill.channel || null,
+    sale_company: prefill.saleCompany ?? '',
+    competitor_id: prefill.competitorId ?? null,
+    sale_zone_ids: prefill.saleZoneIds ?? [],
+  });
 }
 
 /** Khoá tạm của công ty chọn từ BD Pipeline trong danh sách công ty (đổi sang clients.id lúc Lưu). */
 const PIPE_KEY = 'pipe:';
 
-export function ContactProfileModal({ contactId, data, clients, toast, onClose, onLog, onOpenClient, onManageGroups }: {
+export function ContactProfileModal({ contactId, data, clients, toast, onClose, onLog, onOpenClient, onManageGroups, prefill, onCreated }: {
   /** null = thêm liên hệ mới (form trống, lưu xong là tạo người + hồ sơ chăm sóc trong 1 lần). */
   contactId: string | null;
+  /** Chỉ khi thêm mới: điền sẵn form. */
+  prefill?: NewContactPrefill;
+  /** Chỉ khi thêm mới: gọi sau khi lưu xong với id người vừa tạo. */
+  onCreated?: (contactId: string) => void | Promise<void>;
   data: CskhData;
   clients: readonly Client[];
   toast: (m: string) => void;
@@ -209,7 +240,7 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
   const isNew = contactId === null;
   const [blank] = useState(() => {
     if (!isNew) return null;
-    const r = blankContactRaw();
+    const r = blankContactRaw(prefill);
     return { raw: r, current: mapContactRow(r) };
   });
   // Tạo xong mà lưu phần CSKH lỗi → bấm lưu lại phải dùng đúng người đã tạo, không tạo trùng
@@ -514,6 +545,10 @@ export function ContactProfileModal({ contactId, data, clients, toast, onClose, 
       });
       // Thẻ BD Pipeline chưa chọn người liên hệ → đặt người này (không ghi đè người đã có)
       for (const entry of pipeEntries) await fillPipelineContactIfEmpty(entry, { id: saveRaw.id, name: name.trim() }, user);
+      // VD Bảng nháp đầu mối: đánh dấu dòng nháp đã chuyển sang Sale / CTV (lỗi ở bước này không làm mất người vừa tạo)
+      if (isNew && onCreated) {
+        try { await onCreated(saveRaw.id); } catch (e) { toast('Đã thêm người nhưng chưa đánh dấu được nơi chuyển sang: ' + (e as Error).message); }
+      }
       setSaving(false);
       emitCskhDataChanged();
       toast(partial174 ? 'Đã lưu hồ sơ — riêng giới tính / học vấn / quê / nhắc sinh nhật chưa lưu được: cần chạy migration 174' : isNew ? `Đã thêm ${isSale ? 'Sale' : 'liên hệ'} "${name.trim()}"` : 'Đã cập nhật hồ sơ');
