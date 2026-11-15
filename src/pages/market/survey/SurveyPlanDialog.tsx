@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Check, ExternalLink, Loader2, MapPin, Navigation, Pencil, Plus, Route, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, ExternalLink, Loader2, MapPin, Navigation, Pencil, Plus, Route, Search, Trash2, X } from 'lucide-react';
 import { streetTiles } from '../../../lib/mapTiles';
 import { escapeMapHtml } from '../../../lib/mapGroups';
 import type { LatLng } from '../../../lib/geo';
@@ -65,12 +65,15 @@ interface Props {
   tripId?: string | null;
   /** Màn khảo sát: bấm "Dẫn đường qua N công ty" */
   onNavigate?: (ordered: PlanStop[]) => void;
+  /** Màn khảo sát: công ty nào đã ghé (kể cả tick tay) + tick / bỏ tick */
+  isDone?: (s: PlanStop) => boolean;
+  onToggleDone?: (s: PlanStop) => void;
   onClose: () => void;
   say: (m: string) => void;
   zIndex?: number;
 }
 
-export default function SurveyPlanDialog({ zones, initialZoneId, companies, stops, setStops, missing, token, userName, here = null, tripId = null, onNavigate, onClose, say, zIndex = 80 }: Props) {
+export default function SurveyPlanDialog({ zones, initialZoneId, companies, stops, setStops, missing, token, userName, here = null, tripId = null, onNavigate, isDone, onToggleDone, onClose, say, zIndex = 80 }: Props) {
   const isMobile = useIsMobile();
   const countByZone = useMemo(() => {
     const m = new Map<string, number>();
@@ -82,7 +85,7 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
   const zone = zones.find(z => z.id === zoneId) ?? null;
 
   const zoneStops = useMemo(() => stops.filter(s => s.zone_id === zoneId), [stops, zoneId]);
-  const visitedNow = useCallback((s: PlanStop) => !!tripId && s.visited_trip_id === tripId, [tripId]);
+  const visitedNow = useCallback((s: PlanStop) => (isDone ? isDone(s) : !!tripId && s.visited_trip_id === tripId), [tripId, isDone]);
   const todoStops = useMemo(() => zoneStops.filter(s => !visitedNow(s)), [zoneStops, visitedNow]);
   const doneStops = useMemo(() => zoneStops.filter(visitedNow), [zoneStops, visitedNow]);
   const center = useMemo<LatLng | null>(() => {
@@ -301,12 +304,41 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planKey]);
 
-  const ordered = useMemo(() => {
+  /** Thứ tự tự xếp tay (kéo / ▲▼ / Đi trước) — null = theo thứ tự ngắn nhất app tính */
+  const [manualIds, setManualIds] = useState<string[] | null>(null);
+  const autoOrdered = useMemo(() => {
     if (!plan) return todoStops;
     const byId = new Map(todoStops.map(s => [s.id, s]));
     const list = plan.ids.map(id => byId.get(id)).filter((s): s is PlanStop => !!s);
     return [...list, ...todoStops.filter(s => !plan.ids.includes(s.id))];
   }, [plan, todoStops]);
+  const ordered = useMemo(() => {
+    if (!manualIds) return autoOrdered;
+    const byId = new Map(todoStops.map(s => [s.id, s]));
+    const list = manualIds.map(id => byId.get(id)).filter((s): s is PlanStop => !!s);
+    return [...list, ...autoOrdered.filter(s => !manualIds.includes(s.id))];
+  }, [manualIds, autoOrdered, todoStops]);
+  const moveStop = (from: number, to: number) => {
+    if (to < 0 || to >= ordered.length || from === to) return;
+    const ids = ordered.map(s => s.id);
+    const [m] = ids.splice(from, 1);
+    ids.splice(to, 0, m);
+    setManualIds(ids);
+  };
+  const [dragId, setDragId] = useState<string | null>(null);
+  // Đổi tay thứ tự → vẽ lại đường theo thứ tự mới; đổi chỗ xuất phát / danh sách → về thứ tự ngắn nhất
+  useEffect(() => { setManualIds(null); }, [zoneId, startMode, todoStops.length]);
+  useEffect(() => {
+    if (!manualIds) return;
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => {
+      const pts: LatLng[] = [...(startPt ? [startPt] : []), ...ordered.map(s => ({ lat: s.lat, lng: s.lng }))];
+      if (pts.length < 2) return;
+      void routeShape(pts, ctrl.signal).then(shp => { if (!ctrl.signal.aborted) setShape(shp?.lines ?? null); }).catch(() => {});
+    }, 400);
+    return () => { ctrl.abort(); window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualIds]);
   const gLinks = useMemo(() => googleDirectionsLinks(startMode === 'center' ? center : null, ordered.map(s => ({ lat: s.lat, lng: s.lng }))), [ordered, startMode, center]);
 
   // ── Sửa / xoá ──
@@ -508,16 +540,28 @@ export default function SurveyPlanDialog({ zones, initialZoneId, companies, stop
                 </div>
               )}
               <div className="rounded-xl border border-[#E8E7E2] divide-y divide-[#F0EFEA] overflow-hidden empty:hidden">
-                {ordered.map(s => {
-                  const leg = plan?.legs[s.id];
+                {manualIds && ordered.length > 1 && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#F4F3FF] text-[11.5px] text-[#3634A3]">
+                    <span className="flex-1">Đang theo thứ tự bạn xếp</span>
+                    <button onClick={() => { setManualIds(null); setShape(null); }} className="font-semibold underline">Xếp lại ngắn nhất</button>
+                  </div>
+                )}
+                {ordered.map((s, idx) => {
+                  const leg = manualIds ? null : plan?.legs[s.id];
                   return (
                     <StopRow key={s.id} s={s} no={numberOf(s.id)} leg={leg ?? null} active={focusId === s.id}
+                      onUp={ordered.length > 1 ? () => moveStop(idx, idx - 1) : undefined} onDown={ordered.length > 1 ? () => moveStop(idx, idx + 1) : undefined}
+                      onFirst={idx > 0 ? () => moveStop(idx, 0) : undefined} isFirst={idx === 0} isLast={idx === ordered.length - 1}
+                      draggable={ordered.length > 1} dragging={dragId === s.id}
+                      onDragStart={() => setDragId(s.id)} onDragEnd={() => setDragId(null)}
+                      onDropOn={() => { const from = ordered.findIndex(x => x.id === dragId); setDragId(null); if (from >= 0) moveStop(from, idx); }}
+                      onToggleDone={onToggleDone ? () => onToggleDone(s) : undefined}
                       editing={editing?.id === s.id ? editing.value : null} onEdit={v => setEditing(v == null ? null : { id: s.id, value: v })} onSaveName={() => void saveName()}
                       onFocus={() => setFocusId(s.id)} onDelete={() => void remove(s)} />
                   );
                 })}
                 {doneStops.map(s => (
-                  <StopRow key={s.id} s={s} no={0} leg={null} active={focusId === s.id} done
+                  <StopRow key={s.id} s={s} no={0} leg={null} active={focusId === s.id} done onToggleDone={onToggleDone ? () => onToggleDone(s) : undefined}
                     editing={editing?.id === s.id ? editing.value : null} onEdit={v => setEditing(v == null ? null : { id: s.id, value: v })} onSaveName={() => void saveName()}
                     onFocus={() => setFocusId(s.id)} onDelete={() => void remove(s)} />
                 ))}
@@ -572,13 +616,23 @@ function CandRow({ c, added, onAdd, compact, onMore }: { c: StopCandidate; added
   );
 }
 
-function StopRow({ s, no, leg, active, done, editing, onEdit, onSaveName, onFocus, onDelete }: {
+function StopRow({ s, no, leg, active, done, editing, onEdit, onSaveName, onFocus, onDelete, onUp, onDown, onFirst, isFirst, isLast, draggable, dragging, onDragStart, onDragEnd, onDropOn, onToggleDone }: {
   s: PlanStop; no: number; leg: { km: number; sec: number } | null; active: boolean; done?: boolean;
+  onUp?: () => void; onDown?: () => void; onFirst?: () => void; isFirst?: boolean; isLast?: boolean;
+  draggable?: boolean; dragging?: boolean; onDragStart?: () => void; onDragEnd?: () => void; onDropOn?: () => void;
+  /** Tick tay: đã khảo sát xong / bỏ tick */
+  onToggleDone?: () => void;
   editing: string | null; onEdit: (v: string | null) => void; onSaveName: () => void; onFocus: () => void; onDelete: () => void;
 }) {
   const visitedBefore = !done && s.visited_at ? new Date(s.visited_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : null;
   return (
-    <div className={`flex items-center gap-2.5 px-3 py-2 ${active ? 'bg-[#F4F3FF]' : ''} ${done ? 'opacity-70' : ''}`}>
+    <div className={`flex items-center gap-2 px-3 py-2 ${active ? 'bg-[#F4F3FF]' : ''} ${done ? 'opacity-70' : ''} ${dragging ? 'opacity-40' : ''}`}
+      draggable={!!draggable && editing == null} onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; onDragStart?.(); }} onDragEnd={onDragEnd}
+      onDragOver={e => { if (onDropOn) e.preventDefault(); }} onDrop={e => { e.preventDefault(); onDropOn?.(); }}>
+      {onToggleDone && (
+        <button onClick={onToggleDone} title={done ? 'Bỏ tick (chưa khảo sát)' : 'Tick: đã khảo sát xong công ty này'} aria-label={done ? 'Bỏ tick' : 'Đánh dấu đã khảo sát'}
+          className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 ${done ? 'bg-[#34C759] border-[#34C759] text-white' : 'border-[#C7C7CC] text-transparent hover:border-[#34C759]'}`}><Check size={14} strokeWidth={3} /></button>
+      )}
       <button onClick={onFocus} className={`w-7 h-7 rounded-lg text-white text-[12.5px] font-bold flex items-center justify-center shrink-0 ${done ? 'bg-[#34C759]' : 'bg-[#5E5CE6]'}`} aria-label="Xem trên bản đồ">
         {done ? <Check size={14} strokeWidth={3} /> : no}
       </button>
@@ -594,7 +648,7 @@ function StopRow({ s, no, leg, active, done, editing, onEdit, onSaveName, onFocu
           <button onClick={onFocus} className="block w-full text-left">
             <span className="block text-[13px] font-medium leading-tight truncate">{stopTitle(s)}</span>
             <span className="block text-[11px] text-[#888] truncate">
-              {done ? 'Đã ghé trong chuyến này' : leg ? `+${fmtKm(leg.km)} · ${fmtMin(leg.sec)}` : no === 1 ? 'Điểm đầu' : ''}
+              {done ? 'Đã khảo sát xong' : leg ? `+${fmtKm(leg.km)} · ${fmtMin(leg.sec)}` : no === 1 ? 'Điểm đầu' : ''}
               {visitedBefore ? ` · lần trước ghé ${visitedBefore}` : ''}
               {` · ${STOP_SOURCE_LABEL[s.source]}`}{s.address ? ` · ${s.address}` : ''}
             </span>
@@ -603,6 +657,9 @@ function StopRow({ s, no, leg, active, done, editing, onEdit, onSaveName, onFocu
       </div>
       {editing == null && (
         <>
+          {!done && onFirst && <button onClick={onFirst} title="Đi công ty này trước" className="h-7 px-2 rounded-full bg-[#EEF0FF] text-[#3634A3] text-[11px] font-semibold shrink-0">Đi trước</button>}
+          {!done && onUp && <button onClick={onUp} disabled={isFirst} title="Lên" className="w-7 h-8 rounded-full text-[#555] hover:bg-[#F3F2EE] flex items-center justify-center shrink-0 disabled:opacity-25"><ChevronUp size={15} /></button>}
+          {!done && onDown && <button onClick={onDown} disabled={isLast} title="Xuống" className="w-7 h-8 rounded-full text-[#555] hover:bg-[#F3F2EE] flex items-center justify-center shrink-0 disabled:opacity-25"><ChevronDown size={15} /></button>}
           <button onClick={() => onEdit(s.name)} title="Đổi tên" className="w-8 h-8 rounded-full text-[#888] hover:bg-[#F3F2EE] flex items-center justify-center shrink-0"><Pencil size={13} /></button>
           <a href={s.map_link || `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`} target="_blank" rel="noopener noreferrer" title="Mở trên Google Maps"
             className="w-8 h-8 rounded-full text-[#888] hover:bg-[#F3F2EE] flex items-center justify-center shrink-0"><ExternalLink size={13} /></a>

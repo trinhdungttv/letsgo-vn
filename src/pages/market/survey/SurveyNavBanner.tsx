@@ -1,6 +1,6 @@
 // Băng dẫn đường trên cùng màn khảo sát (kiểu Google Maps): mũi tên rẽ to, còn bao xa, rẽ vào đường nào, chỗ rẽ sau đó.
-import type { ReactNode } from 'react';
-import { ArrowUp, ArrowUpLeft, ArrowUpRight, Bell, CornerUpLeft, CornerUpRight, ExternalLink, Flag, Loader2, RefreshCw, Route, SkipForward, Undo2, Volume2, VolumeX, X } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ArrowUp, ArrowUpLeft, ArrowUpRight, Bell, Check, ChevronDown, ChevronUp, CornerUpLeft, CornerUpRight, ExternalLink, Flag, ListOrdered, Loader2, RefreshCw, Route, SkipForward, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import type { Maneuver, ManeuverKind, NavRoute } from '../../../lib/kcnSurvey/navigate';
 import { fmtDistance } from '../../../lib/kcnSurvey/track';
 import type { NavMode, NavStatus } from './useSurveyNavigation';
@@ -38,9 +38,14 @@ interface Props {
   compact?: boolean;
   /** Kế hoạch ghé: bỏ qua công ty đang dẫn tới */
   onSkipStop?: () => void;
+  /** Kế hoạch ghé: đổi thứ tự các công ty còn lại (ids mới) — công ty đầu đổi thì dẫn lại */
+  onReorderStops?: (ids: string[]) => void;
+  /** Kế hoạch ghé: tick xong 1 công ty (không cần tới nơi) */
+  onDoneStop?: (id: string) => void;
 }
 
-export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop, compact, onSkipStop }: Props) {
+export default function SurveyNavBanner({ mode, status, route, next, after, distToNext, remaining, toApproach, sound, onSound, onReplan, onStop, compact, onSkipStop, onReorderStops, onDoneStop }: Props) {
+  const [listOpen, setListOpen] = useState(false);
   if (mode.kind === 'off') return null;
   const stop = mode.kind === 'stops' ? mode.stops[0] ?? null : null;
   const stopNo = mode.kind === 'stops' ? `${mode.total - mode.stops.length + 1}/${mode.total}` : '';
@@ -97,6 +102,10 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
           <button onClick={onSkipStop} title={`Bỏ qua ${stop.name}, đi công ty kế tiếp`}
             className={`${compact ? 'h-7' : 'h-8'} px-2 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}><SkipForward size={13} /> Bỏ qua</button>
         )}
+        {mode.kind === 'stops' && mode.stops.length > 1 && onReorderStops && (
+          <button onClick={() => setListOpen(o => !o)} title="Đổi thứ tự / chọn công ty đi tiếp"
+            className={`${compact ? 'h-7' : 'h-8'} px-2 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}><ListOrdered size={13} /> Thứ tự</button>
+        )}
         <button onClick={onReplan} className={`${compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-full flex items-center justify-center hover:bg-white/10 shrink-0`} aria-label="Tìm đường khác" title="Tìm đường khác"><RefreshCw size={15} /></button>
         <button onClick={() => onSound(nextNavSound(sound))}
           className={`${compact ? 'h-7' : 'h-8'} pl-2 pr-2.5 rounded-full flex items-center gap-1 hover:bg-white/10 bg-white/10 shrink-0 text-[11.5px] font-medium`}
@@ -105,6 +114,25 @@ export default function SurveyNavBanner({ mode, status, route, next, after, dist
           {sound === 'voice' ? 'Giọng' : sound === 'beep' ? 'Bíp' : 'Tắt'}
         </button>
       </div>
+      {listOpen && mode.kind === 'stops' && onReorderStops && (
+        <div className="bg-white text-[#1D1D1F] max-h-[40vh] overflow-y-auto overscroll-contain divide-y divide-[#F0EFEA]">
+          {mode.stops.map((x, i, arr) => {
+            const ids = arr.map(y => y.id);
+            const move = (from: number, to: number) => { const c = [...ids]; const [m] = c.splice(from, 1); c.splice(to, 0, m); onReorderStops(c); };
+            const btn = 'w-8 h-8 rounded-full flex items-center justify-center shrink-0 disabled:opacity-25 hover:bg-[#F3F2EE]';
+            return (
+              <div key={x.id} className="flex items-center gap-1.5 px-2.5 py-1.5">
+                <span className={`w-6 h-6 rounded-md text-white text-[11.5px] font-bold flex items-center justify-center shrink-0 ${i === 0 ? 'bg-[#137333]' : 'bg-[#5E5CE6]'}`}>{mode.total - mode.stops.length + i + 1}</span>
+                <span className="flex-1 min-w-0 text-[12.5px] font-medium truncate">{x.name}</span>
+                {i > 0 && <button onClick={() => move(i, 0)} className="h-7 px-2 rounded-full bg-[#EEF0FF] text-[#3634A3] text-[11.5px] font-semibold shrink-0">Đi trước</button>}
+                <button disabled={i === 0} onClick={() => move(i, i - 1)} className={btn} aria-label="Lên"><ChevronUp size={16} /></button>
+                <button disabled={i === arr.length - 1} onClick={() => move(i, i + 1)} className={btn} aria-label="Xuống"><ChevronDown size={16} /></button>
+                {onDoneStop && <button onClick={() => onDoneStop(x.id)} title="Đã khảo sát xong công ty này" className="w-8 h-8 rounded-full bg-[#E8F7EE] text-[#137333] flex items-center justify-center shrink-0"><Check size={16} strokeWidth={3} /></button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

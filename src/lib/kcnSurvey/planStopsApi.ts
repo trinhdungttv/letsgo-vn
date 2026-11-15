@@ -64,6 +64,12 @@ export async function markStopVisited(id: string, tripId: string | null): Promis
   if (error) fail(error);
 }
 
+/** Bỏ dấu "đã ghé" trong chuyến (tick nhầm) — giữ visited_at để còn biết lần ghé gần nhất */
+export async function unmarkStopVisited(id: string): Promise<void> {
+  const { error } = await supabase.from('kcn_survey_plan_stops').update({ visited_trip_id: null }).eq('id', id);
+  if (error) fail(error);
+}
+
 // ── Link Google Maps rút gọn → toạ độ (qua api/resolve-map, cần phiên đăng nhập) ──
 export interface ResolvedLink { url: string; coords: LatLng | null }
 export async function resolveMapLink(url: string, token: string | null): Promise<ResolvedLink | null> {

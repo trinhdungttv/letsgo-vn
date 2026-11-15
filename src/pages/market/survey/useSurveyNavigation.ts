@@ -115,7 +115,7 @@ function useSpeech(enabled: boolean) {
 }
 
 /** Cách công ty trong kế hoạch bấy nhiêu mét là coi như tới nơi */
-export const STOP_ARRIVE_M = 40;
+export const STOP_ARRIVE_M = 100;
 
 export function useSurveyNavigation({ graph, fix, course, targets, scores, preferFactories, strategy, sound, say, onArrive }: Inputs) {
   const [mode, setMode] = useState<NavMode>({ kind: 'off' });
@@ -235,7 +235,7 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     if (mode.kind === 'off' || !fix) return;
     const p = { lat: fix.lat, lng: fix.lng };
     // Kế hoạch ghé: tới gần công ty (kể cả khi không có lộ trình — công ty ngoài bản đồ đường) → công ty kế tiếp
-    if (mode.kind === 'stops' && mode.stops[0] && distM(p, mode.stops[0].point) <= Math.max(STOP_ARRIVE_M, Math.min(60, fix.acc))) {
+    if (mode.kind === 'stops' && mode.stops[0] && distM(p, mode.stops[0].point) <= Math.max(STOP_ARRIVE_M, Math.min(150, fix.acc))) {
       advanceStop(p, true);
       return;
     }
@@ -324,6 +324,31 @@ export function useSurveyNavigation({ graph, fix, course, targets, scores, prefe
     dropStop: (id: string) => {
       const m = modeRef.current;
       if (m.kind !== 'stops' || m.stops[0]?.id === id || !m.stops.some(x => x.id === id)) return;
+      const next: NavMode = { ...m, stops: m.stops.filter(x => x.id !== id) };
+      setMode(next);
+      modeRef.current = next;
+    },
+    /** Kế hoạch ghé: đổi thứ tự các công ty còn lại (ids = thứ tự mới). Đổi công ty đầu → dẫn lại tới công ty đó */
+    reorderStops: (ids: readonly string[]) => {
+      const m = modeRef.current;
+      if (m.kind !== 'stops') return;
+      const byId = new Map(m.stops.map(x => [x.id, x]));
+      const list = ids.map(id => byId.get(id)).filter((x): x is NavStop => !!x);
+      for (const x of m.stops) if (!ids.includes(x.id)) list.push(x);
+      const firstChanged = list[0]?.id !== m.stops[0]?.id;
+      const next: NavMode = { ...m, stops: list };
+      setMode(next);
+      modeRef.current = next;
+      if (firstChanged) {
+        if (fix) plan({ lat: fix.lat, lng: fix.lng }, 'next');
+        else { setRoute(null); setStatus('waiting-gps'); }
+      }
+    },
+    /** Kế hoạch ghé: đánh dấu xong 1 công ty (tick tay) — đang dẫn tới đúng công ty đó thì sang công ty kế */
+    completeStop: (id: string) => {
+      const m = modeRef.current;
+      if (m.kind !== 'stops' || !m.stops.some(x => x.id === id)) return;
+      if (m.stops[0]?.id === id) { advanceStop(fix ? { lat: fix.lat, lng: fix.lng } : null, true); return; }
       const next: NavMode = { ...m, stops: m.stops.filter(x => x.id !== id) };
       setMode(next);
       modeRef.current = next;

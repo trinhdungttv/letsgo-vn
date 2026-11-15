@@ -25,8 +25,9 @@ import { streetTiles } from '../../../lib/mapTiles';
 import { escapeMapHtml, SOUTH_VN_BOUNDS } from '../../../lib/mapGroups';
 import type { Branch, LaborHistoryEntry, MarketLead, MarketZone } from '../../../lib/types';
 import type { MarketTab } from '../../Market';
+import type { LatLng } from '../../../lib/geo';
 import {
-  boundsAround, distM, distToShape, fmtDistance, fmtDuration, roadCoverage, splitRoads, mergePieces, TrackIndex,
+  boundsAround, distM, distToShape, fmtDistance, fmtDuration, pointSegDist, projector, roadCoverage, splitRoads, mergePieces, TrackIndex,
   type Bounds, type TrackSegment,
 } from '../../../lib/kcnSurvey/track';
 import {
@@ -72,7 +73,7 @@ import { listPanoramas, PanoMissingTable, PANO_MIGRATION_HINT, type MapPanorama 
 import { listLodgings, LodgingMissingTable, LODGING_MIGRATION_HINT } from '../../../lib/kcnSurvey/lodgings';
 import { lodgingTitle, fmtRent, type Lodging } from '../../../lib/kcnSurvey/lodgingCore';
 import SurveyPlanDialog from './SurveyPlanDialog';
-import { listPlanStops, markStopVisited, PlanMissingTable } from '../../../lib/kcnSurvey/planStopsApi';
+import { listPlanStops, markStopVisited, unmarkStopVisited, PlanMissingTable } from '../../../lib/kcnSurvey/planStopsApi';
 import { stopTitle, type PlanStop } from '../../../lib/kcnSurvey/planStops';
 
 interface Props {
@@ -415,15 +416,24 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     listPlanStops().then(setPlanStops).catch(e => { if (e instanceof PlanMissingTable) setPlanMissing(true); });
   }, []);
   const tripIdNow = recorder.trip?.id ?? null;
+  /** Chưa có chuyến (chưa bấm bắt đầu) → nhớ tạm trong máy các công ty đã tới / đã tick */
+  const [localDone, setLocalDone] = useState<ReadonlySet<string>>(new Set());
   const zoneStops = useMemo(() => (zone ? planStops.filter(s => s.zone_id === zone.id) : []), [planStops, zone]);
-  const stopDone = useCallback((s: PlanStop) => !!tripIdNow && s.visited_trip_id === tripIdNow, [tripIdNow]);
+  const stopDone = useCallback((s: PlanStop) => (tripIdNow ? s.visited_trip_id === tripIdNow : localDone.has(s.id)), [tripIdNow, localDone]);
   const planLeft = zoneStops.filter(s => !stopDone(s)).length;
-  /** Tới / đi ngang 1 công ty trong kế hoạch → "đã ghé" trong chuyến đang đi */
+  /** Tới / đi ngang / tick tay 1 công ty trong kế hoạch → "đã ghé" trong chuyến đang đi */
   const markVisited = useCallback((id: string) => {
     const at = new Date().toISOString();
     setPlanStops(list => list.map(s => (s.id === id ? { ...s, visited_at: at, visited_trip_id: tripIdNow } : s)));
+    if (!tripIdNow) setLocalDone(set => new Set(set).add(id));
     void markStopVisited(id, tripIdNow).catch(() => { /* mất mạng — đánh dấu trong máy, lần sau đi ngang ghi lại */ });
   }, [tripIdNow]);
+  /** Bỏ tick (bấm nhầm) */
+  const unmarkVisited = useCallback((id: string) => {
+    setPlanStops(list => list.map(s => (s.id === id ? { ...s, visited_trip_id: null } : s)));
+    setLocalDone(set => { const n = new Set(set); n.delete(id); return n; });
+    void unmarkStopVisited(id).catch(() => { /* bỏ qua */ });
+  }, []);
 
   // ── Dẫn đường ─────────────────────────────────────────────────────────────
   const graph = useMemo(() => (area && allPieces.length ? buildRoadGraph(allPieces, area.roads) : null), [area, allPieces]);
@@ -438,15 +448,34 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     preferFactories: prefs.navPreferFactories, strategy: prefs.navStrategy, sound: prefs.navSound, say,
     onArrive: markVisited,
   });
-  // Đi ngang công ty trong kế hoạch (≤ 50 m) khi đang ghi chuyến → tự đánh dấu đã ghé (công ty đang dẫn tới để dẫn đường tự xử lý)
+  /** Tick tay trong hộp Kế hoạch: đang dẫn đường thì công ty đó cũng rời danh sách dẫn */
+  const toggleStopDone = useCallback((s: PlanStop) => {
+    if (stopDone(s)) { unmarkVisited(s.id); return; }
+    markVisited(s.id);
+    nav.completeStop(s.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopDone, unmarkVisited, markVisited, nav.completeStop]);
+  // Đi ngang công ty trong kế hoạch (≤ 120 m — toạ độ thường ở giữa nhà máy, đường cách cổng xa; tính cả đoạn thẳng giữa 2 điểm GPS
+  // liền nhau để không lọt khi GPS thưa) → tự tích xanh "đã ghé". Công ty đang dẫn tới để dẫn đường tự xử lý.
+  const prevStopFix = useRef<LatLng | null>(null);
   useEffect(() => {
-    if (!fix || recorder.status !== 'recording' || !tripIdNow) return;
+    if (!fix) return;
+    const prev = prevStopFix.current;
+    prevStopFix.current = { lat: fix.lat, lng: fix.lng };
+    if (!zoneStops.length || (recorder.status !== 'recording' && nav.mode.kind !== 'stops')) return;
     const navFirst = nav.mode.kind === 'stops' ? nav.mode.stops[0]?.id : null;
+    const pr = projector(fix.lat, fix.lng);
+    const ax = prev ? pr.x(prev.lng) : 0, ay = prev ? pr.y(prev.lat) : 0;
+    const prevOk = !!prev && distM(prev, fix) < 400;
+    let left = planLeft;
     for (const s of zoneStops) {
-      if (stopDone(s) || s.id === navFirst || distM(fix, s) > 50) continue;
+      if (stopDone(s) || s.id === navFirst) continue;
+      const d = prevOk ? pointSegDist(pr.x(s.lng), pr.y(s.lat), ax, ay, 0, 0) : distM(fix, s);
+      if (d > 120) continue;
       markVisited(s.id);
       nav.dropStop(s.id);
-      say(`✓ Đã ghé ${stopTitle(s)}${planLeft > 1 ? ` — còn ${planLeft - 1} công ty trong kế hoạch` : ' — xong kế hoạch'}`);
+      left -= 1;
+      say(`✓ Đã ghé ${stopTitle(s)}${left > 0 ? ` — còn ${left} công ty trong kế hoạch` : ' — xong kế hoạch'}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);
@@ -1462,7 +1491,8 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
     <SurveyNavBanner mode={nav.mode} status={nav.status} route={nav.route} next={nav.next} after={nav.after}
       distToNext={nav.distToNext} remaining={nav.remaining} toApproach={nav.toApproach} compact={compact}
       sound={prefs.navSound} onSound={v => { setPref({ navSound: v }); nav.previewSound(v); say(`Âm thanh dẫn đường: ${NAV_SOUND_LABEL[v]}`); }}
-      onReplan={nav.replan} onStop={nav.stop} onSkipStop={nav.skipStop} />
+      onReplan={nav.replan} onStop={nav.stop} onSkipStop={nav.skipStop} onReorderStops={nav.reorderStops}
+      onDoneStop={id => { const st = zoneStops.find(x => x.id === id); if (st) toggleStopDone(st); }} />
   );
   const companyCard = cardItem && panel === 'none' && (
     <div className={compact ? 'max-h-[46vh] overflow-y-auto overscroll-contain rounded-2xl pointer-events-auto' : ''}>
@@ -1999,7 +2029,7 @@ export default function KcnSurveyMode({ marketZones, marketLeads, branches, labo
 
       {planOpen && (
         <SurveyPlanDialog zones={allZones} initialZoneId={zone?.id ?? null} companies={allCompanies} stops={planStops} setStops={setPlanStops}
-          missing={planMissing} token={token} userName={user?.full_name ?? ''} here={fix ? { lat: fix.lat, lng: fix.lng } : null} tripId={tripIdNow}
+          missing={planMissing} token={token} userName={user?.full_name ?? ''} here={fix ? { lat: fix.lat, lng: fix.lng } : null} tripId={tripIdNow} isDone={stopDone} onToggleDone={toggleStopDone}
           onNavigate={startNavPlan} onClose={() => setPlanOpen(false)} say={say} zIndex={1400} />
       )}
 

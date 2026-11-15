@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-15-plan-reorder',
+    date: '2026-11-15',
+    title: 'Khảo sát KCN — Kế hoạch ghé',
+    features: [
+      'Đổi thứ tự công ty cần ghé: kéo thả, mũi tên lên/xuống hoặc "Đi trước" — cả trong hộp Kế hoạch lẫn lúc đang dẫn đường',
+      'Tick tay "đã khảo sát xong" cho từng công ty; đi ngang qua cũng tự tích xanh (nhận cả khi GPS thưa)',
+    ],
+  },
+  {
     id: '2026-11-14-share-sections',
     date: '2026-11-14',
     title: 'Khảo sát KCN — Chia sẻ',
