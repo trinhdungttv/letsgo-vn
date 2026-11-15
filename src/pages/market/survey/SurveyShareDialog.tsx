@@ -4,11 +4,11 @@
 // Khảo sát sau này (migration 227): "Tự cập nhật" (khảo sát mới tự hiện; tỉnh chọn cả tỉnh thì KCN mới cũng tự vào) hoặc
 // "Chốt đến hôm nay". Link đã gửi sửa được phạm vi bằng "Sửa phạm vi" — link + mã giữ nguyên.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Check, Copy, Home, KeyRound, Link2, Loader2, Pencil, Pin, RefreshCw, Search, Shuffle, Trash2, X } from 'lucide-react';
+import { Box as Box3d, Camera, Check, Copy, Home, KeyRound, Link2, Loader2, Pencil, Pin, RefreshCw, Route, Search, Shuffle, Trash2, X } from 'lucide-react';
 import {
   buildShareMessage, createSurveyShare, DEFAULT_EXPIRY_DAYS, EXPIRY_OPTIONS, fmtVnDate, fmtVnDateTime, FOLLOW_ALL, followKeys, followLabels, groupZonesByProvince,
   listSurveyShares, provincesOf, randomPin, revokeSurveyShare, scopeModeText, scopeSelection, shareState, surveyShareUrl, updateSurveyShare,
-  updateSurveyShareScope, type ShareZone, type SurveyShareRow,
+  updateSurveyShareScope, effectiveSections, SHARE_SECTIONS, type ShareSection, type ShareZone, type SurveyShareRow,
 } from '../../../lib/kcnSurvey/share';
 import { fold } from './surveyData';
 
@@ -25,7 +25,7 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 interface Issued {
-  url: string; pin: string; zoneNames: string[]; provinces: string[]; expiresAt: string | null; recipient: string; title: string; lodgings: boolean;
+  url: string; pin: string; zoneNames: string[]; provinces: string[]; expiresAt: string | null; recipient: string; title: string; lodgings: boolean; sections: ShareSection[];
   /** tự cập nhật / số liệu chốt đến dataUntil */
   live: boolean; dataUntil: string | null;
 }
@@ -45,7 +45,12 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
   const [recipient, setRecipient] = useState('');
   const [pin, setPin] = useState(() => randomPin());
   // Kèm nhà trọ (migration 222): mặc định bật khi đã có nhà trọ; SĐT chủ nhà mặc định ẩn
-  const [withLodgings, setWithLodgings] = useState(() => zones.some(z => (z.lodgings ?? 0) > 0));
+  const defaultSections = useCallback((): Set<ShareSection> => new Set<ShareSection>(['photos', 'trips',
+    ...(zones.some(z => (z.lodgings ?? 0) > 0) ? ['lodgings' as const] : []), ...(zones.some(z => (z.panos ?? 0) > 0) ? ['panos' as const] : [])]), [zones]);
+  // Hạng mục người xem được thấy (migration 228)
+  const [secSel, setSecSel] = useState<Set<ShareSection>>(() => defaultSections());
+  const withLodgings = secSel.has('lodgings');
+  const toggleSection = (id: ShareSection) => setSecSel(c => { const n = new Set(c); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const [showLandlord, setShowLandlord] = useState(false);
   // Khảo sát sau này: false = tự cập nhật (mặc định), true = chốt số liệu đến lúc tạo link
   const [freeze, setFreeze] = useState(false);
@@ -90,24 +95,26 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
 
   const showIssued = (i: Issued) => {
     setIssued(i);
-    setMessage(buildShareMessage({ url: i.url, pin: i.pin, zoneNames: i.zoneNames, provinces: i.provinces, expiresAt: i.expiresAt, recipient: i.recipient, lodgings: i.lodgings, live: i.live, dataUntil: i.dataUntil }));
+    setMessage(buildShareMessage({ url: i.url, pin: i.pin, zoneNames: i.zoneNames, provinces: i.provinces, expiresAt: i.expiresAt, recipient: i.recipient, lodgings: i.lodgings, sections: i.sections, live: i.live, dataUntil: i.dataUntil }));
     setCopied(null);
   };
 
   const create = async () => {
     if (!token) { setErr('Cần đăng nhập để tạo link chia sẻ'); return; }
     if (!selected.size) { setErr('Chọn ít nhất 1 KCN để chia sẻ'); return; }
+    if (!secSel.size) { setErr('Chọn ít nhất 1 hạng mục cho người xem'); return; }
     setBusy(true); setErr(null);
     try {
+      const sections = SHARE_SECTIONS.filter(x => secSel.has(x));
       const chosen = zones.filter(z => selected.has(z.id));
       const provinces = provincesOf(zones, selected);
       const r = await createSurveyShare(token, {
         label: recipient.trim(), zoneIds: chosen.map(z => z.id), provinces, pin, days, lodgings: withLodgings, showLandlord: withLodgings && showLandlord,
-        follow, freeze,
+        follow, freeze, sections,
       });
       showIssued({
         url: surveyShareUrl(r.code), pin, zoneNames: chosen.map(z => z.name), provinces, expiresAt: r.expires_at, recipient: recipient.trim(), title: recipient.trim(),
-        lodgings: withLodgings, live: !freeze, dataUntil: r.data_until ?? (freeze ? new Date().toISOString() : null),
+        lodgings: withLodgings, sections, live: !freeze, dataUntil: r.data_until ?? (freeze ? new Date().toISOString() : null),
       });
       setShares(null);
     } catch (e) { setErr((e as Error).message); }
@@ -116,25 +123,26 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
 
   const resetForm = () => {
     setSelected(new Set()); setRecipient(''); setFreeze(false); setErr(null);
-    setWithLodgings(zones.some(z => (z.lodgings ?? 0) > 0)); setShowLandlord(false);
+    setSecSel(defaultSections()); setShowLandlord(false);
   };
   const startEdit = (s: SurveyShareRow) => {
     setEditing(s);
     setSelected(scopeSelection(zones, s));
     setRecipient(s.label);
     setFreeze(!!s.data_until);
-    setWithLodgings(!!s.include_lodgings); setShowLandlord(!!s.show_landlord);
+    setSecSel(new Set(effectiveSections(s))); setShowLandlord(!!s.show_landlord);
     setQ(''); setErr(null); setTab('new');
   };
   const cancelEdit = () => { setEditing(null); resetForm(); setTab('list'); };
   const saveEdit = async () => {
     if (!token || !editing) return;
     if (!selected.size) { setErr('Chọn ít nhất 1 KCN để chia sẻ'); return; }
+    if (!secSel.size) { setErr('Chọn ít nhất 1 hạng mục cho người xem'); return; }
     setBusy(true); setErr(null);
     try {
       await updateSurveyShareScope(token, editing.id, {
         label: recipient.trim(), zoneIds: zones.filter(z => selected.has(z.id)).map(z => z.id), provinces: provincesOf(zones, selected),
-        follow, freeze, lodgings: withLodgings, showLandlord: withLodgings && showLandlord,
+        follow, freeze, lodgings: withLodgings, showLandlord: withLodgings && showLandlord, sections: SHARE_SECTIONS.filter(x => secSel.has(x)),
       });
       say('Đã lưu phạm vi link — người xem mở lại link là thấy');
       setEditing(null); resetForm(); setShares(null); setTab('list');
@@ -160,7 +168,7 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
       const names = s.zone_ids.map(id => zoneById.get(id)?.name).filter((n): n is string => !!n);
       showIssued({
         url: surveyShareUrl(r.code), pin: newPin, zoneNames: names.length ? names : [`${s.zone_ids.length} KCN`], provinces: s.provinces, expiresAt: r.expires_at,
-        recipient: s.label, title: s.label, lodgings: !!s.include_lodgings, live: !s.data_until, dataUntil: s.data_until ?? null,
+        recipient: s.label, title: s.label, lodgings: !!s.include_lodgings, sections: effectiveSections(s), live: !s.data_until, dataUntil: s.data_until ?? null,
       });
       setShares(null);
     } catch (e) { say((e as Error).message); }
@@ -175,6 +183,7 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
   const chosenZones = zones.filter(z => selected.has(z.id));
   const totalPhotos = chosenZones.reduce((n, z) => n + z.photos, 0);
   const totalLodgings = chosenZones.reduce((n, z) => n + (z.lodgings ?? 0), 0);
+  const totalPanos = chosenZones.reduce((n, z) => n + (z.panos ?? 0), 0);
   // Tỉnh được theo dõi khi tự cập nhật (tỉnh chọn đủ mọi KCN; chọn tất cả = mọi KCN)
   const follow = useMemo(() => followKeys(zones, selected), [zones, selected]);
   const keptUntil = editing?.data_until ?? null;
@@ -252,7 +261,7 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-medium text-[#666]">Cho xem khu vực nào <span className="text-[#aaa]">· chạm tên tỉnh để chọn cả tỉnh</span></span>
-                    <span className="text-[11px] text-[#888]">{selected.size ? `${selected.size} KCN · ${totalPhotos} ảnh${withLodgings && totalLodgings ? ` · ${totalLodgings} trọ` : ''}` : 'chưa chọn'}</span>
+                    <span className="text-[11px] text-[#888]">{selected.size ? `${selected.size} KCN · ${totalPhotos} ảnh${withLodgings && totalLodgings ? ` · ${totalLodgings} trọ` : ''}${secSel.has('panos') && totalPanos ? ` · ${totalPanos} ảnh 360` : ''}` : 'chưa chọn'}</span>
                   </div>
                   {zones.length === 0 ? (
                     <div className="text-[12.5px] text-[#888] rounded-lg bg-[#F9F9F7] p-3">Chưa có KCN nào có dữ liệu khảo sát để chia sẻ.</div>
@@ -281,7 +290,7 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
                                 <button type="button" key={z.id} onClick={() => toggleZone(z.id)} className="w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-left hover:bg-[#FAFAF8]">
                                   <Box state={selected.has(z.id) ? 'on' : 'off'} />
                                   <span className="text-[12.5px] flex-1 min-w-0 truncate">{z.name}</span>
-                                  <span className="text-[11px] text-[#999] shrink-0">{z.photos} ảnh · {z.trips} chuyến{z.lodgings ? ` · ${z.lodgings} trọ` : ''}</span>
+                                  <span className="text-[11px] text-[#999] shrink-0">{z.photos} ảnh · {z.trips} chuyến{z.lodgings ? ` · ${z.lodgings} trọ` : ''}{z.panos ? ` · ${z.panos} ảnh 360` : ''}</span>
                                 </button>
                               ))}
                             </div>
@@ -304,25 +313,34 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
                 </div>
 
                 <div>
-                  <span className="block text-[11px] font-medium text-[#666] mb-1.5">Kèm theo</span>
+                  <span className="block text-[11px] font-medium text-[#666] mb-1.5">Cho xem hạng mục nào <span className="text-[#aaa]">· hạng mục bỏ chọn thì người xem không thấy</span></span>
                   <div className="rounded-xl border border-[#E8E7E2] divide-y divide-[#F0EFEA]">
-                    <button type="button" onClick={() => setWithLodgings(v => !v)} className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-[#FAFAF8]">
-                      <span className="mt-0.5"><Box state={withLodgings ? 'on' : 'off'} /></span>
-                      <span className="flex-1 min-w-0">
-                        <span className="flex items-center gap-1.5 text-[12.5px] font-semibold"><Home size={13} className="text-[#FF9500]" /> Khảo sát nhà trọ</span>
-                        <span className="block text-[11px] text-[#888] leading-snug mt-0.5">Ảnh, số phòng, giá, tiện ích, khoảng cách xe máy / đi bộ tới công ty gần đó</span>
-                      </span>
-                      <span className="text-[11px] text-[#999] shrink-0 mt-0.5">{selected.size ? `${totalLodgings} nhà trọ` : ''}</span>
-                    </button>
-                    {withLodgings && (
-                      <button type="button" onClick={() => setShowLandlord(v => !v)} className="w-full flex items-start gap-2.5 pl-9 pr-3 py-2 text-left hover:bg-[#FAFAF8]">
-                        <span className="mt-0.5"><Box state={showLandlord ? 'on' : 'off'} /></span>
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-[12.5px]">Hiện tên & SĐT chủ nhà</span>
-                          <span className="block text-[11px] text-[#888] leading-snug mt-0.5">{showLandlord ? 'Người xem gọi / nhắn Zalo thẳng cho chủ nhà được' : 'Đang ẩn — người xem thấy "liên hệ Let\'s Go VN để được giới thiệu"'}</span>
-                        </span>
-                      </button>
-                    )}
+                    {([
+                      ['photos', <Camera key="p" size={13} className="text-[#0A84FF]" />, 'Ảnh chỉ tiêu', 'Công ty, vị trí tuyển, số lượng, lương, ghi chú trên ảnh', selected.size ? `${totalPhotos} ảnh` : ''],
+                      ['trips', <Route key="t" size={13} className="text-[#34C759]" />, 'Chuyến khảo sát', 'Lộ trình GPS các chuyến và bản đồ đường đã đi', selected.size ? `${chosenZones.reduce((n, z) => n + z.trips, 0)} chuyến` : ''],
+                      ['lodgings', <Home key="h" size={13} className="text-[#FF9500]" />, 'Nhà trọ', 'Ảnh, số phòng, giá, tiện ích, khoảng cách xe máy / đi bộ tới công ty gần đó', selected.size ? `${totalLodgings} nhà trọ` : ''],
+                      ['panos', <Box3d key="b" size={13} className="text-[#AF52DE]" />, 'Ảnh 360°', 'Ảnh toàn cảnh thực địa / flycam, xoay được kèm nét vẽ ghi chú', selected.size ? `${totalPanos} ảnh` : ''],
+                    ] as [ShareSection, ReactNode, string, string, string][]).map(([id, icon, title, sub, count]) => (
+                      <div key={id}>
+                        <button type="button" onClick={() => toggleSection(id)} aria-pressed={secSel.has(id)} className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-[#FAFAF8]">
+                          <span className="mt-0.5"><Box state={secSel.has(id) ? 'on' : 'off'} /></span>
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-1.5 text-[12.5px] font-semibold">{icon} {title}</span>
+                            <span className="block text-[11px] text-[#888] leading-snug mt-0.5">{sub}</span>
+                          </span>
+                          <span className="text-[11px] text-[#999] shrink-0 mt-0.5">{count}</span>
+                        </button>
+                        {id === 'lodgings' && withLodgings && (
+                          <button type="button" onClick={() => setShowLandlord(v => !v)} className="w-full flex items-start gap-2.5 pl-9 pr-3 py-2 text-left hover:bg-[#FAFAF8] border-t border-[#F0EFEA]">
+                            <span className="mt-0.5"><Box state={showLandlord ? 'on' : 'off'} /></span>
+                            <span className="flex-1 min-w-0">
+                              <span className="block text-[12.5px]">Hiện tên & SĐT chủ nhà</span>
+                              <span className="block text-[11px] text-[#888] leading-snug mt-0.5">{showLandlord ? 'Người xem gọi / nhắn Zalo thẳng cho chủ nhà được' : 'Đang ẩn — người xem thấy "liên hệ Let\'s Go VN để được giới thiệu"'}</span>
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                   {withLodgings && unzonedLodgings > 0 && (
                     <div className="text-[11px] text-[#999] mt-1.5">{unzonedLodgings} nhà trọ chưa gắn KCN nên không có trong link.</div>
@@ -351,12 +369,12 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
                 </>}
 
                 {err && <div className="text-[12.5px] text-[#b3140a] bg-[#fff1f0] rounded-lg px-3 py-2">{err}</div>}
-                <button onClick={editing ? saveEdit : create} disabled={busy || !selected.size}
+                <button onClick={editing ? saveEdit : create} disabled={busy || !selected.size || !secSel.size}
                   className="w-full h-11 rounded-full bg-[#0A84FF] text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-40 active:scale-95 transition">
                   {busy && <Loader2 size={15} className="animate-spin" />} {editing ? 'Lưu thay đổi' : 'Tạo link & soạn tin nhắn Zalo'}
                 </button>
                 <p className="text-[11px] text-[#999] leading-relaxed">
-                  Người xem chỉ thấy ảnh chỉ tiêu (công ty, vị trí, số lượng, lương, ghi chú), các chuyến{withLodgings ? ' và nhà trọ' : ''} của KCN đã chọn — không thấy ghi âm, tên nhân viên đi khảo sát{withLodgings && !showLandlord ? ', SĐT chủ nhà' : ''} hay KCN khác.
+                  Người xem chỉ thấy các hạng mục đã tick ({secSel.size ? SHARE_SECTIONS.filter(x => secSel.has(x)).map(x => ({ photos: 'ảnh chỉ tiêu', trips: 'chuyến khảo sát', lodgings: 'nhà trọ', panos: 'ảnh 360°' }[x])).join(', ') : 'chưa chọn'}) của KCN đã chọn — không thấy ghi âm, tên nhân viên đi khảo sát{withLodgings && !showLandlord ? ', SĐT chủ nhà' : ''} hay KCN khác.
                   Nhập sai mã 5 lần thì link tự khoá 15 phút.
                 </p>
               </div>
@@ -377,7 +395,7 @@ export default function SurveyShareDialog({ zones, unzonedLodgings = 0, token, o
                         </span>
                       </div>
                       <div className="text-[11.5px] text-[#888] leading-snug">
-                        {s.zone_ids.length} KCN{s.provinces.length ? ` · ${s.provinces.join(', ')}` : ''}{s.include_lodgings ? ` · kèm nhà trọ${s.show_landlord ? ' (có SĐT chủ nhà)' : ''}` : ''} · {s.expires_at ? `hạn ${fmtVnDate(new Date(s.expires_at))}` : 'không hết hạn'}
+                        {s.zone_ids.length} KCN{s.provinces.length ? ` · ${s.provinces.join(', ')}` : ''}· {effectiveSections(s).map(x => ({ photos: 'ảnh chỉ tiêu', trips: 'chuyến', lodgings: 'nhà trọ', panos: 'ảnh 360°' }[x])).join(', ')}{s.include_lodgings && s.show_landlord ? ' (có SĐT chủ nhà)' : ''} · {s.expires_at ? `hạn ${fmtVnDate(new Date(s.expires_at))}` : 'không hết hạn'}
                         <br /><span className={s.data_until ? 'text-[#b25e00]' : 'text-[#1d8a3b]'}>{s.data_until ? '📌' : '🔄'} {scopeModeText(zones, s)}</span>
                         <br />Đã mở {s.open_count} lần{s.last_opened_at ? `, gần nhất ${fmtVnDate(new Date(s.last_opened_at))}` : ''} · tạo {fmtVnDate(new Date(s.created_at))}{s.created_by_name ? ` bởi ${s.created_by_name}` : ''}
                         {locked && <span className="text-[#d70015] font-medium"> · đang khoá do nhập sai mã</span>}

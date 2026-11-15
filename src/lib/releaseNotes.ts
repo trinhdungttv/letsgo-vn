@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-14-share-sections',
+    date: '2026-11-14',
+    title: 'Khảo sát KCN — Chia sẻ',
+    features: [
+      'Chia sẻ link khảo sát: tích chọn người xem được thấy hạng mục nào (Ảnh chỉ tiêu, Chuyến khảo sát, Nhà trọ, Ảnh 360°)',
+      'Người nhận mở được Ảnh 360° ngay trên link chia sẻ (kéo xoay, phóng to, xem nét vẽ ghi chú)',
+    ],
+  },
+  {
     id: '2026-11-13-pano-gphotos-gps',
     date: '2026-11-13',
     title: 'Khảo sát KCN — Ảnh 360°',

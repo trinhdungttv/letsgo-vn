@@ -7,6 +7,7 @@ import type { TrackSegment } from './track';
 
 export const SURVEY_SHARE_HINT = 'Chưa chạy migration 209 (Chia sẻ khảo sát) trên Supabase — chạy file 20261106100000_209_kcn_survey_shares.sql rồi thử lại';
 export const SURVEY_SHARE_LODGING_HINT = 'Chưa chạy migration 222 (Chia sẻ kèm nhà trọ) trên Supabase — chạy file 20261112100000_222_kcn_survey_share_lodgings.sql rồi thử lại, hoặc bỏ chọn "Nhà trọ"';
+export const SURVEY_SHARE_SECTIONS_HINT = 'Chưa chạy migration 228 (Chọn hạng mục cho link chia sẻ) trên Supabase — chạy file 20261114100000_228_kcn_survey_share_sections.sql rồi thử lại';
 export const SURVEY_SHARE_FOLLOW_HINT = 'Chưa chạy migration 227 (Tự cập nhật / Chốt số liệu link chia sẻ) trên Supabase — chạy file 20261113140000_227_kcn_survey_share_follow.sql rồi thử lại';
 
 function fail(err: { message?: string; code?: string } | null, hint = SURVEY_SHARE_HINT): never {
@@ -79,7 +80,22 @@ export interface ShareZone {
   id: string; name: string; location: string | null; photos: number; trips: number;
   /** số nhà trọ đã khảo sát trong KCN (migration 221) */
   lodgings?: number;
+  /** số ảnh 360° trong KCN (migration 220) */
+  panos?: number;
 }
+
+// ── Hạng mục người xem được thấy (migration 228) ─────────────────────────────
+export type ShareSection = 'photos' | 'trips' | 'lodgings' | 'panos';
+export const SHARE_SECTIONS: readonly ShareSection[] = ['photos', 'trips', 'lodgings', 'panos'];
+export const SECTION_LABEL: Record<ShareSection, string> = {
+  photos: 'Ảnh chỉ tiêu', trips: 'Chuyến khảo sát', lodgings: 'Nhà trọ', panos: 'Ảnh 360°',
+};
+/** Hạng mục thực của 1 link; link cũ (chưa có sections) = ảnh + chuyến (+ nhà trọ nếu có kèm). */
+export function effectiveSections(s: { sections?: readonly string[] | null; include_lodgings?: boolean }): ShareSection[] {
+  const raw = s.sections ?? (s.include_lodgings ? ['photos', 'trips', 'lodgings'] : ['photos', 'trips']);
+  return SHARE_SECTIONS.filter(x => raw.includes(x));
+}
+export const sectionsText = (secs: readonly ShareSection[]) => secs.map(x => SECTION_LABEL[x].toLowerCase()).join(', ');
 export interface ProvinceGroup { key: string; label: string; zones: ShareZone[] }
 
 /** Gộp KCN theo tỉnh; tỉnh nhiều KCN lên trước, "Chưa ghi tỉnh" xuống cuối. */
@@ -154,6 +170,8 @@ export interface ShareMessageInput {
   recipient?: string;
   /** Link có kèm nhà trọ đã khảo sát */
   lodgings?: boolean;
+  /** Hạng mục được xem (migration 228); không truyền = ảnh chỉ tiêu + chuyến (+ nhà trọ nếu lodgings) */
+  sections?: readonly ShareSection[];
   /** true = link tự cập nhật khi có khảo sát mới; false = số liệu chốt đến dataUntil; không truyền = không nhắc */
   live?: boolean;
   dataUntil?: string | null;
@@ -161,6 +179,14 @@ export interface ShareMessageInput {
 
 const joinNames = (names: readonly string[], max = 6) =>
   names.length <= max ? names.join(', ') : `${names.slice(0, max).join(', ')} và ${names.length - max} KCN khác`;
+
+function viewText(i: ShareMessageInput): string {
+  const secs = i.sections ?? (i.lodgings ? ['photos', 'trips', 'lodgings'] as const : ['photos', 'trips'] as const);
+  const parts = secs.map(x => ({
+    photos: 'ảnh chỉ tiêu tuyển dụng', trips: 'các chuyến khảo sát', lodgings: 'nhà trọ quanh KCN (giá, số phòng, khoảng cách tới công ty)', panos: 'ảnh 360° thực địa',
+  }[x]));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} và ${parts[parts.length - 1]}` : parts[0] ?? 'dữ liệu khảo sát';
+}
 
 /** Nội dung soạn sẵn để dán thẳng vào Zalo: nội dung chia sẻ + link + mã + hạn xem. */
 export function buildShareMessage(i: ShareMessageInput): string {
@@ -176,7 +202,7 @@ export function buildShareMessage(i: ShareMessageInput): string {
     ...(i.live === true ? ['🔄 Link tự cập nhật khi có khảo sát mới — mở lại link là thấy'] : []),
     ...(i.live === false && i.dataUntil ? [`📌 Số liệu khảo sát tính đến ${fmtVnDate(new Date(i.dataUntil))}`] : []),
     '',
-    `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ảnh chỉ tiêu tuyển dụng${i.lodgings ? ', các chuyến khảo sát và nhà trọ quanh KCN (giá, số phòng, khoảng cách tới công ty)' : ' và các chuyến khảo sát'}. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
+    `Mở link, nhập mã 4 số (như mở khoá iPhone) là xem được ${viewText(i)}. ${who === 'anh/chị' ? 'Anh/chị' : who[0].toUpperCase() + who.slice(1)} có thắc mắc cứ nhắn lại em nhé.`,
   ];
   return lines.join('\n');
 }
@@ -192,6 +218,8 @@ export interface SurveyShareRow {
   /** Migration 227 — tỉnh đang theo dõi (FOLLOW_ALL = mọi KCN) + mốc chốt số liệu (null = tự cập nhật) */
   follow_provinces?: string[];
   data_until?: string | null;
+  /** Migration 228 — chưa chạy / link cũ thì không có (xem effectiveSections) */
+  sections?: ShareSection[] | null;
 }
 
 export async function listSurveyShares(token: string): Promise<SurveyShareRow[]> {
@@ -204,6 +232,8 @@ export async function createSurveyShare(token: string, a: {
   lodgings?: boolean; showLandlord?: boolean;
   /** Migration 227: tỉnh theo dõi khi tự cập nhật (followKeys) / chốt số liệu tại lúc tạo */
   follow?: string[]; freeze?: boolean;
+  /** Migration 228: hạng mục cho xem */
+  sections?: ShareSection[];
 }) {
   const args: Record<string, unknown> = {
     p_token: token, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces, p_pin: a.pin, p_days: a.days,
@@ -213,19 +243,21 @@ export async function createSurveyShare(token: string, a: {
   const follow = a.freeze ? [] : a.follow ?? [];
   if (a.freeze) args.p_freeze = true;
   if (follow.length) args.p_follow_provinces = follow;
-  const hint = a.freeze || follow.length ? SURVEY_SHARE_FOLLOW_HINT : a.lodgings ? SURVEY_SHARE_LODGING_HINT : undefined;
+  if (a.sections) args.p_sections = a.sections;
+  const hint = a.sections ? SURVEY_SHARE_SECTIONS_HINT : a.freeze || follow.length ? SURVEY_SHARE_FOLLOW_HINT : a.lodgings ? SURVEY_SHARE_LODGING_HINT : undefined;
   return rpc<{ ok: true; id: string; code: string; expires_at: string | null; data_until?: string | null }>('survey_share_create', args, hint);
 }
 
 /** Sửa link đã gửi: KCN, tự cập nhật / chốt số liệu, nhà trọ, tên người nhận — link và mã 4 số giữ nguyên (migration 227). */
 export async function updateSurveyShareScope(token: string, id: string, a: {
   label: string; zoneIds: string[]; provinces: string[]; follow: string[]; freeze: boolean; lodgings: boolean; showLandlord: boolean;
+  sections: ShareSection[];
 }) {
   return rpc<{ ok: true; code: string; data_until: string | null }>('survey_share_update_scope', {
     p_token: token, p_id: id, p_label: a.label, p_zone_ids: a.zoneIds, p_provinces: a.provinces,
     p_follow_provinces: a.freeze ? [] : a.follow, p_freeze: a.freeze,
-    p_include_lodgings: a.lodgings, p_show_landlord: a.lodgings && a.showLandlord,
-  }, SURVEY_SHARE_FOLLOW_HINT);
+    p_include_lodgings: a.lodgings, p_show_landlord: a.lodgings && a.showLandlord, p_sections: a.sections,
+  }, SURVEY_SHARE_SECTIONS_HINT);
 }
 
 /** Đặt mã mới (và gia hạn nếu setExpiry) — mở lại được cả link đã hết hạn / thu hồi. */
@@ -266,6 +298,15 @@ export interface SharedSurvey {
   /** Migration 227: mốc chốt số liệu (null / không có = tự cập nhật); follows = có theo dõi cả tỉnh / mọi KCN */
   data_until?: string | null;
   follows?: boolean;
+  /** Migration 228: ảnh 360° (null / không có = link không kèm) + hạng mục được xem */
+  panos?: SharedPano[] | null;
+  sections?: ShareSection[];
+}
+export interface SharedPano {
+  id: string; title: string; note: string; pano_url: string; google_url: string | null;
+  width: number | null; height: number | null; haov: number | null; vaov: number | null; voffset: number | null;
+  lat: number | null; lng: number | null; heading: number | null; camera_height: number | null;
+  view: unknown; annotations: unknown; taken_at: string | null; trip_id: string | null; zone_id: string | null; zone_name: string;
 }
 
 export type OpenSurveyShareResult =

@@ -4,8 +4,8 @@
 // Mã được kiểm tra ở server (hàm survey_share_open, migration 209): sai 5 lần thì khoá tạm.
 // Migration 227: link "tự cập nhật" (khảo sát mới tự hiện) hoặc "chốt số liệu" đến 1 mốc — hiện rõ ở đầu trang.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Camera, Home, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
-import { loadSharedTracks, openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
+import { AlertTriangle, Box, Camera, Home, Loader2, Lock, MapPin, Route, Search, X } from 'lucide-react';
+import { effectiveSections, loadSharedTracks, openSurveyShare, type SharedPhoto, type SharedSurvey, type SurveyShareFail } from '../lib/kcnSurvey/share';
 import { lockMessage } from '../lib/costPlan/api';
 import { provinceKey, provinceLabel } from '../lib/kcnSurvey/province';
 import { fmtDistance, type TrackSegment } from '../lib/kcnSurvey/track';
@@ -16,6 +16,8 @@ import { MarksSvg } from './market/survey/PhotoMarks';
 import { UNVERIFIED_TAG } from '../lib/kcnSurvey/online';
 import { lodgingTitle, normLodging, type Lodging } from '../lib/kcnSurvey/lodgingCore';
 import { SharedLodgingDetail, SharedLodgingRow } from './market/survey/SharedLodgingView';
+import { SharedPanoCard, SharedPanoViewer } from './market/survey/SharedPanoView';
+import { normPanorama, type MapPanorama } from '../lib/pano/panoramas';
 
 // Bản đồ Leaflet nặng → chỉ nạp khi mở trang xem (dùng đúng bản đồ trong app của người gửi)
 const SurveyTripMap = lazy(() => import('./market/survey/SurveyTripMap'));
@@ -60,7 +62,7 @@ export default function SharedSurvey({ code }: { code: string }) {
   const [deadMsg, setDeadMsg] = useState('');
   const [data, setData] = useState<SharedSurvey | null>(null);
 
-  const [tab, setTab] = useState<'photos' | 'trips' | 'lodgings'>('trips');
+  const [tab, setTab] = useState<'photos' | 'trips' | 'lodgings' | 'panos'>('trips');
   const [pin, setPin] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tracks, setTracks] = useState<Map<string, TrackSegment[]>>(new Map());
@@ -69,6 +71,7 @@ export default function SharedSurvey({ code }: { code: string }) {
   const [zoneId, setZoneId] = useState('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<SharedPhoto | null>(null);
+  const [openPano, setOpenPano] = useState<MapPanorama | null>(null);
   const [openLodging, setOpenLodging] = useState<Lodging | null>(null);
   const [lodgingFocus, setLodgingFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
 
@@ -80,8 +83,10 @@ export default function SharedSurvey({ code }: { code: string }) {
         if (remember) writeStore(pinKey(code), pin);
         setPin(pin);
         setData(r); setPhase('ready');
-        // link chỉ có nhà trọ (chưa có chuyến) → mở thẳng tab Nhà trọ
-        if (!r.trips.length && (r.lodgings?.length ?? 0) > 0) setTab('lodgings');
+        // mở thẳng hạng mục đầu tiên link cho xem (chuyến → ảnh chỉ tiêu → nhà trọ → ảnh 360)
+        const secs = effectiveSections(r);
+        const first = (['trips', 'photos', 'lodgings', 'panos'] as const).find(x => secs.includes(x));
+        if (first) setTab(first);
         return;
       }
       if (r.reason === 'not_found' || r.reason === 'expired') { setDeadMsg(FAIL_TEXT[r.reason] ?? ''); setPhase('dead'); return; }
@@ -128,6 +133,10 @@ export default function SharedSurvey({ code }: { code: string }) {
     && (!needle || fold([t.title ?? '', t.zone_name].join(' ')).includes(needle))), [data, okZone, needle]);
   // Nhà trọ: null = link không kèm nhà trọ (hoặc chưa chạy migration 222)
   const hasLodgings = Array.isArray(data?.lodgings);
+  const secs = useMemo(() => effectiveSections(data ?? {}), [data]);
+  const showPhotos = secs.includes('photos'), showTrips = secs.includes('trips'), showPanos = secs.includes('panos');
+  const allPanos = useMemo(() => (data?.panos ?? []).map(r => normPanorama(r as unknown as Record<string, unknown>)), [data]);
+  const panos = useMemo(() => allPanos.filter(x => okZone(x.zone_id) && (!needle || fold([x.title, x.note, x.zone_name].join(' ')).includes(needle))), [allPanos, okZone, needle]);
   // Phần lớn nhà trọ không ghi tên / địa chỉ, chủ nhà lại có thể bị ẩn → đánh số theo thứ tự khảo sát ("Nhà trọ số 12")
   // để danh sách, ghim bản đồ và bảng chi tiết khớp nhau và người xem gọi tên được.
   const allLodgings = useMemo(() => {
@@ -204,7 +213,7 @@ export default function SharedSurvey({ code }: { code: string }) {
         <div className="bg-white rounded-2xl shadow-[0_0_0_1px_rgba(0,0,0,0.05)] p-5">
           <h1 className="text-[22px] font-semibold tracking-tight leading-tight">Khảo sát {data.zones.length} KCN</h1>
           <div className="text-[13px] text-[#6e6e73] mt-0.5">
-            {headProvinces.length ? `${headProvinces.join(', ')} · ` : ''}{data.photos.length} ảnh chỉ tiêu · {data.trips.length} chuyến khảo sát{hasLodgings ? ` · ${allLodgings.length} nhà trọ` : ''}
+            {headProvinces.length ? `${headProvinces.join(', ')} · ` : ''}{[showPhotos && `${data.photos.length} ảnh chỉ tiêu`, showTrips && `${data.trips.length} chuyến khảo sát`, hasLodgings && `${allLodgings.length} nhà trọ`, showPanos && `${allPanos.length} ảnh 360°`].filter(Boolean).join(' · ')}
           </div>
           <div className="text-[12px] text-[#86868b] mt-1.5">
             {data.expires_at ? `Link xem được đến hết ngày ${fmtDate(data.expires_at)}` : 'Link không giới hạn thời gian'} · Chỉ xem
@@ -235,16 +244,23 @@ export default function SharedSurvey({ code }: { code: string }) {
 
         <div className="flex flex-wrap gap-1.5">
           {([
-            ['photos', `Ảnh chỉ tiêu · ${photos.length}`, <Camera key="c" size={13} />],
-            ['trips', `Chuyến khảo sát · ${trips.length}`, <Route key="r" size={13} />],
+            ...(showPhotos ? [['photos', `Ảnh chỉ tiêu · ${photos.length}`, <Camera key="c" size={13} />] as const] : []),
+            ...(showTrips ? [['trips', `Chuyến khảo sát · ${trips.length}`, <Route key="r" size={13} />] as const] : []),
             ...(hasLodgings ? [['lodgings', `Nhà trọ · ${lodgings.length}`, <Home key="h" size={13} />] as const] : []),
+            ...(showPanos ? [['panos', `Ảnh 360° · ${panos.length}`, <Box key="p" size={13} />] as const] : []),
           ] as const).map(([id, label, icon]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full text-[12.5px] font-medium transition ${tab === id ? 'bg-[#1d1d1f] text-white' : 'bg-white text-[#6e6e73] shadow-[0_0_0_1px_rgba(0,0,0,0.06)]'}`}>{icon}{label}</button>
           ))}
         </div>
 
-        {tab === 'lodgings' ? (
+        {tab === 'panos' ? (
+          panos.length ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {panos.map(x => <SharedPanoCard key={x.id} p={x} onOpen={() => setOpenPano(x)} />)}
+            </div>
+          ) : <Empty text={allPanos.length ? 'Không có ảnh 360° nào khớp bộ lọc.' : 'Chưa có ảnh 360° nào ở các KCN này.'} />
+        ) : tab === 'lodgings' ? (
           <div className="grid md:grid-cols-[340px_1fr] gap-3">
             <div className="order-2 md:order-1 md:max-h-[72vh] overflow-y-auto">
               {lodgings.length ? (
@@ -340,6 +356,7 @@ export default function SharedSurvey({ code }: { code: string }) {
         <div className="text-[11.5px] text-[#a1a1a6] text-center pb-6">Link riêng tư của Let's Go VN — vui lòng không chuyển tiếp cho người khác.</div>
       </div>
 
+      {openPano && <SharedPanoViewer pano={openPano} onClose={() => setOpenPano(null)} />}
       {open && <Lightbox photo={open} onClose={() => setOpen(null)} />}
       {openLodging && <SharedLodgingDetail lodging={openLodging} showLandlord={!!data.show_landlord} onClose={() => setOpenLodging(null)} />}
     </Shell>

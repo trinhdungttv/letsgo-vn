@@ -61,7 +61,7 @@ function readView(raw: unknown): PanoStartView | null {
   return { yaw: wrapYaw(yaw), pitch: clamp(pitch, -90, 90), hfov: clamp(hfov ?? HFOV_DEFAULT, 10, 130) };
 }
 
-function norm(r: Record<string, unknown>): MapPanorama {
+export function normPanorama(r: Record<string, unknown>): MapPanorama {
   const width = num(r.width), height = num(r.height);
   const cov = coverageFromSize(width ?? 0, height ?? 0);
   return {
@@ -89,7 +89,7 @@ export async function listPanoramas(): Promise<MapPanorama[]> {
     if (isMissingTableError(error)) throw new PanoMissingTable(PANO_MIGRATION_HINT);
     throw error;
   }
-  return ((data ?? []) as Record<string, unknown>[]).map(norm);
+  return ((data ?? []) as Record<string, unknown>[]).map(normPanorama);
 }
 
 export interface PanoImageInfo {
@@ -245,7 +245,7 @@ export async function createPanorama(p: NewPano): Promise<MapPanorama> {
     if (isMissingTableError(error)) throw new PanoMissingTable(PANO_MIGRATION_HINT);
     throw error;
   }
-  return norm(data as Record<string, unknown>);
+  return normPanorama(data as Record<string, unknown>);
 }
 
 export type PanoPatch = Partial<Pick<MapPanorama, 'title' | 'note' | 'lat' | 'lng' | 'heading' | 'camera_height' | 'view' | 'annotations' | 'zone_id' | 'zone_name'>>;
@@ -253,7 +253,7 @@ export type PanoPatch = Partial<Pick<MapPanorama, 'title' | 'note' | 'lat' | 'ln
 export async function updatePanorama(id: string, patch: PanoPatch, userName: string): Promise<MapPanorama> {
   const { data, error } = await supabase.from('map_panoramas').update({ ...patch, updated_by: userName }).eq('id', id).select('*').single();
   if (error) throw error;
-  return norm(data as Record<string, unknown>);
+  return normPanorama(data as Record<string, unknown>);
 }
 
 /** Xoá MỀM — dòng và file ảnh vẫn còn (khôi phục được ở Lịch sử dữ liệu). */

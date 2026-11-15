@@ -327,9 +327,11 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     photos.forEach(p => { if (p.zone_id) ph.set(p.zone_id, (ph.get(p.zone_id) ?? 0) + 1); });
     trips.forEach(t => { if (t.zone_id) tr.set(t.zone_id, (tr.get(t.zone_id) ?? 0) + 1); });
     lodgings.forEach(l => { if (l.zone_id) lo.set(l.zone_id, (lo.get(l.zone_id) ?? 0) + 1); });
-    return marketZones.filter(z => ph.has(z.id) || tr.has(z.id) || lo.has(z.id))
-      .map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0, lodgings: lo.get(z.id) ?? 0 }));
-  }, [marketZones, photos, trips, lodgings]);
+    const pa = new Map<string, number>();
+    panos.forEach(x => { if (x.zone_id) pa.set(x.zone_id, (pa.get(x.zone_id) ?? 0) + 1); });
+    return marketZones.filter(z => ph.has(z.id) || tr.has(z.id) || lo.has(z.id) || pa.has(z.id))
+      .map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0, lodgings: lo.get(z.id) ?? 0, panos: pa.get(z.id) ?? 0 }));
+  }, [marketZones, photos, trips, lodgings, panos]);
   const unzonedLodgings = useMemo(() => lodgings.filter(l => !l.zone_id).length, [lodgings]);
 
   // ── Vết: chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc ──────
