@@ -27,7 +27,7 @@ interface Props {
   /** đổi giá trị này → bản đồ tự canh lại khung nhìn */
   fitKey: string;
   /** đưa bản đồ tới 1 điểm (bấm "Xem chỗ chụp") */
-  focus?: { lat: number; lng: number; key: number } | null;
+  focus?: { lat: number; lng: number; key: number; zoom?: number } | null;
   /** vị trí hiện tại của người dùng (chấm xanh) */
   me?: { lat: number; lng: number } | null;
   className?: string;
@@ -121,7 +121,7 @@ export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, 
   }, [tracks, selectedId, photos, voiceNotes, lodgings, panos, fitKey]);
 
   useEffect(() => {
-    if (focus && mapRef.current) mapRef.current.setView([focus.lat, focus.lng], Math.max(mapRef.current.getZoom(), 18));
+    if (focus && mapRef.current) mapRef.current.setView([focus.lat, focus.lng], focus.zoom ?? Math.max(mapRef.current.getZoom(), 18));
   }, [focus]);
 
   const meRef = useRef<L.LayerGroup | null>(null);

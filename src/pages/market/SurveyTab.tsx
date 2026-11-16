@@ -131,12 +131,12 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     if (!navigator.geolocation) { say('Máy không hỗ trợ định vị'); return; }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
-      pos => { const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }; setMe(p); setFocus({ ...p, key: Date.now() }); setLocating(false); },
+      pos => { const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }; setMe(p); setFocus({ ...p, key: Date.now(), zoom: 16 }); setLocating(false); },
       () => { setLocating(false); say('Không lấy được vị trí — hãy cho phép truy cập vị trí'); },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
   };
-  const [focus, setFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
+  const [focus, setFocus] = useState<{ lat: number; lng: number; key: number; zoom?: number } | null>(null);
   const [surveyOpen, setSurveyOpen] = useState<false | 'survey' | 'area'>(false);
   const [pending, setPending] = useState(() => pendingActiveTrip());
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
