@@ -47,7 +47,10 @@ export interface SaleLeadInput {
   phone: string;
   company: string;
   zoneIds: string[];
+  /** Khu vực ngoài KCN — bỏ trống (undefined) khi DB chưa chạy migration 229. */
+  areaIds?: string[];
   areaText: string;
+  areaReviewed?: boolean;
   channelUrl: string;
   postUrl: string;
   note: string;
@@ -61,7 +64,9 @@ function rowOf(i: SaleLeadInput): Record<string, unknown> {
     phone_keys: phoneKeysOf(i.phone),
     company: i.company.trim(),
     zone_ids: i.zoneIds,
+    ...(i.areaIds ? { area_ids: i.areaIds } : {}),
     area_text: i.areaText.trim(),
+    ...(i.areaReviewed !== undefined ? { area_reviewed: i.areaReviewed } : {}),
     channel_url: i.channelUrl.trim(),
     post_url: i.postUrl.trim(),
     note: i.note.trim(),
@@ -127,4 +132,67 @@ export async function deleteSaleLeads(ids: readonly string[], user: AppUser | nu
   if (!ids.length) return;
   const { error } = await supabase.from('sale_leads').update({ deleted_at: new Date().toISOString(), updated_by: who(user) }).in('id', ids);
   if (error) throw friendly(error);
+}
+
+// ── Khu vực (migration 229) ─────────────────────────────────────────────────
+export const SALE_LEAD_AREAS_MIGRATION_HINT =
+  'Danh sách khu vực riêng cần migration 229. Mở Supabase → SQL Editor, chạy file 20261116100000_229_sale_lead_areas.sql rồi tải lại trang.';
+
+export interface SaleLeadArea {
+  id: string;
+  name: string;
+}
+
+const isMissingAreas = (err: { code?: string; message?: string } | null | undefined) =>
+  !!err && (err.code === '42P01' || err.code === 'PGRST205' || err.code === 'PGRST204' || err.code === '42703'
+    || (/sale_lead_areas|area_ids|area_reviewed/.test(err.message ?? '') && /(does not exist|schema cache|could not find)/i.test(err.message ?? '')));
+
+const areaError = (e: { code?: string; message?: string }) => new Error(
+  isMissingAreas(e) ? SALE_LEAD_AREAS_MIGRATION_HINT
+    : e.code === '23505' ? 'Đã có khu vực tên này trong danh sách'
+      : e.message || 'Lỗi lưu khu vực');
+
+/** Danh sách khu vực (ngoài KCN), A → Z. `null` = chưa chạy migration 229. */
+export async function loadSaleLeadAreas(): Promise<SaleLeadArea[] | null> {
+  const { data, error } = await supabase.from('sale_lead_areas').select('id, name');
+  if (error) {
+    if (isMissingAreas(error)) return null;
+    throw error;
+  }
+  return ((data ?? []) as SaleLeadArea[])
+    .map(a => ({ id: a.id, name: (a.name ?? '').trim() }))
+    .filter(a => a.name)
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+}
+
+export async function createSaleLeadArea(name: string, user: AppUser | null): Promise<SaleLeadArea> {
+  const n = name.replace(/\s+/g, ' ').trim();
+  if (!n) throw new Error('Nhập tên khu vực');
+  const { data, error } = await supabase.from('sale_lead_areas').insert({ name: n, created_by: who(user) }).select('id, name').single();
+  if (error) throw areaError(error);
+  return data as SaleLeadArea;
+}
+
+export async function renameSaleLeadArea(id: string, name: string): Promise<void> {
+  const n = name.replace(/\s+/g, ' ').trim();
+  if (!n) throw new Error('Nhập tên khu vực');
+  const { error } = await supabase.from('sale_lead_areas').update({ name: n }).eq('id', id);
+  if (error) throw areaError(error);
+}
+
+/** Xoá 1 khu vực khỏi danh sách + gỡ khỏi các đầu mối đang gắn (khôi phục được ở trang Lịch sử). */
+export async function deleteSaleLeadArea(id: string, leads: readonly SaleLead[], user: AppUser | null): Promise<void> {
+  for (const l of leads.filter(x => x.areaIds.includes(id))) {
+    await patchSaleLead(l.id, { area_ids: l.areaIds.filter(a => a !== id) }, user);
+  }
+  const { error } = await supabase.from('sale_lead_areas').delete().eq('id', id);
+  if (error) throw areaError(error);
+}
+
+/** Đặt lại khu vực của 1 đầu mối (KCN + khu vực khác). `reviewed` = đã chọn bằng tay. */
+export async function setLeadAreas(id: string, v: { zoneIds: readonly string[]; areaIds: readonly string[]; reviewed?: boolean }, user: AppUser | null): Promise<void> {
+  const { error } = await supabase.from('sale_leads').update({
+    zone_ids: v.zoneIds, area_ids: v.areaIds, ...(v.reviewed !== undefined ? { area_reviewed: v.reviewed } : {}), updated_by: who(user),
+  }).eq('id', id);
+  if (error) throw areaError(error);
 }

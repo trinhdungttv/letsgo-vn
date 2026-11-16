@@ -16,6 +16,24 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-16-survey-locate-me',
+    date: '2026-11-16',
+    title: 'Khảo sát KCN',
+    features: [
+      'Nút "Về vị trí của tôi" trên bản đồ Khảo sát (xem Ảnh 360°): bản đồ zoom nhanh tới chỗ bạn đang đứng, kèm chấm xanh vị trí',
+    ],
+  },
+  {
+    id: '2026-11-16-lead-areas',
+    date: '2026-11-16',
+    title: 'CSKH — Đầu mối Sale / CTV',
+    features: [
+      'Khu vực của đầu mối chọn từ danh sách tạo sẵn (KCN + tỉnh / quận…) — mỗi khu vực là 1 mục, lọc được',
+      'Bấm ô Khu vực để chọn lại; "Ghép khu vực" gom chữ khu vực cũ (Thủ Đức, Vsip1, Bình Dương…) để chọn 1 lần cho mọi người',
+      'Chọn nhiều dòng → "Gắn khu vực" cho cả nhóm; lọc thêm "Chưa có khu vực" / "Còn chữ chưa ghép"',
+    ],
+  },
+  {
     id: '2026-11-15-plan-reorder',
     date: '2026-11-15',
     title: 'Khảo sát KCN — Kế hoạch ghé',

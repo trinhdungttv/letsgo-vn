@@ -1,10 +1,20 @@
 // Hàm thuần của Bảng nháp đầu mối dùng ở nhiều màn (tách khỏi parts.tsx để Fast Refresh chỉ thấy component).
 import { CONTACT_CHANNELS } from '../../../lib/contactOps';
 import { formatDateVN, todayVN } from '../../../lib/cskh/dates';
-import { matchCompetitor, unmatchedAreaParts, type NamedItem, type PhoneOwner } from '../../../lib/saleLeads/match';
+import { matchCompetitor, pendingPartsOf, type NamedItem, type PhoneOwner } from '../../../lib/saleLeads/match';
 import { LEAD_CHANNEL_LABEL, SALE_LEAD_STATUS_LABEL, type SaleLead } from '../../../lib/saleLeads/types';
 import { socialKind } from '../../../lib/socialLinks';
 import type { NewContactPrefill } from '../components/ContactProfileModal';
+
+/** Màu viên: KCN xanh dương, khu vực khác chàm, chữ chưa ghép xám. */
+export const AREA_CHIP = {
+  zone: 'bg-[#0071E3]/10 text-[#0058B0]',
+  area: 'bg-[#5856D6]/10 text-[#3634A3]',
+  raw: 'bg-black/[0.05] text-[#6E6E73]',
+} as const;
+
+/** Tên KCN gọn (bỏ chữ "KCN " đầu). */
+export const shortZone = (name: string) => name.replace(/^KCN\s+/i, '');
 
 /** Mốc thời gian ISO (UTC) → "dd/mm/yyyy" theo giờ Việt Nam. */
 export const vnDate = (iso: string): string => formatDateVN(todayVN(new Date(iso)));
@@ -25,13 +35,14 @@ function channelOf(url: string): string {
 }
 
 /** Điền sẵn form "Thêm Sale" từ 1 đầu mối (lúc chuyển sang Sale / CTV). */
-export function promotePrefill(lead: SaleLead, zones: readonly NamedItem[], competitors: readonly NamedItem[]): NewContactPrefill {
-  const extraArea = unmatchedAreaParts(lead.areaText, lead.zoneIds, zones);
+export function promotePrefill(lead: SaleLead, zones: readonly NamedItem[], areas: readonly NamedItem[], competitors: readonly NamedItem[]): NewContactPrefill {
+  // Hồ sơ Sale chỉ có ô KCN → khu vực khác + chữ gốc chưa ghép ghi vào ghi chú
+  const extraArea = [...areas.filter(a => lead.areaIds.includes(a.id)).map(a => a.name), ...pendingPartsOf(lead, zones, areas)];
   const history = lead.contactLog.map(l =>
     `• ${vnDate(l.at)} ${LEAD_CHANNEL_LABEL[l.channel]} — ${SALE_LEAD_STATUS_LABEL[l.result]}${l.note ? `: ${l.note}` : ''}`);
   const notes = [
     `Từ Bảng nháp đầu mối (nhập ${vnDate(lead.createdAt)})`,
-    extraArea.length ? `Khu vực ghi: ${extraArea.join(', ')}` : '',
+    extraArea.length ? `Khu vực: ${extraArea.join(', ')}` : '',
     lead.postUrl ? `Bài đăng tuyển: ${lead.postUrl}` : '',
     lead.note ? `Ghi chú: ${lead.note}` : '',
     history.length ? `Đã liên hệ:\n${history.join('\n')}` : '',

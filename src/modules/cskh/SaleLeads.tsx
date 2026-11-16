@@ -8,17 +8,17 @@
 //     không chấm điểm, không lên Tổng quan: chưa phải chăm sóc.
 //   • Gặp được rồi → "Chuyển sang Sale / CTV": mở form Thêm Sale điền sẵn, lưu xong dòng nháp thành "Đã chuyển".
 // ============================================================================
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowRightCircle, FileSpreadsheet, MessageCircle, NotebookPen, Phone, Plus, UserCheck,
+  AlertTriangle, ArrowRightCircle, FileSpreadsheet, MapPin, MessageCircle, NotebookPen, Phone, Plus, UserCheck,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { MIGRATION_178_HINT } from '../../lib/contactOps';
 import { zaloUrl } from '../../lib/cskh/contactActions';
 import { compareVnName } from '../../lib/vnName';
-import { bulkSetLeadStatus, deleteSaleLeads, markLeadPromoted, SALE_LEADS_MIGRATION_HINT } from '../../lib/saleLeads/api';
-import { matchCompetitor, ownersOf, type PhoneOwner } from '../../lib/saleLeads/match';
+import { bulkSetLeadStatus, createSaleLeadArea, deleteSaleLeads, markLeadPromoted, SALE_LEADS_MIGRATION_HINT } from '../../lib/saleLeads/api';
+import { matchCompetitor, ownersOf, pendingAreaParts, pendingPartsOf, type NamedItem, type PhoneOwner } from '../../lib/saleLeads/match';
 import { fold, formatPhoneKey, phoneKeysOf } from '../../lib/saleLeads/parse';
 import {
   SALE_LEAD_STATUS_HINT, SALE_LEAD_STATUS_LABEL, SALE_LEAD_STATUSES, type LeadChannel, type SaleLead, type SaleLeadStatus,
@@ -28,6 +28,8 @@ import { Spinner } from './components/Card';
 import { FilterChip, MoreButton, PageTitle, PillSelect, Quiet, SearchField, Segmented } from './components/apple';
 import { PANEL, PILL_PRIMARY, PILL_TINTED, ROUND_ADD, ROUND_ICON } from './ui';
 import { LeadFormSheet } from './saleLeads/LeadFormSheet';
+import { LeadAreaManageSheet } from './saleLeads/LeadAreaManageSheet';
+import { LeadAreaSheet } from './saleLeads/LeadAreaSheet';
 import { LeadImportSheet } from './saleLeads/LeadImportSheet';
 import { LeadLogSheet } from './saleLeads/LeadLogSheet';
 import { LeadLinks, PhoneCheckBox, StatusPill, ZoneChips } from './saleLeads/parts';
@@ -51,6 +53,8 @@ interface Derived {
   /** Số này là người liên hệ của khách. */
   client: PhoneOwner | undefined;
   competitor: string;
+  /** Chữ khu vực gốc chưa ghép (chưa chọn lại bằng tay). */
+  pending: string[];
   haystack: string;
   digits: string;
 }
@@ -58,14 +62,15 @@ interface Derived {
 export default function CskhSaleLeads() {
   const { data, toast, openProfile, openNewContactWith } = useCskh();
   const { user } = useAuth();
-  const { leads, ready, loading, phoneIndex, reload } = useSaleLeads(toast);
+  const { leads, ready, loading, phoneIndex, areas, areasReady, reload, reloadAreas } = useSaleLeads(toast);
   const zones = useMemo(() => data?.zones ?? [], [data]);
   const competitors = useMemo(() => data?.competitors ?? [], [data]);
   const saleIds = useMemo(() => new Set((data?.contacts ?? []).map(c => c.id)), [data]);
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = usePersistedState<StatusFilter>('sale_leads_status', 'all');
-  const [zone, setZone] = usePersistedState<string>('sale_leads_zone', 'all');
+  // 'all' | 'none' (chưa có khu vực) | 'pending' (còn chữ chưa ghép) | 'z:<KCN>' | 'a:<khu vực khác>'
+  const [area, setArea] = usePersistedState<string>('sale_leads_area', 'all');
   const [company, setCompany] = usePersistedState<string>('sale_leads_company', 'all');
   const [sort, setSort] = usePersistedState<SortKey>('sale_leads_sort', 'recent');
   const [limit, setLimit] = useState(PAGE);
@@ -74,6 +79,21 @@ export default function CskhSaleLeads() {
   const [editing, setEditing] = useState<{ lead: SaleLead | null; phone?: string } | null>(null);
   const [logging, setLogging] = useState<{ lead: SaleLead; channel: LeadChannel } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [areaFor, setAreaFor] = useState<SaleLead[] | null>(null);
+  const [managing, setManaging] = useState(false);
+
+  /** Thêm 1 khu vực vào danh sách (từ ô chọn khu vực) — trả về mục mới, lỗi thì báo + null. */
+  const createArea = async (name: string): Promise<NamedItem | null> => {
+    try {
+      const made = await createSaleLeadArea(name, user);
+      await reloadAreas();
+      toast(`Đã thêm khu vực "${made.name}" vào danh sách`);
+      return made;
+    } catch (e) {
+      toast((e as Error).message);
+      return null;
+    }
+  };
 
   const derived = useMemo(() => leads.map((lead): Derived => {
     const owners = ownersOf(lead.phoneKeys, phoneIndex, lead.id);
@@ -82,10 +102,15 @@ export default function CskhSaleLeads() {
       sale: owners.find(o => o.kind === 'sale'),
       client: owners.find(o => o.kind === 'client'),
       competitor: lead.company ? matchCompetitor(lead.company, competitors)?.name ?? '' : '',
-      haystack: fold([lead.fullName, lead.company, lead.areaText, lead.note, lead.source, ...zones.filter(z => lead.zoneIds.includes(z.id)).map(z => z.name)].join(' ')),
+      pending: pendingPartsOf(lead, zones, areas),
+      haystack: fold([
+        lead.fullName, lead.company, lead.areaText, lead.note, lead.source,
+        ...zones.filter(z => lead.zoneIds.includes(z.id)).map(z => z.name),
+        ...areas.filter(a => lead.areaIds.includes(a.id)).map(a => a.name),
+      ].join(' ')),
       digits: [lead.phone.replace(/\D/g, ''), ...lead.phoneKeys].join(' '),
     };
-  }), [leads, phoneIndex, competitors, zones]);
+  }), [leads, phoneIndex, competitors, zones, areas]);
 
   const byId = useMemo(() => new Map(leads.map(l => [l.id, l])), [leads]);
   const companyKey = (s: string) => fold(s).replace(/[^a-z0-9]/g, '');
@@ -98,16 +123,27 @@ export default function CskhSaleLeads() {
   const qText = fold(q);
   const isPhoneQuery = qDigits.length >= 4 && qDigits.length >= q.replace(/[\s.+()-]/g, '').length - 1;
 
+  const zoneIdSet = useMemo(() => new Set(zones.map(z => z.id)), [zones]);
+  const areaIdSet = useMemo(() => new Set(areas.map(a => a.id)), [areas]);
+  /** Đầu mối đã có ít nhất 1 khu vực còn trong danh sách. */
+  const hasPlace = useCallback((l: SaleLead) => l.zoneIds.some(id => zoneIdSet.has(id)) || l.areaIds.some(id => areaIdSet.has(id)), [zoneIdSet, areaIdSet]);
+  const inArea = useCallback((d: Derived) => {
+    if (area === 'none') return !hasPlace(d.lead);
+    if (area === 'pending') return d.pending.length > 0;
+    if (area.startsWith('a:')) return d.lead.areaIds.includes(area.slice(2));
+    return d.lead.zoneIds.includes(area.startsWith('z:') ? area.slice(2) : area);
+  }, [area, hasPlace]);
+
   const filtered = useMemo(() => derived.filter(d => {
     const l = d.lead;
     if (status !== 'all' && l.status !== status) return false;
-    if (zone === 'none' ? l.zoneIds.length > 0 : zone !== 'all' && !l.zoneIds.includes(zone)) return false;
+    if (area !== 'all' && !inArea(d)) return false;
     if (company !== 'all' && companyKey(l.company) !== company) return false;
     if (!q) return true;
     if (qKeys.length) return l.phoneKeys.some(k => qKeys.includes(k));
     if (isPhoneQuery) return d.digits.includes(qDigits.replace(/^84/, '').replace(/^0/, ''));
     return qText.split(' ').every(w => d.haystack.includes(w));
-  }), [derived, status, zone, company, q, qKeys, isPhoneQuery, qDigits, qText]);
+  }), [derived, status, area, inArea, company, q, qKeys, isPhoneQuery, qDigits, qText]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -129,7 +165,14 @@ export default function CskhSaleLeads() {
     for (const l of leads) for (const id of l.zoneIds) n.set(id, (n.get(id) ?? 0) + 1);
     return zones.filter(z => n.has(z.id)).map(z => ({ ...z, n: n.get(z.id) ?? 0 }));
   }, [leads, zones]);
-  const noZone = leads.filter(l => !l.zoneIds.length).length;
+  const areaOptions = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const l of leads) for (const id of l.areaIds) n.set(id, (n.get(id) ?? 0) + 1);
+    return areas.filter(a => n.has(a.id)).map(a => ({ ...a, n: n.get(a.id) ?? 0 }));
+  }, [leads, areas]);
+  const noArea = derived.filter(d => !hasPlace(d.lead)).length;
+  const pendingLeads = derived.filter(d => d.pending.length > 0).length;
+  const pendingParts = useMemo(() => pendingAreaParts(leads, zones, areas).length, [leads, zones, areas]);
   const companyOptions = useMemo(() => {
     const m = new Map<string, { label: string; n: number }>();
     for (const l of leads) {
@@ -161,7 +204,7 @@ export default function CskhSaleLeads() {
     }
     if (!data?.saleReady) { toast(MIGRATION_178_HINT); return; }
     openNewContactWith({
-      prefill: promotePrefill(l, zones, competitors),
+      prefill: promotePrefill(l, zones, areas, competitors),
       onCreated: async contactId => {
         await markLeadPromoted(l.id, contactId, user);
         toast(`Đã chuyển "${l.fullName || l.phone}" sang Sale / CTV`);
@@ -206,7 +249,13 @@ export default function CskhSaleLeads() {
   };
 
   const chips: { label: string; clear: () => void }[] = [];
-  if (zone !== 'all') chips.push({ label: zone === 'none' ? 'Chưa ghép KCN' : `KCN: ${zones.find(z => z.id === zone)?.name ?? '?'}`, clear: () => setZone('all') });
+  if (area !== 'all') {
+    const label = area === 'none' ? 'Chưa có khu vực'
+      : area === 'pending' ? 'Còn chữ khu vực chưa ghép'
+        : area.startsWith('a:') ? `Khu vực: ${areas.find(a => a.id === area.slice(2))?.name ?? '?'}`
+          : `KCN: ${zones.find(z => z.id === (area.startsWith('z:') ? area.slice(2) : area))?.name ?? '?'}`;
+    chips.push({ label, clear: () => setArea('all') });
+  }
   if (company !== 'all') chips.push({ label: `Đơn vị: ${companyOptions.find(c => c.key === company)?.label ?? '?'}`, clear: () => setCompany('all') });
 
   if (loading && !leads.length) return <Spinner />;
@@ -294,10 +343,20 @@ export default function CskhSaleLeads() {
         <Segmented label="Tình trạng" value={status} onChange={v => { setStatus(v); setLimit(PAGE); }} keepLabels
           options={(['all', ...SALE_LEAD_STATUSES] as StatusFilter[]).map(s => ({ key: s, label: s === 'all' ? 'Tất cả' : SALE_LEAD_STATUS_LABEL[s], badge: counts[s] }))} />
         <div className="flex flex-wrap items-center gap-2">
-          <PillSelect value={zone} active={zone !== 'all'} label="Lọc theo KCN" onChange={v => { setZone(v); setLimit(PAGE); }}>
-            <option value="all">Mọi KCN</option>
-            {zoneOptions.map(z => <option key={z.id} value={z.id}>{z.name} ({z.n})</option>)}
-            {noZone > 0 && <option value="none">Chưa ghép KCN ({noZone})</option>}
+          <PillSelect value={area} active={area !== 'all'} label="Lọc theo khu vực" onChange={v => { setArea(v); setLimit(PAGE); }}>
+            <option value="all">Mọi khu vực</option>
+            {areaOptions.length > 0 && (
+              <optgroup label="Khu vực">
+                {areaOptions.map(a => <option key={a.id} value={`a:${a.id}`}>{a.name} ({a.n})</option>)}
+              </optgroup>
+            )}
+            {zoneOptions.length > 0 && (
+              <optgroup label="KCN">
+                {zoneOptions.map(z => <option key={z.id} value={`z:${z.id}`}>{z.name} ({z.n})</option>)}
+              </optgroup>
+            )}
+            {noArea > 0 && <option value="none">Chưa có khu vực ({noArea})</option>}
+            {pendingLeads > 0 && <option value="pending">Còn chữ chưa ghép ({pendingLeads})</option>}
           </PillSelect>
           <PillSelect value={company} active={company !== 'all'} label="Lọc theo đơn vị" onChange={v => { setCompany(v); setLimit(PAGE); }}>
             <option value="all">Mọi đơn vị</option>
@@ -306,6 +365,14 @@ export default function CskhSaleLeads() {
           <PillSelect value={sort} active={false} label="Sắp xếp" onChange={v => setSort(v as SortKey)}>
             {(Object.keys(SORT_LABEL) as SortKey[]).map(k => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
           </PillSelect>
+          <button type="button" onClick={ready ? () => setManaging(true) : needMigration}
+            title="Danh sách khu vực + ghép chữ khu vực cũ vào danh sách"
+            className={`inline-flex items-center gap-1.5 h-9 md:h-8 px-3.5 rounded-full text-[13px] font-medium transition ${pendingParts > 0 && areasReady
+              ? 'bg-[#FF9500]/[0.14] text-[#B25000] hover:bg-[#FF9500]/[0.22]'
+              : 'bg-[rgba(118,118,128,0.12)] text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)]'}`}>
+            <MapPin size={14} strokeWidth={2.2} />
+            {pendingParts > 0 && areasReady ? `Ghép khu vực · ${pendingParts}` : 'Khu vực'}
+          </button>
           {chips.map(c => <FilterChip key={c.label} label={c.label} onClear={c.clear} />)}
           <span className="ml-auto text-[12.5px] text-[#86868B] tabular-nums">{filtered.length} / {leads.length}</span>
         </div>
@@ -321,6 +388,10 @@ export default function CskhSaleLeads() {
             <option value="">Đổi tình trạng…</option>
             {SALE_LEAD_STATUSES.filter(s => s !== 'promoted').map(s => <option key={s} value={s} className="text-black">{SALE_LEAD_STATUS_LABEL[s]}</option>)}
           </select>
+          <button type="button" onClick={() => setAreaFor(selIds.map(id => byId.get(id)).filter((l): l is SaleLead => !!l))} disabled={busy}
+            className="inline-flex items-center gap-1 h-8 px-3.5 rounded-full bg-white/15 text-[13px] font-medium hover:bg-white/25 disabled:opacity-40">
+            <MapPin size={13} /> Gắn khu vực
+          </button>
           <button type="button" onClick={() => void bulkDelete()} disabled={busy} className="h-8 px-3.5 rounded-full bg-[#FF3B30] text-[13px] font-medium hover:brightness-110 disabled:opacity-40">Xoá</button>
           <button type="button" onClick={() => setSelected(new Set())} className="ml-auto h-8 px-3 rounded-full text-[13px] text-white/80 hover:text-white">Bỏ chọn</button>
         </div>
@@ -379,7 +450,12 @@ export default function CskhSaleLeads() {
                             {dialButtons(l)}
                           </span>
                         </td>
-                        <td className="px-2 py-2.5 hidden lg:table-cell max-w-[240px]"><ZoneChips zoneIds={l.zoneIds} areaText={l.areaText} zones={zones} max={4} /></td>
+                        <td className="px-1 py-1.5 hidden lg:table-cell max-w-[260px]">
+                          <button type="button" onClick={() => setAreaFor([l])} title="Chọn khu vực từ danh sách"
+                            className="w-full min-h-[36px] text-left rounded-[10px] px-1.5 py-1 hover:bg-black/[0.04] transition">
+                            <ZoneChips zoneIds={l.zoneIds} areaIds={l.areaIds} areaText={l.areaText} reviewed={l.areaReviewed} zones={zones} areas={areas} max={4} />
+                          </button>
+                        </td>
                         <td className="px-2 py-2.5"><LeadLinks lead={l} /></td>
                         <td className="px-2 py-2.5">
                           <StatusPill status={l.status} onClick={() => setLogging({ lead: l, channel: 'call' })} title="Ghi lần liên hệ" />
@@ -427,7 +503,11 @@ export default function CskhSaleLeads() {
                           <span className="tabular-nums text-[14px] text-[#1D1D1F]">{l.phoneKeys.length ? l.phoneKeys.map(formatPhoneKey).join(', ') : l.phone}</span>
                           {dialButtons(l)}
                         </div>
-                        {(l.zoneIds.length > 0 || l.areaText) && <div className="mt-1.5"><ZoneChips zoneIds={l.zoneIds} areaText={l.areaText} zones={zones} /></div>}
+                        <button type="button" onClick={() => setAreaFor([l])} className="mt-1.5 block text-left" aria-label={`Chọn khu vực cho ${l.fullName}`}>
+                          {hasPlace(l) || d.pending.length
+                            ? <ZoneChips zoneIds={l.zoneIds} areaIds={l.areaIds} areaText={l.areaText} reviewed={l.areaReviewed} zones={zones} areas={areas} />
+                            : <span className="text-[12.5px] font-medium text-[#0066CC]">+ Khu vực</span>}
+                        </button>
                         {l.note && <p className="mt-1 text-[12.5px] text-[#6E6E73] line-clamp-2 whitespace-pre-line">{l.note}</p>}
                         <div className="flex flex-wrap items-center gap-1.5 mt-2">
                           <LeadLinks lead={l} />
@@ -454,6 +534,9 @@ export default function CskhSaleLeads() {
           lead={editing.lead}
           initialPhone={editing.phone}
           zones={zones}
+          areas={areas}
+          areasReady={areasReady}
+          onCreateArea={createArea}
           competitors={competitors}
           companies={companyNames}
           phoneIndex={phoneIndex}
@@ -469,8 +552,16 @@ export default function CskhSaleLeads() {
           onClose={() => setLogging(null)} onSaved={() => { void reload(); }} />
       )}
       {importing && (
-        <LeadImportSheet zones={zones} competitors={competitors} phoneIndex={phoneIndex} toast={toast}
+        <LeadImportSheet zones={zones} areas={areas} areasReady={areasReady} competitors={competitors} phoneIndex={phoneIndex} toast={toast}
           onClose={() => setImporting(false)} onSaved={() => { void reload(); }} />
+      )}
+      {areaFor && (
+        <LeadAreaSheet leads={areaFor} zones={zones} areas={areas} areasReady={areasReady} onCreateArea={createArea} toast={toast}
+          onClose={() => setAreaFor(null)} onSaved={() => { if (areaFor.length > 1) setSelected(new Set()); void reload(); }} />
+      )}
+      {managing && (
+        <LeadAreaManageSheet leads={leads} zones={zones} areas={areas} areasReady={areasReady} onCreateArea={createArea} reloadAreas={reloadAreas}
+          toast={toast} onClose={() => setManaging(false)} onSaved={() => { void reload(); }} />
       )}
     </div>
   );

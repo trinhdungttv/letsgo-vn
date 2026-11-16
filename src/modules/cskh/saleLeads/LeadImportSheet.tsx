@@ -29,7 +29,7 @@ import { ownerLine } from './helpers';
 type WorkBook = import('xlsx').WorkBook;
 
 const PATCH_LABEL: Readonly<Record<string, string>> = {
-  full_name: 'tên', company: 'đơn vị', channel_url: 'link kênh', post_url: 'link bài đăng', zone_ids: 'KCN', area_text: 'khu vực', note: 'ghi chú',
+  full_name: 'tên', company: 'đơn vị', channel_url: 'link kênh', post_url: 'link bài đăng', zone_ids: 'KCN', area_ids: 'khu vực', area_text: 'chữ khu vực', note: 'ghi chú',
 };
 
 /** Màu + chữ của kết quả dò trùng từng dòng. */
@@ -88,8 +88,11 @@ async function gridFromSheet(wb: WorkBook, name: string): Promise<Grid> {
   return grid.filter(r => r.some(c => c.text || c.href));
 }
 
-export function LeadImportSheet({ zones, competitors, phoneIndex, toast, onClose, onSaved }: {
+export function LeadImportSheet({ zones, areas, areasReady, competitors, phoneIndex, toast, onClose, onSaved }: {
   zones: readonly NamedItem[];
+  /** Khu vực ngoài KCN (migration 229). */
+  areas: readonly NamedItem[];
+  areasReady: boolean;
   competitors: readonly NamedItem[];
   phoneIndex: ReadonlyMap<string, PhoneOwner[]>;
   toast: (m: string) => void;
@@ -158,11 +161,14 @@ export function LeadImportSheet({ zones, competitors, phoneIndex, toast, onClose
   const parsed = useMemo(() => (grid ? draftsFromGrid(grid, headerIdx, mapping) : { drafts: [], lostLinks: 0 }), [grid, headerIdx, mapping]);
   const { drafts } = parsed;
   const checks = useMemo(() => checkDrafts(drafts, phoneIndex), [drafts, phoneIndex]);
-  const zoneHits = useMemo(() => drafts.map(d => matchAreaZones(d.areaText, zones)), [drafts, zones]);
+  const zoneHits = useMemo(() => drafts.map(d => matchAreaZones(d.areaText, zones, areasReady ? areas : [])), [drafts, zones, areas, areasReady]);
   const patches = useMemo(() => drafts.map((d, i) => {
     const c = checks[i];
-    return c.kind === 'dup_lead' && c.owner.lead ? mergeLeadPatch(c.owner.lead, d, zoneHits[i].ids) : null;
-  }), [drafts, checks, zoneHits]);
+    const hit = zoneHits[i];
+    return c.kind === 'dup_lead' && c.owner.lead
+      ? mergeLeadPatch(c.owner.lead, d, hit.ids, areasReady ? { areaIds: hit.areaIds, unmatched: hit.unmatched } : undefined)
+      : null;
+  }), [drafts, checks, zoneHits, areasReady]);
 
   const picked = (i: number) => canInsert(checks[i]) && (picks[i] ?? defaultPick(checks[i]));
   const insertIdx = drafts.map((_, i) => i).filter(picked);
@@ -181,6 +187,7 @@ export function LeadImportSheet({ zones, competitors, phoneIndex, toast, onClose
         const d = drafts[i];
         return {
           fullName: d.fullName, phone: d.phone, company: d.company, zoneIds: zoneHits[i].ids, areaText: d.areaText,
+          ...(areasReady ? { areaIds: zoneHits[i].areaIds } : {}),
           channelUrl: d.channelUrl, postUrl: d.postUrl, note: d.note, status: d.status ?? 'new',
         };
       });
@@ -331,7 +338,7 @@ export function LeadImportSheet({ zones, competitors, phoneIndex, toast, onClose
                   {comp && <span className="px-1.5 rounded-full text-[11px] font-medium bg-[#FF9500]/[0.14] text-[#B25000]" title={`Đối thủ: ${comp.name}`}>đối thủ</span>}
                   {d.status && <span className="text-[12px] text-[#6E6E73]">· {SALE_LEAD_STATUS_LABEL[d.status]}</span>}
                 </div>
-                {(d.areaText || zoneHits[i].ids.length > 0) && <ZoneChips zoneIds={zoneHits[i].ids} areaText={d.areaText} zones={zones} max={8} />}
+                {d.areaText && <ZoneChips zoneIds={zoneHits[i].ids} areaIds={zoneHits[i].areaIds} areaText={d.areaText} zones={zones} areas={areas} max={8} />}
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[#6E6E73]">
                   {d.channelUrl && <a href={d.channelUrl} target="_blank" rel="noreferrer" className="text-[#0066CC] hover:underline">Link kênh</a>}
                   {d.postUrl && <a href={d.postUrl} target="_blank" rel="noreferrer" className="text-[#0066CC] hover:underline">Link bài đăng</a>}
@@ -340,7 +347,7 @@ export function LeadImportSheet({ zones, competitors, phoneIndex, toast, onClose
                 <p className="text-[12px] font-medium leading-snug" style={{ color: look.color }}>
                   {look.text}
                   {c.kind === 'dup_lead' && (merge
-                    ? (patch ? ` → sẽ bổ sung ${Object.keys(patch).map(k => PATCH_LABEL[k] ?? k).join(', ')}` : ' → không có gì mới')
+                    ? (patch ? ` → sẽ bổ sung ${Object.keys(patch).filter(k => k !== 'area_reviewed').map(k => PATCH_LABEL[k] ?? k).join(', ')}` : ' → không có gì mới')
                     : ' → bỏ qua')}
                 </p>
               </div>

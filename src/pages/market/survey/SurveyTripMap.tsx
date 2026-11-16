@@ -28,10 +28,12 @@ interface Props {
   fitKey: string;
   /** đưa bản đồ tới 1 điểm (bấm "Xem chỗ chụp") */
   focus?: { lat: number; lng: number; key: number } | null;
+  /** vị trí hiện tại của người dùng (chấm xanh) */
+  me?: { lat: number; lng: number } | null;
   className?: string;
 }
 
-export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, onPhoto, onVoice, onTrip, lodgings = [], panos = [], onLodging, onPano, fitKey, focus, className = '' }: Props) {
+export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, onPhoto, onVoice, onTrip, lodgings = [], panos = [], onLodging, onPano, fitKey, focus, me, className = '' }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<{ tracks: L.LayerGroup; marks: L.LayerGroup; renderer: L.Canvas } | null>(null);
@@ -121,6 +123,19 @@ export default function SurveyTripMap({ tracks, selectedId, photos, voiceNotes, 
   useEffect(() => {
     if (focus && mapRef.current) mapRef.current.setView([focus.lat, focus.lng], Math.max(mapRef.current.getZoom(), 18));
   }, [focus]);
+
+  const meRef = useRef<L.LayerGroup | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    meRef.current?.remove();
+    meRef.current = null;
+    if (!me) return;
+    meRef.current = L.layerGroup([
+      L.circleMarker([me.lat, me.lng], { radius: 16, stroke: false, fillColor: '#2563EB', fillOpacity: 0.18, interactive: false }),
+      L.circleMarker([me.lat, me.lng], { radius: 7, color: '#fff', weight: 3, fillColor: '#2563EB', fillOpacity: 1, interactive: false }),
+    ]).addTo(map);
+  }, [me]);
 
   return <div ref={divRef} className={`bg-[#E5E3DF] ${className}`} />;
 }

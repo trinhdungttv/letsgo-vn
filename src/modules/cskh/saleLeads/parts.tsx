@@ -6,7 +6,7 @@ import { formatPhoneKey } from '../../../lib/saleLeads/parse';
 import { SALE_LEAD_STATUS_COLOR, SALE_LEAD_STATUS_LABEL, type SaleLead, type SaleLeadStatus } from '../../../lib/saleLeads/types';
 import { withScheme } from '../../../lib/socialLinks';
 import { chipStyle } from '../ui';
-import { ownerLine } from './helpers';
+import { AREA_CHIP, ownerLine, shortZone } from './helpers';
 
 export function StatusPill({ status, onClick, title }: { status: SaleLeadStatus; onClick?: () => void; title?: string }) {
   const cls = 'inline-flex items-center px-2.5 h-7 rounded-full text-[12px] font-medium whitespace-nowrap';
@@ -16,20 +16,30 @@ export function StatusPill({ status, onClick, title }: { status: SaleLeadStatus;
     : <span className={cls} style={style} title={title}>{SALE_LEAD_STATUS_LABEL[status]}</span>;
 }
 
-/** KCN đã ghép (xanh) + phần chữ khu vực chưa có trong danh mục (xám). */
-export function ZoneChips({ zoneIds, areaText, zones, max = 6 }: { zoneIds: readonly string[]; areaText: string; zones: readonly NamedItem[]; max?: number }) {
-  const named = zones.filter(z => zoneIds.includes(z.id));
-  const rest = unmatchedAreaParts(areaText, zoneIds, zones);
+/**
+ * Khu vực của 1 đầu mối: KCN (xanh) + khu vực khác (chàm) + phần chữ gốc chưa ghép (xám — thôi hiện khi
+ * đã chọn lại bằng tay).
+ */
+export function ZoneChips({ zoneIds, areaIds = [], areaText, reviewed = false, zones, areas = [], max = 6 }: {
+  zoneIds: readonly string[];
+  areaIds?: readonly string[];
+  areaText: string;
+  reviewed?: boolean;
+  zones: readonly NamedItem[];
+  areas?: readonly NamedItem[];
+  max?: number;
+}) {
+  const rest = reviewed ? [] : unmatchedAreaParts(areaText, zoneIds, zones, areaIds, areas);
   const all = [
-    ...named.map(z => ({ key: z.id, label: z.name.replace(/^KCN\s+/i, ''), known: true })),
-    ...rest.map(p => ({ key: `t:${p}`, label: p.replace(/^KCN\s+/i, ''), known: false })),
+    ...zones.filter(z => zoneIds.includes(z.id)).map(z => ({ key: z.id, label: shortZone(z.name), cls: AREA_CHIP.zone, tip: z.name })),
+    ...areas.filter(a => areaIds.includes(a.id)).map(a => ({ key: a.id, label: a.name, cls: AREA_CHIP.area, tip: a.name })),
+    ...rest.map(p => ({ key: `t:${p}`, label: shortZone(p), cls: AREA_CHIP.raw, tip: `${p} — chữ gốc chưa ghép, bấm để chọn từ danh sách` })),
   ];
   if (!all.length) return <span className="text-[#C7C7CC]">—</span>;
   return (
     <span className="flex flex-wrap gap-1">
       {all.slice(0, max).map(z => (
-        <span key={z.key} title={z.known ? z.label : `${z.label} — chưa có trong danh mục KCN (Thị trường → Khu vực)`}
-          className={`px-2 h-6 inline-flex items-center rounded-full text-[11.5px] font-medium whitespace-nowrap ${z.known ? 'bg-[#0071E3]/10 text-[#0058B0]' : 'bg-black/[0.05] text-[#6E6E73]'}`}>
+        <span key={z.key} title={z.tip} className={`px-2 h-6 inline-flex items-center rounded-full text-[11.5px] font-medium whitespace-nowrap ${z.cls}`}>
           {z.label}
         </span>
       ))}

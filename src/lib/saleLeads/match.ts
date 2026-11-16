@@ -42,26 +42,111 @@ export function splitAreaText(text: string | null | undefined): string[] {
   return [...new Set(out)];
 }
 
-/** Ghép chữ khu vực với danh mục KCN (so chặt sau khi bỏ dấu + bỏ chữ "KCN"). */
-export function matchAreaZones(text: string, zones: readonly NamedItem[]): { ids: string[]; unmatched: string[] } {
-  const byKey = new Map<string, string>();
+/**
+ * Khoá so tên khu vực: như zoneKey (bỏ dấu, bỏ chữ "KCN"…) + bỏ "TP." / "Tỉnh" + bỏ hết khoảng trắng
+ * → "Vsip1" = "KCN VSIP 1", "Đồng Nai" = "TP. Đồng Nai".
+ */
+export const areaKey = (s?: string | null): string => zoneKey(s)
+  .replace(/\b(thanh pho|tp|tinh)\b/g, ' ')
+  .replace(/\s+/g, '');
+
+/**
+ * Ghép chữ khu vực với danh mục: KCN (Thị trường → Khu vực) trước, rồi danh sách khu vực khác của
+ * bảng nháp (migration 229). So chặt theo areaKey.
+ */
+export function matchAreaZones(text: string, zones: readonly NamedItem[], areas: readonly NamedItem[] = []): { ids: string[]; areaIds: string[]; unmatched: string[] } {
+  const zoneBy = new Map<string, string>();
   for (const z of zones) {
-    const k = zoneKey(z.name);
-    if (k && !byKey.has(k)) byKey.set(k, z.id);
+    const k = areaKey(z.name);
+    if (k && !zoneBy.has(k)) zoneBy.set(k, z.id);
+  }
+  const areaBy = new Map<string, string>();
+  for (const a of areas) {
+    const k = areaKey(a.name);
+    if (k && !areaBy.has(k) && !zoneBy.has(k)) areaBy.set(k, a.id);
   }
   const ids: string[] = [];
+  const areaIds: string[] = [];
   const unmatched: string[] = [];
   for (const part of splitAreaText(text)) {
-    const id = byKey.get(zoneKey(part));
-    if (id) { if (!ids.includes(id)) ids.push(id); } else unmatched.push(part);
+    const k = areaKey(part);
+    const z = zoneBy.get(k);
+    const a = areaBy.get(k);
+    if (z) { if (!ids.includes(z)) ids.push(z); } else if (a) { if (!areaIds.includes(a)) areaIds.push(a); } else unmatched.push(part);
   }
-  return { ids, unmatched };
+  return { ids, areaIds, unmatched };
 }
 
-/** Phần chữ khu vực KHÔNG nằm trong các KCN đã chọn — hiện xám "chưa có trong danh mục". */
-export function unmatchedAreaParts(areaText: string, zoneIds: readonly string[], zones: readonly NamedItem[]): string[] {
-  const chosen = new Set(zones.filter(z => zoneIds.includes(z.id)).map(z => zoneKey(z.name)));
-  return splitAreaText(areaText).filter(p => !chosen.has(zoneKey(p)));
+/** Phần chữ khu vực KHÔNG trùng tên KCN / khu vực đã chọn — hiện xám "chưa ghép". */
+export function unmatchedAreaParts(
+  areaText: string, zoneIds: readonly string[], zones: readonly NamedItem[],
+  areaIds: readonly string[] = [], areas: readonly NamedItem[] = [],
+): string[] {
+  const chosen = new Set([
+    ...zones.filter(z => zoneIds.includes(z.id)),
+    ...areas.filter(a => areaIds.includes(a.id)),
+  ].map(x => areaKey(x.name)));
+  return splitAreaText(areaText).filter(p => !chosen.has(areaKey(p)));
+}
+
+/** Lead đủ để tính phần chữ khu vực chưa ghép. */
+type AreaLead = Pick<SaleLead, 'id' | 'zoneIds' | 'areaIds' | 'areaText' | 'areaReviewed'>;
+
+/** Chữ khu vực chưa ghép của 1 đầu mối (đã chọn lại bằng tay thì coi như xong). */
+export const pendingPartsOf = (l: AreaLead, zones: readonly NamedItem[], areas: readonly NamedItem[]): string[] =>
+  (l.areaReviewed ? [] : unmatchedAreaParts(l.areaText, l.zoneIds, zones, l.areaIds, areas));
+
+/** 1 cụm chữ khu vực chưa ghép, gộp qua mọi đầu mối (để ghép 1 lần cho tất cả). */
+export interface AreaPart {
+  key: string;
+  /** Chữ hiện (lần gặp đầu). */
+  text: string;
+  leadIds: string[];
+}
+
+/** Mọi cụm chữ khu vực chưa ghép, nhiều người nhất trước. */
+export function pendingAreaParts(leads: readonly AreaLead[], zones: readonly NamedItem[], areas: readonly NamedItem[]): AreaPart[] {
+  const m = new Map<string, AreaPart>();
+  for (const l of leads) {
+    for (const p of pendingPartsOf(l, zones, areas)) {
+      const key = areaKey(p) || p;
+      const e = m.get(key) ?? { key, text: p, leadIds: [] };
+      if (!e.leadIds.includes(l.id)) e.leadIds.push(l.id);
+      m.set(key, e);
+    }
+  }
+  return [...m.values()].sort((a, b) => b.leadIds.length - a.leadIds.length || a.text.localeCompare(b.text, 'vi'));
+}
+
+/** Cách xử lý 1 cụm chữ: ghép vào KCN / khu vực nào, hoặc bỏ qua (chữ rác). */
+export interface AreaDecision {
+  zoneIds: readonly string[];
+  areaIds: readonly string[];
+  skip?: boolean;
+}
+
+/**
+ * Áp các quyết định ghép cho 1 đầu mối: thêm KCN / khu vực đã chọn; mọi cụm chữ của người này đều đã
+ * có quyết định → đánh dấu đã xong (không hiện chữ xám nữa). Không đổi gì → null.
+ */
+export function applyAreaDecisions(
+  l: AreaLead, zones: readonly NamedItem[], areas: readonly NamedItem[], decisions: ReadonlyMap<string, AreaDecision>,
+): { zoneIds: string[]; areaIds: string[]; reviewed: boolean } | null {
+  const parts = pendingPartsOf(l, zones, areas);
+  if (!parts.length) return null;
+  const zoneIds = [...l.zoneIds];
+  const areaIds = [...l.areaIds];
+  let decided = 0;
+  for (const p of parts) {
+    const d = decisions.get(areaKey(p) || p);
+    if (!d || (!d.skip && !d.zoneIds.length && !d.areaIds.length)) continue;
+    decided++;
+    if (d.skip) continue;
+    for (const z of d.zoneIds) if (!zoneIds.includes(z)) zoneIds.push(z);
+    for (const a of d.areaIds) if (!areaIds.includes(a)) areaIds.push(a);
+  }
+  if (!decided) return null;
+  return { zoneIds, areaIds, reviewed: decided === parts.length };
 }
 
 // ── Đơn vị → đối thủ ────────────────────────────────────────────────────────
@@ -169,7 +254,11 @@ export function checkDrafts(drafts: readonly LeadDraft[], idx: ReadonlyMap<strin
  * tên / đơn vị / link trống thì điền, KCN + khu vực thêm phần chưa có, ghi chú khác thì nối thêm.
  * Không có gì mới → null.
  */
-export function mergeLeadPatch(lead: SaleLead, d: LeadDraft, zoneIds: readonly string[]): Record<string, unknown> | null {
+export function mergeLeadPatch(
+  lead: SaleLead, d: LeadDraft, zoneIds: readonly string[],
+  /** Kết quả ghép khu vực khác (chỉ truyền khi DB đã chạy migration 229). */
+  extra?: { areaIds: readonly string[]; unmatched: readonly string[] },
+): Record<string, unknown> | null {
   const patch: Record<string, unknown> = {};
   if (!lead.fullName && d.fullName) patch.full_name = d.fullName;
   if (!lead.company && d.company) patch.company = d.company;
@@ -177,9 +266,16 @@ export function mergeLeadPatch(lead: SaleLead, d: LeadDraft, zoneIds: readonly s
   if (!lead.postUrl && d.postUrl) patch.post_url = d.postUrl;
   const newZones = zoneIds.filter(z => !lead.zoneIds.includes(z));
   if (newZones.length) patch.zone_ids = [...lead.zoneIds, ...newZones];
-  const have = new Set(splitAreaText(lead.areaText).map(zoneKey));
-  const newParts = splitAreaText(d.areaText).filter(p => !have.has(zoneKey(p)));
-  if (newParts.length) patch.area_text = [lead.areaText, newParts.join(', ')].filter(Boolean).join(', ');
+  const newAreas = (extra?.areaIds ?? []).filter(a => !lead.areaIds.includes(a));
+  if (newAreas.length) patch.area_ids = [...lead.areaIds, ...newAreas];
+  const have = new Set(splitAreaText(lead.areaText).map(areaKey));
+  const newParts = splitAreaText(d.areaText).filter(p => !have.has(areaKey(p)));
+  if (newParts.length) {
+    patch.area_text = [lead.areaText, newParts.join(', ')].filter(Boolean).join(', ');
+    // Có chữ mới chưa ghép được → hiện lại để chọn
+    const unmatched = new Set((extra?.unmatched ?? []).map(areaKey));
+    if (extra && lead.areaReviewed && newParts.some(p => unmatched.has(areaKey(p)))) patch.area_reviewed = false;
+  }
   if (d.note && !fold(lead.note).includes(fold(d.note))) patch.note = [lead.note, d.note].filter(Boolean).join('\n');
   return Object.keys(patch).length ? patch : null;
 }

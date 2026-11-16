@@ -4,7 +4,8 @@ import {
   type Grid,
 } from './parse';
 import {
-  buildPhoneIndex, checkDrafts, companyKeys, matchAreaZones, matchCompetitor, mergeLeadPatch, splitAreaText, unmatchedAreaParts,
+  applyAreaDecisions, areaKey, buildPhoneIndex, checkDrafts, companyKeys, matchAreaZones, matchCompetitor, mergeLeadPatch,
+  pendingAreaParts, splitAreaText, unmatchedAreaParts, type AreaDecision,
 } from './match';
 import { mapSaleLeadRow, type SaleLead } from './types';
 
@@ -19,6 +20,11 @@ const SHEET: Grid = [
   row('2', 'Hồng Ngân Hr', '0814821788', 'Manpower', 'KCN VSIP 3', ['Link', 'https://facebook.com/ngan'], ['Link', 'https://facebook.com/posts/2'], 'Đang tuyển cho Coherent'),
   row('14', 'Mỹ Hương Hr', '0937. 506.355', 'Green Speed', 'KCN VSIP 1-2', ['Link', 'https://fb.com/huong'], ['Link', 'https://fb.com/p/14'], ''),
   row('16', 'Cẩm Thơ Hr', '0933.885.105', 'Green Speed', 'KCN VSIP 1-2, KCN Sóng Thần 1-2', ['Link', 'https://fb.com/tho'], ['Link', 'https://fb.com/p/16'], ''),
+];
+
+const AREAS = [
+  { id: 'a-td', name: 'Thủ Đức' },
+  { id: 'a-da', name: 'Dĩ An' },
 ];
 
 const ZONES = [
@@ -156,10 +162,45 @@ describe('khu vực → KCN', () => {
 
   it('ghép danh mục, giữ phần chưa có', () => {
     expect(matchAreaZones('KCN Mỹ Phước 3, KCN VSIP 2, KCN VSIP 2A Mở rộng', ZONES))
-      .toEqual({ ids: ['z-mp3', 'z-v2'], unmatched: ['KCN VSIP 2A Mở rộng'] });
+      .toEqual({ ids: ['z-mp3', 'z-v2'], areaIds: [], unmatched: ['KCN VSIP 2A Mở rộng'] });
     expect(matchAreaZones('KCN VSIP 1-2, KCN Sóng Thần 1-2', ZONES))
-      .toEqual({ ids: ['z-v2', 'z-st1', 'z-st2'], unmatched: ['KCN VSIP 1'] });
+      .toEqual({ ids: ['z-v2', 'z-st1', 'z-st2'], areaIds: [], unmatched: ['KCN VSIP 1'] });
     expect(unmatchedAreaParts('KCN VSIP 1-2', ['z-v2'], ZONES)).toEqual(['KCN VSIP 1']);
+  });
+
+  it('viết dính / "TP." vẫn khớp; khu vực ngoài KCN', () => {
+    expect(areaKey('Vsip1')).toBe(areaKey('KCN VSIP 1'));
+    expect(areaKey('TP. Đồng Nai')).toBe(areaKey('Đồng Nai'));
+    expect(areaKey('Tân Phú')).not.toBe(areaKey('Tân Phú Trung'));
+    expect(matchAreaZones('Thủ Đức , Dĩ An , Vsip2 , Sóng Thần', ZONES, AREAS))
+      .toEqual({ ids: ['z-v2'], areaIds: ['a-td', 'a-da'], unmatched: ['Sóng Thần'] });
+    expect(unmatchedAreaParts('Thủ Đức, Sóng Thần', [], ZONES, ['a-td'], AREAS)).toEqual(['Sóng Thần']);
+  });
+});
+
+describe('ghép khu vực hàng loạt', () => {
+  const a = lead({ id: 'A', areaText: 'Thủ Đức , Dĩ An , Vsip1 , Sóng Thần' });
+  const b = lead({ id: 'B', areaText: 'Sóng Thần, Hằng tuyển dụng HL' });
+  const c = lead({ id: 'C', areaText: 'Sóng Thần', areaReviewed: true });
+  const ZS = [...ZONES, { id: 'z-v1', name: 'KCN Vsip 1' }];
+
+  it('gộp cụm chữ chưa ghép qua mọi người, bỏ người đã chọn lại', () => {
+    const parts = pendingAreaParts([a, b, c], ZS, []);
+    expect(parts.map(p => [p.text, p.leadIds])).toEqual([
+      ['Sóng Thần', ['A', 'B']], ['Dĩ An', ['A']], ['Hằng tuyển dụng HL', ['B']], ['Thủ Đức', ['A']], ['Vsip1', ['A']],
+    ]);
+  });
+
+  it('áp quyết định: đủ hết thì đánh dấu xong', () => {
+    const dec = new Map<string, AreaDecision>([
+      [areaKey('Sóng Thần'), { zoneIds: ['z-st1', 'z-st2'], areaIds: [] }],
+      [areaKey('Hằng tuyển dụng HL'), { zoneIds: [], areaIds: [], skip: true }],
+      [areaKey('Thủ Đức'), { zoneIds: [], areaIds: ['a-td'] }],
+    ]);
+    expect(applyAreaDecisions(b, ZS, AREAS, dec)).toEqual({ zoneIds: ['z-st1', 'z-st2'], areaIds: [], reviewed: true });
+    // A: mới quyết Thủ Đức + Sóng Thần, còn Dĩ An + Vsip1 chưa quyết → chưa xong (vẫn hiện 2 cụm đó)
+    expect(applyAreaDecisions(a, ZS, AREAS, dec)).toEqual({ zoneIds: ['z-st1', 'z-st2'], areaIds: ['a-td'], reviewed: false });
+    expect(applyAreaDecisions(c, ZS, AREAS, dec)).toBeNull();
   });
 });
 

@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom';
 import {
   Archive, Camera, ChevronDown, ChevronRight, Download, FileText, ImagePlus, ListChecks, Loader2, MapPin, Maximize2, Mic, Minimize2, Pencil, Play, Plus, RefreshCw, Globe, RotateCcw, Route, Search, Share2, Star, Trash2, X,
   Home, Orbit, Phone, Bike,
+  LocateFixed,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -124,6 +125,17 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const [tracks, setTracks] = useState<Map<string, TrackSegment[]>>(new Map());
   const [viewer, setViewer] = useState<SurveyPhoto | null>(null);
   const [voiceSheet, setVoiceSheet] = useState<SurveyVoiceNote | null>(null);
+  const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const locateMe = () => {
+    if (!navigator.geolocation) { say('Máy không hỗ trợ định vị'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      pos => { const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }; setMe(p); setFocus({ ...p, key: Date.now() }); setLocating(false); },
+      () => { setLocating(false); say('Không lấy được vị trí — hãy cho phép truy cập vị trí'); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
+    );
+  };
   const [focus, setFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
   const [surveyOpen, setSurveyOpen] = useState<false | 'survey' | 'area'>(false);
   const [pending, setPending] = useState(() => pendingActiveTrip());
@@ -678,7 +690,11 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
               lodgings={mapLodgings} panos={mapPanos}
               onLodging={l => setLodgingSheet({ lodging: l })} onPano={p => setOpenPano({ id: p.id, calibrate: false })}
               onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
-              fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${needs.join('+')}:${position}:${mapBig}`} focus={focus} />
+              fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${needs.join('+')}:${position}:${mapBig}`} focus={focus} me={me} />
+            <button onClick={locateMe} title="Về vị trí của tôi" disabled={locating}
+              className={`absolute z-[1000] h-9 w-9 rounded-full bg-white/95 shadow-md text-[#1D4ED8] inline-flex items-center justify-center ${mapBig ? 'right-3 top-[calc(60px+env(safe-area-inset-top))]' : 'right-2 top-12'}`}>
+              {locating ? <Loader2 size={15} className="animate-spin" /> : <LocateFixed size={16} />}
+            </button>
             <button onClick={() => setMapBig(v => !v)} title={mapBig ? 'Thu nhỏ bản đồ (Esc)' : 'Phóng bản đồ kín màn hình'}
               className={`absolute z-[1000] h-9 px-3 rounded-full bg-white/95 shadow-md text-[12.5px] font-medium text-[#111] inline-flex items-center gap-1.5 ${mapBig ? 'right-3 top-[calc(12px+env(safe-area-inset-top))]' : 'right-2 top-2'}`}>
               {mapBig ? <><Minimize2 size={14} /> Thu nhỏ</> : <Maximize2 size={14} />}

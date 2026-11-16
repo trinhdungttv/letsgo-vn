@@ -1,25 +1,30 @@
 // Form thêm / sửa 1 đầu mối. Gõ SĐT là dò trùng ngay: trùng bảng nháp hoặc đã là Sale / CTV → không lưu
 // (mở dòng đã có thay vì tạo trùng); trùng người liên hệ của khách → chỉ nhắc, vẫn lưu được.
 import { useMemo, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { ChevronDown, Trash2 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
 import { deleteSaleLeads, insertSaleLead, updateSaleLead, type SaleLeadInput } from '../../../lib/saleLeads/api';
-import { matchAreaZones, matchCompetitor, ownersOf, type NamedItem, type PhoneOwner } from '../../../lib/saleLeads/match';
+import { matchCompetitor, ownersOf, pendingPartsOf, type NamedItem, type PhoneOwner } from '../../../lib/saleLeads/match';
 import { phoneKeysOf } from '../../../lib/saleLeads/parse';
 import { SALE_LEAD_STATUS_HINT, SALE_LEAD_STATUS_LABEL, SALE_LEAD_STATUSES, type SaleLead, type SaleLeadStatus } from '../../../lib/saleLeads/types';
-import { CatalogPick } from '../components/CatalogPick';
 import { ChoiceChip, Sheet, SHEET_FOOTER } from '../components/Sheet';
 import { inputCls } from '../ui';
+import { AreaPicker, type AreaValue } from './AreaPicker';
+import { AREA_CHIP, shortZone } from './helpers';
 import { PhoneCheckBox } from './parts';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function LeadFormSheet({ lead, initialPhone = '', zones, competitors, companies, phoneIndex, toast, onClose, onSaved, onOpenLead, onOpenSale }: {
+export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasReady, onCreateArea, competitors, companies, phoneIndex, toast, onClose, onSaved, onOpenLead, onOpenSale }: {
   /** null = thêm mới. */
   lead: SaleLead | null;
   /** Thêm mới từ ô tra số: điền sẵn SĐT. */
   initialPhone?: string;
   zones: readonly NamedItem[];
+  /** Khu vực ngoài KCN (migration 229). */
+  areas: readonly NamedItem[];
+  areasReady: boolean;
+  onCreateArea: (name: string) => Promise<NamedItem | null>;
   competitors: readonly NamedItem[];
   /** Tên đơn vị đã gặp trong bảng nháp (gợi ý khi gõ). */
   companies: readonly string[];
@@ -36,8 +41,12 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, competitors, com
   const [name, setName] = useState(lead?.fullName ?? '');
   const [phone, setPhone] = useState(lead?.phone ?? initialPhone);
   const [company, setCompany] = useState(lead?.company ?? '');
-  const [zoneIds, setZoneIds] = useState<string[]>(lead?.zoneIds ?? []);
-  const [areaText, setAreaText] = useState(lead?.areaText ?? '');
+  const [place, setPlace] = useState<AreaValue>(() => ({
+    zoneIds: (lead?.zoneIds ?? []).filter(id => zones.some(z => z.id === id)),
+    areaIds: (lead?.areaIds ?? []).filter(id => areas.some(a => a.id === id)),
+  }));
+  const [placeTouched, setPlaceTouched] = useState(false);
+  const [pickOpen, setPickOpen] = useState(!lead);
   const [channelUrl, setChannelUrl] = useState(lead?.channelUrl ?? '');
   const [postUrl, setPostUrl] = useState(lead?.postUrl ?? '');
   const [note, setNote] = useState(lead?.note ?? '');
@@ -49,16 +58,19 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, competitors, com
   const owners = useMemo(() => ownersOf(keys, phoneIndex, lead?.id), [keys, phoneIndex, lead?.id]);
   const blocker = owners.find(o => o.kind === 'lead' || o.kind === 'sale');
   const competitor = useMemo(() => matchCompetitor(company, competitors), [company, competitors]);
-  // Gõ chữ khu vực → tự chọn những KCN có trong danh mục
-  const areaMatch = useMemo(() => matchAreaZones(areaText, zones), [areaText, zones]);
-  const suggestZones = areaMatch.ids.filter(id => !zoneIds.includes(id));
+  // Chữ gốc lúc nhập chưa ghép được (đã chọn lại bằng tay thì thôi)
+  const hints = useMemo(() => (lead && !(lead.areaReviewed || placeTouched) ? pendingPartsOf({ ...lead, ...place }, zones, areas) : []),
+    [lead, place, placeTouched, zones, areas]);
+  const changePlace = (v: AreaValue) => { setPlace(v); setPlaceTouched(true); };
 
   const save = async () => {
     if (!name.trim() && !keys.length) { setError('Nhập tên hoặc SĐT'); return; }
     if (phone.trim() && !keys.length) { setError('SĐT không đúng — số di động 10 số (VD 0912 345 678)'); return; }
     if (blocker) { setError(blocker.kind === 'sale' ? 'Số này đã là Sale / CTV — không cần thêm vào bảng nháp' : 'Số này đã có trong bảng nháp — mở dòng đó để ghi tiếp'); return; }
     const input: SaleLeadInput = {
-      fullName: name, phone, company, zoneIds: [...new Set([...zoneIds, ...suggestZones])], areaText, channelUrl, postUrl, note,
+      fullName: name, phone, company, zoneIds: place.zoneIds, areaText: lead?.areaText ?? '', channelUrl, postUrl, note,
+      // Đã chọn lại khu vực bằng tay → thôi hiện chữ gốc chưa ghép
+      ...(areasReady ? { areaIds: place.areaIds, ...(lead && placeTouched ? { areaReviewed: true } : {}) } : {}),
       // Trạng thái "Đã chuyển" chỉ đặt bằng nút Chuyển sang Sale / CTV
       status: status === 'promoted' && lead?.status !== 'promoted' ? undefined : status,
     };
@@ -119,7 +131,7 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, competitors, com
             )}
           </div>
         )}
-        <div>
+        <div className="md:col-span-2">
           <label className={labelCls}>Đơn vị / nơi làm</label>
           <input value={company} onChange={e => setCompany(e.target.value)} className={inputCls} list="sale-lead-companies" placeholder="VD: Manpower, Green Speed, làm tự do" />
           <datalist id="sale-lead-companies">
@@ -127,16 +139,30 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, competitors, com
           </datalist>
           {competitor && <p className="text-[11.5px] text-[#B25000] mt-1">Trùng tên đối thủ «{competitor.name}» (Thị trường → Đối thủ)</p>}
         </div>
-        <div>
-          <label className={labelCls}>Khu vực (chữ)</label>
-          <input value={areaText} onChange={e => setAreaText(e.target.value)} className={inputCls} placeholder="VD: KCN VSIP 1-2, KCN Mỹ Phước 3" />
-          {areaMatch.unmatched.length > 0 && areaText.trim() && (
-            <p className="text-[11.5px] text-[#86868B] mt-1">Chưa có trong danh mục KCN: {areaMatch.unmatched.join(', ')}</p>
-          )}
-        </div>
         <div className="md:col-span-2">
-          <label className={labelCls}>KCN (để lọc){suggestZones.length > 0 && <span className="font-normal text-[#248A3D]"> · tự thêm khi lưu: {zones.filter(z => suggestZones.includes(z.id)).map(z => z.name).join(', ')}</span>}</label>
-          <CatalogPick items={zones} value={zoneIds} onChange={setZoneIds} addLabel="Thêm KCN…" emptyText="Chưa có KCN nào trong Thị trường → Khu vực." />
+          <label className={labelCls}>Khu vực <span className="font-normal text-[#86868B]">— chọn từ danh sách để lọc được</span></label>
+          {!pickOpen && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {zones.filter(z => place.zoneIds.includes(z.id)).map(z => (
+                <span key={z.id} className={`px-2.5 h-8 md:h-7 inline-flex items-center rounded-full text-[12.5px] font-medium ${AREA_CHIP.zone}`}>{shortZone(z.name)}</span>
+              ))}
+              {areas.filter(a => place.areaIds.includes(a.id)).map(a => (
+                <span key={a.id} className={`px-2.5 h-8 md:h-7 inline-flex items-center rounded-full text-[12.5px] font-medium ${AREA_CHIP.area}`}>{a.name}</span>
+              ))}
+              {hints.map(h => (
+                <span key={h} title="Chữ gốc chưa ghép" className={`px-2.5 h-8 md:h-7 inline-flex items-center rounded-full text-[12.5px] font-medium ${AREA_CHIP.raw}`}>{h}</span>
+              ))}
+              <button type="button" onClick={() => setPickOpen(true)}
+                className="inline-flex items-center gap-1 h-8 md:h-7 px-3 rounded-full text-[12.5px] font-medium bg-[#0071E3]/10 text-[#0066CC] hover:bg-[#0071E3]/[0.16] transition">
+                {place.zoneIds.length || place.areaIds.length ? 'Sửa khu vực' : 'Chọn khu vực'} <ChevronDown size={13} />
+              </button>
+            </div>
+          )}
+          {pickOpen && (
+            <AreaPicker zones={zones} areas={areas} areasReady={areasReady} value={place} onChange={changePlace}
+              onCreate={onCreateArea} hints={hints} listClass="max-h-[220px]" />
+          )}
+          {lead?.areaText && <p className="text-[11.5px] text-[#86868B] mt-1.5">Chữ gốc khi nhập: {lead.areaText}</p>}
         </div>
         <div>
           <label className={labelCls}>Link kênh</label>

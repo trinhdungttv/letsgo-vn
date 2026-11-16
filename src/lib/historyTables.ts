@@ -72,6 +72,7 @@ export const TABLE_LABELS: Record<string, string> = {
   labor_source_windows: 'Nguồn LĐ — lịch thực tập',
   labor_source_batches: 'Nguồn LĐ — đợt gửi SV',
   sale_leads: 'Đầu mối Sale / CTV (bảng nháp)',
+  sale_lead_areas: 'Danh sách khu vực đầu mối',
 };
 
 export function tableLabel(name: string): string {

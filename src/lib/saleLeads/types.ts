@@ -73,8 +73,12 @@ export interface SaleLead {
   company: string;
   /** KCN đã ghép với danh mục (market_zones.id). */
   zoneIds: string[];
+  /** Khu vực ngoài KCN đã chọn (sale_lead_areas.id — migration 229). */
+  areaIds: string[];
   /** Cột "Khu vực" chữ gốc. */
   areaText: string;
+  /** Đã chọn lại khu vực bằng tay → không hiện phần chữ gốc chưa ghép nữa. */
+  areaReviewed: boolean;
   channelUrl: string;
   postUrl: string;
   note: string;
@@ -98,7 +102,10 @@ export interface SaleLeadRow {
   phone_keys: string[] | null;
   company: string | null;
   zone_ids: string[] | null;
+  /** Chưa chạy migration 229 thì không có. */
+  area_ids?: string[] | null;
   area_text: string | null;
+  area_reviewed?: boolean | null;
   channel_url: string | null;
   post_url: string | null;
   note: string | null;
@@ -141,7 +148,9 @@ export function mapSaleLeadRow(r: SaleLeadRow): SaleLead {
     phoneKeys: (r.phone_keys ?? []).filter(Boolean),
     company: (r.company ?? '').trim(),
     zoneIds: (r.zone_ids ?? []).filter(Boolean),
+    areaIds: (r.area_ids ?? []).filter(Boolean),
     areaText: (r.area_text ?? '').trim(),
+    areaReviewed: r.area_reviewed === true,
     channelUrl: (r.channel_url ?? '').trim(),
     postUrl: (r.post_url ?? '').trim(),
     note: (r.note ?? '').trim(),
