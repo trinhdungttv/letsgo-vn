@@ -16,6 +16,15 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-18-survey-zone-layers',
+    date: '2026-11-18',
+    title: 'Khảo sát KCN',
+    features: [
+      'Chọn 1 KCN → bản đồ hiện đủ chuyến đi, ảnh chỉ tiêu, ghi âm, nhà trọ và ảnh 360° của KCN đó; bấm từng nút lớp để ẩn/hiện',
+      'Ảnh 360° / nhà trọ chưa gắn KCN tự nhận KCN gần nhất theo GPS nên lọc theo KCN không còn bị sót',
+    ],
+  },
+  {
     id: '2026-11-16-survey-locate-me',
     date: '2026-11-16',
     title: 'Khảo sát KCN',

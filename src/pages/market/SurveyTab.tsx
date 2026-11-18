@@ -56,6 +56,7 @@ import LodgingSheet from './survey/LodgingSheet';
 import { loadMapCandidates } from './survey/surveyExtras';
 import PanoModal, { type PanoMapPoint } from '../../components/pano/PanoModal';
 import AddPanoModal from '../../components/pano/AddPanoModal';
+import { distanceM } from '../../lib/pano/sphere';
 import { listPanoramas, panoThumb, PanoMissingTable, PANO_MIGRATION_HINT, type MapPanorama } from '../../lib/pano/panoramas';
 import { listLodgings, LodgingMissingTable, LODGING_MIGRATION_HINT } from '../../lib/kcnSurvey/lodgings';
 import { fmtMin, fmtRent, lodgingTitle, phoneDigits, type Lodging, type RouteCandidate } from '../../lib/kcnSurvey/lodgingCore';
@@ -318,10 +319,23 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   const fVoice = useMemo(() => voiceNotes.filter(n => okTime(n.recorded_at) && okZone(n.zone_id) && okPerson(n.user_name) && (!tripFilter || n.trip_id === tripFilter)
     && (!q || fold([n.company_name, n.note, n.zone_name].join(' ')).includes(q))), [voiceNotes, okTime, okZone, okPerson, q, tripFilter]);
 
-  const fLodgings = useMemo(() => lodgings.filter(l => okTime(l.created_at) && okZone(l.zone_id) && okPerson(l.created_by)
-    && (!q || fold([lodgingTitle(l), l.address, l.landlord_name, l.landlord_phone, l.note, l.zone_name, l.facilities.join(' ')].join(' ')).includes(q))), [lodgings, okTime, okZone, okPerson, q]);
-  const fPanos = useMemo(() => panos.filter(p => okTime(p.created_at) && okZone(p.zone_id) && okPerson(p.created_by)
-    && (!q || fold([p.title, p.note, p.zone_name, ...p.annotations.map(a => `${a.label} ${a.note}`)].join(' ')).includes(q))), [panos, okTime, okZone, okPerson, q]);
+  // Ảnh 360 / nhà trọ chưa gắn KCN (thêm lúc đang xem "Tất cả KCN", hoặc ghi cũ) → tự nhận KCN gần nhất theo GPS (≤ 4 km) để lọc theo KCN ra đủ
+  const nearZoneId = useCallback((lat: number | null, lng: number | null) => {
+    if (lat == null || lng == null) return null;
+    let best: { id: string; d: number } | null = null;
+    for (const z of marketZones) {
+      if (z.lat == null || z.lng == null) continue;
+      const d = distanceM({ lat, lng }, { lat: z.lat, lng: z.lng });
+      if (d < 4000 && (!best || d < best.d)) best = { id: z.id, d };
+    }
+    return best?.id ?? null;
+  }, [marketZones]);
+  const panosZ = useMemo(() => panos.map(p => (p.zone_id ? p : { ...p, zone_id: nearZoneId(p.lat, p.lng) })), [panos, nearZoneId]);
+  const lodgingsZ = useMemo(() => lodgings.map(l => (l.zone_id ? l : { ...l, zone_id: nearZoneId(l.lat, l.lng) })), [lodgings, nearZoneId]);
+  const fLodgings = useMemo(() => lodgingsZ.filter(l => okTime(l.created_at) && okZone(l.zone_id) && okPerson(l.created_by)
+    && (!q || fold([lodgingTitle(l), l.address, l.landlord_name, l.landlord_phone, l.note, l.zone_name, l.facilities.join(' ')].join(' ')).includes(q))), [lodgingsZ, okTime, okZone, okPerson, q]);
+  const fPanos = useMemo(() => panosZ.filter(p => okTime(p.created_at) && okZone(p.zone_id) && okPerson(p.created_by)
+    && (!q || fold([p.title, p.note, p.zone_name, ...p.annotations.map(a => `${a.label} ${a.note}`)].join(' ')).includes(q))), [panosZ, okTime, okZone, okPerson, q]);
 
   const people = useMemo(() => [...new Set([...trips.map(t => t.user_name), ...photos.map(p => p.user_name), ...voiceNotes.map(n => n.user_name)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')), [trips, photos, voiceNotes]);
   const usedZones = useMemo(() => new Set([...trips.map(t => t.zone_id), ...photos.map(p => p.zone_id), ...voiceNotes.map(n => n.zone_id)]), [trips, photos, voiceNotes]);
@@ -338,16 +352,20 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
     const ph = new Map<string, number>(), tr = new Map<string, number>(), lo = new Map<string, number>();
     photos.forEach(p => { if (p.zone_id) ph.set(p.zone_id, (ph.get(p.zone_id) ?? 0) + 1); });
     trips.forEach(t => { if (t.zone_id) tr.set(t.zone_id, (tr.get(t.zone_id) ?? 0) + 1); });
-    lodgings.forEach(l => { if (l.zone_id) lo.set(l.zone_id, (lo.get(l.zone_id) ?? 0) + 1); });
+    lodgingsZ.forEach(l => { if (l.zone_id) lo.set(l.zone_id, (lo.get(l.zone_id) ?? 0) + 1); });
     const pa = new Map<string, number>();
-    panos.forEach(x => { if (x.zone_id) pa.set(x.zone_id, (pa.get(x.zone_id) ?? 0) + 1); });
+    panosZ.forEach(x => { if (x.zone_id) pa.set(x.zone_id, (pa.get(x.zone_id) ?? 0) + 1); });
     return marketZones.filter(z => ph.has(z.id) || tr.has(z.id) || lo.has(z.id) || pa.has(z.id))
       .map(z => ({ id: z.id, name: z.name, location: z.location, photos: ph.get(z.id) ?? 0, trips: tr.get(z.id) ?? 0, lodgings: lo.get(z.id) ?? 0, panos: pa.get(z.id) ?? 0 }));
-  }, [marketZones, photos, trips, lodgings, panos]);
+  }, [marketZones, photos, trips, lodgingsZ, panosZ]);
   const unzonedLodgings = useMemo(() => lodgings.filter(l => !l.zone_id).length, [lodgings]);
 
+  // Lớp trên bản đồ: luôn hiện đủ (chuyến đi, ảnh chỉ tiêu, ghi âm, nhà trọ, ảnh 360) theo KCN đang lọc; bấm chip để tắt/bật từng lớp
+  const [layers, setLayers] = useState({ trips: true, photos: true, voice: true, lodgings: true, panos: true });
+  const toggleLayer = (k: keyof typeof layers) => setLayers(l => ({ ...l, [k]: !l[k] }));
+
   // ── Vết: chuyến đang chọn, không thì 40 chuyến mới nhất trong bộ lọc ──────
-  const trackIds = useMemo(() => (sub !== 'trips' ? [] : selected ? [selected] : fTrips.slice(0, 40).map(t => t.id)), [sub, selected, fTrips]);
+  const trackIds = useMemo(() => (!layers.trips ? [] : selected ? [selected] : fTrips.slice(0, 40).map(t => t.id)), [layers.trips, selected, fTrips]);
   const trackKey = trackIds.join(',');
   useEffect(() => {
     if (!trackIds.length) { setTracks(new Map()); return; }
@@ -358,11 +376,11 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
   }, [trackKey]);
 
   const selTrip = selected ? trips.find(t => t.id === selected) ?? null : null;
-  const extrasSub = sub === 'lodgings' || sub === 'panos';
-  const mapPhotos = sub === 'voice' || extrasSub ? [] : sub === 'trips' && selTrip ? fPhotos.filter(p => p.trip_id === selTrip.id) : fPhotos;
-  const mapVoice = sub === 'photos' || sub === 'online' || extrasSub ? [] : sub === 'trips' && selTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
-  const mapLodgings = sub === 'lodgings' ? fLodgings : sub === 'trips' && selTrip ? fLodgings.filter(l => l.trip_id === selTrip.id) : [];
-  const mapPanos = sub === 'panos' ? fPanos : sub === 'trips' && selTrip ? fPanos.filter(p => p.trip_id === selTrip.id) : [];
+  const onTrip = sub === 'trips' && selTrip;
+  const mapPhotos = !layers.photos ? [] : onTrip ? fPhotosBoth.filter(p => p.trip_id === selTrip.id) : fPhotosBoth;
+  const mapVoice = !layers.voice ? [] : onTrip ? fVoice.filter(n => n.trip_id === selTrip.id) : fVoice;
+  const mapLodgings = !layers.lodgings ? [] : onTrip ? fLodgings.filter(l => l.trip_id === selTrip.id) : fLodgings;
+  const mapPanos = !layers.panos ? [] : onTrip ? fPanos.filter(p => p.trip_id === selTrip.id) : fPanos;
 
   const byTrip = useMemo(() => {
     const ph = new Map<string, number>(), vo = new Map<string, number>();
@@ -691,6 +709,14 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
               onLodging={l => setLodgingSheet({ lodging: l })} onPano={p => setOpenPano({ id: p.id, calibrate: false })}
               onPhoto={setViewer} onVoice={setVoiceSheet} onTrip={id => setSelected(id)}
               fitKey={`${sub}:${zoneId}:${province}:${period}:${person}:${selected ?? ''}:${tripFilter ?? ''}:${starOnly}:${needs.join('+')}:${position}:${mapBig}`} focus={focus} me={me} />
+            <div className={`absolute z-[1000] left-2 flex flex-wrap gap-1 max-w-[calc(100%-120px)] ${mapBig ? 'top-[calc(12px+env(safe-area-inset-top))] left-12' : 'bottom-2'}`}>
+              {([['trips', 'Chuyến đi', fTrips.length], ['photos', 'Ảnh chỉ tiêu', fPhotosBoth.length], ['voice', 'Ghi âm', fVoice.length], ['lodgings', 'Nhà trọ', fLodgings.length], ['panos', 'Ảnh 360°', fPanos.length]] as const).map(([k, label, n]) => (
+                <button key={k} onClick={() => toggleLayer(k)} title={layers[k] ? `Bấm để ẩn ${label} trên bản đồ` : `Bấm để hiện ${label} trên bản đồ`}
+                  className={`h-7 px-2.5 rounded-full text-[11.5px] font-medium shadow-md ${layers[k] ? 'bg-[#111] text-white' : 'bg-white/95 text-[#888] line-through'}`}>
+                  {label} {n}
+                </button>
+              ))}
+            </div>
             <button onClick={locateMe} title="Về vị trí của tôi" disabled={locating}
               className={`absolute z-[1000] h-9 w-9 rounded-full bg-white/95 shadow-md text-[#1D4ED8] inline-flex items-center justify-center ${mapBig ? 'right-3 top-[calc(60px+env(safe-area-inset-top))]' : 'right-2 top-12'}`}>
               {locating ? <Loader2 size={15} className="animate-spin" /> : <LocateFixed size={16} />}
