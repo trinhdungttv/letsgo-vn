@@ -66,7 +66,7 @@ const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagNa
 const errText = (e: unknown) => (e as { message?: string })?.message ?? String(e);
 const readRadius = () => { try { const n = Number(localStorage.getItem(RADIUS_KEY)); return RADII.includes(n) ? n : 2000; } catch { return 2000; } };
 
-export default function PanoModal({ pano, points, panos, onClose, onChanged, onDeleted, onSwitch, startCalibrate }: {
+export default function PanoModal({ pano, points, panos, onClose, onChanged, onDeleted, onSwitch, startCalibrate, zones }: {
   pano: MapPanorama;
   /** Công ty / dự án / KCN có toạ độ — để tìm cái nào ở gần ảnh. */
   points: PanoMapPoint[];
@@ -78,6 +78,8 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
   /** Không dùng nữa: thông báo của trang nằm DƯỚI lớp phủ 360 nên không thấy — màn này tự hiện thông báo trong khung. */
   toast?: (msg: string) => void;
   startCalibrate?: boolean;
+  /** Danh sách KCN để đổi KCN cho ảnh (không truyền = không hiện ô chọn). */
+  zones?: { id: string; name: string }[];
 }) {
   const { user } = useAuth();
   const userName = user?.full_name || user?.username || '';
@@ -658,6 +660,14 @@ export default function PanoModal({ pano, points, panos, onClose, onChanged, onD
               </button>
             )}
           </div>
+          {zones && zones.length > 0 && (
+            <select value={p.zone_id ?? ''} title="KCN của ảnh — chọn để gắn / đổi KCN"
+              onChange={e => { const z = zones.find(x => x.id === e.target.value); patchLocal({ zone_id: z?.id ?? null, zone_name: z?.name ?? '' }); queue({ zone_id: z?.id ?? null, zone_name: z?.name ?? '' }, true); }}
+              className={`pointer-events-auto shrink-0 max-w-[40vw] md:max-w-[220px] ${phone ? 'h-11 text-[16px]' : 'h-9 text-[12.5px]'} px-2 rounded-full bg-white/90 text-[#111] font-medium outline-none`}>
+              <option value="">Chưa gắn KCN</option>
+              {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+            </select>
+          )}
           <SaveBadge save={save} phone={phone} onRetry={() => { void flush(); }} />
           {!editing && (
             <button onClick={() => startEditing()} title="Vẽ / đánh dấu" aria-label="Vẽ / đánh dấu"

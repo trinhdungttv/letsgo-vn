@@ -1005,6 +1005,7 @@ export default function SurveyTab({ marketZones, marketLeads, laborHistory, goTa
         if (!pn) return null;
         return (
           <PanoModal key={pn.id} pano={pn} points={mapPts.panoPoints} panos={panos} startCalibrate={openPano.calibrate} toast={say}
+            zones={marketZones.map(z => ({ id: z.id, name: z.name })).sort((a, b) => a.name.localeCompare(b.name, 'vi'))}
             onClose={() => setOpenPano(null)}
             onChanged={row => setPanos(list => list.map(x => (x.id === row.id ? row : x)))}
             onDeleted={id => { setOpenPano(null); setPanos(list => list.filter(x => x.id !== id)); say('Đã xoá ảnh 360'); }}

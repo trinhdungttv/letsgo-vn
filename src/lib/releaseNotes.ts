@@ -22,6 +22,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     features: [
       'Chọn 1 KCN → bản đồ hiện đủ chuyến đi, ảnh chỉ tiêu, ghi âm, nhà trọ và ảnh 360° của KCN đó; bấm từng nút lớp để ẩn/hiện',
       'Ảnh 360° / nhà trọ chưa gắn KCN tự nhận KCN gần nhất theo GPS nên lọc theo KCN không còn bị sót',
+      'Mở ảnh 360° → chọn ô KCN ở thanh trên để gắn / đổi KCN cho ảnh',
     ],
   },
   {
