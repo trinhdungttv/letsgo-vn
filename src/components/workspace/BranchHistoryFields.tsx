@@ -88,7 +88,7 @@ function todayStr(): string {
  * Bảng có UNIQUE(user_id, priority_date, target_name): mỗi người 1 phiên/chi nhánh/ngày. Ghi thêm
  * trong cùng ngày thì GỘP nội dung vào phiên đó — không ghi đè mất nội dung đã lưu như trước.
  */
-async function recordBranchVisit(userId: string, branchName: string, fields: NoteFields, priority_date: string, goal_type: GoalType): Promise<'inserted' | 'merged'> {
+export async function recordBranchVisit(userId: string, branchName: string, fields: NoteFields, priority_date: string, goal_type: GoalType): Promise<'inserted' | 'merged'> {
   const target_name = `Chi nhánh ${branchName}`
   const { data: existing, error: selectError } = await supabase
     .from('morning_priorities')

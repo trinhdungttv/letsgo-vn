@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
   Settings, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet, Building2, Users,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
@@ -17,6 +17,7 @@ import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
+import { recordBranchVisit } from '../components/workspace/BranchHistoryFields';
 import { BranchVisitSettings } from '../components/workspace/BranchVisitSettings';
 import { Switch } from '../components/workspace/Switch';
 import { BranchAvatar } from '../components/branches/BranchAvatar';
@@ -309,6 +310,23 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
     if (date > todayStr()) return;
     const k = `Chi nhánh ${branchKey(branch)}`;
     setBranchActivity(prev => (prev[k] && prev[k] >= date ? prev : { ...prev, [k]: date }));
+  }
+
+  // "Đã gặp": mới gặp chi nhánh / văn phòng, không có thông tin mới → ghi 1 lần ghé hôm nay (gộp nếu hôm nay đã có) để hết báo đỏ.
+  const [metBusyId, setMetBusyId] = useState<string | null>(null);
+  async function markBranchMet(branch: Branch) {
+    if (!user || metBusyId) return;
+    setMetBusyId(branch.id);
+    try {
+      const d = new Date();
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      await recordBranchVisit(user.id, branch.name, { status_note: 'Đã gặp mặt, không có thông tin mới', difficulties: '', opportunities: '' }, date, 'tham_quan');
+      setBranchActivity(prev => ({ ...prev, [`Chi nhánh ${branchKey(branch)}`]: date }));
+    } catch (e) {
+      alert('Không ghi được: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setMetBusyId(null);
+    }
   }
 
   // ---- Rail: KCN cần ghé + accordion KCN Grid ----
@@ -699,6 +717,13 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
                             <div className="text-[13.5px] font-medium text-[#1D1D1F] truncate">{s.branch.name}</div>
                             {s.branch.manager_name && <div className="text-[11.5px] text-[#86868B] truncate">{s.branch.manager_name}</div>}
                           </div>
+                          <button type="button" disabled={metBusyId === s.branch.id}
+                            onClick={e => { e.stopPropagation(); void markBranchMet(s.branch); }}
+                            onKeyDown={e => e.stopPropagation()}
+                            title="Vừa gặp rồi, không có gì mới — làm xanh lại (ghi 1 lần ghé hôm nay)"
+                            className="shrink-0 h-7 px-2 rounded-full bg-[#F2F2F7] text-[#34C759] hover:bg-[#E3F6E8] text-[11.5px] font-medium inline-flex items-center gap-1 disabled:opacity-50">
+                            <Check size={12} /> Đã gặp
+                          </button>
                           <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 tabular-nums ${visitColor(s.daysSince)}`}>
                             {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày`}
                           </span>
