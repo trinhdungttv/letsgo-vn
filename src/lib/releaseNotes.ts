@@ -16,6 +16,22 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-19-tab-title',
+    date: '2026-11-19',
+    title: 'Giao diện',
+    features: [
+      'Tên tab trình duyệt đổi theo module đang mở (vd "Khách hàng - LGVN") để dễ phân biệt khi mở nhiều tab',
+    ],
+  },
+  {
+    id: '2026-11-18-cancel-work-task',
+    date: '2026-11-18',
+    title: 'Workspace',
+    features: [
+      'Nút "Huỷ việc" cho việc không làm nữa: việc rời Workspace nhưng vẫn lưu trong lịch sử khách hàng / chi nhánh, kèm lý do huỷ',
+    ],
+  },
+  {
     id: '2026-11-18-survey-zone-layers',
     date: '2026-11-18',
     title: 'Khảo sát KCN',

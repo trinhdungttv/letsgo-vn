@@ -5,7 +5,7 @@
 // comment + doc status (Tái ký HĐ), báo cáo khi hoàn thành, sửa/xoá, yêu cầu ngưng HĐ.
 import { useState, useEffect, useMemo, useRef } from 'react'
 import {
-  ChevronDown, Check, X, Trash2, Pencil,
+  ChevronDown, Check, X, Trash2, Pencil, Ban,
   MessageSquare, History, Search, Plus, SlidersHorizontal,
   Building2, Hourglass, Hand, Flame, Target, Phone, CalendarClock, CheckCircle2, BellRing,
 } from 'lucide-react'
@@ -278,7 +278,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     ;(async () => {
       setLoading(true)
       const [my, ws, dw, dws, pl, dpl] = await Promise.all([
-        supabase.from('work_tasks').select('*').eq('user_id', user.id).is('deleted_at', null).neq('status', 'done').order('due_date', { ascending: true }),
+        supabase.from('work_tasks').select('*').eq('user_id', user.id).is('deleted_at', null).is('voided_at', null).neq('status', 'done').order('due_date', { ascending: true }),
         supabase.from('workspace_tasks').select('*').neq('status', 'done').order('deadline', { ascending: true }),
         supabase.from('work_tasks').select('*').eq('user_id', user.id).is('deleted_at', null).eq('status', 'done').gte('completed_at', since).order('completed_at', { ascending: false }),
         supabase.from('workspace_tasks').select('*').eq('status', 'done').gte('created_at', since).order('created_at', { ascending: false }),
@@ -816,6 +816,18 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   // Xoá mềm: việc rời khỏi Workspace nhưng vẫn nằm trong lịch sử của Khách hàng /
   // Chi nhánh. Google Calendar vẫn xoá event như cũ vì engine sync chỉ đọc việc còn
   // hiệu lực — việc bị đánh dấu xoá cũng "biến mất" dưới góc nhìn của nó.
+  // Huỷ việc (không làm nữa): rời khỏi Workspace nhưng vẫn nằm trong lịch sử của Khách hàng / Chi nhánh
+  // (đánh dấu "Vô hiệu" kèm lý do — dùng chung cột voided_at với LinkedWorkTasks, khôi phục được ở đó).
+  async function cancelWork(t: WorkTask) {
+    const reason = window.prompt(`Huỷ việc này?\n"${t.title}"\n\nViệc sẽ rời Workspace nhưng vẫn lưu trong lịch sử khách hàng / chi nhánh.\nLý do huỷ (có thể để trống):`, '')
+    if (reason === null) return
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('work_tasks').update({ voided_at: now, void_reason: reason.trim() || null, updated_at: now }).eq('id', t.id)
+    if (error) { alert('Không huỷ được: ' + error.message); return }
+    setMyTasks(prev => prev.filter(x => x.id !== t.id))
+    toast('Đã huỷ việc — vẫn lưu trong lịch sử')
+  }
+
   async function deleteWork(id: string) {
     setMyTasks(prev => prev.filter(t => t.id !== id))
     const now = new Date().toISOString()
@@ -1251,6 +1263,10 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
           >
             <button onClick={() => it.source === 'ws' ? markWsDone(it.ws!) : it.source === 'pipeline' ? startPipelineDone(it.pipeline!) : startWorkDone(it.work!)}
               className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.green}`}><Check size={12} strokeWidth={2.5} /> Xong</button>
+            {it.work && (
+              <button onClick={() => cancelWork(it.work!)} title="Không làm nữa — vẫn lưu trong lịch sử"
+                className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.gray}`}><Ban size={12} /> Huỷ</button>
+            )}
             <button onClick={() => snoozeItem(it, 1)}
               className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium hover:brightness-95 transition ${TINT.gray}`}><CalendarClock size={12} /> +1 ngày</button>
             <button onClick={() => snoozeItem(it, 7)}
@@ -1294,6 +1310,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   </select>
                 )}
                 <span className="text-[12px] text-[#86868B] tabular-nums">Hạn: {formatDate(it.work.due_date)}</span>
+                <button onClick={() => cancelWork(it.work!)}
+                  className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] font-medium bg-black/[0.04] hover:bg-[#FF3B30]/10 text-[#6E6E73] hover:text-[#D70015] transition"
+                  title="Không làm nữa — vẫn lưu trong lịch sử khách hàng / chi nhánh"><Ban size={12} /> Huỷ việc</button>
                 <button
                   onClick={() => {
                     const msg = it.work!.task_type === 'Tái ký HĐ'
@@ -1301,7 +1320,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                       : 'Xoá công việc này?'
                     if (confirm(msg)) deleteWork(it.id)
                   }}
-                  className="ml-auto w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#FF3B30]/10 text-[#AEAEB2] hover:text-[#D70015] transition"
+                  className="w-7 h-7 inline-flex items-center justify-center rounded-full hover:bg-[#FF3B30]/10 text-[#AEAEB2] hover:text-[#D70015] transition"
                   title="Xoá"
                 ><Trash2 size={13} /></button>
               </div>

@@ -78,7 +78,7 @@ export default function AlertsTasksPanel({ clients, scopeClientIds, onSelectClie
       const doneSince = new Date(Date.now() - 60 * 86400000).toISOString();
       const [{ data: pipelineTasks }, { data: workTasks }, { data: doneRenewals }] = await Promise.all([
         supabase.from('crm_pipeline_tasks').select('*').neq('status', 'done').order('created_at', { ascending: false }),
-        supabase.from('work_tasks').select('*').is('deleted_at', null).neq('status', 'done').order('due_date', { ascending: true }),
+        supabase.from('work_tasks').select('*').is('deleted_at', null).is('voided_at', null).neq('status', 'done').order('due_date', { ascending: true }),
         // Task tái ký đã hoàn tất gần đây — để hiện "Hoàn tất" và không tự sinh lại task mới
         supabase.from('work_tasks').select('*').is('deleted_at', null).eq('task_type', 'Tái ký HĐ').eq('status', 'done').gte('completed_at', doneSince).order('completed_at', { ascending: false }),
       ]);

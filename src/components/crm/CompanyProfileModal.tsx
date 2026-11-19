@@ -1009,7 +1009,7 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
     }
     // work_task — đồng bộ từ Workspace (Morning Priority)
     const t = entry.data;
-    const isOverdue = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done';
+    const isOverdue = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done' && !t.voided_at;
     return (
       <div key={`wt_${t.id}`} className={`p-3 bg-white border rounded-lg space-y-1.5 ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-[#E8E7E2]'}`}>
         <div className="flex items-start gap-2">
@@ -1029,14 +1029,16 @@ export function CompanyProfileModal({ entry, contacts: contactsProp, onContactsC
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700 shrink-0" title={`Việc Workspace · ${t.task_type ?? ''}`}>
                 <ClipboardList size={9} /> {taskTypeLabel(t.task_type)}
               </span>
-              <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' ? 'line-through text-gray-400' : 'text-[#222]'}`}>
+              <div className={`text-[12.5px] font-medium leading-snug ${t.status === 'done' || t.voided_at ? 'line-through text-gray-400' : 'text-[#222]'}`}>
                 {t.title}
               </div>
+              {t.voided_at && <span className="text-[10px] px-1.5 py-px rounded-full border bg-red-50 text-red-600 border-red-200 shrink-0" title={t.void_reason || ''}>Đã huỷ</span>}
             </div>
             <div className={`flex items-center gap-1 mt-1 text-[11px] flex-wrap ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
               <CalendarDays size={10} />
               {isOverdue ? 'Quá hạn: ' : 'Hạn: '}{formatDate(t.due_date)}
               {t.kcn ? ` · ${t.kcn}` : ''}
+              {t.voided_at && <span className="text-red-500"> · Huỷ {formatDate(t.voided_at.slice(0, 10))}{t.void_reason ? ` — ${t.void_reason}` : ''}</span>}
               {t.completed_at && <span className="text-emerald-600"> · Xong {formatDate(t.completed_at.slice(0, 10))}</span>}
               {taskPeople.users[t.user_id] && <span> · Phụ trách: {taskPeople.users[t.user_id]}</span>}
             </div>

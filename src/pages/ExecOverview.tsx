@@ -81,7 +81,7 @@ export default function ExecOverview({ clients, pipeline }: Props) {
       countByMonth('work_tasks', 'completed_at', since, q => q.eq('status', 'done').is('deleted_at', null)),
       countByMonth('kcn_visits', 'visit_date', since, q => q.eq('status', 'done')),
       supabase.from('work_tasks').select('id', { count: 'exact', head: true })
-        .neq('status', 'done').is('deleted_at', null).lt('due_date', today)
+        .neq('status', 'done').is('deleted_at', null).is('voided_at', null).lt('due_date', today)
         .then(({ count, error }) => (error ? null : count ?? 0)),
     ]).then(([cskh, tasksDone, visits, overdue]) => {
       if (alive) setTrends({ cskh, tasksDone, visits, overdue });

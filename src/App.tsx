@@ -47,6 +47,7 @@ import LaborReminderRunner from './pages/market/sources/LaborReminderRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
 import { VoiceRecorderProvider } from './components/voice/VoiceRecorderProvider';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
+import { pageTitle } from './lib/pageTitle';
 import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme';
 
 // Văn phòng Orient: tải bundle riêng khi mở (nhân viên không phải admin không bao giờ tải)
@@ -203,6 +204,10 @@ function AppInner() {
 
   // Persist current page/selection so a page reload (F5) returns to the same place
   useEffect(() => { localStorage.setItem('lgvn_page', page); }, [page]);
+  useEffect(() => {
+    if (shareCode || applyLink || surveyShare) return; // trang công khai tự đặt tiêu đề riêng
+    document.title = pageTitle(page);
+  }, [page, shareCode, applyLink, surveyShare]);
   useEffect(() => {
     if (selectedClientId) localStorage.setItem('lgvn_selectedClientId', selectedClientId);
     else localStorage.removeItem('lgvn_selectedClientId');
