@@ -720,12 +720,12 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
                           <button type="button" disabled={metBusyId === s.branch.id}
                             onClick={e => { e.stopPropagation(); void markBranchMet(s.branch); }}
                             onKeyDown={e => e.stopPropagation()}
-                            title="Vừa gặp rồi, không có gì mới — làm xanh lại (ghi 1 lần ghé hôm nay)"
-                            className="shrink-0 h-7 px-2 rounded-full bg-[#F2F2F7] text-[#34C759] hover:bg-[#E3F6E8] text-[11.5px] font-medium inline-flex items-center gap-1 disabled:opacity-50">
-                            <Check size={12} /> Đã gặp
+                            title="Đã gặp — vừa gặp rồi, không có gì mới, làm xanh lại (ghi 1 lần ghé hôm nay)"
+                            className="shrink-0 w-5 h-5 rounded-full text-[#34C759] hover:bg-[#E3F6E8] inline-flex items-center justify-center disabled:opacity-50">
+                            <Check size={11} />
                           </button>
-                          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 tabular-nums ${visitColor(s.daysSince)}`}>
-                            {s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày`}
+                          <span title={s.daysSince === null ? 'Chưa liên hệ' : `${s.daysSince} ngày chưa ghé`} className={`text-[10.5px] font-medium px-1.5 rounded-full whitespace-nowrap shrink-0 tabular-nums ${visitColor(s.daysSince)}`}>
+                            {s.daysSince === null ? '–' : s.daysSince}
                           </span>
                           <ChevronRight size={14} className="text-[#C7C7CC] shrink-0 -mr-1" />
                         </div>
