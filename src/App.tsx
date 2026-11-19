@@ -47,6 +47,7 @@ import LaborReminderRunner from './pages/market/sources/LaborReminderRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
 import { VoiceRecorderProvider } from './components/voice/VoiceRecorderProvider';
 import { OFFICE_PAGES, isOfficePage } from './modules/office-rental/pages';
+import DailyAttentionAlert from './components/DailyAttentionAlert';
 import { pageTitle } from './lib/pageTitle';
 import { CARD, BTN_PRIMARY, BTN_SECONDARY } from './components/workspace/wsTheme';
 
@@ -549,6 +550,8 @@ function AppInner() {
       </div>
       <Toast message={toastMsg} />
       {user && <UpcomingDatesReminder userId={user.id} />}
+      {/* Lần mở app đầu tiên mỗi ngày: việc quá hạn / hôm nay, nhất là hợp đồng cần báo khách */}
+      {user && <DailyAttentionAlert userId={user.id} onOpenWorkspace={() => navigateTop('workspace')} />}
       {/* Việc nhắc tự động CSKH: mỗi ngày 1 lần khi mở app, không cần mở trang CSKH */}
       {user && <CareAutomationRunner clients={clients} toast={toast} />}
       {/* Nguồn LĐ: trước mùa thực tập của trường tự tạo việc nhắc trong Workspace (mỗi ngày 1 lần) */}

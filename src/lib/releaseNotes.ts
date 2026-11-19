@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-19-daily-attention',
+    date: '2026-11-19',
+    title: 'Workspace',
+    features: [
+      'Lần mở app đầu tiên mỗi ngày hiện popup nhắc việc quá hạn / đến hạn hôm nay, hợp đồng cần báo khách lên đầu',
+    ],
+  },
+  {
     id: '2026-11-19-tab-title',
     date: '2026-11-19',
     title: 'Giao diện',
