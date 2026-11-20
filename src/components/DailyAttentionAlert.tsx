@@ -8,7 +8,7 @@
 // Không có gì cần chú ý ở bất kỳ tab nào → không hiện, cũng không ghi nhận "đã xem".
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, FileText, Settings2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, FileText, Settings2, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { todayVN } from '../lib/cskh/dates';
 import { taskGroupOf, taskTypeLabel } from '../lib/workTaskTypes';
@@ -114,7 +114,7 @@ export default function DailyAttentionAlert({ userId, clients, onOpenWorkspace, 
   const skipToday = useRef(false);
 
   useEffect(() => {
-    try { if (localStorage.getItem(seenKey(userId, today))) { skipToday.current = true; return; } } catch { /* bỏ qua */ }
+    try { if (localStorage.getItem(seenKey(userId, today))) skipToday.current = true; } catch { /* bỏ qua */ }
     let cancelled = false;
     void (async () => {
       const { data, error } = await supabase
@@ -150,7 +150,21 @@ export default function DailyAttentionAlert({ userId, clients, onOpenWorkspace, 
     if (firstWithData) { setActive(firstWithData); setOpen(true); }
   }, [tasksLoaded, clients.length, firstWithData]);
 
-  if (!open) return null;
+  const total = visibleTabs.reduce((n, t) => n + counts[t], 0);
+  if (!open) {
+    if (!tasksLoaded || clients.length === 0) return null;
+    // Bong bóng nhỏ: mở lại popup bất cứ lúc nào sau khi đã đóng
+    return (
+      <button
+        onClick={() => { setActive(firstWithData ?? visibleTabs[0] ?? 'tasks'); setShowSettings(false); setOpen(true); }}
+        aria-label="Xem lại tổng quan hôm nay" title="Xem lại tổng quan hôm nay"
+        className="fixed z-[47] right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] md:right-14 md:bottom-5 w-10 h-10 rounded-full bg-white text-[#1D1D1F] shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_6px_18px_-4px_rgba(0,0,0,0.3)] flex items-center justify-center hover:scale-105 active:scale-95 transition"
+      >
+        <Bell size={17} />
+        {total > 0 && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF3B30] text-white text-[10.5px] font-bold flex items-center justify-center">{total > 99 ? '99+' : total}</span>}
+      </button>
+    );
+  }
 
   const savePrefs = (p: Prefs) => {
     setPrefs(p);

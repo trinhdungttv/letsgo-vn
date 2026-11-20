@@ -20,6 +20,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     date: '2026-11-20',
     title: 'Tổng quan',
     features: [
+      'Bong bóng chuông nhỏ góc phải dưới để xem lại tổng quan đầu ngày bất cứ lúc nào',
       'Popup đầu ngày nhiều tab: thêm Chốt công, Chốt hóa đơn, Ứng lương, Chi lương — chọn tab ưu tiên hiện trước ở bánh răng',
     ],
   },
