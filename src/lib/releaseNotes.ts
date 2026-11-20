@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-20-daily-popup-tabs',
+    date: '2026-11-20',
+    title: 'Tổng quan',
+    features: [
+      'Popup đầu ngày nhiều tab: thêm Chốt công, Chốt hóa đơn, Ứng lương, Chi lương — chọn tab ưu tiên hiện trước ở bánh răng',
+    ],
+  },
+  {
     id: '2026-11-19-daily-attention',
     date: '2026-11-19',
     title: 'Workspace',

@@ -551,7 +551,7 @@ function AppInner() {
       <Toast message={toastMsg} />
       {user && <UpcomingDatesReminder userId={user.id} />}
       {/* Lần mở app đầu tiên mỗi ngày: việc quá hạn / hôm nay, nhất là hợp đồng cần báo khách */}
-      {user && <DailyAttentionAlert userId={user.id} onOpenWorkspace={() => navigateTop('workspace')} />}
+      {user && <DailyAttentionAlert userId={user.id} clients={clients} onOpenWorkspace={() => navigateTop('workspace')} onOpenFinance={() => navigateTop('finance')} />}
       {/* Việc nhắc tự động CSKH: mỗi ngày 1 lần khi mở app, không cần mở trang CSKH */}
       {user && <CareAutomationRunner clients={clients} toast={toast} />}
       {/* Nguồn LĐ: trước mùa thực tập của trường tự tạo việc nhắc trong Workspace (mỗi ngày 1 lần) */}
