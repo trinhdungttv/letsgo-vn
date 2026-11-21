@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchStamp, markStamp, type StampAction, type StampPurpose } from '../../../lib/costPlan/api';
 import type { QuoteEntity } from '../../../lib/costPlan/entity';
 import { pingStampAlert } from '../../../lib/stampAlerts';
+import { fetchSignerStamp } from '../../../lib/legal/signatures';
 
 type Part = 'signature' | 'seal';
 interface Got { signature: string | null; seal: string | null; alertId: number | null }
@@ -20,8 +21,12 @@ export function useStampImages(a: {
   purpose: StampPurpose;
   /** Giấy tờ gì, cho ai — hiện trong popup của admin */
   context: string;
+  /** Chữ ký chọn từ KHO CHỮ KÝ CHUNG (migration 230). Có → dùng thay chữ ký lưu ở pháp nhân. */
+  signerId?: string | null;
 }) {
-  const { token, entity, canSign, canStamp, wantSig, wantSeal, purpose, context } = a;
+  const { token, entity, canSign, canStamp, wantSig, wantSeal, purpose, context, signerId = null } = a;
+  const [vgot, setVgot] = useState<Record<string, { image: string; ink: number; alertId: number }>>({});
+  const vcur = signerId ? vgot[signerId] : undefined;
   const [got, setGot] = useState<Record<string, Got>>({});           // theo stamp_id
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -31,7 +36,7 @@ export function useStampImages(a: {
   const cur = stampId ? got[stampId] : undefined;
 
   const missing: Part[] = !canSign && canStamp && stampId && entity ? [
-    ...(wantSig && entity.has_signature && !cur?.signature ? ['signature' as const] : []),
+    ...(wantSig && !signerId && entity.has_signature && !cur?.signature ? ['signature' as const] : []),
     ...(wantSeal && entity.has_seal && !cur?.seal ? ['seal' as const] : []),
   ] : [];
   const need = missing.join(',');
@@ -51,16 +56,32 @@ export function useStampImages(a: {
     return () => { dead = true; };
   }, [need, token, stampId, purpose]);
 
-  const signature = !wantSig || !entity ? null : canSign ? entity.signature : cur?.signature ?? null;
+  // Chữ ký từ kho: lấy qua RPC (ghi nhật ký, admin được báo) — dùng cho cả admin lẫn nhân viên
+  const vNeed = wantSig && signerId && token && !vcur ? signerId : null;
+  useEffect(() => {
+    if (!vNeed || !token) return;
+    let dead = false;
+    setBusy(true); setErr(null);
+    fetchSignerStamp(token, vNeed, purpose, ctxRef.current)
+      .then(r => { if (!dead) { setVgot(g => ({ ...g, [vNeed]: { image: r.image, ink: r.ink, alertId: r.alertId } })); void pingStampAlert(); } })
+      .catch(e => { if (!dead) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!dead) setBusy(false); });
+    return () => { dead = true; };
+  }, [vNeed, token, purpose]);
+
+  const signature = !wantSig ? null : signerId ? vcur?.image ?? null : !entity ? null : canSign ? entity.signature : cur?.signature ?? null;
+  /** Độ đậm của chữ ký đã chọn từ kho (null = theo pháp nhân) */
+  const sigInk = signerId && vcur ? vcur.ink : null;
   const seal = !wantSeal || !entity ? null : canSign ? entity.seal : cur?.seal ?? null;
 
   /** Ghi "đã xuất …" vào nhật ký (chỉ nhân viên — admin đã có audit_logs như cũ). */
   const mark = useCallback((action: StampAction) => {
-    if (canSign || !token || !cur?.alertId || !(signature || seal)) return;
-    void markStamp(token, cur.alertId, action);
-  }, [canSign, token, cur?.alertId, signature, seal]);
+    if (!token) return;
+    if (!canSign && cur?.alertId && (signature || seal)) void markStamp(token, cur.alertId, action);
+    if (signerId && vcur?.alertId && signature) void markStamp(token, vcur.alertId, action);
+  }, [canSign, token, cur?.alertId, signature, seal, signerId, vcur?.alertId]);
 
-  return { signature, seal, busy, err, mark, usable: canSign || canStamp };
+  return { signature, seal, sigInk, busy, err, mark, usable: canSign || canStamp };
 }
 
 /** Xác nhận 1 lần (mỗi hộp thoại) trước khi nhân viên bật chữ ký / con dấu. Admin không cần hỏi. */

@@ -8,12 +8,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
   Settings, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet, Building2, Users,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check, Grid3x3,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
 import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
+import { CskhQuickPanel } from '../components/workspace/CskhQuickPanel';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
@@ -142,6 +143,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [showCostPlan, setShowCostPlan] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
+  const [showCskhQuick, setShowCskhQuick] = useState(false);
   const [showPayrollCalc, setShowPayrollCalc] = useState(false);
 
   // ---- Rail: HĐ cần xử lý ----
@@ -494,6 +496,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
     { label: 'Phương án giá', icon: <PieChart size={16} />, tile: 'purple', onClick: () => setShowCostPlan(true) },
     { label: 'Giao việc', icon: <Send size={15} />, tile: 'green', onClick: () => setShowGiaoViec(true) },
     { label: 'Ghi nhận LĐ', icon: <Users size={16} />, tile: 'teal', onClick: () => setShowBulkLabor(true) },
+    ...(canAccess(user.role, 'crm-leads', rolePermissions) ? [{ label: 'Ghi nhanh khách', icon: <Grid3x3 size={16} />, tile: 'orange' as const, onClick: () => setShowCskhQuick(true) }] : []),
   ];
 
   return (
@@ -827,6 +830,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
           onCreated={() => setRefreshToken(t => t + 1)}
         />
       )}
+      {showCskhQuick && <CskhQuickPanel clients={clients} toast={toast} onNavigate={onNavigate} onClose={() => setShowCskhQuick(false)} />}
       {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}
       {showPayrollCalc && <PayrollCalculatorModal clients={clients} toast={toast} onClose={() => setShowPayrollCalc(false)} />}
     </>

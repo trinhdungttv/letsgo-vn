@@ -16,11 +16,19 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-21-workspace-quick-matrix',
+    date: '2026-11-21',
+    title: 'Workspace',
+    features: [
+      'Nút "Ghi nhanh khách" ở Workspace: mở Ma trận khách hàng để chọn nhanh người vừa trao đổi và ghi lại điều họ nói / yêu cầu',
+    ],
+  },
+  {
     id: '2026-11-21-legal-signature-vault',
     date: '2026-11-21',
     title: 'Pháp lý',
     features: [
-      'Kho chữ ký (Pháp lý → tab Chữ ký): tải ảnh gốc 1 lần, tự tách nền + làm đậm, chọn chữ ký đi với pháp nhân',
+      'Kho chữ ký chung (Pháp lý → tab Chữ ký): tải ảnh gốc 1 lần, tự tách nền + làm đậm; khi làm giấy tờ chọn người ký',
     ],
   },
   {

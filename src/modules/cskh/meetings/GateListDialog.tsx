@@ -17,6 +17,7 @@ import type { Client } from '../../../lib/types';
 import { downloadBlob, printCss, renderElementToPdf } from '../../../lib/costPlan/pdf';
 import { useInk } from '../../../components/workspace/costplan/useInk';
 import { useStampConsent, useStampImages } from '../../../components/workspace/costplan/useStampImages';
+import { SignerSelect, useSigners } from '../../../components/workspace/costplan/useSigners';
 import { Slider } from '../../../components/workspace/costplan/EntityManager';
 import {
   buildGateDoc, EXTRA_COL_LABEL, GATE_TITLE, gateFileName, gateIssues, isoToVn, resolvePlace,
@@ -65,11 +66,12 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
   useEffect(() => { if (entities.length && entityId && !findEntity(entities, entityId)) setEntityId(entities[0]?.id ?? null); }, [entities, entityId]);
   const layout = entity?.layout ?? DEFAULT_LAYOUT;
   const consent = useStampConsent(canSign);
+  const signers = useSigners(token);
   const stamp = useStampImages({
-    token, entity, canSign, canStamp, wantSig: showSig, wantSeal: showSeal, purpose: 'gate_list',
+    token, entity, canSign, canStamp, wantSig: showSig, wantSeal: showSeal, purpose: 'gate_list', signerId: signers.signerId,
     context: `Danh sách vào cổng ${meeting.company_name || ''} · ${isoToVn(meeting.meet_date)}`.replace(/\s+/g, ' '),
   });
-  const signature = useInk(stamp.signature, 'sig', layout.sigInk);
+  const signature = useInk(stamp.signature, 'sig', stamp.sigInk ?? layout.sigInk);
   const seal = useInk(stamp.seal, 'seal', layout.sealInk);
   const toggleStamp = (kind: 'sig' | 'seal', on: boolean) => {
     if (on && !consent('danh sách vào cổng', entity?.label ?? '')) return;
@@ -90,8 +92,8 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
   const vehicles = opts.vehicles ?? [];
   const setVehicles = (v: GateVehicle[]) => set({ vehicles: v });
   const plateSuggest = [...new Set(attendees.map(a => membersById.get(a.id)?.vehicle_plate.trim().toUpperCase() ?? '').filter(Boolean))].filter(pl => !vehicles.some(v => v.plate.trim().toUpperCase() === pl));
-  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: { ...opts, recipient }, today, entityHeader: entity?.layout.header }),
-    [meeting, attendees, members, entity, opts, recipient, today]);
+  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: signers.withSigner(entity?.data ?? null), options: { ...opts, recipient }, today, entityHeader: entity?.layout.header }),
+    [meeting, attendees, members, entity, signers.withSigner, opts, recipient, today]);
   const issues = gateIssues(doc.rows, { entityMissing: !entity });
   const savedEntityId = findEntity(entities, meeting.entity_id)?.id ?? meeting.entity_id ?? null;
   const dirty = JSON.stringify(opts) !== JSON.stringify(meeting.gate) || JSON.stringify(attendees) !== JSON.stringify(meeting.attendees)
@@ -270,19 +272,20 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
                   <Switch checked={showLogo} onChange={setShowLogo} label={<span className="text-[13px]">Logo</span>} />
                   {(canSign || canStamp) && (
                     <>
-                      <Switch checked={showSig} onChange={v => toggleStamp('sig', v)} label={<span className="text-[13px]">Chữ ký{entity && !entity.has_signature ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
+                      <Switch checked={showSig} onChange={v => toggleStamp('sig', v)} label={<span className="text-[13px]">Chữ ký{entity && !entity.has_signature && !signers.signerId ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
                       <Switch checked={showSeal} onChange={v => toggleStamp('seal', v)} label={<span className="text-[13px]">Con dấu{entity && !entity.has_seal ? <span className="text-[#AEAEB2]"> (chưa có ảnh)</span> : ''}</span>} />
                     </>
                   )}
                   {stamp.busy && <Loader2 size={14} className="animate-spin text-[#86868B] self-center" />}
                 </div>
+                {(canSign || canStamp) && showSig && <SignerSelect s={signers} ownLabel={entity?.has_signature ? 'Chữ ký lưu ở pháp nhân' : null} className="pt-1" />}
                 {!canSign && canStamp && (
                   <p className="flex items-start gap-1.5 text-[11.5px] text-[#8A5A00]"><ShieldAlert size={13} className="shrink-0 mt-px" />Dùng chữ ký / con dấu sẽ báo ngay cho quản trị viên.</p>
                 )}
                 {!canSign && !canStamp && <p className="text-[11.5px] text-[#86868B]">Chữ ký và con dấu chỉ admin chèn được — in ra rồi ký, đóng dấu tay.</p>}
                 {stamp.err && <p className="text-[11.5px] text-[#D70015]">{stamp.err}</p>}
                 <Switch checked={opts.showSigner !== false} onChange={v => set({ showSigner: v })}
-                  label={<span className="text-[13px]">In tên người đại diện{entity?.data.signerName ? <span className="text-[#86868B]"> ({entity.data.signerName})</span> : ''}</span>} />
+                  label={<span className="text-[13px]">In tên người ký{signers.withSigner(entity?.data)?.signerName ? <span className="text-[#86868B]"> ({signers.withSigner(entity?.data)?.signerName})</span> : ''}</span>} />
               </div>
             </div>
 

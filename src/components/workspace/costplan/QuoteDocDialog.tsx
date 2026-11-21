@@ -21,6 +21,7 @@ import EntityManager from './EntityManager';
 import { lastEntityId, rememberEntity, useEntities } from './useEntities';
 import { useInk } from './useInk';
 import { useStampConsent, useStampImages } from './useStampImages';
+import { SignerSelect, useSigners } from './useSigners';
 import { FONT, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, field, labelCls } from './ui';
 
 const LANG_KEY = 'lgvn_doc_lang';
@@ -85,7 +86,8 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
   const { entities, canSign: isAdmin, canStamp, loading: entLoading, err: profErr, reload: reloadEntities } = useEntities(token);
   const entity = useMemo(() => pickEntity(entities, doc.entityId, lastEntityId()), [entities, doc.entityId]);
   const [entityDlg, setEntityDlg] = useState(false);
-  const effData = entity?.data ?? emptyProfile();
+  const signers = useSigners(token);
+  const effData = signers.withSigner(entity?.data ?? emptyProfile());
   const effLogo = entity?.logo ?? null;
 
   const layout = entity?.layout ?? DEFAULT_LAYOUT;
@@ -95,11 +97,11 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
   const [signOn, setSignOn] = useState(false);
   const [sealOn, setSealOn] = useState(false);
   const canUse = isAdmin || canStamp;
-  const sigAvail = canUse && !!entity?.has_signature;
+  const sigAvail = canUse && (!!entity?.has_signature || !!signers.signerId);
   const sealAvail = canUse && !!entity?.has_seal;
   const consent = useStampConsent(isAdmin);
   const stamp = useStampImages({
-    token, entity, canSign: isAdmin, canStamp, wantSig: signOn && sigAvail, wantSeal: sealOn && sealAvail, purpose: 'quote_pdf',
+    token, entity, canSign: isAdmin, canStamp, wantSig: signOn && sigAvail, wantSeal: sealOn && sealAvail, purpose: 'quote_pdf', signerId: signers.signerId,
     context: `Báo giá ${doc.number || ''} gửi ${doc.customer.name || meta?.company || '—'}`.replace(/\s+/g, ' '),
   });
   const effSig = stamp.signature, effSeal = stamp.seal;
@@ -108,7 +110,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
     if (kind === 'sig') setSignOn(on); else setSealOn(on);
   };
   const signHint = !token ? 'Đăng nhập để dùng chữ ký / con dấu.' : entLoading ? '' : !entity ? 'Chưa có pháp nhân — thêm ở Workspace → Pháp lý.'
-    : !canUse ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.has_signature && !entity.has_seal) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.'
+    : !canUse ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.has_signature && !entity.has_seal && !signers.signerId) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.'
     : stamp.err ? stamp.err : !isAdmin ? 'Dùng chữ ký / con dấu sẽ báo ngay cho quản trị viên.' : '';
 
   // ── Tài liệu ──
@@ -117,7 +119,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
   const issues = useMemo(() => docIssues(doc, view, effData, { sign: signOn && sigAvail, seal: sealOn && sealAvail }), [doc, view, effData, signOn, sealOn, sigAvail, sealAvail]);
   const rows = useMemo(() => computePriceList(data, result).rows, [data, result]);
   const showSig = signOn && sigAvail, showSeal = sealOn && sealAvail;
-  const inkSig = useInk(effSig, 'sig', layout.sigInk), inkSeal = useInk(effSeal, 'seal', layout.sealInk);
+  const inkSig = useInk(effSig, 'sig', stamp.sigInk ?? layout.sigInk), inkSeal = useInk(effSeal, 'seal', layout.sealInk);
   const images = { logo: effLogo, signature: inkSig, seal: inkSeal };
   const bi2 = (b: { a: string; b?: string }) => (b.b ? `${b.a}\n${b.b}` : b.a);
 
@@ -308,6 +310,7 @@ export default function QuoteDocDialog({ data, result, meta, planId, defaults, r
               <label className={`flex items-center gap-2 text-[13px] ${sigAvail ? '' : 'opacity-50'}`}><Switch on={signOn && sigAvail} disabled={!sigAvail} onChange={v => toggleStamp('sig', v)} />Chữ ký</label>
               <label className={`flex items-center gap-2 text-[13px] ${sealAvail ? '' : 'opacity-50'}`}><Switch on={sealOn && sealAvail} disabled={!sealAvail} onChange={v => toggleStamp('seal', v)} />Con dấu</label>
               {stamp.busy && <Loader2 size={13} className="animate-spin text-[#86868b]" />}
+              {signOn && <SignerSelect s={signers} ownLabel={entity?.has_signature ? 'Chữ ký lưu ở pháp nhân' : null} className="min-w-[220px]" />}
               <label className="flex items-center gap-2 text-[13px]" title="Tự thu nhỏ chữ (tối đa còn 80%) để báo giá vừa 1 trang"><Switch on={autoFit} onChange={setAutoFit} />Vừa 1 trang</label>
               {signHint && <span className="text-[11.5px] text-[#86868b]">{signHint}</span>}
             </div>

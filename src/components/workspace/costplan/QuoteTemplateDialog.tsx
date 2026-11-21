@@ -27,6 +27,7 @@ import { F, Section } from './QuoteDocDialog';
 import SheetPreview, { SHEET_PAGE, sheetScale } from './SheetPreview';
 import { lastEntityId, rememberEntity, useEntities } from './useEntities';
 import { useStampConsent, useStampImages } from './useStampImages';
+import { SignerSelect, useSigners } from './useSigners';
 import { FONT, Select, Seg, Switch, btnGhost, btnLink, btnPrimary, field, labelCls } from './ui';
 
 const NO_VERSIONS: TemplateVersion[] = [];
@@ -106,10 +107,11 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
   const [logoOn, setLogoOn] = useState(false);
   // Admin có ảnh sẵn; nhân viên bật thì xác nhận + admin được báo ngay (useStampImages, migration 219)
   const canUse = isAdmin || canStamp;
-  const sigAvail = canUse && !!entity?.has_signature, sealAvail = canUse && !!entity?.has_seal, logoAvail = !!entity?.logo;
+  const signers = useSigners(token);
+  const sigAvail = canUse && (!!entity?.has_signature || !!signers.signerId), sealAvail = canUse && !!entity?.has_seal, logoAvail = !!entity?.logo;
   const consent = useStampConsent(isAdmin);
   const stamp = useStampImages({
-    token, entity, canSign: isAdmin, canStamp, wantSig: signOn && sigAvail, wantSeal: sealOn && sealAvail, purpose: 'quote_excel',
+    token, entity, canSign: isAdmin, canStamp, wantSig: signOn && sigAvail, wantSeal: sealOn && sealAvail, purpose: 'quote_excel', signerId: signers.signerId,
     context: `Báo giá theo mẫu Excel ${doc.number || ''} gửi ${doc.customer.name || meta?.company || '—'}`.replace(/\s+/g, ' '),
   });
   const toggleStamp = (kind: 'sig' | 'seal', on: boolean) => {
@@ -123,7 +125,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
   const sigOn = signOn && sigAvail && !!stamp.signature, sealUse = sealOn && sealAvail && !!stamp.seal;
   const stampWanted = sigOn || sealUse;
   const signHint = !token ? 'Đăng nhập để dùng chữ ký / con dấu.' : entLoading ? '' : !entity ? 'Chưa có pháp nhân — thêm ở Workspace → Pháp lý.'
-    : !canUse ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.has_signature && !entity.has_seal) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.'
+    : !canUse ? 'Chỉ admin được chèn chữ ký / con dấu.' : (!entity.has_signature && !entity.has_seal && !signers.signerId) ? 'Pháp nhân này chưa có ảnh chữ ký / con dấu.'
     : stamp.err ? stamp.err : !isAdmin ? 'Dùng chữ ký / con dấu sẽ báo ngay cho quản trị viên.' : '';
 
   // ── Sửa chữ trực tiếp trên bản xem trước (vd bản dịch song ngữ sai) ──
@@ -169,9 +171,10 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
     try {
       const buf = await sourceBuf();
       // ảnh chữ ký / con dấu được làm rõ + đậm màu theo mức đã chọn (scan nhạt, mờ → giống bản ký, đóng dấu thật)
-      const ent = entity && (sigOn || sealUse)
-        ? { ...entity, signature: await enhanceInk(stamp.signature, 'sig', layout.sigInk), seal: await enhanceInk(stamp.seal, 'seal', layout.sealInk) }
-        : entity;
+      const baseEnt = entity && signers.signer ? { ...entity, data: signers.withSigner(entity.data) } : entity;     // người ký chọn từ kho
+      const ent = baseEnt && (sigOn || sealUse)
+        ? { ...baseEnt, signature: await enhanceInk(stamp.signature, 'sig', stamp.sigInk ?? layout.sigInk), seal: await enhanceInk(stamp.seal, 'seal', layout.sealInk) }
+        : baseEnt;
       const vals = buildFillValues(data, result, meta ?? {}, { entity: ent, doc, use: { signature: sigOn, seal: sealUse, logo: logoOn && logoAvail } });
       const res = await fillExcelTemplate(buf, { ...vals, layout, edits: sheetEdits }, { sheet: chosen.sheet });
       const m = await buildSheetModel(res.output, chosen.sheet);
@@ -180,7 +183,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
       return res;
     } catch (e) { if (my === seq.current) { setPvErr(errorText(e)); setModel(null); out.current = null; } return null; }
     finally { if (my === seq.current) setPvBusy(false); }
-  }, [chosen, sourceBuf, data, result, meta, entity, doc, sigOn, sealUse, stamp.signature, stamp.seal, logoOn, logoAvail, layout, sheetEdits]);
+  }, [chosen, sourceBuf, data, result, meta, entity, signers.signer, stamp.sigInk, doc, sigOn, sealUse, stamp.signature, stamp.seal, logoOn, logoAvail, layout, sheetEdits]);
 
   useEffect(() => {
     if (pending || editing || !chosen) return;
@@ -521,6 +524,7 @@ export default function QuoteTemplateDialog({ data, result, meta, planTitle, pla
           {entity && <div className="text-[11.5px] text-[#86868b] leading-snug">{entity.data.name || '(chưa có tên công ty)'}{entity.data.taxCode ? ` · MST ${entity.data.taxCode}` : ''}{entity.has_signature ? ' · có chữ ký' : ''}{entity.has_seal ? ' · có con dấu' : ''}</div>}
           <div className="space-y-2.5 pt-1">
             <label className={`flex items-center gap-2 text-[13px] ${sigAvail ? '' : 'opacity-50'}`}><Switch on={signOn && sigAvail} disabled={!sigAvail} onChange={v => toggleStamp('sig', v)} />Chèn chữ ký</label>
+            {signOn && <SignerSelect s={signers} ownLabel={entity?.has_signature ? 'Chữ ký lưu ở pháp nhân' : null} />}
             <label className={`flex items-center gap-2 text-[13px] ${sealAvail ? '' : 'opacity-50'}`}><Switch on={sealOn && sealAvail} disabled={!sealAvail} onChange={v => toggleStamp('seal', v)} />Chèn con dấu</label>
             {stamp.busy && <Loader2 size={13} className="animate-spin text-[#86868b]" />}
             <label className={`flex items-center gap-2 text-[13px] ${logoAvail ? '' : 'opacity-50'}`}><Switch on={logoOn && logoAvail} disabled={!logoAvail} onChange={setLogoOn} />Chèn logo <span className="text-[11.5px] text-[#86868b]">(vào ô {'{{logo}}'})</span></label>

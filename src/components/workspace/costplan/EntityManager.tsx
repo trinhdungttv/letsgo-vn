@@ -280,7 +280,7 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
             <>
               {canSign && entity.stale_signature_of && !('signature' in draft) && (
                 <div className="rounded-xl bg-[#FFF4E5] text-[#8A5A00] text-[12.5px] px-3 py-2 leading-snug">
-                  Chữ ký đã lưu là của <b>{entity.stale_signature_of}</b>, còn người đại diện hiện tại ở Pháp lý là <b>{legal?.legal_rep}</b> — nên chữ ký cũ không được chèn vào giấy tờ. Vào Pháp lý → tab Chữ ký để gán chữ ký của {legal?.legal_rep} (hoặc tải ảnh mới ở đây rồi bấm Lưu).
+                  Chữ ký đã lưu là của <b>{entity.stale_signature_of}</b>, còn người đại diện hiện tại ở Pháp lý là <b>{legal?.legal_rep}</b> — nên chữ ký cũ không được chèn vào giấy tờ. Khi làm giấy tờ, chọn “Người ký” từ Kho chữ ký (Pháp lý → tab Chữ ký) — hoặc tải ảnh chữ ký mới ở đây rồi bấm Lưu.
                 </div>
               )}
               {(canSign || entity.has_signature) && <ImagePicker label="Chữ ký người đại diện" hint={canSign ? 'Ảnh chụp/scan chữ ký trên giấy trắng — hệ thống tự xoá nền.' : 'Chỉ admin xem được ảnh — khi làm giấy tờ bạn vẫn chèn được (admin được báo).'} value={sig} onChange={v => img('signature', v)} cutoutDefault disabled={dis} />}
