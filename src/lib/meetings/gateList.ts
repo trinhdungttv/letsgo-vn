@@ -87,7 +87,7 @@ export function buildGateRows(meeting: Pick<Meeting, 'attendees'>, members: read
       address: m.address.trim(),
       title: (a.title.trim() || m.title).trim(),
       phone: m.phone.trim(),
-      plate: ((a.plate ?? '').trim() || m.vehicle_plate).trim().toUpperCase(),
+      plate: m.vehicle_plate.trim(),
     });
   }
   return rows;
@@ -176,6 +176,8 @@ export interface GateDoc {
   recipient: string;
   /** "" = không in */
   visit: string;
+  /** "Biển số xe: …" — "" = không in */
+  vehicle: string;
   columns: GateColumn[];
   rows: GateRow[];
   dateLine: string;
@@ -245,7 +247,10 @@ export function buildGateDoc(a: {
     title: (options.title ?? '').trim() || GATE_TITLE,
     recipient: (options.recipient ?? '').trim() ? `Kính gửi: ${(options.recipient ?? '').trim().replace(/^kính gửi\s*:?\s*/i, '')}` : '',
     visit: options.showVisit ? visitParts.join('   ·   ') : '',
-    columns: gateColumns(rows, options.extraCols ?? []),
+    vehicle: (options.vehicles ?? []).map(v => v.trim().toUpperCase()).filter(Boolean).length
+      ? `Biển số xe: ${(options.vehicles ?? []).map(v => v.trim().toUpperCase()).filter(Boolean).join('   ·   ')}` : '',
+    // Biển số nay ghi theo xe (1 dòng cho cả đoàn) — không còn cột biển số theo từng người
+    columns: gateColumns(rows, (options.extraCols ?? []).filter(c => c !== 'vehicle_plate')),
     rows,
     dateLine: gateDateLine(resolvePlace(options, profile), options.docDate || a.today),
     signCompany: name,

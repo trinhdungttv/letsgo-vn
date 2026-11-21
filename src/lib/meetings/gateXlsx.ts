@@ -76,6 +76,7 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
   next(r2(g.titleH)); put(r, 1, N, doc.title, { bold: true, size: r2(g.titleSize) }, { horizontal: 'center' }); frame(r);
   if (doc.recipient) { next(22); put(r, 1, N, doc.recipient, { bold: true, size: 13 }, { horizontal: 'center' }); frame(r); }
   if (doc.visit) { next(22); put(r, 1, N, doc.visit, { italic: true, size: 12 }, { horizontal: 'center', wrapText: true }); frame(r); }
+  if (doc.vehicle) { next(22); put(r, 1, N, doc.vehicle, { bold: true, size: 12 }, { horizontal: 'center' }); frame(r); }
   next(7.5); frame(r);
 
   // ── Bảng ──

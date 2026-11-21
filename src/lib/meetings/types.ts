@@ -53,8 +53,6 @@ export interface Attendee {
   id: string;
   /** Chức vụ riêng cho buổi này (khác hồ sơ) — trống = theo hồ sơ thành viên. */
   title: string;
-  /** Biển số xe riêng cho buổi này — trống = theo hồ sơ thành viên. */
-  plate?: string;
 }
 
 /** Cột thêm (ngoài 9 cột như mẫu) có thể bật trên bản in. */
@@ -71,6 +69,8 @@ export interface GateOptions {
   /** In thêm dòng "Thời gian · Nội dung" dưới tiêu đề. */
   showVisit?: boolean;
   extraCols?: GateExtraCol[];
+  /** Biển số các xe đi họp (cả đoàn đi chung 1 xe; đi 2 xe thì thêm xe) — in 1 dòng dưới tiêu đề. Trống = không in. */
+  vehicles?: string[];
   /** In tên người đại diện (pháp nhân) dưới chỗ ký — mặc định có. */
   showSigner?: boolean;
   /** Cỡ / vị trí logo, chữ đầu trang, tiêu đề riêng cho buổi này — thiếu = theo mặc định của pháp nhân. */
@@ -131,6 +131,7 @@ export function normalizeGate(raw: unknown): GateOptions {
   if (typeof r.showVisit === 'boolean') out.showVisit = r.showVisit;
   if (typeof r.showSigner === 'boolean') out.showSigner = r.showSigner;
   if (Array.isArray(r.extraCols)) out.extraCols = r.extraCols.filter((c): c is GateExtraCol => c === 'phone' || c === 'vehicle_plate');
+  if (Array.isArray(r.vehicles)) out.vehicles = r.vehicles.map(str).map(v => v.trim()).filter(Boolean);
   const h = normalizeHeader(r.header);
   if (h) out.header = h;
   return out;
@@ -146,8 +147,7 @@ export function normalizeMeeting(raw: unknown): Meeting {
     entity_id: str(r.entity_id) || null,
     attendees: att.map(a => {
       const o = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
-      const plate = str(o.plate);
-      return plate ? { id: str(o.id), title: str(o.title), plate } : { id: str(o.id), title: str(o.title) };
+      return { id: str(o.id), title: str(o.title) };
     }).filter(a => a.id),
     contact_ids: Array.isArray(r.contact_ids) ? r.contact_ids.map(str).filter(Boolean) : [],
     status: st === 'done' || st === 'cancelled' ? st : 'planned',

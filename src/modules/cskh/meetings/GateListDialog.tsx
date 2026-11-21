@@ -86,6 +86,10 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
   const companyFull = ((meeting.client_id ? clients?.find(c => c.id === meeting.client_id)?.name : '') || meeting.company_name || '').trim();
   const recipientDefault = companyFull ? `Bộ Phận: An Ninh - ${companyFull}` : '';
   const recipient = opts.recipient ?? recipientDefault;
+  // Biển số xe theo XE (không theo người): danh sách nhập tay; gợi ý nhanh = biển số lưu ở hồ sơ những người tham dự
+  const vehicles = opts.vehicles ?? [];
+  const setVehicles = (v: string[]) => set({ vehicles: v });
+  const plateSuggest = [...new Set(attendees.map(a => membersById.get(a.id)?.vehicle_plate.trim().toUpperCase() ?? '').filter(Boolean))].filter(pl => !vehicles.some(v => v.trim().toUpperCase() === pl));
   const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: { ...opts, recipient }, today, entityHeader: entity?.layout.header }),
     [meeting, attendees, members, entity, opts, recipient, today]);
   const issues = gateIssues(doc.rows, { entityMissing: !entity });
@@ -363,18 +367,9 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
                         <button type="button" aria-label="Xuống" disabled={i === attendees.length - 1} onClick={() => move(i, 1)} className="w-7 h-7 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06] disabled:opacity-30"><ArrowDown size={14} /></button>
                         <button type="button" aria-label="Bỏ khỏi danh sách" onClick={() => setAttendees(x => x.filter(y => y.id !== a.id))} className="w-7 h-7 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06]"><X size={14} /></button>
                       </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        <input value={a.title} placeholder={m?.title ? `Chức vụ: ${m.title}` : 'Chức vụ'} title="Chức vụ in cho buổi này (trống = theo hồ sơ)"
-                          onChange={e => setAttendees(x => x.map(y => (y.id === a.id ? { ...y, title: e.target.value } : y)))}
-                          className="min-w-0 flex-1 text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3]" />
-                        <input value={a.plate ?? ''} placeholder={m?.vehicle_plate ? `Biển số: ${m.vehicle_plate}` : 'Biển số xe'} title="Biển số xe cho buổi này (trống = theo hồ sơ)"
-                          onChange={e => {
-                            const plate = e.target.value.toUpperCase();
-                            setAttendees(x => x.map(y => (y.id === a.id ? { ...y, plate } : y)));
-                            if (plate.trim() && !(opts.extraCols ?? []).includes('vehicle_plate')) set({ extraCols: [...(opts.extraCols ?? []), 'vehicle_plate'] });
-                          }}
-                          maxLength={30} className="w-[40%] min-w-0 text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3] uppercase" />
-                      </div>
+                      <input value={a.title} placeholder={m?.title ? `Chức vụ: ${m.title}` : 'Chức vụ'} title="Chức vụ in cho buổi này (trống = theo hồ sơ)"
+                        onChange={e => setAttendees(x => x.map(y => (y.id === a.id ? { ...y, title: e.target.value } : y)))}
+                        className="mt-1.5 w-full text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3]" />
                     </div>
                   );
                 })}
@@ -407,11 +402,28 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
                 <input value={recipient} onChange={e => set({ recipient: e.target.value })} placeholder={`Ban bảo vệ ${companyFull || 'Công ty …'}`} className={inputCls} />
                 {opts.recipient === undefined && recipientDefault && <p className="mt-1 text-[11.5px] text-[#AEAEB2]">Tự điền theo tên công ty ở Khách hàng — sửa thoải mái, xoá trống = không in.</p>}
               </div>
+              <div>
+                <label className={labelCls}>Biển số xe <span className="font-normal text-[#AEAEB2]">(cả đoàn đi chung 1 xe — đi 2 xe thì thêm xe; trống = không in)</span></label>
+                <div className="space-y-1.5">
+                  {vehicles.map((v, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <input value={v} onChange={e => setVehicles(vehicles.map((x, j) => (j === i ? e.target.value.toUpperCase() : x)))} placeholder="60A-123.45" maxLength={30} className={`${inputCls} uppercase`} />
+                      <button type="button" aria-label="Bỏ xe này" onClick={() => setVehicles(vehicles.filter((_, j) => j !== i))} className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06]"><X size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <button type="button" onClick={() => setVehicles([...vehicles, ''])} className="text-[12.5px] font-medium text-[#0066CC] hover:opacity-70">+ {vehicles.length ? 'Thêm xe' : 'Thêm biển số xe'}</button>
+                  {plateSuggest.map(pl => (
+                    <button key={pl} type="button" onClick={() => setVehicles([...vehicles.filter(x => x.trim()), pl])} className="text-[12px] px-2 py-0.5 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F]" title="Biển số lưu trong hồ sơ người tham dự">{pl}</button>
+                  ))}
+                </div>
+              </div>
               <Switch checked={!!opts.showVisit} onChange={v => set({ showVisit: v })} label={<span className="text-[13px]">In thời gian · địa điểm · nội dung</span>} />
               <div>
                 <span className={labelCls}>Cột thêm</span>
                 <div className="flex flex-wrap gap-x-4">
-                  {(['phone', 'vehicle_plate'] as const).map(c => (
+                  {(['phone'] as const).map(c => (
                     <Switch key={c} checked={(opts.extraCols ?? []).includes(c)} onChange={() => toggleExtra(c)} label={<span className="text-[13px]">{EXTRA_COL_LABEL[c]}</span>} />
                   ))}
                 </div>

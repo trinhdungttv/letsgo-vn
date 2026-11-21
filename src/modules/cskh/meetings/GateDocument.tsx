@@ -78,6 +78,7 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
         <div style={line(g.titleH, { ...text(g.titleSize, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.title}</div>
         {doc.recipient && <div style={line(22, { ...text(13, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.recipient}</div>}
         {doc.visit && <div style={{ ...text(12, { italic: true }), minHeight: pt(22), display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: `0 ${12 * k}px` }}>{doc.visit}</div>}
+        {doc.vehicle && <div style={line(22, { ...text(12, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.vehicle}</div>}
         <div style={{ height: pt(7.5) }} />
 
         {/* Bảng */}
