@@ -109,7 +109,7 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
         <div data-pdf-block style={{ position: 'relative', marginLeft: signLeft, width: signW, textAlign: 'center' }}>
           {doc.vehicleLines.length > 0 && (
             <div style={{ position: 'absolute', top: pt(8), right: signW + 10 * k, width: signLeft - 24 * k, textAlign: 'left' }}>
-              {doc.vehicleLines.map((t, i) => <div key={i} style={{ ...text(12, { bold: i === 0 }), marginBottom: pt(2), wordBreak: 'break-word' }}>{t}</div>)}
+              {doc.vehicleLines.map((t, i) => <div key={i} style={{ ...text(doc.vehicleSize, { bold: i === 0 }), marginBottom: pt(3), wordBreak: 'break-word' }}>{t}</div>)}
             </div>
           )}
           <div style={line(16, { ...text(12, { italic: true }), justifyContent: 'center' })}>{doc.dateLine}</div>

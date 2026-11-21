@@ -414,6 +414,14 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
                   ))}
                   <datalist id="gate-vehicle-types">{['Ô tô 4 chỗ', 'Ô tô 5 chỗ', 'Ô tô 7 chỗ', 'Xe bán tải', 'Xe khách 16 chỗ', 'Xe máy'].map(t => <option key={t} value={t} />)}</datalist>
                 </div>
+                {vehicles.length > 0 && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[12px] text-[#6E6E73]">
+                    <span>Cỡ chữ</span>
+                    {([[0, 'Vừa'], [1, 'To'], [2, 'Rất to']] as const).map(([k, l]) => (
+                      <button key={k} type="button" onClick={() => set({ vehicleSize: k })} className={`px-2.5 py-0.5 rounded-full ${(opts.vehicleSize ?? 1) === k ? 'bg-[#1D1D1F] text-white' : 'bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F]'}`}>{l}</button>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <button type="button" onClick={() => setVehicles([...vehicles, { type: vehicles.length ? '' : 'Ô tô 4 chỗ', plate: '' }])} className="text-[12.5px] font-medium text-[#0066CC] hover:opacity-70">+ {vehicles.length ? 'Thêm xe' : 'Thêm biển số xe'}</button>
                   {plateSuggest.map(pl => (

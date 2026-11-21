@@ -114,9 +114,9 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
   next(21.75); frame(r, { bottom: 'thick' });
   // Khối "Phương tiện đi họp" ở góc trái dưới, cùng các dòng với khối ký (bỏ dòng đệm 8pt ngay dưới ngày ký)
   if (s > 1) {
-    const slots = [rDate + 2, rDate + 3, ...Array.from({ length: SIGN_ROWS + 1 }, (_, k) => rDate + 4 + k)];
+    const slots = [rDate + 2, ...Array.from({ length: SIGN_ROWS + 1 }, (_, k) => rDate + 4 + k)];   // bỏ dòng "Ký, ghi rõ…" cao 15pt
     doc.vehicleLines.slice(0, slots.length).forEach((t, i) => {
-      put(slots[i], 1, s - 1, t, { bold: i === 0, size: 11 }, { horizontal: 'left', vertical: 'middle', indent: 1, wrapText: false });
+      put(slots[i], 1, s - 1, t, { bold: i === 0, size: doc.vehicleSize }, { horizontal: 'left', vertical: 'middle', indent: 1, wrapText: false });
       frame(slots[i]);
     });
   }

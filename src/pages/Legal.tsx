@@ -8,7 +8,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArchiveRestore, Building2, ChevronLeft, Expand, Library, Loader2, Maximize2, Minimize2, RefreshCw, Scale, Search, Shrink, Trash2, X,
+  AlertTriangle, ArchiveRestore, Building2, ChevronLeft, Expand, Library, Loader2, PenLine, Maximize2, Minimize2, RefreshCw, Scale, Search, Shrink, Trash2, X,
 } from 'lucide-react';
 import { legalLevel, useAuth } from '../lib/auth';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -18,6 +18,7 @@ import { fmtDate } from '../lib/legal/timeline';
 import { useLegal } from '../components/legal/useLegal';
 import type { LegalCtx } from '../components/legal/ctx';
 import EntitiesView, { type EntityTab } from '../components/legal/EntitiesView';
+import SignaturesView from '../components/legal/SignaturesView';
 import LibraryView, { type LibrarySel } from '../components/legal/LibraryView';
 import DocReader from '../components/legal/DocReader';
 import DocForm, { type DocPreset } from '../components/legal/DocForm';
@@ -26,7 +27,7 @@ import { ColorTile, EntityLogo, fmtWhen, TopicGlyph } from '../components/legal/
 import { Sheet } from '../modules/cskh/components/Sheet';
 import { BTN_PRIMARY, BTN_SECONDARY, CARD } from '../components/workspace/wsTheme';
 
-type Tab = 'entities' | 'library';
+type Tab = 'entities' | 'library' | 'signatures';
 interface Place { tab: Tab; entityId: string | null; entityTab: EntityTab; lib: LibrarySel }
 const PLACE_KEY = 'legal-place';
 const WIDE_KEY = 'legal-wide';
@@ -35,7 +36,7 @@ const DOC_HASH = /^#\/legal\/doc\/([0-9a-f-]{36})/i;
 function readPlace(): Place {
   try {
     const p = JSON.parse(localStorage.getItem(PLACE_KEY) || '{}') as Partial<Place>;
-    return { tab: p.tab === 'library' ? 'library' : 'entities', entityId: p.entityId ?? null, entityTab: p.entityTab ?? 'overview', lib: p.lib ?? null };
+    return { tab: p.tab === 'library' || p.tab === 'signatures' ? p.tab : 'entities', entityId: p.entityId ?? null, entityTab: p.entityTab ?? 'overview', lib: p.lib ?? null };
   } catch {
     return { tab: 'entities', entityId: null, entityTab: 'overview', lib: null };
   }
@@ -166,7 +167,7 @@ export default function Legal({ toast, onBack }: { toast: (m: string) => void; o
 
         {/* chọn khu */}
         <div className="mx-auto inline-flex bg-[#767680]/[0.12] rounded-[10px] p-[2px] min-w-0">
-          {([['entities', 'Pháp nhân', 'Pháp nhân', Building2], ['library', 'Thư viện ngành', 'Thư viện', Library]] as const).map(([t, label, short, Icon]) => (
+          {([['entities', 'Pháp nhân', 'Pháp nhân', Building2], ['library', 'Thư viện ngành', 'Thư viện', Library], ...(user?.role === 'admin' ? [['signatures', 'Chữ ký', 'Chữ ký', PenLine] as const] : [])] as const).map(([t, label, short, Icon]) => (
             <button key={t} type="button" onClick={() => { setPlace({ tab: t }); clearSearch(); }}
               className={`inline-flex items-center gap-1.5 h-8 px-2.5 md:px-4 rounded-[8px] text-[13px] font-medium whitespace-nowrap transition ${place.tab === t && !results ? 'bg-white shadow-[0_3px_8px_rgba(0,0,0,0.12),0_3px_1px_rgba(0,0,0,0.04)] text-[#1D1D1F]' : 'text-[#3A3A3C]'}`}>
               <Icon size={14} className="hidden sm:block" /> <span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span>
@@ -282,6 +283,8 @@ export default function Legal({ toast, onBack }: { toast: (m: string) => void; o
   } else if (place.tab === 'entities') {
     body = <EntitiesView ctx={ctx} entityId={place.entityId && store.entities.some(e => e.id === place.entityId) ? place.entityId : null}
       setEntityId={id => setPlace({ entityId: id, entityTab: 'overview' })} tab={place.entityTab} setTab={t => setPlace({ entityTab: t })} />;
+  } else if (place.tab === 'signatures' && user?.role === 'admin') {
+    body = <SignaturesView toast={toast} />;
   } else {
     body = <LibraryView ctx={ctx} sel={place.lib} setSel={s => setPlace({ lib: s })} />;
   }

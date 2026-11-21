@@ -178,6 +178,8 @@ export interface GateDoc {
   visit: string;
   /** Khối "Phương tiện đi họp" in ở góc trái dưới (cạnh khối ký): dòng đầu = tiêu đề; [] = không in */
   vehicleLines: string[];
+  /** Cỡ chữ khối phương tiện (pt) */
+  vehicleSize: number;
   columns: GateColumn[];
   rows: GateRow[];
   dateLine: string;
@@ -221,11 +223,14 @@ export function gateHeaderGeom(h: HeaderLayout): GateHeaderGeom {
   };
 }
 
-/** "Phương tiện đi họp:" + mỗi xe 1 dòng ("Ô tô 4 chỗ — BKS: 51L-97992"); nhiều xe thì đánh số. */
+/** Cỡ chữ khối phương tiện theo mức chọn (pt): 0 = vừa, 1 = to (mặc định), 2 = rất to. Tối đa 16pt để vừa dòng Excel cao 21,75pt. */
+export const VEHICLE_SIZES = [13, 15, 16] as const;
+
+/** "Phương tiện đăng ký vào cổng:" + mỗi xe 1 dòng ("Ô tô 4 chỗ — BKS: 51L-97992"); nhiều xe thì đánh số. */
 export function vehicleLines(vehicles: readonly GateVehicle[] | undefined): string[] {
   const list = (vehicles ?? []).map(v => ({ type: v.type.trim(), plate: v.plate.trim().toUpperCase() })).filter(v => v.type || v.plate);
   if (!list.length) return [];
-  return ['Phương tiện đi họp:', ...list.map((v, i) => `${list.length > 1 ? `${i + 1}. ` : ''}${[v.type, v.plate ? `BKS: ${v.plate}` : ''].filter(Boolean).join(' — ')}`)];
+  return ['Phương tiện đăng ký vào cổng:', ...list.map((v, i) => `${list.length > 1 ? `${i + 1}. ` : ''}Xe: ${[v.type, v.plate ? `BKS: ${v.plate}` : ''].filter(Boolean).join(' - ')}`)];
 }
 
 export function buildGateDoc(a: {
@@ -255,6 +260,7 @@ export function buildGateDoc(a: {
     recipient: (options.recipient ?? '').trim() ? `Kính gửi: ${(options.recipient ?? '').trim().replace(/^kính gửi\s*:?\s*/i, '')}` : '',
     visit: options.showVisit ? visitParts.join('   ·   ') : '',
     vehicleLines: vehicleLines(options.vehicles),
+    vehicleSize: VEHICLE_SIZES[options.vehicleSize ?? 1] ?? VEHICLE_SIZES[1],
     // Biển số nay ghi theo xe (1 dòng cho cả đoàn) — không còn cột biển số theo từng người
     columns: gateColumns(rows, (options.extraCols ?? []).filter(c => c !== 'vehicle_plate')),
     rows,
