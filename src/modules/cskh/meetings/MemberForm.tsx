@@ -5,6 +5,7 @@ import { emptyMember, ISSUER_SUGGESTIONS, type MeetingMember, type MemberDraft }
 import { inputCls } from '../ui';
 import { ChoiceChip, Sheet, SHEET_FOOTER } from '../components/Sheet';
 import { Switch } from '../components/apple';
+import { DraftNotice, useFormDraft } from '../../../components/legal/useFormDraft';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
@@ -22,6 +23,8 @@ export function MemberForm({ existing, preset, readOnly, onSave, onDelete, onClo
     id_issued_on: existing.id_issued_on, id_issued_by: existing.id_issued_by, address: existing.address, title: existing.title,
     phone: existing.phone, vehicle_plate: existing.vehicle_plate, note: existing.note, active: existing.active,
   } : { ...emptyMember(), ...preset }));
+  // Tự lưu nháp vào máy khi gõ: lỡ thoát / tải lại / bấm X thì mở lại form là còn nguyên; Lưu thành công hoặc Huỷ mới xoá nháp
+  const draft = useFormDraft(`member:${existing?.id ?? 'new'}`, d, setD);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (p: Partial<MemberDraft>) => setD(x => ({ ...x, ...p }));
@@ -35,8 +38,9 @@ export function MemberForm({ existing, preset, readOnly, onSave, onDelete, onClo
     // Gõ tay: chỉ bỏ dấu cách (không tự thêm số 0 như khi nhập file — số thiếu là gõ sai, cảnh báo ở trên)
     const err = await onSave({ ...d, id_number: d.id_number.replace(/\s+/g, ''), vehicle_plate: d.vehicle_plate.toUpperCase() });
     setSaving(false);
-    if (err) setError(err);
+    if (err) setError(err); else draft.clear();
   };
+  const discard = () => { draft.clear(); onClose(); };
   const remove = async () => {
     if (!onDelete || !existing) return;
     if (!window.confirm(`Xoá ${existing.full_name} khỏi danh sách thành viên đi họp?\nCác buổi họp cũ vẫn giữ tên người này.`)) return;
@@ -51,6 +55,7 @@ export function MemberForm({ existing, preset, readOnly, onSave, onDelete, onClo
     <Sheet label={title} onClose={onClose} wide>
       <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#1D1D1F]">{title}</h2>
       <p className="text-[12.5px] text-[#86868B] mt-0.5 mb-3">Thông tin in lên “Danh sách đăng ký ra vào cổng” — nhập đúng như trên CCCD.</p>
+      {draft.restored && !readOnly && <DraftNotice onDiscard={discard} />}
       <fieldset disabled={readOnly} className="space-y-3 min-w-0">
         <div>
           <label className={labelCls}>Họ và tên</label>
@@ -118,7 +123,7 @@ export function MemberForm({ existing, preset, readOnly, onSave, onDelete, onClo
               <Trash2 size={16} />
             </button>
           )}
-          <button type="button" onClick={onClose} className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Huỷ</button>
+          <button type="button" onClick={discard} className="flex-1 h-11 md:h-9 rounded-full bg-[rgba(118,118,128,0.12)] text-[13px] font-medium text-[#1D1D1F] hover:bg-[rgba(118,118,128,0.2)] active:scale-[0.98] transition">Huỷ</button>
           <button type="button" onClick={save} disabled={saving}
             className="flex-[2] h-11 md:h-9 rounded-full bg-[#0071E3] text-white active:scale-[0.98] transition text-[13px] font-semibold disabled:opacity-40">
             {saving ? 'Đang lưu…' : existing ? 'Lưu' : 'Thêm thành viên'}

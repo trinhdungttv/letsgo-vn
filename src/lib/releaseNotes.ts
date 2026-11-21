@@ -20,6 +20,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     date: '2026-11-21',
     title: 'Pháp lý',
     features: [
+      'Form thêm/sửa thành viên đi họp tự lưu nháp khi gõ — lỡ thoát hay tải lại vẫn còn nguyên',
       'Thành viên đi họp: nút "+ Trưởng CN" thêm nhanh Trưởng Chi Nhánh (nhập thông tin 1 lần, sau chọn là tự điền vào danh sách vào cổng)',
       'Danh sách vào cổng: nhập biển số xe ngay từng người tham dự; ô Kính gửi tự điền theo tên công ty ở Khách hàng (vẫn sửa được)',
       'Người ký trên giấy tờ (danh sách vào cổng, báo giá) luôn theo người đại diện ở Pháp lý — đổi bên Pháp lý là giấy tờ đổi theo',
