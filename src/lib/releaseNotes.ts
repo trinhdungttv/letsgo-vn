@@ -16,11 +16,27 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-21-workspace-eisenhower',
+    date: '2026-11-21',
+    title: 'Workspace',
+    features: [
+      'Việc của tôi: gắn cờ quan trọng cho từng việc + chế độ xem Ma trận Eisenhower (4 ô), đặt kiểu mở mặc định',
+    ],
+  },
+  {
+    id: '2026-11-21-license-reissue',
+    date: '2026-11-21',
+    title: 'Pháp lý',
+    features: [
+      'Giấy phép con: nút "Cấp lại / cập nhật" (cấp lại lần N), giữ lại lịch sử các lần cấp trước kèm file',
+    ],
+  },
+  {
     id: '2026-11-21-workspace-quick-matrix',
     date: '2026-11-21',
     title: 'Workspace',
     features: [
-      'Nút "Ghi nhanh khách" ở Workspace: mở Ma trận khách hàng để chọn nhanh người vừa trao đổi và ghi lại điều họ nói / yêu cầu',
+      'Nút tròn "Ghi nhanh khách" (trên chuông thông báo) ở Workspace: mở Ma trận khách hàng để chọn nhanh người vừa trao đổi và ghi lại điều họ nói / yêu cầu',
     ],
   },
   {

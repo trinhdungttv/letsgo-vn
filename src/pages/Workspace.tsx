@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
   Settings, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet, Building2, Users,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check, Grid3x3,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check, NotebookPen,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
@@ -496,7 +496,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
     { label: 'Phương án giá', icon: <PieChart size={16} />, tile: 'purple', onClick: () => setShowCostPlan(true) },
     { label: 'Giao việc', icon: <Send size={15} />, tile: 'green', onClick: () => setShowGiaoViec(true) },
     { label: 'Ghi nhận LĐ', icon: <Users size={16} />, tile: 'teal', onClick: () => setShowBulkLabor(true) },
-    ...(canAccess(user.role, 'crm-leads', rolePermissions) ? [{ label: 'Ghi nhanh khách', icon: <Grid3x3 size={16} />, tile: 'orange' as const, onClick: () => setShowCskhQuick(true) }] : []),
   ];
 
   return (
@@ -829,6 +828,16 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
           onClose={() => setShowGiaoViec(false)}
           onCreated={() => setRefreshToken(t => t + 1)}
         />
+      )}
+      {canAccess(user.role, 'crm-leads', rolePermissions) && (
+        <button
+          onClick={() => setShowCskhQuick(true)}
+          title="Ghi nhanh khách — chọn người vừa trao đổi để ghi lại"
+          aria-label="Ghi nhanh khách"
+          className="fixed z-[47] right-3 bottom-[calc(128px+env(safe-area-inset-bottom))] md:right-14 md:bottom-[72px] w-10 h-10 rounded-full bg-white text-[#0071E3] shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_6px_18px_-4px_rgba(0,0,0,0.3)] flex items-center justify-center hover:scale-105 active:scale-95 transition"
+        >
+          <NotebookPen size={17} />
+        </button>
       )}
       {showCskhQuick && <CskhQuickPanel clients={clients} toast={toast} onNavigate={onNavigate} onClose={() => setShowCskhQuick(false)} />}
       {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}

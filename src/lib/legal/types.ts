@@ -7,10 +7,20 @@ export type EntityStatus = 'active' | 'paused' | 'dissolved';
 export interface LegalOwner { id: string; name: string; capital: number | null; percent: number | null; note: string }
 export interface LegalIndustry { id: string; code: string; name: string; main: boolean }
 export interface LegalBank { id: string; bank: string; number: string; branch: string; holder: string }
+/** Bản cũ của giấy phép trước khi cấp lại / cập nhật (lưu trong LegalLicense.history). */
+export interface LicenseVersion {
+  /** lần cấp của bản này: 0 = bản gốc, 1 = cấp lại lần 1… */
+  revision: number;
+  number: string; issued: string; expires: string; url: string; note: string;
+}
 export interface LegalLicense {
   id: string; name: string; number: string; issuer: string;
   /** yyyy-mm-dd, '' = chưa nhập */
   issued: string; expires: string; url: string; note: string;
+  /** Số lần cấp lại / cập nhật (0 hoặc thiếu = bản gốc) — dữ liệu nằm trong JSON info, không cần migration */
+  revision?: number;
+  /** Các bản trước (cũ → mới) */
+  history?: LicenseVersion[];
 }
 
 export interface LegalEntityInfo {

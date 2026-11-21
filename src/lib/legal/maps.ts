@@ -100,6 +100,7 @@ export function entityOverviewMap(entity: LegalEntity, milestones: LegalMileston
   const inds = t('Ngành nghề', entity.info.industries.slice(0, 12).map(i => t([i.code, i.name].filter(Boolean).join(' '), [], i.main ? { markers: ['star-yellow'] } : {})));
   const lic = t('Giấy phép', entity.info.licenses.map(l => t(l.name || 'Giấy phép', [
     ...leaf('Số', l.number), ...leaf('Hết hạn', fmtDate(l.expires)),
+    ...(l.revision ? leaf('Cấp lại', `lần ${l.revision}`) : []),
   ])));
   const history = t('Lịch sử thay đổi', sortMilestones(milestones.filter(m => !m.deleted_at), 'asc').map(m => {
     const kind = MILESTONE_KINDS[m.kind] ?? MILESTONE_KINDS.khac;

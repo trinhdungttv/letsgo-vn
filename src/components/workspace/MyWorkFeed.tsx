@@ -7,8 +7,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   ChevronDown, Check, X, Trash2, Pencil, Ban,
   MessageSquare, History, Search, Plus, SlidersHorizontal,
-  Building2, Hourglass, Hand, Flame, Target, Phone, CalendarClock, CheckCircle2, BellRing,
-} from 'lucide-react'
+  Building2, Hourglass, Hand, Flame, Target, Phone, CalendarClock, CheckCircle2, BellRing, Flag, LayoutGrid, List, Pin } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logActivity } from '../../lib/audit'
@@ -43,6 +42,8 @@ export interface WorkspaceTask {
   created_at: string
   /** Chi nhánh liên kết — chỉ áp dụng cho type==='task' (Task nội bộ chung) */
   branch_id: string | null
+  /** Cờ Quan trọng (migration 231) */
+  is_flagged?: boolean
 }
 
 const WS_STATUS: Record<string, { label: string; cls: string }> = {
@@ -127,6 +128,17 @@ const GROUP_META: Record<GroupKey, { label: string; head: string; badge: string 
   week:    { label: 'Tuần này',  head: 'text-[#1D1D1F]', badge: TINT.gray },
   later:   { label: 'Sau đó',    head: 'text-[#6E6E73]', badge: TINT.gray },
 }
+
+// ---- Ma trận Eisenhower ----
+// Khẩn = quá hạn hoặc đến hạn trong 2 ngày tới. Quan trọng = có gắn cờ HOẶC ưu tiên Cao.
+type Quadrant = 'q1' | 'q2' | 'q3' | 'q4'
+const QUADRANTS: { key: Quadrant; roman: string; label: string; hint: string; color: string; bg: string }[] = [
+  { key: 'q1', roman: 'I',   label: 'Làm ngay',    hint: 'Khẩn · Quan trọng',        color: '#FF3B30', bg: 'bg-[#FF3B30]' },
+  { key: 'q2', roman: 'II',  label: 'Lên lịch',    hint: 'Không khẩn · Quan trọng',  color: '#FF9500', bg: 'bg-[#FF9500]' },
+  { key: 'q3', roman: 'III', label: 'Xử lý nhanh', hint: 'Khẩn · Ít quan trọng',     color: '#0071E3', bg: 'bg-[#0071E3]' },
+  { key: 'q4', roman: 'IV',  label: 'Để sau',      hint: 'Không khẩn · Ít quan trọng', color: '#30B0C7', bg: 'bg-[#30B0C7]' },
+]
+type FeedView = 'list' | 'matrix'
 
 function todayStr() { return new Date().toISOString().split('T')[0] }
 
@@ -364,6 +376,9 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   const [filter, setFilter] = useState<'Tất cả' | Category>('Tất cả')
   const [search, setSearch] = useState('')
   const [focusMode, setFocusMode] = useState(false)
+  // Chế độ xem: danh sách theo ngày / Ma trận Eisenhower. "Mặc định" lưu theo máy để vào lại không bị nhảy.
+  const [defaultView, setDefaultView] = usePersistedState<FeedView>('lgvn_workfeed_default_view', 'list')
+  const [view, setView] = useState<FeedView>(defaultView === 'matrix' ? 'matrix' : 'list')
   // 'overdue' hoặc 'YYYY-MM-DD' — bấm ô radar để lọc theo ngày
   const [dayFilter, setDayFilter] = useState<string | null>(null)
 
@@ -459,6 +474,22 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
     for (const k of Object.keys(g) as GroupKey[]) g[k].sort(byDue)
     return g
   }, [allItems, filter, search, dayFilter, focusMode, branches])
+
+  // Ma trận: dùng đúng các việc đang lọc ở danh sách (chip loại, tìm nhanh, Tập trung…)
+  const matrix = useMemo(() => {
+    const today = todayStr()
+    const urgentUntil = new Date(); urgentUntil.setDate(urgentUntil.getDate() + 2)
+    const limit = urgentUntil.toISOString().split('T')[0]
+    const q: Record<Quadrant, FeedItem[]> = { q1: [], q2: [], q3: [], q4: [] }
+    for (const it of [...groups.overdue, ...groups.today, ...groups.week, ...groups.later]) {
+      const urgent = !!it.due && it.due <= limit
+      const important = !!(it.work?.is_flagged ?? it.ws?.is_flagged ?? it.pipeline?.is_flagged) || it.work?.priority === 'high'
+      q[urgent ? (important ? 'q1' : 'q3') : (important ? 'q2' : 'q4')].push(it)
+    }
+    const flagged = (it: FeedItem) => (it.work?.is_flagged ?? it.ws?.is_flagged ?? it.pipeline?.is_flagged) ? 0 : 1
+    for (const k of Object.keys(q) as Quadrant[]) q[k].sort((a, b) => flagged(a) - flagged(b) || (a.due ?? '9999').localeCompare(b.due ?? '9999'))
+    return { q, today }
+  }, [groups])
 
   const totalVisible = groups.overdue.length + groups.today.length + groups.week.length + groups.later.length
 
@@ -861,6 +892,26 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   }
 
   // ---- ④ Hoãn nhanh: dời hạn sang ngày mai / tuần sau (tính từ hôm nay) ----
+  const isFlagged = (it: FeedItem) => !!(it.work?.is_flagged ?? it.ws?.is_flagged ?? it.pipeline?.is_flagged)
+
+  async function toggleFlag(it: FeedItem) {
+    const next = !isFlagged(it)
+    const table = it.work ? 'work_tasks' : it.ws ? 'workspace_tasks' : 'crm_pipeline_tasks'
+    if (it.work) setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: next } : x))
+    else if (it.ws) setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: next } : x))
+    else if (it.pipeline) setPipelineTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: next } : x))
+    const { error } = await supabase.from(table).update({ is_flagged: next }).eq('id', it.id)
+    if (error) {
+      // hoàn lại + báo (thường do chưa chạy migration 231)
+      if (it.work) setMyTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: !next } : x))
+      else if (it.ws) setWsTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: !next } : x))
+      else if (it.pipeline) setPipelineTasks(prev => prev.map(x => x.id === it.id ? { ...x, is_flagged: !next } : x))
+      toast('Chưa gắn được cờ — cần chạy migration 231 (' + error.message + ')')
+      return
+    }
+    toast(next ? 'Đã gắn cờ quan trọng' : 'Đã bỏ cờ')
+  }
+
   async function snoozeItem(it: FeedItem, days: number) {
     const d = new Date()
     d.setDate(d.getDate() + days)
@@ -1176,6 +1227,12 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
   )
 
   // ---- Render 1 dòng việc ----
+  const groupOf = (due: string | null): GroupKey => {
+    const today = todayStr()
+    if (!due) return 'later'
+    return due < today ? 'overdue' : due === today ? 'today' : due <= endOfWeekStr() ? 'week' : 'later'
+  }
+
   function renderRow(it: FeedItem, group: GroupKey) {
     const expanded = expandedKey === it.key
     const isOverdue = group === 'overdue'
@@ -1253,6 +1310,14 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
               {showField('comments') && cmts.length > 0 && <span className="text-[11.5px] text-[#86868B] inline-flex items-center gap-1"><MessageSquare size={11} />{cmts.length}</span>}
             </div>
           </div>
+          <button
+            onClick={e => { e.stopPropagation(); toggleFlag(it) }}
+            title={isFlagged(it) ? 'Bỏ cờ quan trọng' : 'Gắn cờ quan trọng — để không bị nhỡ việc của khách'}
+            aria-label="Gắn cờ"
+            className={`w-7 h-7 rounded-full shrink-0 inline-flex items-center justify-center transition ${isFlagged(it) ? 'text-[#FF3B30]' : 'text-[#C7C7CC] hover:text-[#FF3B30] lg:opacity-0 lg:group-hover:opacity-100'}`}
+          >
+            <Flag size={15} className={isFlagged(it) ? 'fill-[#FF3B30]' : ''} />
+          </button>
           <span className={`text-[12.5px] whitespace-nowrap shrink-0 tabular-nums ${isOverdue ? 'text-[#D70015] font-medium' : group === 'today' ? 'text-[#0066CC] font-medium' : 'text-[#86868B]'}`}>{dueLabel(it.due, group)}</span>
           <ChevronDown size={15} className={`text-[#C7C7CC] shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
 
@@ -1564,6 +1629,23 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-[19px] font-semibold text-[#1D1D1F] tracking-[-0.02em]">Việc của tôi</h2>
+            <div className="flex items-center gap-2">
+            {/* Chế độ xem + đặt mặc định */}
+            <div role="tablist" aria-label="Chế độ xem" className="flex p-[2px] rounded-[10px] bg-[rgba(118,118,128,0.12)]">
+              {([['list', 'Danh sách', List], ['matrix', 'Ma trận', LayoutGrid]] as const).map(([k, label, Icon]) => (
+                <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
+                  className={`h-6 px-2.5 rounded-[8px] text-[12px] font-medium inline-flex items-center gap-1 transition ${view === k ? 'bg-white text-[#1D1D1F] shadow-sm' : 'text-[#6E6E73]'}`}>
+                  <Icon size={12} />{label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setDefaultView(view); toast(`Đã đặt "${view === 'matrix' ? 'Ma trận' : 'Danh sách'}" làm kiểu mở mặc định`) }}
+              title={defaultView === view ? 'Đây là kiểu mở mặc định' : 'Đặt kiểu này làm mặc định khi vào Workspace'}
+              className={`w-7 h-7 rounded-full inline-flex items-center justify-center transition ${defaultView === view ? TINT.blue : FILTER_OFF}`}
+            >
+              <Pin size={13} className={defaultView === view ? 'fill-current' : ''} />
+            </button>
             {/* Chọn nhãn nào hiện trên dòng việc */}
             <div className="relative" ref={fieldMenuRef}>
               <button
@@ -1592,6 +1674,7 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
                   </div>
                 </div>
               )}
+            </div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-2.5 -mx-4 px-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1857,6 +1940,30 @@ export function MyWorkFeed({ clients, pipelineEntries, products, branches, onCli
             <CheckCircle2 size={34} strokeWidth={1.5} className="text-[#34C759]" />
             <div className="text-[14px] font-medium text-[#1D1D1F]">{filter === 'Tất cả' ? 'Không còn việc nào' : 'Không có việc nào trong nhóm này'}</div>
             {filter === 'Tất cả' && <div className="text-[12.5px] text-[#86868B]">Bạn đã xử lý xong mọi việc — tuyệt vời!</div>}
+          </div>
+        ) : view === 'matrix' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 px-3 pb-3 border-t border-black/[0.06] pt-3">
+            {QUADRANTS.map(qd => {
+              const items = matrix.q[qd.key]
+              return (
+                <div key={qd.key} className="rounded-[14px] bg-[#F5F5F7] flex flex-col min-h-[140px]">
+                  <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
+                    <span className={`w-5 h-5 rounded-full text-white text-[10px] font-bold inline-flex items-center justify-center ${qd.bg}`}>{qd.roman}</span>
+                    <span className="text-[14px] font-semibold tracking-[-0.01em]" style={{ color: qd.color }}>{qd.label}</span>
+                    <span className="text-[11.5px] text-[#86868B] hidden sm:inline">{qd.hint}</span>
+                    <span className="ml-auto text-[12px] font-medium text-[#86868B] tabular-nums">{items.length}</span>
+                  </div>
+                  <div className="bg-white rounded-[12px] mx-1.5 mb-1.5 flex-1 max-h-[440px] overflow-y-auto">
+                    {items.length === 0
+                      ? <div className="py-6 text-center text-[12.5px] text-[#AEAEB2]">Trống</div>
+                      : items.map(it => renderRow(it, groupOf(it.due)))}
+                  </div>
+                </div>
+              )
+            })}
+            <div className="lg:col-span-2 text-[11.5px] text-[#86868B] px-1">
+              Khẩn = quá hạn hoặc đến hạn trong 2 ngày. Quan trọng = gắn cờ <Flag size={10} className="inline -mt-0.5 text-[#FF3B30]" /> hoặc ưu tiên Cao — bấm cờ ở mỗi dòng để đưa việc của khách lên nhóm quan trọng.
+            </div>
           </div>
         ) : (
           (Object.keys(GROUP_META) as GroupKey[]).map(gk => {

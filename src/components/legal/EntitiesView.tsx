@@ -231,9 +231,23 @@ function EntityOverview({ ctx, e, goTab }: { ctx: LegalCtx; e: LegalEntity; goTa
                     <div className="text-[13.5px] font-semibold text-[#1D1D1F]">{l.name}</div>
                     <div className="text-[12px] text-[#86868B]">{[l.number && `Số ${l.number}`, l.issuer, l.issued && `cấp ${fmtDate(l.issued)}`].filter(Boolean).join(' · ')}</div>
                   </div>
+                  {!!l.revision && <Pill tint="blue">Cấp lại lần {l.revision}</Pill>}
                   <Pill tint={st.tint}>{st.label}</Pill>
                   <FileIconButton url={l.url} label="Xem file giấy phép" onOpen={() => setViewing({ title: l.name || 'Giấy phép', url: l.url })} />
                 </div>
+                {!!l.history?.length && (
+                  <details className="mt-1.5 text-[12px] text-[#86868B]">
+                    <summary className="cursor-pointer select-none hover:text-[#1D1D1F]">Các lần cấp trước ({l.history.length})</summary>
+                    <div className="mt-1 space-y-1">
+                      {[...l.history].reverse().map((h, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1">{h.revision ? `Lần ${h.revision}` : 'Bản gốc'} · {[h.number && `Số ${h.number}`, h.issued && `cấp ${fmtDate(h.issued)}`, h.expires && `hạn ${fmtDate(h.expires)}`].filter(Boolean).join(' · ') || 'chưa nhập'}</span>
+                          <FileIconButton url={h.url} label="Xem file bản cũ" onOpen={() => setViewing({ title: `${l.name || 'Giấy phép'} (${h.revision ? `lần ${h.revision}` : 'bản gốc'})`, url: h.url })} />
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
             );
           })}

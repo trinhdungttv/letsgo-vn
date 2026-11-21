@@ -37,6 +37,10 @@ export function normInfo(raw: unknown): LegalEntityInfo {
   info.banks = arr(r.banks).map(o => ({ id: s(o.id) || rid(), bank: s(o.bank), number: s(o.number), branch: s(o.branch), holder: s(o.holder) }));
   info.licenses = arr(r.licenses).map(o => ({
     id: s(o.id) || rid(), name: s(o.name), number: s(o.number), issuer: s(o.issuer), issued: s(o.issued), expires: s(o.expires), url: s(o.url), note: s(o.note),
+    revision: Math.max(0, Math.floor(Number(o.revision) || 0)),
+    history: arr(o.history).map(h => ({
+      revision: Math.max(0, Math.floor(Number(h.revision) || 0)), number: s(h.number), issued: s(h.issued), expires: s(h.expires), url: s(h.url), note: s(h.note),
+    })),
   }));
   info.registrationUrl = s(r.registrationUrl);
   return info;

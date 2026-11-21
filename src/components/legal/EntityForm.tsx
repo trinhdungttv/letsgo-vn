@@ -291,6 +291,15 @@ export default function EntityForm({ initial, count, userName, toast, onClose, o
                   <label className="flex items-center gap-2 text-[12px] text-[#86868B]"><span className="w-[58px] shrink-0">Ngày cấp</span><input type="date" value={l.issued} onChange={e => upd({ issued: e.target.value })} className={INPUT_CLS} /></label>
                   <label className="flex items-center gap-2 text-[12px] text-[#86868B]"><span className="w-[58px] shrink-0">Hết hạn</span><input type="date" value={l.expires} onChange={e => upd({ expires: e.target.value })} className={INPUT_CLS} /></label>
                   <input value={l.url} onChange={e => upd({ url: e.target.value })} placeholder="Link file giấy phép trên Google Drive (bấm icon file để xem)" className={`${INPUT_CLS} sm:col-span-2`} />
+                  <div className="sm:col-span-2 flex items-center gap-2 flex-wrap text-[12px] text-[#86868B]">
+                    <span>{l.revision ? `Đang là bản cấp lại lần ${l.revision}` : 'Bản gốc'}{l.history?.length ? ` · ${l.history.length} bản cũ đã lưu` : ''}</span>
+                    <button type="button" className={SMALL_BTN} title="Lưu bản hiện tại vào lịch sử, rồi nhập số / ngày cấp / hạn / file của bản mới"
+                      onClick={() => upd({
+                        history: [...(l.history ?? []), { revision: l.revision ?? 0, number: l.number, issued: l.issued, expires: l.expires, url: l.url, note: l.note }],
+                        revision: (l.revision ?? 0) + 1,
+                        number: '', issued: '', expires: '', url: '',
+                      })}>Cấp lại / cập nhật</button>
+                  </div>
                 </div>
               );
             })}

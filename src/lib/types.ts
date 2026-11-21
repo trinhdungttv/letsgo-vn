@@ -354,6 +354,7 @@ export interface CRMPipelineTask {
   result_note: string | null;
   created_at: string;
   updated_at: string;
+  is_flagged?: boolean; // migration 231
 }
 
 export interface MarketSurvey {
@@ -1257,6 +1258,8 @@ export interface WorkTask {
   // Người liên hệ (contacts.id) bên khách liên quan tới việc — chọn nhiều người (migration 200,
   // đọc / ghi qua lib/workTaskLinks). Chưa chạy 200 thì không có cột này.
   contact_ids?: string[] | null
+  // Cờ Quan trọng (migration 231) — dùng cho Ma trận Eisenhower
+  is_flagged?: boolean
 }
 
 export interface CooperationSuspensionRequest {
