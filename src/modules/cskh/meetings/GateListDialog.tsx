@@ -21,7 +21,7 @@ import { Slider } from '../../../components/workspace/costplan/EntityManager';
 import {
   buildGateDoc, EXTRA_COL_LABEL, GATE_TITLE, gateFileName, gateIssues, isoToVn, resolvePlace,
 } from '../../../lib/meetings/gateList';
-import type { Attendee, GateExtraCol, GateOptions, Meeting, MeetingMember } from '../../../lib/meetings/types';
+import type { Attendee, GateExtraCol, GateOptions, GateVehicle, Meeting, MeetingMember } from '../../../lib/meetings/types';
 import { todayVN } from '../../../lib/cskh/dates';
 import { inputCls } from '../ui';
 import { Switch } from '../components/apple';
@@ -88,8 +88,8 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
   const recipient = opts.recipient ?? recipientDefault;
   // Biển số xe theo XE (không theo người): danh sách nhập tay; gợi ý nhanh = biển số lưu ở hồ sơ những người tham dự
   const vehicles = opts.vehicles ?? [];
-  const setVehicles = (v: string[]) => set({ vehicles: v });
-  const plateSuggest = [...new Set(attendees.map(a => membersById.get(a.id)?.vehicle_plate.trim().toUpperCase() ?? '').filter(Boolean))].filter(pl => !vehicles.some(v => v.trim().toUpperCase() === pl));
+  const setVehicles = (v: GateVehicle[]) => set({ vehicles: v });
+  const plateSuggest = [...new Set(attendees.map(a => membersById.get(a.id)?.vehicle_plate.trim().toUpperCase() ?? '').filter(Boolean))].filter(pl => !vehicles.some(v => v.plate.trim().toUpperCase() === pl));
   const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: { ...opts, recipient }, today, entityHeader: entity?.layout.header }),
     [meeting, attendees, members, entity, opts, recipient, today]);
   const issues = gateIssues(doc.rows, { entityMissing: !entity });
@@ -403,19 +403,21 @@ export function GateListDialog({ meeting, members, entities, clients, canSign, c
                 {opts.recipient === undefined && recipientDefault && <p className="mt-1 text-[11.5px] text-[#AEAEB2]">Tự điền theo tên công ty ở Khách hàng — sửa thoải mái, xoá trống = không in.</p>}
               </div>
               <div>
-                <label className={labelCls}>Biển số xe <span className="font-normal text-[#AEAEB2]">(cả đoàn đi chung 1 xe — đi 2 xe thì thêm xe; trống = không in)</span></label>
+                <label className={labelCls}>Biển số xe <span className="font-normal text-[#AEAEB2]">(cả đoàn đi chung 1 xe — đi 2 xe thì thêm xe; in ở góc trái dưới, cạnh chỗ ký)</span></label>
                 <div className="space-y-1.5">
                   {vehicles.map((v, i) => (
                     <div key={i} className="flex items-center gap-1.5">
-                      <input value={v} onChange={e => setVehicles(vehicles.map((x, j) => (j === i ? e.target.value.toUpperCase() : x)))} placeholder="60A-123.45" maxLength={30} className={`${inputCls} uppercase`} />
+                      <input list="gate-vehicle-types" value={v.type} onChange={e => setVehicles(vehicles.map((x, j) => (j === i ? { ...x, type: e.target.value } : x)))} placeholder="Loại xe" maxLength={40} className={`${inputCls} min-w-0 flex-1`} />
+                      <input value={v.plate} onChange={e => setVehicles(vehicles.map((x, j) => (j === i ? { ...x, plate: e.target.value.toUpperCase() } : x)))} placeholder="60A-123.45" maxLength={30} className={`${inputCls} min-w-0 w-[42%] uppercase`} />
                       <button type="button" aria-label="Bỏ xe này" onClick={() => setVehicles(vehicles.filter((_, j) => j !== i))} className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06]"><X size={14} /></button>
                     </div>
                   ))}
+                  <datalist id="gate-vehicle-types">{['Ô tô 4 chỗ', 'Ô tô 5 chỗ', 'Ô tô 7 chỗ', 'Xe bán tải', 'Xe khách 16 chỗ', 'Xe máy'].map(t => <option key={t} value={t} />)}</datalist>
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <button type="button" onClick={() => setVehicles([...vehicles, ''])} className="text-[12.5px] font-medium text-[#0066CC] hover:opacity-70">+ {vehicles.length ? 'Thêm xe' : 'Thêm biển số xe'}</button>
+                  <button type="button" onClick={() => setVehicles([...vehicles, { type: vehicles.length ? '' : 'Ô tô 4 chỗ', plate: '' }])} className="text-[12.5px] font-medium text-[#0066CC] hover:opacity-70">+ {vehicles.length ? 'Thêm xe' : 'Thêm biển số xe'}</button>
                   {plateSuggest.map(pl => (
-                    <button key={pl} type="button" onClick={() => setVehicles([...vehicles.filter(x => x.trim()), pl])} className="text-[12px] px-2 py-0.5 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F]" title="Biển số lưu trong hồ sơ người tham dự">{pl}</button>
+                    <button key={pl} type="button" onClick={() => setVehicles([...vehicles.filter(x => x.plate.trim() || x.type.trim()), { type: 'Ô tô 4 chỗ', plate: pl }])} className="text-[12px] px-2 py-0.5 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F]" title="Biển số lưu trong hồ sơ người tham dự">{pl}</button>
                   ))}
                 </div>
               </div>

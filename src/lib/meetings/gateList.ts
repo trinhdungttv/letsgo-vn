@@ -4,7 +4,7 @@
 import type { CompanyProfileData } from '../costPlan/quoteDoc';
 import { DEFAULT_HEADER, INDENT_PX, normalizeHeader, type HeaderLayout } from '../costPlan/entity';
 import { foldVn } from '../companyMatch';
-import type { GateExtraCol, GateOptions, Meeting, MeetingMember } from './types';
+import type { GateExtraCol, GateOptions, GateVehicle, Meeting, MeetingMember } from './types';
 
 export const GATE_TITLE = 'DANH SÁCH ĐĂNG KÝ RA VÀO CỔNG';
 export const SIGN_HINT = '(Ký, ghi rõ họ tên, đóng dấu)';
@@ -176,8 +176,8 @@ export interface GateDoc {
   recipient: string;
   /** "" = không in */
   visit: string;
-  /** "Biển số xe: …" — "" = không in */
-  vehicle: string;
+  /** Khối "Phương tiện đi họp" in ở góc trái dưới (cạnh khối ký): dòng đầu = tiêu đề; [] = không in */
+  vehicleLines: string[];
   columns: GateColumn[];
   rows: GateRow[];
   dateLine: string;
@@ -221,6 +221,13 @@ export function gateHeaderGeom(h: HeaderLayout): GateHeaderGeom {
   };
 }
 
+/** "Phương tiện đi họp:" + mỗi xe 1 dòng ("Ô tô 4 chỗ — BKS: 51L-97992"); nhiều xe thì đánh số. */
+export function vehicleLines(vehicles: readonly GateVehicle[] | undefined): string[] {
+  const list = (vehicles ?? []).map(v => ({ type: v.type.trim(), plate: v.plate.trim().toUpperCase() })).filter(v => v.type || v.plate);
+  if (!list.length) return [];
+  return ['Phương tiện đi họp:', ...list.map((v, i) => `${list.length > 1 ? `${i + 1}. ` : ''}${[v.type, v.plate ? `BKS: ${v.plate}` : ''].filter(Boolean).join(' — ')}`)];
+}
+
 export function buildGateDoc(a: {
   meeting: Pick<Meeting, 'attendees' | 'meet_date' | 'meet_time' | 'location' | 'purpose' | 'company_name'>;
   members: readonly MeetingMember[];
@@ -247,8 +254,7 @@ export function buildGateDoc(a: {
     title: (options.title ?? '').trim() || GATE_TITLE,
     recipient: (options.recipient ?? '').trim() ? `Kính gửi: ${(options.recipient ?? '').trim().replace(/^kính gửi\s*:?\s*/i, '')}` : '',
     visit: options.showVisit ? visitParts.join('   ·   ') : '',
-    vehicle: (options.vehicles ?? []).map(v => v.trim().toUpperCase()).filter(Boolean).length
-      ? `Biển số xe: ${(options.vehicles ?? []).map(v => v.trim().toUpperCase()).filter(Boolean).join('   ·   ')}` : '',
+    vehicleLines: vehicleLines(options.vehicles),
     // Biển số nay ghi theo xe (1 dòng cho cả đoàn) — không còn cột biển số theo từng người
     columns: gateColumns(rows, (options.extraCols ?? []).filter(c => c !== 'vehicle_plate')),
     rows,

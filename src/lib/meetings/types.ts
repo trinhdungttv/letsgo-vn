@@ -55,6 +55,9 @@ export interface Attendee {
   title: string;
 }
 
+/** 1 xe đi họp: loại xe ("Ô tô 4 chỗ", "Xe máy"…) + biển số. */
+export interface GateVehicle { type: string; plate: string }
+
 /** Cột thêm (ngoài 9 cột như mẫu) có thể bật trên bản in. */
 export type GateExtraCol = 'phone' | 'vehicle_plate';
 
@@ -70,7 +73,7 @@ export interface GateOptions {
   showVisit?: boolean;
   extraCols?: GateExtraCol[];
   /** Biển số các xe đi họp (cả đoàn đi chung 1 xe; đi 2 xe thì thêm xe) — in 1 dòng dưới tiêu đề. Trống = không in. */
-  vehicles?: string[];
+  vehicles?: GateVehicle[];
   /** In tên người đại diện (pháp nhân) dưới chỗ ký — mặc định có. */
   showSigner?: boolean;
   /** Cỡ / vị trí logo, chữ đầu trang, tiêu đề riêng cho buổi này — thiếu = theo mặc định của pháp nhân. */
@@ -131,7 +134,12 @@ export function normalizeGate(raw: unknown): GateOptions {
   if (typeof r.showVisit === 'boolean') out.showVisit = r.showVisit;
   if (typeof r.showSigner === 'boolean') out.showSigner = r.showSigner;
   if (Array.isArray(r.extraCols)) out.extraCols = r.extraCols.filter((c): c is GateExtraCol => c === 'phone' || c === 'vehicle_plate');
-  if (Array.isArray(r.vehicles)) out.vehicles = r.vehicles.map(str).map(v => v.trim()).filter(Boolean);
+  if (Array.isArray(r.vehicles)) {
+    out.vehicles = r.vehicles.map((v): GateVehicle => {
+      if (v && typeof v === 'object') { const o = v as Record<string, unknown>; return { type: str(o.type).trim(), plate: str(o.plate).trim() }; }
+      return { type: '', plate: str(v).trim() };               // bản cũ: chỉ lưu biển số
+    }).filter(v => v.plate || v.type);
+  }
   const h = normalizeHeader(r.header);
   if (h) out.header = h;
   return out;

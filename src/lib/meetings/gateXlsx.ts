@@ -76,7 +76,6 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
   next(r2(g.titleH)); put(r, 1, N, doc.title, { bold: true, size: r2(g.titleSize) }, { horizontal: 'center' }); frame(r);
   if (doc.recipient) { next(22); put(r, 1, N, doc.recipient, { bold: true, size: 13 }, { horizontal: 'center' }); frame(r); }
   if (doc.visit) { next(22); put(r, 1, N, doc.visit, { italic: true, size: 12 }, { horizontal: 'center', wrapText: true }); frame(r); }
-  if (doc.vehicle) { next(22); put(r, 1, N, doc.vehicle, { bold: true, size: 12 }, { horizontal: 'center' }); frame(r); }
   next(7.5); frame(r);
 
   // ── Bảng ──
@@ -105,7 +104,7 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
   // ── Ngày ký + khối ký (cột "Nơi cấp" → hết) ──
   const s = signStartCol(doc);
   next(13.5); frame(r);
-  next(16); put(r, s, N, doc.dateLine, { italic: true, size: 12 }, { horizontal: 'center' }); frame(r);
+  const rDate = next(16); put(r, s, N, doc.dateLine, { italic: true, size: 12 }, { horizontal: 'center' }); frame(r);
   next(8); frame(r);
   next(21.75); put(r, s, N, doc.signCompany, { bold: true, size: 13 }, { horizontal: 'center' }); frame(r);
   next(15); put(r, s, N, SIGN_HINT, { italic: true, size: 11 }, { horizontal: 'center' }); frame(r);
@@ -113,6 +112,14 @@ export async function buildGateXlsx(doc: GateDoc, img: GateImages): Promise<Arra
   for (let k = 0; k < SIGN_ROWS; k++) { next(SIGN_ROW_PT); frame(r); }
   if (doc.signerName) { next(21.75); put(r, s, N, doc.signerName, { bold: true, size: 13 }, { horizontal: 'center' }); frame(r); }
   next(21.75); frame(r, { bottom: 'thick' });
+  // Khối "Phương tiện đi họp" ở góc trái dưới, cùng các dòng với khối ký (bỏ dòng đệm 8pt ngay dưới ngày ký)
+  if (s > 1) {
+    const slots = [rDate + 2, rDate + 3, ...Array.from({ length: SIGN_ROWS + 1 }, (_, k) => rDate + 4 + k)];
+    doc.vehicleLines.slice(0, slots.length).forEach((t, i) => {
+      put(slots[i], 1, s - 1, t, { bold: i === 0, size: 11 }, { horizontal: 'left', vertical: 'middle', indent: 1, wrapText: false });
+      frame(slots[i]);
+    });
+  }
 
   // ── Ảnh ──
   const pic = (dataUrl: string | null, at: { c: number; r: number; x: number; y: number; w: number; h: number }) => {

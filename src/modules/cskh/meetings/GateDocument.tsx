@@ -78,7 +78,6 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
         <div style={line(g.titleH, { ...text(g.titleSize, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.title}</div>
         {doc.recipient && <div style={line(22, { ...text(13, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.recipient}</div>}
         {doc.visit && <div style={{ ...text(12, { italic: true }), minHeight: pt(22), display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: `0 ${12 * k}px` }}>{doc.visit}</div>}
-        {doc.vehicle && <div style={line(22, { ...text(12, { bold: true }), justifyContent: 'center', textAlign: 'center' })}>{doc.vehicle}</div>}
         <div style={{ height: pt(7.5) }} />
 
         {/* Bảng */}
@@ -107,7 +106,12 @@ export function GateDocument({ doc, images }: { doc: GateDoc; images: GateImages
 
         {/* Ngày ký + khối ký */}
         <div style={{ height: pt(13.5) }} />
-        <div data-pdf-block style={{ marginLeft: signLeft, width: signW, textAlign: 'center' }}>
+        <div data-pdf-block style={{ position: 'relative', marginLeft: signLeft, width: signW, textAlign: 'center' }}>
+          {doc.vehicleLines.length > 0 && (
+            <div style={{ position: 'absolute', top: pt(8), right: signW + 10 * k, width: signLeft - 24 * k, textAlign: 'left' }}>
+              {doc.vehicleLines.map((t, i) => <div key={i} style={{ ...text(12, { bold: i === 0 }), marginBottom: pt(2), wordBreak: 'break-word' }}>{t}</div>)}
+            </div>
+          )}
           <div style={line(16, { ...text(12, { italic: true }), justifyContent: 'center' })}>{doc.dateLine}</div>
           <div style={{ height: pt(8) }} />
           <div style={line(21.75, { ...text(13, { bold: true }), justifyContent: 'center' })}>{doc.signCompany}</div>
