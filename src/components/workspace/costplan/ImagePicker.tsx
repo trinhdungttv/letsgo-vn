@@ -47,7 +47,7 @@ export default function ImagePicker({ label, hint, value, onChange, cutoutDefaul
         </div>
       </div>
       {err && <div className="mt-2 text-[12px] text-[#b3140a]">{err}</div>}
-      <input ref={ref} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pick(f); }} />
+      <input ref={ref} type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pick(f); }} />
     </div>
   );
 }

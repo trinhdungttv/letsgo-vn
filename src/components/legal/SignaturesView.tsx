@@ -69,7 +69,7 @@ export default function SignaturesView({ toast }: { toast: (m: string) => void }
           <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} className={`${BTN_PRIMARY} h-9 px-4 text-[13px] shrink-0`}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}Tải chữ ký
           </button>
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void pickFile(f); }} />
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void pickFile(f); }} />
         </div>
         {err && <div className="text-[12.5px] text-[#D70015] bg-[#FF3B30]/10 rounded-[12px] px-3.5 py-2.5">{err}</div>}
         {sigs === null && <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-[#86868B]" /></div>}
@@ -134,7 +134,7 @@ function SignatureEditor({ token, sig, original: initial, onClose, onSaved, toas
       <div className="mt-1 flex items-center justify-between text-[12px] text-[#86868B]">
         <span>Xem trước đúng như khi in lên giấy tờ</span>
         <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 font-medium text-[#0066CC]"><Upload size={12} />Đổi ảnh gốc</button>
-        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void replace(f); }} />
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void replace(f); }} />
       </div>
       <div className="mt-3 space-y-3">
         <label className="block">

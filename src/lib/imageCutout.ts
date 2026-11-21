@@ -35,13 +35,54 @@ export interface StampImage {
   hadAlpha: boolean;
 }
 
-const loadImg = (file: Blob): Promise<HTMLImageElement> => new Promise((res, rej) => {
+/** Đọc vài byte đầu để biết ảnh thật sự là gì (đuôi file / file.type có thể sai hoặc để trống, nhất là HEIC từ iPhone). */
+async function sniffKind(file: Blob): Promise<'png' | 'jpeg' | 'webp' | 'heic' | 'gif' | 'unknown'> {
+  const b = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const asc = (from: number, to: number) => String.fromCharCode(...b.slice(from, to));
+  if (b[0] === 0x89 && asc(1, 4) === 'PNG') return 'png';
+  if (b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
+  if (asc(0, 4) === 'RIFF' && asc(8, 12) === 'WEBP') return 'webp';
+  if (asc(0, 3) === 'GIF') return 'gif';
+  if (asc(4, 8) === 'ftyp' && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1|heif)/.test(asc(8, 12))) return 'heic';
+  return 'unknown';
+}
+
+export const HEIC_HINT = 'Không đổi được ảnh HEIC này — thử mở bằng Safari, hoặc xuất sang JPG/PNG rồi tải lại.';
+
+const loadViaImage = (file: Blob): Promise<HTMLImageElement> => new Promise((res, rej) => {
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => { URL.revokeObjectURL(url); res(img); };
-  img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Không đọc được file ảnh')); };
+  img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('decode')); };
   img.src = url;
 });
+
+/** Mọi thứ vẽ lên canvas được: <img> hoặc ImageBitmap (đã xoay đúng EXIF). */
+type Drawable = { src: CanvasImageSource; w: number; h: number };
+
+async function loadImg(file: Blob): Promise<Drawable> {
+  const kind = await sniffKind(file);
+  try {
+    const img = await loadViaImage(file);
+    return { src: img, w: img.naturalWidth, h: img.naturalHeight };
+  } catch { /* thử đường khác */ }
+  try {
+    // createImageBitmap giải mã được một số file mà <img> từ chối (JPEG lạ, blob không có type…)
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    return { src: bmp, w: bmp.width, h: bmp.height };
+  } catch { /* hết đường */ }
+  if (kind === 'heic') {
+    // Chrome/Firefox không đọc HEIC: đổi sang JPEG bằng heic2any (nạp khi cần, ~1 MB)
+    try {
+      const { default: heic2any } = await import('heic2any');
+      const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+      const jpg = Array.isArray(out) ? out[0] : out;
+      const img = await loadViaImage(jpg);
+      return { src: img, w: img.naturalWidth, h: img.naturalHeight };
+    } catch { throw new Error(HEIC_HINT); }
+  }
+  throw new Error('Không đọc được file ảnh — file có thể bị hỏng hoặc không phải PNG/JPG/WebP.');
+}
 
 /** Dung lượng gần đúng của data URL (byte). */
 export const dataUrlBytes = (u: string) => Math.round((u.length - u.indexOf(',') - 1) * 0.75);
@@ -50,16 +91,17 @@ export const dataUrlBytes = (u: string) => Math.round((u.length - u.indexOf(',')
  * Thu nhỏ (cạnh dài tối đa `maxSide`) và tuỳ chọn tách nền trắng. Tự hạ kích thước nếu PNG vẫn quá lớn (> `maxBytes`).
  */
 export async function prepareStampImage(file: File, opts: { maxSide?: number; cutout?: boolean; maxBytes?: number } = {}): Promise<StampImage> {
-  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Chỉ nhận ảnh PNG, JPEG hoặc WebP');
+  const kind = await sniffKind(file);
+  if (kind === 'unknown' && !/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Chỉ nhận ảnh PNG, JPEG hoặc WebP (hoặc HEIC nếu trình duyệt hỗ trợ)');
   const img = await loadImg(file);
   let side = opts.maxSide ?? 720;
   const maxBytes = opts.maxBytes ?? 600_000;
   for (let attempt = 0; attempt < 4; attempt++) {
-    const k = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    const k = Math.min(1, side / Math.max(img.w, img.h));
+    const w = Math.max(1, Math.round(img.w * k)), h = Math.max(1, Math.round(img.h * k));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(img, 0, 0, w, h);
+    ctx.drawImage(img.src, 0, 0, w, h);
     const data = ctx.getImageData(0, 0, w, h);
     const hadAlpha = hasTransparency(data.data);
     const original = c.toDataURL('image/png');
@@ -78,9 +120,9 @@ export async function prepareStampImage(file: File, opts: { maxSide?: number; cu
 export async function cutoutDataUrl(dataUrl: string): Promise<string> {
   const blob = await (await fetch(dataUrl)).blob();
   const img = await loadImg(blob);
-  const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const c = document.createElement('canvas'); c.width = img.w; c.height = img.h;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img.src, 0, 0);
   const d = ctx.getImageData(0, 0, c.width, c.height);
   if (hasTransparency(d.data)) return dataUrl;
   ctx.putImageData(new ImageData(whiteToTransparent(d.data), c.width, c.height), 0, 0);
