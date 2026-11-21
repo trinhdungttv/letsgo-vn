@@ -8,8 +8,10 @@ import { Switch } from '../components/apple';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function MemberForm({ existing, readOnly, onSave, onDelete, onClose }: {
+export function MemberForm({ existing, preset, readOnly, onSave, onDelete, onClose }: {
   existing: MeetingMember | null;
+  /** Điền sẵn khi thêm mới (vd chức vụ Trưởng Chi Nhánh) */
+  preset?: Partial<MemberDraft>;
   readOnly: boolean;
   onSave: (d: MemberDraft) => Promise<string | null>;
   onDelete?: () => Promise<string | null>;
@@ -19,7 +21,7 @@ export function MemberForm({ existing, readOnly, onSave, onDelete, onClose }: {
     full_name: existing.full_name, gender: existing.gender, birth: existing.birth, id_number: existing.id_number,
     id_issued_on: existing.id_issued_on, id_issued_by: existing.id_issued_by, address: existing.address, title: existing.title,
     phone: existing.phone, vehicle_plate: existing.vehicle_plate, note: existing.note, active: existing.active,
-  } : emptyMember()));
+  } : { ...emptyMember(), ...preset }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (p: Partial<MemberDraft>) => setD(x => ({ ...x, ...p }));

@@ -167,6 +167,8 @@ export interface QuoteEntity {
   legal: LegalEntityLite | null;
   /** Giá trị đang lưu ở quote_entities (để lưu lại không ghi đè bằng dữ liệu Pháp lý) */
   own: { label: string; data: CompanyProfileData; logo: string | null };
+  /** Chữ ký đã lưu là của người KHÁC người đại diện hiện tại ở Pháp lý → không dùng; giá trị = tên chủ chữ ký cũ (null = hợp lệ / chưa có) */
+  stale_signature_of?: string | null;
   /** Logo đang dùng lấy từ đâu */
   logo_source: 'legal' | 'own' | null;
 }

@@ -53,6 +53,8 @@ export interface Attendee {
   id: string;
   /** Chức vụ riêng cho buổi này (khác hồ sơ) — trống = theo hồ sơ thành viên. */
   title: string;
+  /** Biển số xe riêng cho buổi này — trống = theo hồ sơ thành viên. */
+  plate?: string;
 }
 
 /** Cột thêm (ngoài 9 cột như mẫu) có thể bật trên bản in. */
@@ -144,7 +146,8 @@ export function normalizeMeeting(raw: unknown): Meeting {
     entity_id: str(r.entity_id) || null,
     attendees: att.map(a => {
       const o = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
-      return { id: str(o.id), title: str(o.title) };
+      const plate = str(o.plate);
+      return plate ? { id: str(o.id), title: str(o.title), plate } : { id: str(o.id), title: str(o.title) };
     }).filter(a => a.id),
     contact_ids: Array.isArray(r.contact_ids) ? r.contact_ids.map(str).filter(Boolean) : [],
     status: st === 'done' || st === 'cancelled' ? st : 'planned',

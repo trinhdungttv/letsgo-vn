@@ -22,7 +22,7 @@ import { todayVN } from '../../lib/cskh/dates';
 import { diffDays } from '../../lib/cskh/lunar';
 import { deleteMeeting, deleteMember, importMembers, MEETING_MIGRATION_HINT, reorderMembers, saveMeeting, saveMember } from '../../lib/meetings/api';
 import { buildGateRows, gateIssues, shortWeekday } from '../../lib/meetings/gateList';
-import { MEETING_STATUS_LABEL, type Meeting, type MeetingMember } from '../../lib/meetings/types';
+import { MEETING_STATUS_LABEL, type Meeting, type MeetingMember, type MemberDraft } from '../../lib/meetings/types';
 import { personInitial } from '../../lib/vnName';
 import { useCskh } from './context';
 import { CAPTION, PILL_PRIMARY, PILL_TINTED, ROUND_ADD, ROUND_ICON } from './ui';
@@ -52,7 +52,7 @@ export default function CskhMeetings() {
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [meetingForm, setMeetingForm] = useState<{ existing: Meeting | null } | null>(null);
-  const [memberForm, setMemberForm] = useState<{ existing: MeetingMember | null; fromMeeting?: boolean } | null>(null);
+  const [memberForm, setMemberForm] = useState<{ existing: MeetingMember | null; fromMeeting?: boolean; preset?: Partial<MemberDraft> } | null>(null);
   const [importing, setImporting] = useState(false);
   const [gateFor, setGateFor] = useState<string | null>(null);
   const [entityDlg, setEntityDlg] = useState(false);
@@ -196,6 +196,7 @@ export default function CskhMeetings() {
             action={canEdit && (
               <div className="flex items-center gap-1.5 shrink-0">
                 <button type="button" onClick={() => setImporting(true)} className={ROUND_ICON} title="Nhập từ file Excel danh sách vào cổng" aria-label="Nhập từ Excel"><FileSpreadsheet size={15} /></button>
+                <button type="button" onClick={() => setMemberForm({ existing: null, preset: { title: 'Trưởng Chi Nhánh' } })} className="h-8 px-3 rounded-full bg-[#E8E8ED] hover:bg-[#DEDEE3] text-[12px] font-semibold text-[#1D1D1F]" title="Thêm Trưởng chi nhánh — nhập 1 lần, sau chỉ việc chọn khi tạo danh sách vào cổng">+ Trưởng CN</button>
                 <button type="button" onClick={() => setMemberForm({ existing: null })} className={ROUND_ADD} title="Thêm thành viên" aria-label="Thêm thành viên"><Plus size={16} strokeWidth={2.4} /></button>
               </div>
             )}
@@ -283,6 +284,7 @@ export default function CskhMeetings() {
           meeting={gateMeeting}
           members={members}
           entities={entities}
+          clients={clients}
           canSign={canSign}
           canStamp={canStamp}
           canEdit={canEdit}
@@ -300,6 +302,7 @@ export default function CskhMeetings() {
         <MemberForm
           key={`member:${memberForm.existing?.id ?? 'new'}`}
           existing={memberForm.existing}
+          preset={memberForm.preset}
           readOnly={!canEdit}
           onSave={async d => {
             const ex = memberForm.existing;

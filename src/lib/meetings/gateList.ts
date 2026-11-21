@@ -87,7 +87,7 @@ export function buildGateRows(meeting: Pick<Meeting, 'attendees'>, members: read
       address: m.address.trim(),
       title: (a.title.trim() || m.title).trim(),
       phone: m.phone.trim(),
-      plate: m.vehicle_plate.trim(),
+      plate: ((a.plate ?? '').trim() || m.vehicle_plate).trim().toUpperCase(),
     });
   }
   return rows;

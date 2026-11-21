@@ -13,6 +13,7 @@ import {
   DEFAULT_HEADER, DEFAULT_LAYOUT, HEADER_RANGE, INDENT_PX, findEntity, normalizeHeader, sameHeader, type HeaderLayout, type QuoteEntity,
 } from '../../../lib/costPlan/entity';
 import { saveEntityLayout } from '../../../lib/costPlan/api';
+import type { Client } from '../../../lib/types';
 import { downloadBlob, printCss, renderElementToPdf } from '../../../lib/costPlan/pdf';
 import { useInk } from '../../../components/workspace/costplan/useInk';
 import { useStampConsent, useStampImages } from '../../../components/workspace/costplan/useStampImages';
@@ -30,10 +31,11 @@ import { isLetsGoEntity, letsGoLogoUrl, toPngDataUrl } from './gateImages';
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 const sectionCls = 'px-4 md:px-5 py-3.5 border-b border-black/[0.06]';
 
-export function GateListDialog({ meeting, members, entities, canSign, canStamp, canEdit, onOpenEntities, onEntitiesChanged, onSave, onClose }: {
+export function GateListDialog({ meeting, members, entities, clients, canSign, canStamp, canEdit, onOpenEntities, onEntitiesChanged, onSave, onClose }: {
   meeting: Meeting;
   members: readonly MeetingMember[];
   entities: readonly QuoteEntity[];
+  clients?: readonly Client[];
   /** Admin: nhận được ảnh chữ ký / con dấu ngay trong danh sách pháp nhân */
   canSign: boolean;
   /** Nhân viên: lấy được chữ ký / con dấu (có báo admin) — cần migration 219 */
@@ -80,8 +82,12 @@ export function GateListDialog({ meeting, members, entities, canSign, canStamp, 
   const images = { logo, signature, seal, layout };
 
   const membersById = useMemo(() => new Map(members.map(m => [m.id, m])), [members]);
-  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: opts, today, entityHeader: entity?.layout.header }),
-    [meeting, attendees, members, entity, opts, today]);
+  // Kính gửi: chưa chỉnh lần nào → tự điền "Bộ Phận: An Ninh - <tên đầy đủ công ty ở Khách hàng>" (tên mới nhất theo client_id)
+  const companyFull = ((meeting.client_id ? clients?.find(c => c.id === meeting.client_id)?.name : '') || meeting.company_name || '').trim();
+  const recipientDefault = companyFull ? `Bộ Phận: An Ninh - ${companyFull}` : '';
+  const recipient = opts.recipient ?? recipientDefault;
+  const doc = useMemo(() => buildGateDoc({ meeting: { ...meeting, attendees }, members, profile: entity?.data ?? null, options: { ...opts, recipient }, today, entityHeader: entity?.layout.header }),
+    [meeting, attendees, members, entity, opts, recipient, today]);
   const issues = gateIssues(doc.rows, { entityMissing: !entity });
   const savedEntityId = findEntity(entities, meeting.entity_id)?.id ?? meeting.entity_id ?? null;
   const dirty = JSON.stringify(opts) !== JSON.stringify(meeting.gate) || JSON.stringify(attendees) !== JSON.stringify(meeting.attendees)
@@ -144,7 +150,7 @@ export function GateListDialog({ meeting, members, entities, canSign, canStamp, 
   const hostRef = useRef<HTMLDivElement>(null);
   const persist = async (): Promise<boolean> => {
     if (!canEdit || !dirty) return true;
-    const e = await onSave({ gate: opts, attendees, entity_id: entity?.id ?? entityId });
+    const e = await onSave({ gate: { ...opts, recipient }, attendees, entity_id: entity?.id ?? entityId });
     if (e) { setErr(e); return false; }
     setSaved(true);
     return true;
@@ -357,9 +363,18 @@ export function GateListDialog({ meeting, members, entities, canSign, canStamp, 
                         <button type="button" aria-label="Xuống" disabled={i === attendees.length - 1} onClick={() => move(i, 1)} className="w-7 h-7 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06] disabled:opacity-30"><ArrowDown size={14} /></button>
                         <button type="button" aria-label="Bỏ khỏi danh sách" onClick={() => setAttendees(x => x.filter(y => y.id !== a.id))} className="w-7 h-7 rounded-full flex items-center justify-center text-[#6E6E73] hover:bg-black/[0.06]"><X size={14} /></button>
                       </div>
-                      <input value={a.title} placeholder={m?.title ? `Chức vụ: ${m.title}` : 'Chức vụ'} title="Chức vụ in cho buổi này (trống = theo hồ sơ)"
-                        onChange={e => setAttendees(x => x.map(y => (y.id === a.id ? { ...y, title: e.target.value } : y)))}
-                        className="mt-1.5 w-full text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3]" />
+                      <div className="mt-1.5 flex gap-1.5">
+                        <input value={a.title} placeholder={m?.title ? `Chức vụ: ${m.title}` : 'Chức vụ'} title="Chức vụ in cho buổi này (trống = theo hồ sơ)"
+                          onChange={e => setAttendees(x => x.map(y => (y.id === a.id ? { ...y, title: e.target.value } : y)))}
+                          className="min-w-0 flex-1 text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3]" />
+                        <input value={a.plate ?? ''} placeholder={m?.vehicle_plate ? `Biển số: ${m.vehicle_plate}` : 'Biển số xe'} title="Biển số xe cho buổi này (trống = theo hồ sơ)"
+                          onChange={e => {
+                            const plate = e.target.value.toUpperCase();
+                            setAttendees(x => x.map(y => (y.id === a.id ? { ...y, plate } : y)));
+                            if (plate.trim() && !(opts.extraCols ?? []).includes('vehicle_plate')) set({ extraCols: [...(opts.extraCols ?? []), 'vehicle_plate'] });
+                          }}
+                          maxLength={30} className="w-[40%] min-w-0 text-[12.5px] bg-white rounded-[8px] px-2.5 py-1.5 border border-black/[0.08] outline-none focus:border-[#0071E3] uppercase" />
+                      </div>
                     </div>
                   );
                 })}
@@ -389,7 +404,8 @@ export function GateListDialog({ meeting, members, entities, canSign, canStamp, 
               </div>
               <div>
                 <label className={labelCls}>Kính gửi <span className="font-normal text-[#AEAEB2]">(trống = không in)</span></label>
-                <input value={opts.recipient ?? ''} onChange={e => set({ recipient: e.target.value })} placeholder={`Ban bảo vệ ${meeting.company_name || 'Công ty …'}`} className={inputCls} />
+                <input value={recipient} onChange={e => set({ recipient: e.target.value })} placeholder={`Ban bảo vệ ${companyFull || 'Công ty …'}`} className={inputCls} />
+                {opts.recipient === undefined && recipientDefault && <p className="mt-1 text-[11.5px] text-[#AEAEB2]">Tự điền theo tên công ty ở Khách hàng — sửa thoải mái, xoá trống = không in.</p>}
               </div>
               <Switch checked={!!opts.showVisit} onChange={v => set({ showVisit: v })} label={<span className="text-[13px]">In thời gian · địa điểm · nội dung</span>} />
               <div>

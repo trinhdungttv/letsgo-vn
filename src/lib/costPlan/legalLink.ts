@@ -53,13 +53,17 @@ function fromLegal(l: LegalEntityLite, s: StampRow | null, order: number, logos:
   const data: CompanyProfileData = {
     name: pick(l.name, own.name), address: pick(l.address, own.address), taxCode: pick(l.tax_code, own.taxCode),
     phone: pick(l.phone, own.phone), email: pick(l.email, own.email), website: pick(l.website, own.website),
-    // Người ký / chức danh: ghi riêng ở bộ ký/dấu (vd người được uỷ quyền) → dùng; để trống → người đại diện theo pháp luật
-    // ở Pháp lý. Đã ghi người ký khác mà chưa ghi chức danh → để trống (không lấy chức danh của người đại diện).
-    signerName: own.signerName.trim() ? own.signerName : (l.legal_rep ?? '').trim(),
-    signerTitle: own.signerTitle.trim() ? own.signerTitle : own.signerName.trim() ? '' : (l.legal_rep_title ?? '').trim(),
+    // Người ký / chức danh: LUÔN theo người đại diện ở Pháp lý (đổi bên Pháp lý là giấy tờ đổi theo). Dữ liệu cũ ghi riêng ở
+    // bộ ký/dấu chỉ còn dùng khi Pháp lý chưa ghi người đại diện.
+    signerName: (l.legal_rep ?? '').trim() ? (l.legal_rep ?? '').trim() : own.signerName,
+    signerTitle: (l.legal_rep ?? '').trim() ? (l.legal_rep_title ?? '').trim() || own.signerTitle : own.signerTitle,
     place: own.place,
   };
   const layout = s?.layout ?? DEFAULT_LAYOUT;
+  // Chữ ký là của 1 người cụ thể (tên lưu kèm ở own.signerName lúc tải ảnh lên). Người đại diện ở Pháp lý đã đổi sang người khác
+  // → ảnh chữ ký cũ KHÔNG dùng cho người mới (con dấu là của công ty nên giữ). Chưa ghi tên chủ chữ ký (dữ liệu rất cũ) → coi là hợp lệ.
+  const rep = (l.legal_rep ?? '').trim(), sigOwner = own.signerName.trim();
+  const sigStale = !!s?.has_signature && !!rep && !!sigOwner && nameKey(sigOwner) !== nameKey(rep);
   const ownLogo = s?.logo ?? null;
   const legalLogo = l.logo_url ? logos.get(l.logo_url) ?? null : null;
   const useOwn = !!ownLogo && (!legalLogo || layout.logoOwn === true);
@@ -69,8 +73,9 @@ function fromLegal(l: LegalEntityLite, s: StampRow | null, order: number, logos:
     data, layout,
     logo: useOwn ? ownLogo : legalLogo ?? ownLogo,
     logo_source: useOwn ? 'own' : legalLogo ? 'legal' : ownLogo ? 'own' : null,
-    signature: s?.signature ?? null, seal: s?.seal ?? null,
-    has_signature: !!s?.has_signature, has_seal: !!s?.has_seal,
+    signature: sigStale ? null : s?.signature ?? null, seal: s?.seal ?? null,
+    has_signature: !!s?.has_signature && !sigStale, has_seal: !!s?.has_seal,
+    stale_signature_of: sigStale ? sigOwner : null,
     sort_order: order, updated_by_name: s?.updated_by_name ?? null, updated_at: s?.updated_at ?? null,
     stamp_id: s?.id ?? null, legal_id: l.id, legal: l,
     own: { label: s?.label ?? '', data: own, logo: ownLogo },
@@ -84,7 +89,7 @@ function fromStamp(s: StampRow, order: number): QuoteEntity {
     data: s.data, layout: s.layout, logo: s.logo, logo_source: s.logo ? 'own' : null,
     signature: s.signature, seal: s.seal, has_signature: s.has_signature, has_seal: s.has_seal,
     sort_order: order, updated_by_name: s.updated_by_name, updated_at: s.updated_at,
-    stamp_id: s.id, legal_id: null, legal: null,
+    stamp_id: s.id, legal_id: null, legal: null, stale_signature_of: null,
     own: { label: s.label, data: s.data, logo: s.logo },
   };
 }

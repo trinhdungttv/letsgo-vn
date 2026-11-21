@@ -67,11 +67,11 @@ describe('mergeEntities', () => {
     expect(e.own.data.address).toBe('địa chỉ cũ');                        // lưu lại không ghi đè bằng dữ liệu Pháp lý
   });
 
-  it('người ký ghi riêng (uỷ quyền) thắng người đại diện; logo riêng khi bật logoOwn hoặc Pháp lý chưa có logo', () => {
+  it('người đại diện ở Pháp lý thắng người ký ghi riêng cũ; logo riêng khi bật logoOwn hoặc Pháp lý chưa có logo', () => {
     const s = stamp({ id: 'Q1', legal_entity_id: 'L1', data: { ...emptyProfile(), signerName: 'Nguyễn B', signerTitle: 'Phó Giám đốc' }, logo: 'data:own', layout: { ...DEFAULT_LAYOUT, logoOwn: true } });
     const [e] = mergeEntities([s], [lg], new Map([['https://x/logo.png', 'data:legal-logo']]));
-    expect(e.data.signerName).toBe('Nguyễn B');
-    expect(e.data.signerTitle).toBe('Phó Giám đốc');
+    expect(e.data.signerName).toBe(lg.legal_rep);
+    expect(e.data.signerTitle).toBe(lg.legal_rep_title);
     expect(e.logo).toBe('data:own');
     const [e2] = mergeEntities([stamp({ id: 'Q1', legal_entity_id: 'L1', logo: 'data:own' })], [lg]);   // tải logo Pháp lý lỗi
     expect(e2.logo).toBe('data:own');

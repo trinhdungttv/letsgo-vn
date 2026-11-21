@@ -119,8 +119,12 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
     try {
       if (nameDirty && legal) await patchEntity(legal.id, { short_name: draft.label.trim() }, user?.full_name || user?.username || '');
       if (stampDirty) {
+        // Ảnh chữ ký mới tải lên là của người đại diện hiện tại ở Pháp lý → ghi tên chủ chữ ký để lần đổi người sau biết mà không dùng nhầm
+        const newSig = 'signature' in draft && !!draft.signature;
+        const owner = legal?.legal_rep.trim() ?? '';
         await saveEntity(token, {
-          id: entity.stamp_id, label: legal ? (draft.label.trim() || entity.label) : draft.label, data: draft.data, layout: draft.layout,
+          id: entity.stamp_id, label: legal ? (draft.label.trim() || entity.label) : draft.label,
+          data: newSig && owner ? { ...draft.data, signerName: owner } : draft.data, layout: draft.layout,
           logo: 'logo' in draft ? draft.logo ?? null : undefined, signature: 'signature' in draft ? draft.signature ?? null : undefined,
           seal: 'seal' in draft ? draft.seal ?? null : undefined, legalEntityId: entity.legal_id,
         });
@@ -210,11 +214,11 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
                 <InfoRow label="Đại diện PL" value={[legal.legal_rep, legal.legal_rep_title].filter(s => s.trim()).join(' — ')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <F label="Người ký trên giấy tờ" hint={legal.legal_rep ? `Để trống = ${legal.legal_rep}` : undefined}>
-                  <input disabled={dis} value={data.signerName} onChange={e => editData({ signerName: e.target.value })} className={`${field} w-full`} placeholder={legal.legal_rep || 'Người đại diện'} />
+                <F label="Người ký trên giấy tờ" hint={legal.legal_rep ? `Đang theo Pháp lý: ${legal.legal_rep} (sửa người đại diện ở Pháp lý)` : undefined}>
+                  <input disabled={dis || !!legal.legal_rep.trim()} value={legal.legal_rep.trim() ? legal.legal_rep : data.signerName} onChange={e => editData({ signerName: e.target.value })} className={`${field} w-full`} placeholder="Người đại diện" />
                 </F>
-                <F label="Chức danh" hint={legal.legal_rep_title && !data.signerName.trim() ? `Để trống = ${legal.legal_rep_title}` : undefined}>
-                  <input disabled={dis} value={data.signerTitle} onChange={e => editData({ signerTitle: e.target.value })} className={`${field} w-full`} placeholder={data.signerName.trim() ? 'Giám đốc' : legal.legal_rep_title || 'Giám đốc'} />
+                <F label="Chức danh" hint={legal.legal_rep.trim() ? 'Đang theo Pháp lý' : undefined}>
+                  <input disabled={dis || !!legal.legal_rep.trim()} value={legal.legal_rep.trim() ? legal.legal_rep_title : data.signerTitle} onChange={e => editData({ signerTitle: e.target.value })} className={`${field} w-full`} placeholder="Giám đốc" />
                 </F>
               </div>
               <F label="Nơi ký"><input disabled={dis} value={data.place} onChange={e => editData({ place: e.target.value })} className={`${field} w-full`} placeholder="vd: Biên Hòa (trống = đoán từ địa chỉ)" /></F>
@@ -274,6 +278,11 @@ export default function EntityManager({ entities, canSign, selectedId, onClose, 
 
           {draft && entity && (
             <>
+              {canSign && entity.stale_signature_of && !('signature' in draft) && (
+                <div className="rounded-xl bg-[#FFF4E5] text-[#8A5A00] text-[12.5px] px-3 py-2 leading-snug">
+                  Chữ ký đã lưu là của <b>{entity.stale_signature_of}</b>, còn người đại diện hiện tại ở Pháp lý là <b>{legal?.legal_rep}</b> — nên chữ ký cũ không được chèn vào giấy tờ. Tải ảnh chữ ký của {legal?.legal_rep} lên rồi bấm Lưu.
+                </div>
+              )}
               {(canSign || entity.has_signature) && <ImagePicker label="Chữ ký người đại diện" hint={canSign ? 'Ảnh chụp/scan chữ ký trên giấy trắng — hệ thống tự xoá nền.' : 'Chỉ admin xem được ảnh — khi làm giấy tờ bạn vẫn chèn được (admin được báo).'} value={sig} onChange={v => img('signature', v)} cutoutDefault disabled={dis} />}
               {(canSign || entity.has_seal) && <ImagePicker label="Con dấu công ty" hint={canSign ? 'Ảnh con dấu (dấu đỏ trên giấy trắng) — hệ thống tự xoá nền.' : 'Chỉ admin xem được ảnh — khi làm giấy tờ bạn vẫn chèn được (admin được báo).'} value={seal} onChange={v => img('seal', v)} cutoutDefault disabled={dis} />}
               {canSign && legal && !entity.has_signature && !entity.has_seal && !imgTouched && (

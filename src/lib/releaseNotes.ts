@@ -16,6 +16,17 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-21-entity-signer-follow-legal',
+    date: '2026-11-21',
+    title: 'Pháp lý',
+    features: [
+      'Thành viên đi họp: nút "+ Trưởng CN" thêm nhanh Trưởng Chi Nhánh (nhập thông tin 1 lần, sau chọn là tự điền vào danh sách vào cổng)',
+      'Danh sách vào cổng: nhập biển số xe ngay từng người tham dự; ô Kính gửi tự điền theo tên công ty ở Khách hàng (vẫn sửa được)',
+      'Người ký trên giấy tờ (danh sách vào cổng, báo giá) luôn theo người đại diện ở Pháp lý — đổi bên Pháp lý là giấy tờ đổi theo',
+      'Chữ ký gắn với đúng người: đổi người đại diện thì chữ ký người cũ không bị chèn nhầm, báo cần tải chữ ký mới',
+    ],
+  },
+  {
     id: '2026-11-20-daily-popup-tabs',
     date: '2026-11-20',
     title: 'Tổng quan',
