@@ -21,7 +21,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: 'Tài chính',
     features: [
       'Mốc Ứng lương trên Timeline KH: nhập 1 ngày hoặc từ ngày – tới ngày, thêm nhiều đợt, có chú giải và bật/tắt như các mốc khác',
-      'Cần chú ý hôm nay: tích "đã chi" cho từng công ty ở tab Ứng lương / Chi lương, chưa tích thì vẫn hiện lại để theo dõi',
+      'Cần chú ý hôm nay: tích "đã chi" cho từng công ty ở tab Ứng lương / Chi lương, chưa tích thì vẫn hiện lại; lọc xem theo chi nhánh',
     ],
   },
   {

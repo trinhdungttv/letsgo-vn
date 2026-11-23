@@ -13,6 +13,9 @@ import { supabase } from '../lib/supabase';
 import { todayVN } from '../lib/cskh/dates';
 import { taskGroupOf, taskTypeLabel } from '../lib/workTaskTypes';
 import type { Client, WorkTask } from '../lib/types';
+import { isSuspended } from '../utils/suspension';
+import { useBranchData } from '../hooks/useBranchData';
+import { branchOf } from '../lib/branchRef';
 import { daysOfMonth, formatDayRange, normalizeDayRange, resolveDay } from '../utils/timelineDays';
 
 const seenKey = (userId: string, day: string) => `lgvn_daily_attention_${userId}_${day}`;
@@ -50,6 +53,7 @@ type TaskRow = Pick<WorkTask, 'id' | 'title' | 'task_type' | 'due_date' | 'clien
 interface FinRow {
   id: string; name: string; range: string;
   offset: number;                 // >0 sắp tới, 0 hôm nay, <0 đã qua mốc (chưa tích "đã chi" nên vẫn hiện lại)
+  branch?: string;                // tên chi nhánh của khách (lọc theo chi nhánh)
   clientId?: string; month?: string;   // chỉ có ở tab Ứng lương / Chi lương — để tích "đã chi" theo tháng
 }
 type PayKind = 'advance' | 'payroll';
@@ -92,14 +96,15 @@ function nearestOffset(start: number | null | undefined, end: number | null | un
   return null;
 }
 
-function buildFinance(clients: Client[], today: string, look: number): Record<'cutoff' | 'invoice' | 'advance' | 'payroll', FinRow[]> {
+function buildFinance(clients: Client[], today: string, look: number, branchName: (c: Client) => string): Record<'cutoff' | 'invoice' | 'advance' | 'payroll', FinRow[]> {
   const out = { cutoff: [] as FinRow[], invoice: [] as FinRow[], advance: [] as FinRow[], payroll: [] as FinRow[] };
   for (const c of clients) {
     if (c.service_type === 'recruitment') continue;
+    if (isSuspended(c) || c.archived_at) continue;   // đã chuyển Ngưng hợp tác / lưu trữ → không nhắc nữa (giống Timeline Tài chính)
     if (c.contract_end && c.contract_end < today) continue;
     const push = (key: keyof typeof out, start: number | null | undefined, end: number | null | undefined) => {
       const off = nearestOffset(start, end, today, look);
-      if (off != null) out[key].push({ id: `${c.id}-${key}-${start}-${end}`, name: c.name, range: formatDayRange(start, end), offset: off });
+      if (off != null) out[key].push({ id: `${c.id}-${key}-${start}-${end}`, name: c.name, range: formatDayRange(start, end), offset: off, branch: branchName(c) });
     };
     push('cutoff', c.cutoff_day, c.cutoff_day_end);
     push('invoice', c.invoice_day, c.invoice_day_end);
@@ -118,7 +123,7 @@ function buildFinance(clients: Client[], today: string, look: number): Record<'c
         if (off != null && (!best || off < best.off)) best = { ...r, off };
       }
       if (best) {
-        out[key].push({ id: `${c.id}-${key}`, name: c.name, range: formatDayRange(best.start, best.end), offset: best.off, clientId: c.id, month: monthOfDate(today, best.off) });
+        out[key].push({ id: `${c.id}-${key}`, name: c.name, range: formatDayRange(best.start, best.end), offset: best.off, branch: branchName(c), clientId: c.id, month: monthOfDate(today, best.off) });
         return;
       }
       const late = lateInThisMonth(ranges, today);
@@ -127,7 +132,7 @@ function buildFinance(clients: Client[], today: string, look: number): Record<'c
         const [y, m, d] = today.split('-').map(Number);
         const dim = daysOfMonth(y, m);
         const passed = ranges.filter(r => { const n = normalizeDayRange(r.start, r.end); const e2 = resolveDay(n.end ?? n.start, dim); return n.start != null && e2 != null && e2 === d - late; })[0];
-        out[key].push({ id: `${c.id}-${key}`, name: c.name, range: formatDayRange(passed?.start, passed?.end), offset: -late, clientId: c.id, month: today.slice(0, 7) });
+        out[key].push({ id: `${c.id}-${key}`, name: c.name, range: formatDayRange(passed?.start, passed?.end), offset: -late, branch: branchName(c), clientId: c.id, month: today.slice(0, 7) });
       }
     };
     addPay('payroll', salaryRanges);
@@ -201,7 +206,25 @@ export default function DailyAttentionAlert({ userId, clients, onOpenWorkspace, 
     if (error) apply(was);
   };
 
-  const finance = useMemo(() => buildFinance(clients, today, prefs.look), [clients, today, prefs.look]);
+  const { branches: branchList } = useBranchData();
+  const [branchSel, setBranchSel] = useState<string>(() => { try { return localStorage.getItem(`lgvn_daily_alert_branch_${userId}`) || ''; } catch { return ''; } });
+  const pickBranch = (v: string) => { setBranchSel(v); try { localStorage.setItem(`lgvn_daily_alert_branch_${userId}`, v); } catch { /* bỏ qua */ } };
+  const financeAll = useMemo(
+    () => buildFinance(clients, today, prefs.look, c => branchOf(c, branchList)?.name ?? 'Chưa gán chi nhánh'),
+    [clients, today, prefs.look, branchList],
+  );
+  const branchNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const k of ['cutoff', 'invoice', 'advance', 'payroll'] as const) for (const r of financeAll[k]) if (r.branch) set.add(r.branch);
+    return [...set].sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [financeAll]);
+  // Chi nhánh đã chọn nhưng không còn dòng nào (hoặc đổi tên) → coi như xem tất cả
+  const activeBranch = branchSel && branchNames.includes(branchSel) ? branchSel : '';
+  const finance = useMemo(() => {
+    if (!activeBranch) return financeAll;
+    const f = (rows: FinRow[]) => rows.filter(r => r.branch === activeBranch);
+    return { cutoff: f(financeAll.cutoff), invoice: f(financeAll.invoice), advance: f(financeAll.advance), payroll: f(financeAll.payroll) };
+  }, [financeAll, activeBranch]);
   const isPaid = (kind: PayKind, r: FinRow) => !!r.clientId && !!r.month && paid.has(payKey(r.clientId, kind, r.month));
   const counts: Record<TabId, number> = {
     tasks: tasks.length,
@@ -359,6 +382,16 @@ export default function DailyAttentionAlert({ userId, clients, onOpenWorkspace, 
                 ? (isPayTab ? `Không còn khách nào chưa chi ${TAB_LABEL[current].toLowerCase()}.` : `Không có khách nào có mốc ${TAB_LABEL[current].toLowerCase()} ${prefs.look === 0 ? 'hôm nay' : `trong ${prefs.look} ngày tới`}.`)
                 : <><b className="text-[#1D1D1F]">{finRows.length} khách</b> {isPayTab ? `chưa chi ${TAB_LABEL[current].toLowerCase()} (tới mốc hoặc đã qua mốc trong tháng)` : <>có mốc {TAB_LABEL[current].toLowerCase()} {prefs.look === 0 ? 'hôm nay' : `trong ${prefs.look} ngày tới`}</>}</>}
             </p>
+            {branchNames.length > 1 && (
+              <div className="px-5 pt-2 flex items-center gap-2">
+                <span className="text-[12px] text-[#86868B] shrink-0">Chi nhánh</span>
+                <select value={activeBranch} onChange={e => pickBranch(e.target.value)}
+                  className="flex-1 min-w-0 h-8 px-2.5 rounded-full bg-black/[0.05] text-[12.5px] font-medium text-[#1D1D1F] outline-none">
+                  <option value="">Tất cả chi nhánh</option>
+                  {branchNames.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+            )}
             {isPayTab && <p className="px-5 text-[11.5px] text-[#A1A1A6]">Tích ô tròn khi công ty đã chi; chưa tích thì vẫn hiện lại để theo dõi. Mỗi tháng tính lại từ đầu.</p>}
             <ul className="px-5 py-2">
               {finRows.slice(0, 40).map(r => (
