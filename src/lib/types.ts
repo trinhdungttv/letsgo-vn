@@ -19,6 +19,7 @@ export interface Manager {
   phone: string | null;
   email: string | null;
   region: string | null;
+  avatar_url?: string | null;   // ảnh cá nhân (migration 232) — chi nhánh do người này phụ trách sẽ hiện ảnh này
   created_at: string;
 }
 
@@ -52,6 +53,10 @@ export interface Client {
   salary_day_end: number | null;
   extra_salary_days: { start: number; end: number | null }[];
   extra_calc_days: { start: number; end: number | null }[];
+  // Mốc Ứng lương (migration 233) — tuỳ chọn, trống = không có
+  advance_day?: number | null;
+  advance_day_end?: number | null;
+  extra_advance_days?: { start: number; end: number | null }[];
   next_month_pay: boolean;
   contract_start: string | null;
   contract_end: string | null;

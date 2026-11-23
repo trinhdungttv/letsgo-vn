@@ -81,9 +81,14 @@ function buildFinance(clients: Client[], today: string, look: number): Record<'c
     push('cutoff', c.cutoff_day, c.cutoff_day_end);
     push('invoice', c.invoice_day, c.invoice_day_end);
     push('payroll', c.salary_day, c.salary_day_end);
-    // Ứng lương = các đợt phát lương thêm trong tháng; mỗi khách chỉ hiện đợt gần nhất
+    // Ứng lương = mốc Ứng lương riêng (advance_day + các đợt thêm) và các đợt phát lương thêm cũ; mỗi khách chỉ hiện đợt gần nhất
     let best: { start: number; end: number | null; off: number } | null = null;
-    for (const ex of Array.isArray(c.extra_salary_days) ? c.extra_salary_days : []) {
+    const advCandidates = [
+      ...(c.advance_day != null || c.advance_day_end != null ? [{ start: (c.advance_day ?? c.advance_day_end) as number, end: c.advance_day != null ? c.advance_day_end ?? null : null }] : []),
+      ...(Array.isArray(c.extra_advance_days) ? c.extra_advance_days : []),
+      ...(Array.isArray(c.extra_salary_days) ? c.extra_salary_days : []),
+    ];
+    for (const ex of advCandidates) {
       const off = nearestOffset(ex.start, ex.end, today, look);
       if (off != null && (!best || off < best.off)) best = { start: ex.start, end: ex.end, off };
     }

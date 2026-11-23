@@ -41,13 +41,14 @@ function fmtDate(d: string) {
 }
 
 // ── Các mốc trên timeline: dùng chung cho chú thích, nút lọc và bảng bật/tắt ──
-type TimelinePhaseKey = 'cutoff' | 'calc' | 'invoice' | 'paydue' | 'salary';
+type TimelinePhaseKey = 'cutoff' | 'calc' | 'invoice' | 'paydue' | 'salary' | 'advance';
 const TIMELINE_PHASES: { key: TimelinePhaseKey; label: string; dot: React.ReactNode }[] = [
   { key: 'cutoff', label: 'Chốt công', dot: <span className="inline-block w-3 h-3 rounded-full bg-orange-400" /> },
   { key: 'calc', label: 'Tính lương', dot: <span className="inline-block w-3 h-3 bg-blue-400" style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }} /> },
   { key: 'invoice', label: 'Xuất HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-cyan-500" /> },
   { key: 'paydue', label: 'Kỳ TT Trên HĐ', dot: <span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> },
   { key: 'salary', label: 'Phát lương', dot: <span className="inline-block w-3 h-3 rounded-full bg-purple-500" /> },
+  { key: 'advance', label: 'Ứng lương', dot: <span className="inline-block w-3 h-3 bg-amber-500" style={{ clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)' }} /> },
 ];
 // Nhãn mốc "Kỳ TT" đổi theo lựa chọn Trên HĐ / Thực Tế đang xem trên Timeline & Lịch Thu Tiền.
 function phaseLabel(p: { key: TimelinePhaseKey; label: string }, paymentView: 'contract' | 'actual'): string {
@@ -108,7 +109,7 @@ function payDuesInMonth(c: Client, year: number, month1to12: number, mode: 'cont
 
 const TIMELINE_VISIBLE_KEY = 'lgvn_finance_timeline_visible_phases';
 const ALL_PHASES_VISIBLE: Record<TimelinePhaseKey, boolean> = {
-  cutoff: true, calc: true, invoice: true, paydue: true, salary: true,
+  cutoff: true, calc: true, invoice: true, paydue: true, salary: true, advance: true,
 };
 
 function TimelineStep({ label, day, done, isToday }: { label: string; day: number; done: boolean; isToday: boolean }) {
@@ -207,6 +208,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     salary_day: null as number | null, salary_day_end: null as number | null,
     extra_salary_days: [] as { start: number; end: number | null }[],
     extra_calc_days: [] as { start: number; end: number | null }[],
+    advance_day: null as number | null, advance_day_end: null as number | null,
+    extra_advance_days: [] as { start: number; end: number | null }[],
     // Điều khoản thanh toán — cùng cột DB với "Điều khoản thanh toán" trong hồ sơ
     // khách hàng, sửa ở đây hay ở đó đều ghi vào một chỗ nên luôn đồng bộ.
     payment_group: 1 as number,
@@ -274,6 +277,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
         case 'cutoff': return pair(c.cutoff_day, c.cutoff_day_end);
         case 'calc': return pair(c.calc_day, c.calc_day_end);
         case 'salary': return pair(c.salary_day, c.salary_day_end);
+        case 'advance': return pair(c.advance_day, c.advance_day_end);
         case 'invoice': return pair(c.invoice_day, c.invoice_day_end);
         case 'paydue': return [payDuesInMonth(c, calYear, calMonthNum, paymentView)[0]?.day ?? null, null];
         default: return [null, null];
@@ -301,6 +305,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
       salary_day: c.salary_day, salary_day_end: c.salary_day_end,
       extra_salary_days: Array.isArray(c.extra_salary_days) ? c.extra_salary_days : [],
       extra_calc_days: Array.isArray((c as any).extra_calc_days) ? (c as any).extra_calc_days : [],
+      advance_day: c.advance_day ?? null, advance_day_end: c.advance_day_end ?? null,
+      extra_advance_days: Array.isArray(c.extra_advance_days) ? c.extra_advance_days : [],
       payment_group: c.payment_group ?? 1,
       payment_days: c.payment_days ?? 15,
       payment_fixed_day: c.payment_fixed_day ?? 10,
@@ -323,11 +329,14 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
     const cutoff = keep(editForm.cutoff_day, editForm.cutoff_day_end);
     const calc = keep(editForm.calc_day, editForm.calc_day_end);
     const salary = keep(editForm.salary_day, editForm.salary_day_end);
+    const advance = keep(editForm.advance_day, editForm.advance_day_end);
     const normForm = {
       ...editForm,
       cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
       calc_day: calc.start, calc_day_end: calc.end,
       salary_day: salary.start, salary_day_end: salary.end,
+      advance_day: advance.start, advance_day_end: advance.end,
+      extra_advance_days: editForm.extra_advance_days.filter(ex => ex.start != null || ex.end != null) as { start: number; end: number | null }[],
       extra_calc_days: editForm.extra_calc_days.filter(ex => ex.start != null || ex.end != null) as { start: number; end: number | null }[],
       extra_salary_days: editForm.extra_salary_days.filter(ex => ex.start != null || ex.end != null) as { start: number; end: number | null }[],
     };
@@ -668,6 +677,13 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                   const salaryX = salaryDay != null ? ((Math.min(salaryDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
                   const salaryEndX = salaryEndOk != null ? (salaryEndOk / daysInMonth) * 100 : null;
 
+                  const advanceRange = nr(c.advance_day, c.advance_day_end);
+                  const advanceDay = rd(advanceRange.start);
+                  const advanceEnd = rd(advanceRange.end);
+                  const advanceEndOk = advanceEnd != null && advanceDay != null && advanceEnd > advanceDay ? advanceEnd : null;
+                  const advanceX = advanceDay != null ? ((Math.min(advanceDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                  const advanceEndX = advanceEndOk != null ? (advanceEndOk / daysInMonth) * 100 : null;
+
                   return (
                     <div key={c.id} className="group/row flex border-b border-[#F0EEE9] last:border-0 hover:bg-[#FAFAF8] transition" style={{ minWidth: 900 }}>
                       <div className="w-[130px] md:w-[180px] shrink-0 px-3 py-2.5 border-r border-[#E8E7E2] sticky left-0 z-10 bg-white group-hover/row:bg-[#FAFAF8]">
@@ -684,7 +700,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           style={{ left: `${((todayNum - 1) / daysInMonth) * 100}%` }} />
 
                         {(() => {
-                          type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean; title?: string };
+                          type Mk = { x: number; day: number; label: string; color: string; textCls: string; shape: 'circle' | 'diamond' | 'square' | 'triangle'; endX?: number; endDay?: number; dashCls?: string; inlineColor?: string; external?: boolean; title?: string };
                           const markers: Mk[] = [];
                           if (isPhaseOn('cutoff') && !isRecruitment && cutoffX != null && cutoffDay != null)
                             markers.push({ x: cutoffX, day: cutoffDay, label: 'Chot cong', color: 'bg-orange-400', textCls: 'text-orange-600', shape: 'circle', endX: cutoffEndX ?? undefined, endDay: cutoffEndOk ?? undefined, dashCls: 'border-orange-300' });
@@ -732,6 +748,22 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                             }
                           }
 
+                          if (isPhaseOn('advance') && !isRecruitment && advanceX != null && advanceDay != null)
+                            markers.push({ x: advanceX, day: advanceDay, label: 'Ung luong', color: 'bg-amber-500', textCls: 'text-amber-600', shape: 'triangle', endX: advanceEndX ?? undefined, endDay: advanceEndOk ?? undefined, dashCls: 'border-amber-300' });
+                          if (isPhaseOn('advance') && !isRecruitment) {
+                            const extraAdv: { start: number; end: number | null }[] = Array.isArray(c.extra_advance_days) ? c.extra_advance_days : [];
+                            for (const ex of extraAdv) {
+                              const exR = nr(ex.start, ex.end);
+                              const exDay = rd(exR.start);
+                              const exEnd = rd(exR.end);
+                              const exEndOk = exEnd != null && exDay != null && exEnd > exDay ? exEnd : null;
+                              const exX = exDay != null ? ((Math.min(exDay - 1, daysInMonth - 1)) / daysInMonth) * 100 : null;
+                              const exEndX = exEndOk != null ? (exEndOk / daysInMonth) * 100 : null;
+                              if (exX != null && exDay != null)
+                                markers.push({ x: exX, day: exDay, label: 'Ung luong', color: 'bg-amber-400', textCls: 'text-amber-500', shape: 'triangle', endX: exEndX ?? undefined, endDay: exEndOk ?? undefined, dashCls: 'border-amber-200' });
+                            }
+                          }
+
                           markers.sort((a, b) => a.x - b.x);
 
                           const internalDays: number[] = [];
@@ -749,6 +781,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                           const lineColors: Record<string, string> = {
                             'bg-orange-400': '#fb923c', 'bg-blue-400': '#60a5fa', 'bg-cyan-500': '#06b6d4',
                             'bg-emerald-500': '#10b981', 'bg-purple-500': '#a855f7', 'bg-purple-400': '#c084fc',
+                            'bg-amber-500': '#f59e0b', 'bg-amber-400': '#fbbf24',
                           };
 
                           type Row = typeof row1;
@@ -758,7 +791,7 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
 
                           for (const m of markers) {
                             const sc = m.shape === 'circle' ? 'rounded-full' : m.shape === 'diamond' ? '' : 'rounded-sm';
-                            const cs: React.CSSProperties = m.shape === 'diamond' ? { clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' } : {};
+                            const cs: React.CSSProperties = m.shape === 'diamond' ? { clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' } : m.shape === 'triangle' ? { clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)' } : {};
                             const r = (m.external && isClash(m.day)) ? row2 : row1;
                             if (r === row2) anyRow2 = true;
                             dotItems.push({ x: m.x, day: m.day, color: m.color, sc, cs, title: m.title ?? `${m.label}: ngay ${m.day}${m.endDay ? `–${m.endDay}` : ''}`, inlineColor: m.inlineColor, row: r });
@@ -1054,7 +1087,8 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
                 { label: 'Chot cong', start: 'cutoff_day', end: 'cutoff_day_end', dot: 'bg-orange-400' },
                 { label: 'Tinh luong', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
                 { label: 'Phat luong', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
-              ] as { label: string; start: 'cutoff_day' | 'calc_day' | 'salary_day'; end: 'cutoff_day_end' | 'calc_day_end' | 'salary_day_end'; dot: string }[]).map(row => {
+                { label: 'Ung luong', start: 'advance_day', end: 'advance_day_end', dot: 'bg-amber-500' },
+              ] as { label: string; start: 'cutoff_day' | 'calc_day' | 'salary_day' | 'advance_day'; end: 'cutoff_day_end' | 'calc_day_end' | 'salary_day_end' | 'advance_day_end'; dot: string }[]).map(row => {
                 const startVal = editForm[row.start];
                 const endVal = editForm[row.end];
                 // Chi nhap 1 trong 2 o (bat dau HOAC ket thuc) => moc dien ra trong 1 ngay
@@ -1135,6 +1169,35 @@ export default function Finance({ finance, clients, onLoadFinance, onFinanceUpda
             ))}
             <button type="button" onClick={() => setEditForm({ ...editForm, extra_salary_days: [...editForm.extra_salary_days, { start: 15, end: null }] })}
               className="text-[10.5px] text-purple-500 hover:text-purple-700 mt-1.5 hover:underline">+ Them dot phat luong</button>
+            {editForm.extra_advance_days.map((ex, idx) => (
+              <div key={`ea-${idx}`} className="flex items-center gap-3 mt-2">
+                <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12px] text-[#666]">
+                  <span className="inline-block w-2 h-2 bg-amber-400" style={{ clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)' }} />
+                  UL {idx + 2}
+                  <button type="button" onClick={() => {
+                    const arr = [...editForm.extra_advance_days];
+                    arr.splice(idx, 1);
+                    setEditForm({ ...editForm, extra_advance_days: arr });
+                  }} className="text-[10px] text-gray-400 hover:text-red-500 ml-auto">&times;</button>
+                </div>
+                <div className="flex-1">
+                  <DayCell quick="eom1" value={ex.start} onChange={v => {
+                    const arr = [...editForm.extra_advance_days];
+                    arr[idx] = { ...arr[idx], start: v ?? 1 };
+                    setEditForm({ ...editForm, extra_advance_days: arr });
+                  }} />
+                </div>
+                <div className="flex-1">
+                  <DayCell quick="eom" value={ex.end} onChange={v => {
+                    const arr = [...editForm.extra_advance_days];
+                    arr[idx] = { ...arr[idx], end: v };
+                    setEditForm({ ...editForm, extra_advance_days: arr });
+                  }} />
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={() => setEditForm({ ...editForm, extra_advance_days: [...editForm.extra_advance_days, { start: 15, end: null }] })}
+              className="text-[10.5px] text-amber-600 hover:text-amber-700 mt-1.5 hover:underline">+ Them dot ung luong</button>
 
             <div className="text-[11px] text-[#aaa] mt-2.5">De trong "Ngay ket thuc" neu moc chi dien ra trong 1 ngay. Nut <strong>CT-1</strong> (o trai) = ngay ke truoc ngay cuoi thang, <strong>CT</strong> (o phai) = ngay cuoi thang — ca hai tu nhay theo so ngay thuc te cua thang (28/29/30/31).</div>
 

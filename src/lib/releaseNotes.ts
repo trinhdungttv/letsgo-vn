@@ -16,6 +16,22 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-23-advance-salary-milestone',
+    date: '2026-11-23',
+    title: 'Tài chính',
+    features: [
+      'Mốc Ứng lương trên Timeline KH: nhập 1 ngày hoặc từ ngày – tới ngày, thêm nhiều đợt, có chú giải và bật/tắt như các mốc khác',
+    ],
+  },
+  {
+    id: '2026-11-23-manager-avatar',
+    date: '2026-11-23',
+    title: 'Chi nhánh',
+    features: [
+      'Ảnh đại diện gắn theo người phụ trách: chi nhánh do ai phụ trách thì hiện ảnh của người đó, đổi người phụ trách là ảnh đổi theo',
+    ],
+  },
+  {
     id: '2026-11-21-workspace-eisenhower',
     date: '2026-11-21',
     title: 'Workspace',

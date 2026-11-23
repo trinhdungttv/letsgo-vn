@@ -58,6 +58,7 @@ type TimelineForm = {
   calc_day: number | null; calc_day_end: number | null;
   payment_start: number | null; payment_end: number | null;
   salary_day: number | null; salary_day_end: number | null;
+  advance_day: number | null; advance_day_end: number | null;
 };
 
 /** Chỉ nhập 1 ô => mốc 1 ngày: dồn về ngày bắt đầu, bỏ ngày kết thúc. */
@@ -66,11 +67,13 @@ function normalizeTimelineForm(f: TimelineForm): TimelineForm {
   const calc = normalizeDayRange(f.calc_day, f.calc_day_end);
   const pay = normalizeDayRange(f.payment_start, f.payment_end);
   const salary = normalizeDayRange(f.salary_day, f.salary_day_end);
+  const advance = normalizeDayRange(f.advance_day, f.advance_day_end);
   return {
     cutoff_day: cutoff.start, cutoff_day_end: cutoff.end,
     calc_day: calc.start, calc_day_end: calc.end,
     payment_start: pay.start, payment_end: pay.end,
     salary_day: salary.start, salary_day_end: salary.end,
+    advance_day: advance.start, advance_day_end: advance.end,
   };
 }
 
@@ -214,6 +217,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
     calc_day: client.calc_day, calc_day_end: client.calc_day_end,
     payment_start: client.payment_start, payment_end: client.payment_end,
     salary_day: client.salary_day, salary_day_end: client.salary_day_end,
+    advance_day: client.advance_day ?? null, advance_day_end: client.advance_day_end ?? null,
   });
   const { contacts: primaryContacts, reload: reloadContacts } = useContacts(client.id);
 
@@ -954,6 +958,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                         { label: 'Tính lương', start: 'calc_day', end: 'calc_day_end', dot: 'bg-blue-400' },
                         { label: 'Kỳ thanh toán', start: 'payment_start', end: 'payment_end', dot: 'bg-emerald-500' },
                         { label: 'Phát lương', start: 'salary_day', end: 'salary_day_end', dot: 'bg-purple-500' },
+                        { label: 'Ứng lương', start: 'advance_day', end: 'advance_day_end', dot: 'bg-amber-500' },
                       ] as { label: string; start: keyof typeof timelineForm; end: keyof typeof timelineForm; dot: string }[]).map(row => (
                         <div key={row.start} className="flex items-center gap-3">
                           <div className="w-[110px] shrink-0 flex items-center gap-1.5 text-[12.5px] font-medium text-[#444]">
@@ -1172,6 +1177,7 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                             { label: 'Tính lương', start: client.calc_day, end: client.calc_day_end, cls: 'bg-blue-50 border-blue-200 text-blue-700' },
                             { label: 'Kỳ thanh toán', start: client.payment_start, end: client.payment_end, cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
                             { label: 'Phát lương', start: client.salary_day, end: client.salary_day_end, cls: 'bg-purple-50 border-purple-200 text-purple-700' },
+                            ...(client.advance_day != null || client.advance_day_end != null ? [{ label: 'Ứng lương', start: client.advance_day ?? null, end: client.advance_day_end ?? null, cls: 'bg-amber-50 border-amber-200 text-amber-700' }] : []),
                           ]).map(row => (
                             <span key={row.label} className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${row.cls}`}>
                               {row.label}: ngày {formatDayRange(row.start, row.end)}

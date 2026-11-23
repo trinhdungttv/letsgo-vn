@@ -331,6 +331,7 @@ export async function buildClientMdExport(client: Client, opts: ExportOptions): 
         start == null ? MISSING : `ngày ${formatDayRange(start, end)}`;
       L.push(`| Chu kỳ chốt công | ${dayRange(client.cutoff_day, client.cutoff_day_end)} |`);
       L.push(`| Chu kỳ đối chiếu | ${dayRange(client.calc_day, client.calc_day_end)} |`);
+      if (client.advance_day != null || client.advance_day_end != null) L.push(`| Chu kỳ ứng lương | ${dayRange(client.advance_day ?? null, client.advance_day_end ?? null)} |`);
       L.push(`| Chu kỳ thanh toán | ${dayRange(client.payment_start, client.payment_end)}${client.next_month_pay ? ' (tháng sau)' : ''} |`);
     } else {
       L.push(`| Công nợ | ${client.payment_term_days || MISSING} ngày |`);
