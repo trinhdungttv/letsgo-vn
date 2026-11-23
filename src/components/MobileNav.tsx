@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import type { Page } from '../lib/types';
 import { useAuth, canAccess, isReadOnlyRole } from '../lib/auth';
-import { OFFICE_ICON, OFFICE_NAV, isOfficePage } from '../modules/office-rental/pages';
+import { OFFICE_ICON, OFFICE_NAV, OFFICE_MODULE_ENABLED, isOfficePage } from '../modules/office-rental/pages';
 import { BTN_PRIMARY, BTN_TINTED, ICON_TILE } from './workspace/wsTheme';
 
 interface MobileNavProps {
@@ -67,7 +67,7 @@ export default function MobileNav({ currentPage, onNavigate }: MobileNavProps) {
   const role = user?.role || 'kinhdoanh';
 
   const allowed = useMemo(
-    () => MOBILE_MENU.filter(m => canAccess(role, m.page, rolePermissions)),
+    () => MOBILE_MENU.filter(m => (OFFICE_MODULE_ENABLED || m.page !== 'office') && canAccess(role, m.page, rolePermissions)),
     [role, rolePermissions]
   );
   const allowedIds = useMemo(() => new Set(allowed.map(m => m.page)), [allowed]);

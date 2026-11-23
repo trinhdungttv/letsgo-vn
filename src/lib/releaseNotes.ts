@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-23-lead-phone-fresh-check',
+    date: '2026-11-23',
+    title: 'CSKH',
+    features: [
+      'Thêm đầu mối: dò trùng SĐT theo dữ liệu mới nhất (đồng nghiệp vừa thêm cũng bắt được), báo rõ ai nhập và ngày nào',
+    ],
+  },
+  {
     id: '2026-11-23-advance-salary-milestone',
     date: '2026-11-23',
     title: 'Tài chính',

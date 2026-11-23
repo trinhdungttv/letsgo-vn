@@ -22,7 +22,7 @@ export const vnDate = (iso: string): string => formatDateVN(todayVN(new Date(iso
 /** Ghi chú 1 dòng về người đang giữ số (dùng ở ô tra số, form, bảng nhập). */
 export function ownerLine(o: PhoneOwner): string {
   const tail = o.kind === 'lead' && o.lead
-    ? ` · ${SALE_LEAD_STATUS_LABEL[o.lead.status]}${o.lead.contactLog.length ? ` · đã liên hệ ${o.lead.contactLog.length} lần` : ''}${o.lead.lastContactAt ? `, gần nhất ${vnDate(o.lead.lastContactAt)}` : ''}`
+    ? ` · ${SALE_LEAD_STATUS_LABEL[o.lead.status]}${o.lead.contactLog.length ? ` · đã liên hệ ${o.lead.contactLog.length} lần` : ''}${o.lead.lastContactAt ? `, gần nhất ${vnDate(o.lead.lastContactAt)}` : ''}${o.lead.createdBy ? ` · ${o.lead.createdBy} nhập ${vnDate(o.lead.createdAt)}` : ` · nhập ${vnDate(o.lead.createdAt)}`}`
     : '';
   return `${o.name || '(chưa ghi tên)'}${o.org ? ` — ${o.org}` : ''}${tail}`;
 }

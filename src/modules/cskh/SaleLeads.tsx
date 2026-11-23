@@ -540,6 +540,7 @@ export default function CskhSaleLeads() {
           competitors={competitors}
           companies={companyNames}
           phoneIndex={phoneIndex}
+          onRefresh={() => { void reload(); }}
           toast={toast}
           onClose={() => setEditing(null)}
           onSaved={() => { void reload(); }}

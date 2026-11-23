@@ -41,6 +41,17 @@ export async function loadSaleLeads(): Promise<SaleLead[] | null> {
   return out.map(mapSaleLeadRow);
 }
 
+/** Hỏi thẳng DB (không dùng danh sách đã nạp): đầu mối còn sống nào đang giữ 1 trong các số này — để bắt ca đồng nghiệp vừa thêm. */
+export async function findLiveLeadsByPhoneKeys(keys: readonly string[]): Promise<SaleLead[]> {
+  if (!keys.length) return [];
+  const { data, error } = await supabase.from('sale_leads').select('*').is('deleted_at', null).overlaps('phone_keys', [...keys]);
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return ((data ?? []) as SaleLeadRow[]).map(mapSaleLeadRow);
+}
+
 /** Dữ liệu 1 đầu mối khi thêm / sửa (form hoặc nhập bảng). */
 export interface SaleLeadInput {
   fullName: string;

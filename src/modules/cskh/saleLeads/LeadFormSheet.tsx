@@ -1,9 +1,9 @@
 // Form thêm / sửa 1 đầu mối. Gõ SĐT là dò trùng ngay: trùng bảng nháp hoặc đã là Sale / CTV → không lưu
 // (mở dòng đã có thay vì tạo trùng); trùng người liên hệ của khách → chỉ nhắc, vẫn lưu được.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Trash2 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth';
-import { deleteSaleLeads, insertSaleLead, updateSaleLead, type SaleLeadInput } from '../../../lib/saleLeads/api';
+import { deleteSaleLeads, findLiveLeadsByPhoneKeys, insertSaleLead, updateSaleLead, type SaleLeadInput } from '../../../lib/saleLeads/api';
 import { matchCompetitor, ownersOf, pendingPartsOf, type NamedItem, type PhoneOwner } from '../../../lib/saleLeads/match';
 import { phoneKeysOf } from '../../../lib/saleLeads/parse';
 import { SALE_LEAD_STATUS_HINT, SALE_LEAD_STATUS_LABEL, SALE_LEAD_STATUSES, type SaleLead, type SaleLeadStatus } from '../../../lib/saleLeads/types';
@@ -15,7 +15,7 @@ import { PhoneCheckBox } from './parts';
 
 const labelCls = 'block text-[12px] font-medium text-[#6E6E73] mb-1';
 
-export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasReady, onCreateArea, competitors, companies, phoneIndex, toast, onClose, onSaved, onOpenLead, onOpenSale }: {
+export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasReady, onCreateArea, competitors, companies, phoneIndex, onRefresh, toast, onClose, onSaved, onOpenLead, onOpenSale }: {
   /** null = thêm mới. */
   lead: SaleLead | null;
   /** Thêm mới từ ô tra số: điền sẵn SĐT. */
@@ -29,6 +29,8 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasRead
   /** Tên đơn vị đã gặp trong bảng nháp (gợi ý khi gõ). */
   companies: readonly string[];
   phoneIndex: ReadonlyMap<string, PhoneOwner[]>;
+  /** Nạp lại bảng nháp + danh bạ (đồng nghiệp có thể vừa thêm số này). */
+  onRefresh: () => void;
   toast: (m: string) => void;
   onClose: () => void;
   onSaved: () => void;
@@ -54,6 +56,9 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasRead
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Thêm mới: nạp lại dữ liệu mới nhất ngay khi mở form (danh sách trên máy có thể đã cũ so với đồng nghiệp)
+  useEffect(() => { if (!lead) onRefresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const keys = useMemo(() => phoneKeysOf(phone), [phone]);
   const owners = useMemo(() => ownersOf(keys, phoneIndex, lead?.id), [keys, phoneIndex, lead?.id]);
   const blocker = owners.find(o => o.kind === 'lead' || o.kind === 'sale');
@@ -67,6 +72,17 @@ export function LeadFormSheet({ lead, initialPhone = '', zones, areas, areasRead
     if (!name.trim() && !keys.length) { setError('Nhập tên hoặc SĐT'); return; }
     if (phone.trim() && !keys.length) { setError('SĐT không đúng — số di động 10 số (VD 0912 345 678)'); return; }
     if (blocker) { setError(blocker.kind === 'sale' ? 'Số này đã là Sale / CTV — không cần thêm vào bảng nháp' : 'Số này đã có trong bảng nháp — mở dòng đó để ghi tiếp'); return; }
+    // Hỏi thẳng DB lần cuối: đồng nghiệp có thể vừa thêm số này sau khi trang được mở
+    if (keys.length) {
+      try {
+        const fresh = (await findLiveLeadsByPhoneKeys(keys)).find(l => l.id !== lead?.id);
+        if (fresh) {
+          onRefresh();
+          setError(`Số này vừa được ${fresh.createdBy || 'người khác'} thêm vào bảng nháp (${fresh.fullName || 'chưa ghi tên'}) — chưa lưu. Mở dòng đó để ghi tiếp.`);
+          return;
+        }
+      } catch { /* mất mạng → để trigger DB chặn */ }
+    }
     const input: SaleLeadInput = {
       fullName: name, phone, company, zoneIds: place.zoneIds, areaText: lead?.areaText ?? '', channelUrl, postUrl, note,
       // Đã chọn lại khu vực bằng tay → thôi hiện chữ gốc chưa ghép

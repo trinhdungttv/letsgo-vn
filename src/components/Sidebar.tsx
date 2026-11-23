@@ -3,7 +3,7 @@ import { Home, Gauge, Briefcase, Building2, Building, DollarSign, MapPin, BarCha
 import type { Page } from '../lib/types';
 import { useAuth, canAccess } from '../lib/auth';
 import { getAppLogoUrl } from '../lib/appSettings';
-import { OFFICE_ICON, OFFICE_NAV, isOfficePage } from '../modules/office-rental/pages';
+import { OFFICE_ICON, OFFICE_NAV, OFFICE_MODULE_ENABLED, isOfficePage } from '../modules/office-rental/pages';
 import { ICON_TILE } from './workspace/wsTheme';
 
 interface SidebarProps {
@@ -134,7 +134,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
   const hasCRM = CRM_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
   const hasAdmin = ADMIN_ITEMS.some(item => canAccess(role, item.page, rolePermissions));
-  const hasOffice = OFFICE_NAV.some(item => canAccess(role, item.page, rolePermissions));
+  const hasOffice = OFFICE_MODULE_ENABLED && OFFICE_NAV.some(item => canAccess(role, item.page, rolePermissions));
 
   // Chữ cái đầu của tên gọi (từ cuối trong họ tên tiếng Việt) cho ô avatar
   const initial = (user?.full_name || user?.username || '').trim().split(/\s+/).pop()?.charAt(0).toUpperCase() || '?';

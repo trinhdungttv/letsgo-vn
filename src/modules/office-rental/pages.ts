@@ -7,6 +7,9 @@ export const OFFICE_PAGES = [
 
 export type OfficePage = (typeof OFFICE_PAGES)[number];
 
+/** Công tắc hiện module Văn phòng Orient ở menu. Đang TẮT (chưa dùng) — đổi thành true để bật lại. Dữ liệu không bị xoá. */
+export const OFFICE_MODULE_ENABLED = false;
+
 export function isOfficePage(p: string): p is OfficePage {
   return (OFFICE_PAGES as readonly string[]).includes(p);
 }
