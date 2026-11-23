@@ -20,6 +20,8 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     date: '2026-11-23',
     title: 'Tài chính',
     features: [
+      'Ảnh đại diện theo từng người quản lý (Cài đặt → Quản lý): chi nhánh do ai phụ trách thì hiện ảnh người đó',
+      'Chuyển loại hình dịch vụ (Cho thuê / Giới thiệu / HOH) có ghi ngày chuyển, giữ nguyên chu kỳ lương, chuyển lại là hiện đủ',
       'Mốc Ứng lương trên Timeline KH: nhập 1 ngày hoặc từ ngày – tới ngày, thêm nhiều đợt, có chú giải và bật/tắt như các mốc khác',
       'Cần chú ý hôm nay: tích "đã chi" cho từng công ty ở tab Ứng lương / Chi lương, chưa tích thì vẫn hiện lại; lọc xem theo chi nhánh',
     ],

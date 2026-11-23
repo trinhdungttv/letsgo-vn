@@ -23,6 +23,8 @@ import ClientBranchCosts from '../components/clients/ClientBranchCosts';
 import PaymentTermsSection from '../components/clients/PaymentTermsSection';
 import { calcHealthScore, hsColor, hsLabel } from '../utils/healthScore';
 import PaymentHistory from '../components/clients/PaymentHistory';
+import ServiceChangeModal from '../components/clients/ServiceChangeModal';
+import { SERVICE_LABEL, type ClientServiceHistory } from '../lib/serviceChange';
 import ExportMdModal from '../components/clients/ExportMdModal';
 import SocialLinksRow from '../components/SocialLinksRow';
 import { parseLatLngFromLink, isValidVnLatLng } from '../lib/geo';
@@ -184,6 +186,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   const [transferForm, setTransferForm] = useState<{ manager_name: string; effective_from: string } | null>(null);
   const [branchTransferForm, setBranchTransferForm] = useState<{ branch_id: string; effective_from: string; notes: string } | null>(null);
   const [branchHistory, setBranchHistory] = useState<ClientBranchHistory[]>([]);
+  const [serviceHistory, setServiceHistory] = useState<ClientServiceHistory[]>([]);
+  const [serviceModal, setServiceModal] = useState<ServiceType | null>(null);
   const { branches } = useBranchData();
   const [newZoneOpen, setNewZoneOpen] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
@@ -224,6 +228,10 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
   useEffect(() => {
     supabase.from('client_branch_history').select('*').eq('client_id', client.id).order('effective_from', { ascending: true })
       .then(({ data }) => { if (data) setBranchHistory(data as ClientBranchHistory[]); });
+  }, [client.id]);
+  useEffect(() => {
+    supabase.from('client_service_history').select('*').eq('client_id', client.id).order('effective_from', { ascending: true }).order('created_at', { ascending: true })
+      .then(({ data, error }) => { if (!error && data) setServiceHistory(data as ClientServiceHistory[]); });
   }, [client.id]);
 
   useEffect(() => {
@@ -387,13 +395,6 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         ...normalizeTimelineForm(timelineForm),
         updated_at: new Date().toISOString(),
       };
-      if (form.service_type === 'recruitment') {
-        baseUpdates.cutoff_day = null as any;
-        baseUpdates.calc_day = null as any;
-        baseUpdates.salary_day = null as any;
-        baseUpdates.payment_start = null as any;
-        baseUpdates.payment_end = null as any;
-      }
       const updates: any = baseUpdates;
       if (contractCount > 0) { delete updates.contract_start; delete updates.contract_end; } // do danh sách hợp đồng quyết định
       const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
@@ -655,27 +656,18 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
         <div className="flex items-center gap-2 w-full md:w-auto">
           <select
             value={form.service_type}
-            onChange={async e => {
-              const newType = e.target.value as ServiceType;
-              setForm(f => ({ ...f, service_type: newType }));
-              const extra = newType === 'recruitment'
-                ? { cutoff_day: null, calc_day: null, salary_day: null, payment_start: null, payment_end: null }
-                : {};
-              try {
-                const updates = { service_type: newType, ...extra, updated_at: new Date().toISOString() };
-                const { error } = await supabase.from('clients').update(updates).eq('id', client.id);
-                if (error) throw error;
-                onClientUpdate({ ...client, ...updates });
-                await logActivity({ user, action: 'update', table: 'clients', recordId: client.id, description: `Doi loai hinh dich vu cua "${client.name}" thanh ${newType}`, oldData: client, newData: { ...client, ...updates } });
-                toast('Da cap nhat loai hinh dich vu');
-              } catch (err: any) { toast('Loi: ' + err.message); }
-            }}
+            onChange={e => setServiceModal(e.target.value as ServiceType)}
             className="flex-1 md:flex-none text-[12px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500 bg-white"
           >
-            <option value="leasing">Cho thue lao dong</option>
-            <option value="recruitment">Gioi thieu lao dong</option>
+            <option value="leasing">Cho thuê lao động</option>
+            <option value="recruitment">Giới thiệu lao động</option>
             <option value="hoh">HOH</option>
           </select>
+          {serviceHistory.length > 0 && (
+            <span className="text-[11px] text-[#888] hidden md:inline" title={serviceHistory.map(h => `${formatDate(h.effective_from)}: ${h.from_type ? SERVICE_LABEL[h.from_type] : '—'} → ${SERVICE_LABEL[h.to_type]}`).join('\n')}>
+              Chuyển sang {SERVICE_LABEL[serviceHistory[serviceHistory.length - 1].to_type]} từ {formatDate(serviceHistory[serviceHistory.length - 1].effective_from)}
+            </span>
+          )}
           <button onClick={() => setShowExportMd(true)} title="Xuất MD" className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-emerald-500 text-emerald-700 hover:bg-emerald-50 transition">
             <Download size={13} /> <span className="hidden sm:inline">Xuất MD</span><span className="sm:hidden">MD</span>
           </button>
@@ -684,6 +676,14 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
           </button>
         </div>
       </div>
+      {serviceModal && (
+        <ServiceChangeModal client={client} initialType={serviceModal} user={user} toast={toast} onClose={() => setServiceModal(null)}
+          onDone={(updates, history) => {
+            setForm(f => ({ ...f, service_type: (updates.service_type ?? f.service_type) as ServiceType }));
+            onClientUpdate({ ...client, ...updates });
+            if (history) setServiceHistory(prev => [...prev, history]);
+          }} />
+      )}
       {showExportMd && <ExportMdModal client={client} onClose={() => setShowExportMd(false)} toast={toast} />}
 
       {/* Tab bar */}
@@ -831,16 +831,8 @@ export default function ClientDetail({ client, laborHistory, managerHistory, pro
                       <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500" />
                     </div>
                     <div className="flex flex-col gap-1 col-span-2">
-                      <label className="text-[12px] text-[#666] font-medium">Loai hinh dich vu</label>
-                      <select
-                        value={form.service_type}
-                        onChange={e => setForm({ ...form, service_type: e.target.value as ServiceType })}
-                        className="text-[13px] px-2.5 py-1.5 rounded-lg border border-gray-300 outline-none focus:border-blue-500"
-                      >
-                        <option value="leasing">Cho thue lao dong (mac dinh)</option>
-                        <option value="recruitment">Gioi thieu lao dong</option>
-                        <option value="hoh">HOH</option>
-                      </select>
+                      <label className="text-[12px] text-[#666] font-medium">Loại hình dịch vụ</label>
+                      <div className="text-[12.5px] text-[#555]">{SERVICE_LABEL[(client.service_type ?? 'leasing') as ServiceType]} — đổi bằng ô chọn ở góc trên bên phải để ghi ngày chuyển.</div>
                     </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-[12px] text-[#666] font-medium">Chi Nhánh</label>

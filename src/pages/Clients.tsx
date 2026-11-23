@@ -13,6 +13,7 @@ import { getMonthLast, recentMonths, statusPill, formatDate, daysUntil, getCurre
 import { branchOf, branchOptions, resolveBranchByLegacyText } from '../lib/branchRef';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import ServiceChangeModal from '../components/clients/ServiceChangeModal';
 import { logActivity } from '../lib/audit';
 import { downloadClientTemplate, parseClientExcel } from '../lib/clientImport';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -123,6 +124,7 @@ export default function Clients({
   const [editingCell, setEditingCell] = useState<{ id: string; field: 'branch_id' | 'manager' | 'zone' | 'contract_start' | 'contract_end' | 'cutoff_day' | 'status' | 'labor' | 'payroll_staff' | 'service_type' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
+  const [serviceModalClient, setServiceModalClient] = useState<Client | null>(null);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
   const [showCompanyDates, setShowCompanyDates] = useState(false);
   const [bulkWeek, setBulkWeek] = useState('');
@@ -835,17 +837,6 @@ export default function Clients({
     setSavingCell(true);
     try {
       const updates: any = { [field]: newVal, updated_at: new Date().toISOString() };
-      if (field === 'service_type' && newVal === 'recruitment') {
-        updates.cutoff_day = null; updates.calc_day = null; updates.salary_day = null;
-        updates.payment_start = null; updates.payment_end = null;
-      }
-      if (field === 'service_type' && (newVal === 'leasing' || newVal === 'hoh')) {
-        // Giữ chu kỳ hiện có nếu đã thiết lập, chỉ điền mặc định khi còn trống.
-        updates.cutoff_day = c.cutoff_day ?? 25;
-        updates.payment_start = c.payment_start ?? 1;
-        updates.payment_end = c.payment_end ?? 10;
-        updates.salary_day = c.salary_day ?? 5;
-      }
       const { error } = await supabase.from('clients').update(updates).eq('id', c.id);
       if (error) throw error;
       onClientUpdate({ ...c, ...updates });
@@ -1027,6 +1018,10 @@ export default function Clients({
 
   return (
     <>
+      {serviceModalClient && (
+        <ServiceChangeModal client={serviceModalClient} user={user} toast={toast} onClose={() => setServiceModalClient(null)}
+          onDone={updates => onClientUpdate({ ...serviceModalClient, ...updates })} />
+      )}
       <PageHeader
         title="Khách hàng"
         subtitle={`${clients.length} khách hàng · Click vào hàng để xem chi tiết${isAdmin ? ' · Double-click vào Chi nhánh/Quản lý/Chốt/Bắt đầu HĐ/Hết HĐ/TT để sửa nhanh' : ''}`}
@@ -1440,22 +1435,7 @@ export default function Clients({
                                   </span>
                                 )
                               )}
-                              {editingCell?.id === c.id && editingCell.field === 'service_type' ? (
-                                <select
-                                  autoFocus value={editValue} disabled={savingCell}
-                                  onClick={e => e.stopPropagation()}
-                                  onChange={e => setEditValue(e.target.value)}
-                                  onBlur={() => saveEdit(c)}
-                                  onKeyDown={e => { if (e.key === 'Enter') saveEdit(c); if (e.key === 'Escape') cancelEdit(); }}
-                                  className="text-[11px] border border-blue-400 rounded px-1 py-0.5 bg-white font-normal"
-                                >
-                                  <option value="leasing">Cho thue lao dong</option>
-                                  <option value="recruitment">Gioi thieu lao dong</option>
-                                  <option value="hoh">HOH</option>
-                                </select>
-                              ) : (
-                                <ServiceTypeBadge type={c.service_type} editable onDoubleClick={e => startEdit(e, c, 'service_type')} />
-                              )}
+                              <ServiceTypeBadge type={c.service_type} editable onDoubleClick={e => { e.stopPropagation(); if (isAdmin) setServiceModalClient(c); }} />
                               <ChurnBadge level={churnLevel} />
                               <button
                                 onClick={e => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Plus, Pencil, Trash2, Check, AlertTriangle } from 'lucide-react';
 import type { Region, Manager, Client, Branch, PayrollStaff } from '../lib/types';
 import { branchOptions, branchOf, resolveBranchByLegacyText } from '../lib/branchRef';
@@ -6,6 +6,8 @@ import { usePayrollStaffs } from '../hooks/usePayrollStaffs';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { logActivity } from '../lib/audit';
+import { resizeImage } from '../lib/imageResize';
+import { branchInitials } from '../lib/branchAvatar';
 
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -80,6 +82,30 @@ export default function AdminSettings({
   // Managers state
   const [newMgr, setNewMgr] = useState<Omit<Manager, 'id' | 'created_at'>>({ name: '', phone: '', email: '', region: '' });
   const [editingMgr, setEditingMgr] = useState<Manager | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState<string | null>(null);
+  const avatarSeq = useRef(0);
+  const uploadMgrAvatar = async (m: Manager, file: File) => {
+    if (!file.type.startsWith('image/')) { setError('File không phải ảnh'); return; }
+    if (file.size > 15 * 1024 * 1024) { setError('Ảnh gốc quá lớn — chọn ảnh dưới 15 MB'); return; }
+    setAvatarBusy(m.id);
+    try {
+      const resized = await resizeImage(file, { max: 256, quality: 0.85, square: true });
+      const path = `branch-managers/mgr-${m.id}-${Date.now()}-${avatarSeq.current++}.${resized.ext}`;
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, resized.blob, { upsert: true, contentType: resized.blob.type });
+      if (upErr) throw upErr;
+      const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+      await onUpdateManager(m.id, { avatar_url: url });
+      await logActivity({ user, action: 'update', table: 'managers', recordId: m.id, description: `Đổi ảnh đại diện của "${m.name}"` });
+      setSuccess('Đã cập nhật ảnh — các chi nhánh người này phụ trách sẽ hiện ảnh này');
+    } catch (e) { setError(errMsg(e)); } finally { setAvatarBusy(null); }
+  };
+  const removeMgrAvatar = async (m: Manager) => {
+    if (!confirm(`Gỡ ảnh đại diện của "${m.name}"? Các chi nhánh người này phụ trách sẽ hiện chữ cái đầu.`)) return;
+    try {
+      await onUpdateManager(m.id, { avatar_url: null });
+      await logActivity({ user, action: 'update', table: 'managers', recordId: m.id, description: `Gỡ ảnh đại diện của "${m.name}"` });
+    } catch (e) { setError(errMsg(e)); }
+  };
   const [showAddMgr, setShowAddMgr] = useState(false);
 
   // Payroll staffs state
@@ -257,11 +283,23 @@ export default function AdminSettings({
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
+                        {/* Ảnh đại diện của NGƯỜI — mọi chi nhánh người này phụ trách tự hiện ảnh này (migration 232) */}
+                        <label className="relative shrink-0 cursor-pointer group" title="Bấm để tải ảnh đại diện">
+                          {m.avatar_url
+                            ? <img src={m.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                            : <span className="w-10 h-10 rounded-full bg-[#E1F5EE] text-[#085041] flex items-center justify-center text-[13px] font-semibold">{branchInitials(m.name)}</span>}
+                          <span className="absolute inset-0 rounded-full bg-black/40 text-white text-[10px] hidden group-hover:flex items-center justify-center">{avatarBusy === m.id ? '…' : 'Đổi ảnh'}</span>
+                          <input type="file" accept="image/*" className="hidden" disabled={avatarBusy === m.id}
+                            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadMgrAvatar(m, f); }} />
+                        </label>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-semibold text-gray-800">{m.name}</div>
                           <div className="text-xs text-gray-500">{[m.phone, m.email].filter(Boolean).join(' · ') || 'Chưa có liên hệ'}</div>
                           <div className="text-xs text-gray-400">Chi nhánh: {m.region || '—'}</div>
                         </div>
+                        {m.avatar_url && (
+                          <button onClick={() => void removeMgrAvatar(m)} className="px-1.5 py-1 text-[11px] text-gray-400 hover:text-red-500 flex-shrink-0">Gỡ ảnh</button>
+                        )}
                         <button onClick={() => setEditingMgr({ ...m })} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded-md flex-shrink-0">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
