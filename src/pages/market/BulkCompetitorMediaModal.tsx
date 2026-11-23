@@ -107,7 +107,7 @@ export default function BulkCompetitorMediaModal({ competitors, linkTypes: allTy
       const updates = buildUpdates(c, draftsRef.current[id]);
       if (!Object.keys(updates).length) return;
       setRowState(r => ({ ...r, [id]: 'saving' }));
-      const { error } = await supabase.from('competitors').update(updates).eq('id', id);
+      const { data: saved, error } = await supabase.from('competitors').update(updates).eq('id', id).select('image_url').maybeSingle();
       if (error) {
         errored.current.add(id);
         setRowState(r => ({ ...r, [id]: 'error' }));
@@ -117,6 +117,15 @@ export default function BulkCompetitorMediaModal({ competitors, linkTypes: allTy
       errored.current.delete(id);
       overridesRef.current = { ...overridesRef.current, [id]: { ...overridesRef.current[id], ...updates } as Partial<Competitor> };
       setOverrides(overridesRef.current);
+      // Hệ thống có thể đã tự đổi link ảnh ngoài thành link kho R2 khi ghi → cập nhật ô cho đúng với dữ liệu đã lưu.
+      const sentImg = typeof updates.image_url === 'string' ? updates.image_url : null;
+      const savedImg = (saved as { image_url?: string | null } | null)?.image_url;
+      if (sentImg && savedImg && savedImg !== sentImg) {
+        overridesRef.current = { ...overridesRef.current, [id]: { ...overridesRef.current[id], image_url: savedImg } as Partial<Competitor> };
+        setOverrides(overridesRef.current);
+        const cur = draftsRef.current[id];
+        if (cur && cur.image_url.trim() === sentImg) { draftsRef.current = { ...draftsRef.current, [id]: { ...cur, image_url: savedImg } }; setDrafts(draftsRef.current); }
+      }
       setRowState(r => ({ ...r, [id]: 'saved' }));
       await logActivity({
         user, action: 'update', table: 'competitors', recordId: id,
