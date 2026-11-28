@@ -8,13 +8,12 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Send, FileClock, Phone, MapPin, ChevronDown, ChevronRight, Search,
   Settings, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, TrendingUp, Wallet, Building2, Users,
-  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check, NotebookPen,
+  AlertTriangle, CalendarClock, X, Plus, ArrowRight, Calculator, PieChart, Scale, Check,
 } from 'lucide-react';
 import { MyWorkFeed, type FeedStats } from '../components/workspace/MyWorkFeed';
 import { KCNGridSection } from '../components/workspace/KCNGridSection';
 import { BulkLaborModal } from '../components/workspace/BulkLaborModal';
 import { GiaoViecModal } from '../components/workspace/GiaoViecModal';
-import { CskhQuickPanel } from '../components/workspace/CskhQuickPanel';
 import { PayrollCalculatorModal } from '../components/workspace/PayrollCalculatorModal';
 import { CostPlanModal } from '../components/workspace/CostPlanModal';
 import { BranchHistoryFields } from '../components/workspace/BranchHistoryFields';
@@ -143,7 +142,6 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
   const [showCostPlan, setShowCostPlan] = useState(false);
   const [showGiaoViec, setShowGiaoViec] = useState(false);
   const [showBulkLabor, setShowBulkLabor] = useState(false);
-  const [showCskhQuick, setShowCskhQuick] = useState(false);
   const [showPayrollCalc, setShowPayrollCalc] = useState(false);
 
   // ---- Rail: HĐ cần xử lý ----
@@ -829,17 +827,7 @@ export default function Workspace({ clients, pipeline, products, onNavigate, onC
           onCreated={() => setRefreshToken(t => t + 1)}
         />
       )}
-      {canAccess(user.role, 'crm-leads', rolePermissions) && (
-        <button
-          onClick={() => setShowCskhQuick(true)}
-          title="Ghi nhanh khách — chọn người vừa trao đổi để ghi lại"
-          aria-label="Ghi nhanh khách"
-          className="fixed z-[47] right-3 bottom-[calc(128px+env(safe-area-inset-bottom))] md:right-14 md:bottom-[72px] w-10 h-10 rounded-full bg-white text-[#0071E3] shadow-[0_0_0_0.5px_rgba(0,0,0,0.1),0_6px_18px_-4px_rgba(0,0,0,0.3)] flex items-center justify-center hover:scale-105 active:scale-95 transition"
-        >
-          <NotebookPen size={17} />
-        </button>
-      )}
-      {showCskhQuick && <CskhQuickPanel clients={clients} toast={toast} onNavigate={onNavigate} onClose={() => setShowCskhQuick(false)} />}
+      {/* Nút "Ghi nhanh khách" (cuốn sổ) đã chuyển lên App → hiện ở mọi trang (components/workspace/CskhQuickButton) */}
       {showBulkLabor && <BulkLaborModal clients={clients} toast={toast} onClose={() => setShowBulkLabor(false)} />}
       {showPayrollCalc && <PayrollCalculatorModal clients={clients} toast={toast} onClose={() => setShowPayrollCalc(false)} />}
     </>

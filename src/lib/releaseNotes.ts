@@ -16,6 +16,14 @@ import type { ReleaseNote } from './releaseUpdate';
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    id: '2026-11-28-quick-customer-note-everywhere',
+    date: '2026-11-28',
+    title: 'CSKH',
+    features: [
+      'Nút cuốn sổ "Ghi nhanh khách" hiện ở mọi trang, ngay trên chuông thông báo',
+    ],
+  },
+  {
     id: '2026-11-23-lead-phone-fresh-check',
     date: '2026-11-23',
     title: 'CSKH',

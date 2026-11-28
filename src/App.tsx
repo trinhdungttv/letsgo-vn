@@ -42,6 +42,7 @@ import { parseSurveyShareHash } from './lib/kcnSurvey/share';
 import { RECRUIT_ENABLED } from './lib/featureFlags';
 import UpcomingDatesReminder from './components/contacts/UpcomingDatesReminder';
 import QuickNotesDock from './components/quickNotes/QuickNotesDock';
+import { CskhQuickButton } from './components/workspace/CskhQuickButton';
 import CareAutomationRunner from './modules/cskh/CareAutomationRunner';
 import LaborReminderRunner from './pages/market/sources/LaborReminderRunner';
 import ReleaseUpdatePrompt from './components/ReleaseUpdatePrompt';
@@ -558,6 +559,8 @@ function AppInner() {
       {user && <LaborReminderRunner toast={toast} />}
       {/* Ghi chú nhanh: dải thẻ dính mép phải trên mọi trang (ghi chú riêng từng người + ghi âm cuộc họp) */}
       {user && <QuickNotesDock userId={user.id} />}
+      {/* Nút cuốn sổ "Ghi nhanh khách" (trên chuông) — mọi trang, ai có quyền CSKH */}
+      {user && canAccess(user.role, 'crm-leads', rolePermissions) && <CskhQuickButton clients={clients} toast={toast} onNavigate={navigate} />}
       {/* Admin: cảnh báo nhân viên xoá nhiều / sửa hàng loạt (migration 218) — hiện khi đăng nhập */}
       {user.role === 'admin' && canAccess(user.role, 'history', rolePermissions) && (
         <DataGuardLoginAlert onOpenAlerts={() => { setHistoryTab('alerts'); navigateTop('history'); }} />
